@@ -130,7 +130,7 @@ function calcClassicScore(
     if (success) {
       score = bid + 13;
     } else {
-      score = -1;
+      score = -miss;
     }
   }
 
