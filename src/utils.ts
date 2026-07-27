@@ -64,7 +64,7 @@ function calcNormalScore(
 //   + Sole Winner:  +10 bonus
 //
 // FAILURE (won !== bid):
-//   Normal:         -1 (flat, regardless of miss amount)
+//   Normal:         -|won - bid|
 //   Caller/Wizz:    -(|won - bid| + callerPenalty)
 //     where callerPenalty = 10 normally, 20 when totalBids <= 11 (under by 2+)
 //   Risk:           -(|won - bid| + 10)
