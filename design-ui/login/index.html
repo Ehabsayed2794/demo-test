@@ -129,7 +129,13 @@
 <script src="game-state.js"></script>
 <script>GameState.sync(GameState.STATES.LOGIN);</script>
 <script src="shared-ui.js"></script>
-<script>
+<script type="module">
+import {
+  auth, createUserWithEmailAndPassword, signInWithEmailAndPassword,
+  signInAnonymously, signInWithPopup, GoogleAuthProvider,
+  sendPasswordResetEmail, updateProfile
+} from "../firebase-init.js";
+
 (function(){
   var screen=document.getElementById("screen");
   function fit(){var pad=24;var s=Math.min((window.innerWidth-pad)/932,(window.innerHeight-pad)/430);screen.style.transform="scale("+s+")";}
@@ -162,8 +168,34 @@
     GameState.goTo(GameState.STATES.LOBBY, { data: { player: { name: name }, account: account } });
   }
 
-  createForm.addEventListener("submit", function(e){
-    e.preventDefault();
+  // Maps Firebase Auth error codes to the message shown in the nearest
+  // .ui-hint — Firebase's own err.message is developer-facing, not
+  // player-facing (e.g. "Firebase: Error (auth/wrong-password).").
+  function friendlyAuthError(err){
+    switch(err && err.code){
+      case "auth/email-already-in-use": return "That email is already registered — try Sign In instead.";
+      case "auth/invalid-email": return "Enter a valid email.";
+      case "auth/weak-password": return "At least 8 characters.";
+      case "auth/wrong-password":
+      case "auth/invalid-credential": return "Incorrect email or password.";
+      case "auth/user-not-found": return "No account found with that email.";
+      case "auth/too-many-requests": return "Too many attempts — try again later.";
+      case "auth/operation-not-allowed": return "This sign-in method isn't enabled yet.";
+      case "auth/popup-closed-by-user": return null;
+      default: return "Something went wrong. Please try again.";
+    }
+  }
+
+  function withBusy(btn, fn){
+    return function(e){
+      e.preventDefault();
+      if (btn.disabled) return;
+      btn.disabled = true;
+      Promise.resolve(fn(e)).catch(function(err){ console.error(err); }).finally(function(){ btn.disabled = false; });
+    };
+  }
+
+  createForm.addEventListener("submit", withBusy(createForm.querySelector(".primary-btn"), async function(){
     var name=requireName(); if(!name) return;
     var emailEl=document.getElementById("createEmail"), passEl=document.getElementById("createPassword");
     var email=emailEl.value.trim(), pass=passEl.value;
@@ -171,11 +203,16 @@
     if(!validEmail(email)){ UI.setFieldError(fieldOf(emailEl), "Enter a valid email."); ok=false; } else UI.setFieldError(fieldOf(emailEl), null);
     if(pass.length<8){ UI.setFieldError(fieldOf(passEl), "At least 8 characters."); ok=false; } else UI.setFieldError(fieldOf(passEl), null);
     if(!ok) return;
-    proceedToLobby(name, { type: "full", email: email });
-  });
+    try {
+      var cred = await createUserWithEmailAndPassword(auth, email, pass);
+      await updateProfile(cred.user, { displayName: name });
+      proceedToLobby(name, { type: "full", email: cred.user.email, uid: cred.user.uid });
+    } catch (err) {
+      UI.setFieldError(fieldOf(emailEl), friendlyAuthError(err));
+    }
+  }));
 
-  signinForm.addEventListener("submit", function(e){
-    e.preventDefault();
+  signinForm.addEventListener("submit", withBusy(signinForm.querySelector(".primary-btn"), async function(){
     var name=requireName(); if(!name) return;
     var emailEl=document.getElementById("signinEmail"), passEl=document.getElementById("signinPassword");
     var email=emailEl.value.trim(), pass=passEl.value;
@@ -183,25 +220,47 @@
     if(!validEmail(email)){ UI.setFieldError(fieldOf(emailEl), "Enter a valid email."); ok=false; } else UI.setFieldError(fieldOf(emailEl), null);
     if(!pass){ UI.setFieldError(fieldOf(passEl), "Enter your password."); ok=false; } else UI.setFieldError(fieldOf(passEl), null);
     if(!ok) return;
-    proceedToLobby(name, { type: "full", email: email });
-  });
+    try {
+      var cred = await signInWithEmailAndPassword(auth, email, pass);
+      proceedToLobby(cred.user.displayName || name, { type: "full", email: cred.user.email, uid: cred.user.uid });
+    } catch (err) {
+      UI.setFieldError(fieldOf(passEl), friendlyAuthError(err));
+    }
+  }));
 
-  document.getElementById("forgotBtn").addEventListener("click", function(){
+  document.getElementById("forgotBtn").addEventListener("click", async function(){
     var emailEl=document.getElementById("signinEmail");
     var email=emailEl.value.trim();
     if(!validEmail(email)){ UI.setFieldError(fieldOf(emailEl), "Enter your email first."); emailEl.focus(); return; }
     UI.setFieldError(fieldOf(emailEl), null);
-    UI.toast("Password reset — coming soon.", { container: document.getElementById("screen") });
+    try {
+      await sendPasswordResetEmail(auth, email);
+      UI.toast("Password reset email sent.", { container: document.getElementById("screen") });
+    } catch (err) {
+      UI.setFieldError(fieldOf(emailEl), friendlyAuthError(err));
+    }
   });
 
-  document.getElementById("googleBtn").addEventListener("click", function(){
+  document.getElementById("googleBtn").addEventListener("click", async function(){
     var name=requireName(); if(!name) return;
-    UI.toast("Google sign-in — coming soon.", { container: document.getElementById("screen") });
+    try {
+      var cred = await signInWithPopup(auth, new GoogleAuthProvider());
+      if (!cred.user.displayName) { try { await updateProfile(cred.user, { displayName: name }); } catch(e){} }
+      proceedToLobby(cred.user.displayName || name, { type: "full", email: cred.user.email, uid: cred.user.uid });
+    } catch (err) {
+      var msg = friendlyAuthError(err);
+      if (msg) UI.toast(msg, { container: document.getElementById("screen") });
+    }
   });
 
-  document.getElementById("guestBtn").addEventListener("click", function(){
+  document.getElementById("guestBtn").addEventListener("click", async function(){
     var name=requireName(); if(!name) return;
-    proceedToLobby(name, { type: "guest", email: null });
+    try {
+      var cred = await signInAnonymously(auth);
+      proceedToLobby(name, { type: "guest", email: null, uid: cred.user.uid });
+    } catch (err) {
+      UI.toast(friendlyAuthError(err), { container: document.getElementById("screen") });
+    }
   });
 })();
 </script>
