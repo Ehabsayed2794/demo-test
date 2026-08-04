@@ -39,8 +39,12 @@
   // or Play vs AI screen, depending on the mode chosen in the Lobby).
   var STATE_SCREEN = {
     Splash: "MADE - Logo & Loading.html",
-    Login: "Estimation Login.html",
-    Lobby: "Estimation Lobby v2.html",
+    // Repo layout note: each screen lives in its own design-ui/<screen>/
+    // folder as index.html (not Claude Design's flat per-file export
+    // names), so these paths are relative sibling-folder paths, not
+    // bare filenames. Update this same way as each new screen is imported.
+    Login: "../login/index.html",
+    Lobby: "../lobby/index.html",
     GameModeSelection: null,
     CreateRoom: "Estimation Room.html",
     JoinRoom: null,

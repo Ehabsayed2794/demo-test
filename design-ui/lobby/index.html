@@ -490,22 +490,22 @@
     <header class="topbar">
       <div class="player">
         <div class="avatar-ring">
-          <div class="avatar-fallback" aria-label="Khaled_X avatar">K</div>
+          <div class="avatar-fallback" id="playerAvatar" aria-label="player avatar">K</div>
         </div>
         <div class="player-meta">
-          <span class="player-name">Khaled_X</span>
-          <span class="rank-chip"><span class="crown">♛</span>Diamond II</span>
+          <span class="player-name" id="playerName">Khaled_X</span>
+          <span class="rank-chip"><span class="crown">♛</span><span id="playerRank">Diamond II</span></span>
         </div>
       </div>
 
       <div class="wallet">
         <div class="currency">
-          <span class="amount">14,250</span>
+          <span class="amount" id="playerCoins">14,250</span>
           <button class="add" type="button" aria-label="Buy coins">+</button>
         </div>
         <div class="currency">
           <span class="icon-gem"></span>
-          <span class="amount">320</span>
+          <span class="amount" id="playerGems">320</span>
           <button class="add" type="button" aria-label="Buy gems">+</button>
         </div>
       </div>
@@ -624,5 +624,23 @@
 <script src="game-state.js"></script>
 <script src="session.js"></script>
 <script>GameState.sync(GameState.STATES.LOBBY);</script>
+<script>
+(function () {
+  var player = GameState.getData().player || {};
+  var nameEl = document.getElementById("playerName");
+  var avatarEl = document.getElementById("playerAvatar");
+  var rankEl = document.getElementById("playerRank");
+  var coinsEl = document.getElementById("playerCoins");
+  var gemsEl = document.getElementById("playerGems");
+  if (player.name) {
+    nameEl.textContent = player.name;
+    avatarEl.textContent = player.name.charAt(0).toUpperCase();
+    avatarEl.setAttribute("aria-label", player.name + " avatar");
+  }
+  if (player.rank) rankEl.textContent = player.rank;
+  if (typeof player.coins === "number") coinsEl.textContent = player.coins.toLocaleString();
+  if (typeof player.gems === "number") gemsEl.textContent = player.gems.toLocaleString();
+})();
+</script>
 </body>
 </html>
