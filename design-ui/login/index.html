@@ -129,14 +129,12 @@
 <script src="game-state.js"></script>
 <script>GameState.sync(GameState.STATES.LOGIN);</script>
 <script src="shared-ui.js"></script>
-<script type="module">
-import {
-  auth, createUserWithEmailAndPassword, signInWithEmailAndPassword,
-  signInAnonymously, signInWithPopup, GoogleAuthProvider,
-  sendPasswordResetEmail, updateProfile, onAuthStateChanged
-} from "../firebase-init.js";
-
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="../firebase-init.js"></script>
+<script>
 (function(){
+  var auth=window.Auth;
   var screen=document.getElementById("screen");
   var card=document.querySelector(".card");
 
@@ -144,7 +142,7 @@ import {
   // session — avoids a flash of the login card for a returning user
   // who's about to be bounced straight to the Lobby.
   card.style.visibility="hidden";
-  onAuthStateChanged(auth, function(user){
+  auth.onAuthStateChanged(function(user){
     if (user) {
       var storedName=((GameState.getData() || {}).player || {}).name;
       var name=user.displayName || storedName || "Player";
@@ -197,6 +195,7 @@ import {
       case "auth/user-not-found": return "No account found with that email.";
       case "auth/too-many-requests": return "Too many attempts — try again later.";
       case "auth/operation-not-allowed": return "This sign-in method isn't enabled yet.";
+      case "auth/unauthorized-domain": return "Google sign-in needs a real web address — open this over http(s), not by double-clicking the file.";
       case "auth/popup-closed-by-user": return null;
       default: return "Something went wrong. Please try again.";
     }
@@ -220,8 +219,8 @@ import {
     if(pass.length<8){ UI.setFieldError(fieldOf(passEl), "At least 8 characters."); ok=false; } else UI.setFieldError(fieldOf(passEl), null);
     if(!ok) return;
     try {
-      var cred = await createUserWithEmailAndPassword(auth, email, pass);
-      await updateProfile(cred.user, { displayName: name });
+      var cred = await auth.createUserWithEmailAndPassword(email, pass);
+      await cred.user.updateProfile({ displayName: name });
       proceedToLobby(name, { type: "full", email: cred.user.email, uid: cred.user.uid });
     } catch (err) {
       UI.setFieldError(fieldOf(emailEl), friendlyAuthError(err));
@@ -237,7 +236,7 @@ import {
     if(!pass){ UI.setFieldError(fieldOf(passEl), "Enter your password."); ok=false; } else UI.setFieldError(fieldOf(passEl), null);
     if(!ok) return;
     try {
-      var cred = await signInWithEmailAndPassword(auth, email, pass);
+      var cred = await auth.signInWithEmailAndPassword(email, pass);
       proceedToLobby(cred.user.displayName || name, { type: "full", email: cred.user.email, uid: cred.user.uid });
     } catch (err) {
       UI.setFieldError(fieldOf(passEl), friendlyAuthError(err));
@@ -250,7 +249,7 @@ import {
     if(!validEmail(email)){ UI.setFieldError(fieldOf(emailEl), "Enter your email first."); emailEl.focus(); return; }
     UI.setFieldError(fieldOf(emailEl), null);
     try {
-      await sendPasswordResetEmail(auth, email);
+      await auth.sendPasswordResetEmail(email);
       UI.toast("Password reset email sent.", { container: document.getElementById("screen") });
     } catch (err) {
       UI.setFieldError(fieldOf(emailEl), friendlyAuthError(err));
@@ -260,8 +259,8 @@ import {
   document.getElementById("googleBtn").addEventListener("click", async function(){
     var name=requireName(); if(!name) return;
     try {
-      var cred = await signInWithPopup(auth, new GoogleAuthProvider());
-      if (!cred.user.displayName) { try { await updateProfile(cred.user, { displayName: name }); } catch(e){} }
+      var cred = await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+      if (!cred.user.displayName) { try { await cred.user.updateProfile({ displayName: name }); } catch(e){} }
       proceedToLobby(cred.user.displayName || name, { type: "full", email: cred.user.email, uid: cred.user.uid });
     } catch (err) {
       var msg = friendlyAuthError(err);
@@ -272,7 +271,7 @@ import {
   document.getElementById("guestBtn").addEventListener("click", async function(){
     var name=requireName(); if(!name) return;
     try {
-      var cred = await signInAnonymously(auth);
+      var cred = await auth.signInAnonymously();
       proceedToLobby(name, { type: "guest", email: null, uid: cred.user.uid });
     } catch (err) {
       UI.toast(friendlyAuthError(err), { container: document.getElementById("screen") });
