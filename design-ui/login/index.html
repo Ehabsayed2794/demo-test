@@ -138,19 +138,39 @@
   var screen=document.getElementById("screen");
   var card=document.querySelector(".card");
 
-  // Hide the form until we know whether there's already a signed-in
-  // session — avoids a flash of the login card for a returning user
-  // who's about to be bounced straight to the Lobby.
-  card.style.visibility="hidden";
-  auth.onAuthStateChanged(function(user){
-    if (user) {
-      var storedName=((GameState.getData() || {}).player || {}).name;
-      var name=user.displayName || storedName || "Player";
-      proceedToLobby(name, { type: user.isAnonymous ? "guest" : "full", email: user.email, uid: user.uid });
-      return;
-    }
+  // If Firebase's CDN scripts failed to load (offline, corporate
+  // firewall, ad blocker) window.Auth never gets set. Never leave the
+  // screen stuck on a blank/hidden card with no explanation — reveal
+  // the form and let requireAuth() surface a clear error per-action
+  // instead of a silent dead page.
+  function requireAuth(){
+    if (auth) return auth;
+    UI.toast("Couldn't connect to sign-in — check your internet connection and reload.", { container: screen });
+    return null;
+  }
+
+  if (!requireAuth()) {
     card.style.visibility="";
-  });
+  } else {
+    // Hide the form until we know whether there's already a signed-in
+    // session — avoids a flash of the login card for a returning user
+    // who's about to be bounced straight to the Lobby.
+    card.style.visibility="hidden";
+    try {
+      auth.onAuthStateChanged(function(user){
+        if (user) {
+          var storedName=((GameState.getData() || {}).player || {}).name;
+          var name=user.displayName || storedName || "Player";
+          proceedToLobby(name, { type: user.isAnonymous ? "guest" : "full", email: user.email, uid: user.uid });
+          return;
+        }
+        card.style.visibility="";
+      });
+    } catch(e) {
+      console.error(e);
+      card.style.visibility="";
+    }
+  }
 
   function fit(){var pad=24;var s=Math.min((window.innerWidth-pad)/932,(window.innerHeight-pad)/430);screen.style.transform="scale("+s+")";}
   window.addEventListener("resize",fit); fit();
@@ -212,6 +232,7 @@
 
   createForm.addEventListener("submit", withBusy(createForm.querySelector(".primary-btn"), async function(){
     var name=requireName(); if(!name) return;
+    var auth=requireAuth(); if(!auth) return;
     var emailEl=document.getElementById("createEmail"), passEl=document.getElementById("createPassword");
     var email=emailEl.value.trim(), pass=passEl.value;
     var ok=true;
@@ -229,6 +250,7 @@
 
   signinForm.addEventListener("submit", withBusy(signinForm.querySelector(".primary-btn"), async function(){
     var name=requireName(); if(!name) return;
+    var auth=requireAuth(); if(!auth) return;
     var emailEl=document.getElementById("signinEmail"), passEl=document.getElementById("signinPassword");
     var email=emailEl.value.trim(), pass=passEl.value;
     var ok=true;
@@ -244,6 +266,7 @@
   }));
 
   document.getElementById("forgotBtn").addEventListener("click", async function(){
+    var auth=requireAuth(); if(!auth) return;
     var emailEl=document.getElementById("signinEmail");
     var email=emailEl.value.trim();
     if(!validEmail(email)){ UI.setFieldError(fieldOf(emailEl), "Enter your email first."); emailEl.focus(); return; }
@@ -258,6 +281,7 @@
 
   document.getElementById("googleBtn").addEventListener("click", async function(){
     var name=requireName(); if(!name) return;
+    var auth=requireAuth(); if(!auth) return;
     try {
       var cred = await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
       if (!cred.user.displayName) { try { await cred.user.updateProfile({ displayName: name }); } catch(e){} }
@@ -270,6 +294,7 @@
 
   document.getElementById("guestBtn").addEventListener("click", async function(){
     var name=requireName(); if(!name) return;
+    var auth=requireAuth(); if(!auth) return;
     try {
       var cred = await auth.signInAnonymously();
       proceedToLobby(name, { type: "guest", email: null, uid: cred.user.uid });
