@@ -133,11 +133,27 @@
 import {
   auth, createUserWithEmailAndPassword, signInWithEmailAndPassword,
   signInAnonymously, signInWithPopup, GoogleAuthProvider,
-  sendPasswordResetEmail, updateProfile
+  sendPasswordResetEmail, updateProfile, onAuthStateChanged
 } from "../firebase-init.js";
 
 (function(){
   var screen=document.getElementById("screen");
+  var card=document.querySelector(".card");
+
+  // Hide the form until we know whether there's already a signed-in
+  // session — avoids a flash of the login card for a returning user
+  // who's about to be bounced straight to the Lobby.
+  card.style.visibility="hidden";
+  onAuthStateChanged(auth, function(user){
+    if (user) {
+      var storedName=((GameState.getData() || {}).player || {}).name;
+      var name=user.displayName || storedName || "Player";
+      proceedToLobby(name, { type: user.isAnonymous ? "guest" : "full", email: user.email, uid: user.uid });
+      return;
+    }
+    card.style.visibility="";
+  });
+
   function fit(){var pad=24;var s=Math.min((window.innerWidth-pad)/932,(window.innerHeight-pad)/430);screen.style.transform="scale("+s+")";}
   window.addEventListener("resize",fit); fit();
 
