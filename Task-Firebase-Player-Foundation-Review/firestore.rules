@@ -1,0 +1,81 @@
+rules_version = '2';
+
+// Sprint 2.6 — Firebase Player Foundation.
+// Scope: players/{uid} ONLY. Everything else remains denied by default,
+// per docs/architecture/SecurityArchitecture.md — collections not yet
+// implemented (rooms, matches, inventory, shop, leaderboards, etc.) have
+// no rules block here on purpose, and the explicit catch-all below denies
+// them, matching the deny-all rule already live on this project before
+// this sprint (see docs/architecture/ArchitectureDecisionLog.md).
+//
+// NOT YET DEPLOYED — this file is the reviewable artifact for this sprint.
+// To publish: Firebase Console → Firestore Database → Rules → paste this
+// file's contents → Publish. See docs/implementation/FirebasePlayerFoundation.md
+// for the exact steps and what to verify afterward.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    // A brand-new profile must exactly match PlayerService's approved
+    // defaults (docs/architecture/FirestoreSchema.md) — a client cannot
+    // create itself a profile with a head start on currency, rank, or
+    // stats. This is the create-time half of the "protected fields"
+    // requirement; onlyAllowedFieldsChanged() below is the update-time half.
+    function isValidNewProfile() {
+      let data = request.resource.data;
+      return data.keys().hasOnly([
+               'displayName', 'accountType', 'email', 'avatarInitial',
+               'rank', 'rp', 'wins', 'streak', 'level',
+               'coins', 'gems', 'createdAt', 'lastSeenAt',
+               'currentRoomId', 'currentMatchId'
+             ])
+             && data.displayName is string && data.displayName.size() > 0
+             && data.accountType in ['guest', 'full']
+             && data.rank == 'Unranked'
+             && data.rp == 0
+             && data.wins == 0
+             && data.streak == 0
+             && data.level == 1
+             && data.coins == 500
+             && data.gems == 10
+             && data.currentRoomId == null
+             && data.currentMatchId == null;
+    }
+
+    // Protected fields (coins, gems, rank, rp, wins, streak, level,
+    // accountType, email, createdAt) can NEVER change via a client update
+    // — only these five may. See docs/architecture/SecurityArchitecture.md's
+    // "protected fields" section and FirebasePlayerFoundation.md's honest
+    // limitation note: this rule stops a client from EDITING those fields,
+    // it does not (and structurally cannot, without Cloud Functions) verify
+    // that a stat change reaching this collection via some OTHER path was
+    // itself computed correctly — there is no other path yet, because
+    // Sprint 2.6 implements no such path. This rule is what keeps it that
+    // way until one is deliberately added.
+    function onlyAllowedFieldsChanged() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['displayName', 'avatarInitial', 'lastSeenAt', 'currentRoomId', 'currentMatchId']);
+    }
+
+    match /players/{uid} {
+      allow get: if isOwner(uid);
+      // Explicitly denied, not just omitted: a client must never be able
+      // to query/enumerate the players collection to list other users'
+      // private profiles.
+      allow list: if false;
+      allow create: if isOwner(uid) && isValidNewProfile();
+      allow update: if isOwner(uid) && onlyAllowedFieldsChanged();
+      allow delete: if false;
+    }
+
+    // Deny-by-default for every collection outside this sprint's scope —
+    // unchanged from the rule already live on this project.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
