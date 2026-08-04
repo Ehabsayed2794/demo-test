@@ -287,8 +287,14 @@
       if (!cred.user.displayName) { try { await cred.user.updateProfile({ displayName: name }); } catch(e){} }
       proceedToLobby(cred.user.displayName || name, { type: "full", email: cred.user.email, uid: cred.user.uid });
     } catch (err) {
-      var msg = friendlyAuthError(err);
-      if (msg) UI.toast(msg, { container: document.getElementById("screen") });
+      // Google's OAuth popup rejects the file:// origin outright, and it
+      // does so with several different error codes depending on browser/
+      // version rather than one consistent one — so unlike the other
+      // handlers, treat any non-"user closed it" failure here as that
+      // known limitation instead of guessing at friendlyAuthError's codes.
+      if (err && err.code !== "auth/popup-closed-by-user") {
+        UI.toast("Google sign-in needs a real web address — open this over http(s), not by double-clicking the file.", { container: document.getElementById("screen") });
+      }
     }
   });
 
