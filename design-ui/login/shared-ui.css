@@ -1,0 +1,34 @@
+/* Shared UI components — Toast, Modal, Input, Skeleton. Consolidates ad hoc patterns
+   from bidding-render.js (waitToast — kept separate, see SHARED_COMPONENTS.md), room.js,
+   and shop.js toasts, plus Shop's dialog-family modals. Uses the existing token set
+   (--accent, --panel, --panel-line, --ink, --ink-dim, --pill, --mono) — no new colors. */
+
+/* ---------- Toast ---------- */
+.ui-toast{position:absolute;bottom:16px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--panel-hi,var(--panel));border:1px solid var(--panel-line);color:var(--ink);font-family:"Saira",sans-serif;font-size:12.5px;font-weight:500;letter-spacing:.01em;padding:10px 18px;border-radius:11px;box-shadow:0 8px 24px rgba(0,0,0,.5);opacity:0;pointer-events:none;transition:opacity .2s ease,transform .2s ease;z-index:80;white-space:nowrap;max-width:80%;text-align:center}
+.ui-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* ---------- Modal (dialog family: confirms, detail panels, creator flows) ---------- */
+.ui-modal-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.8);display:flex;align-items:center;justify-content:center;z-index:60;opacity:0;pointer-events:none;transition:opacity .15s ease}
+.ui-modal-backdrop[hidden]{display:none}
+.ui-modal-backdrop.is-open{opacity:1;pointer-events:auto}
+.ui-modal-box{background:var(--panel);border:1px solid var(--panel-line);border-radius:16px;padding:22px;position:relative;box-shadow:0 16px 48px rgba(0,0,0,.7)}
+.ui-modal-close{position:absolute;top:12px;right:12px;width:28px;height:28px;border-radius:50%;border:1px solid var(--panel-line);background:var(--pill);color:var(--ink-dim);cursor:pointer;font-size:14px;display:grid;place-items:center;transition:color .12s ease,border-color .12s ease}
+.ui-modal-close:hover{color:var(--accent);border-color:var(--accent-dim)}
+
+/* ---------- Input field ---------- */
+.ui-field{display:flex;flex-direction:column;gap:6px}
+.ui-field .ui-label{font-family:var(--mono,"Spline Sans Mono",monospace);font-size:10.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-faint)}
+.ui-input{font-family:var(--mono,"Spline Sans Mono",monospace);font-size:15px;font-weight:600;letter-spacing:.04em;color:var(--ink);background:var(--pill);border:1px solid var(--panel-line);border-radius:10px;padding:12px 14px;outline:none;transition:border-color .12s ease,box-shadow .12s ease;width:100%;box-sizing:border-box}
+.ui-input::placeholder{color:var(--ink-faint);font-weight:500;letter-spacing:.02em}
+.ui-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in oklch, var(--accent) 20%, transparent)}
+.ui-field.error .ui-input{border-color:#c14026;box-shadow:0 0 0 3px rgba(193,64,38,.14)}
+.ui-field .ui-hint{font-family:"Saira",sans-serif;font-size:11px;color:var(--ink-dim);min-height:13px}
+.ui-field.error .ui-hint{color:#e0836a}
+
+/* ---------- Loading / Skeleton ---------- */
+.ui-skel{position:relative;overflow:hidden;background:var(--pill);border-radius:8px}
+.ui-skel::after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,rgba(255,240,210,.07),transparent);animation:ui-skel-sweep 1.4s ease-in-out infinite}
+@keyframes ui-skel-sweep{100%{transform:translateX(100%)}}
+.ui-skel-line{height:12px;border-radius:5px}
+.ui-skel-line+.ui-skel-line{margin-top:8px}
+.ui-skel-circle{border-radius:50%}

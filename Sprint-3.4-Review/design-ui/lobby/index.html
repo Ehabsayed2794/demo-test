@@ -1,0 +1,858 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"></meta>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"></meta>
+<title>Estimation — Main Lobby v2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"></link>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous"></link>
+<link href="https://fonts.googleapis.com/css2?family=Marcellus&amp;family=Saira:wght@400;500;600&amp;family=Spline+Sans+Mono:wght@500;600;700&amp;display=swap" rel="stylesheet"></link>
+<style>
+  :root {
+    --accent:      #E8A33D;
+    --accent-hi:   color-mix(in oklch, var(--accent) 70%, #fff3da);
+    --accent-dim:  color-mix(in oklch, var(--accent) 55%, #1a1208);
+    --glow:        0.6;
+    --ink:         #f0eada;
+    --ink-dim:     #a89f8e;
+    --ink-faint:   #6f685b;
+    --bg:          #0d0a07;
+    --panel:       #17130e;
+    --panel-line:  rgba(255, 240, 210, 0.07);
+    --pill:        #1d1a16;
+    --mono:        "Spline Sans Mono", monospace;
+    --nav-display: flex;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    height: 100%;
+    background: #000;
+    overflow: hidden;
+    font-family: "Saira", sans-serif;
+  }
+
+  #stage {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: #000;
+  }
+
+  #screen {
+    width: 932px;
+    height: 430px;
+    position: relative;
+    overflow: hidden;
+    border-radius: 20px;
+    transform-origin: center center;
+    color: var(--ink);
+    user-select: none;
+    background:
+      radial-gradient(140% 65% at 50% -18%, rgba(141, 84, 32, calc(var(--glow) * 0.55)), transparent 70%),
+      linear-gradient(180deg, #171008 0%, var(--bg) 48%, #080604 100%);
+  }
+  /* faint wood grain in the warm top region */
+  #screen::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: repeating-linear-gradient(90deg,
+      rgba(0,0,0,0.16) 0 9px, transparent 9px 15px, rgba(0,0,0,0.1) 15px 26px);
+    -webkit-mask-image: radial-gradient(130% 60% at 50% -10%, #000 0%, transparent 75%);
+            mask-image: radial-gradient(130% 60% at 50% -10%, #000 0%, transparent 75%);
+  }
+
+  .mono { font-family: var(--mono); }
+
+  /* ---------- Header ---------- */
+  .topbar {
+    position: absolute;
+    top: 16px;
+    left: 26px;
+    right: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .player {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+  }
+  .avatar-ring {
+    flex: none;
+    border-radius: 50%;
+    padding: 2px;
+    background: linear-gradient(160deg, var(--accent-hi), var(--accent) 40%, var(--accent-dim));
+  }
+  .avatar-fallback {
+    width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-family: "Marcellus", serif;
+    font-size: 18px;
+    color: var(--ink);
+    background: #2b2620;
+  }
+  .player-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .player-name {
+    font-family: "Marcellus", serif;
+    font-size: 17px;
+    letter-spacing: 0.05em;
+    line-height: 1;
+    color: var(--ink);
+  }
+  .rank-chip {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
+    line-height: 1;
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.03em;
+    color: var(--accent);
+  }
+  .rank-chip .crown { font-size: 11px; }
+
+  .wallet {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .currency {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    height: 38px;
+    padding: 0 5px 0 16px;
+    border-radius: 19px;
+    background: var(--pill);
+    border: 1px solid var(--panel-line);
+  }
+  .currency .icon-gem {
+    width: 15px;
+    height: 15px;
+    margin-right: -1px;
+    clip-path: polygon(50% 0, 100% 30%, 82% 100%, 18% 100%, 0 30%);
+    background: linear-gradient(170deg, #d9dde4 8%, #9aa3ad 45%, #5c646e 100%);
+  }
+  .currency .amount {
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    color: var(--ink);
+  }
+  .currency .add {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1;
+    color: var(--ink);
+    background: #2b2620;
+    transition: background 0.12s ease, transform 0.12s ease;
+  }
+  .currency .add:hover { background: #3a332a; transform: scale(1.07); }
+  .currency .add:active { transform: scale(0.94); }
+
+  /* ---------- Title block ---------- */
+  .masthead {
+    position: absolute;
+    top: 80px;
+    left: 26px;
+    right: 26px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 20px;
+  }
+  .masthead h1 {
+    font-family: "Marcellus", serif;
+    font-size: 38px;
+    font-weight: 400;
+    letter-spacing: 0.1em;
+    line-height: 1;
+    color: var(--ink);
+    text-shadow: 0 2px 18px rgba(232, 163, 61, calc(var(--glow) * 0.35));
+  }
+  .masthead .tagline {
+    margin-top: 9px;
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    color: var(--ink-dim);
+  }
+  .online-pill {
+    flex: none;
+    margin-bottom: 2px;
+    padding: 7px 14px;
+    border-radius: 16px;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+    color: var(--accent);
+    background: color-mix(in oklch, var(--accent) 14%, transparent);
+  }
+
+  /* ---------- Main row ---------- */
+  .mainrow {
+    position: absolute;
+    top: 168px;
+    left: 26px;
+    right: 26px;
+    bottom: 48px;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 304px;
+    grid-template-rows: minmax(0, 100%);
+    gap: 15px;
+  }
+
+  /* --- Mode cards --- */
+  .mode {
+    position: relative;
+    border-radius: 14px;
+    overflow: hidden;
+    background: var(--panel);
+    border: 1px solid var(--panel-line);
+  }
+  .mode .card-art {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center top;
+  }
+  .mode .scrim {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(180deg,
+      rgba(8, 6, 4, 0) 30%,
+      rgba(8, 6, 4, 0.55) 55%,
+      rgba(8, 6, 4, 0.92) 80%,
+      #080604 100%);
+  }
+  .mode .badge {
+    position: absolute;
+    top: 11px;
+    right: 11px;
+    z-index: 2;
+    pointer-events: none;
+    padding: 4px 10px;
+    border-radius: 11px;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+    color: var(--ink-dim);
+    background: rgba(10, 8, 6, 0.72);
+    border: 1px solid rgba(255, 240, 210, 0.1);
+  }
+  .mode .content {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 2;
+    pointer-events: none;
+    padding: 0 16px 14px;
+    display: flex;
+    flex-direction: column;
+  }
+  .mode h2 {
+    font-family: "Marcellus", serif;
+    font-size: 20px;
+    font-weight: 400;
+    letter-spacing: 0.04em;
+    line-height: 1.15;
+    color: var(--ink);
+  }
+  .mode .sub {
+    margin-top: 5px;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--ink-dim);
+    text-wrap: pretty;
+  }
+  .mode .join-link {
+    pointer-events: auto;
+    margin-top: 6px;
+    align-self: flex-start;
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-family: "Saira", sans-serif;
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--ink-dim);
+    padding: 0;
+  }
+  .mode .join-link:hover { color: var(--accent); }
+  .mode .cta {
+    pointer-events: auto;
+    white-space: nowrap;
+    margin-top: 11px;
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    border: none;
+    cursor: pointer;
+    font-family: "Saira", sans-serif;
+    font-size: 13.5px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    border-radius: 10px;
+    padding: 9px 16px;
+    color: var(--ink);
+    background: rgba(26, 23, 19, 0.88);
+    border: 1px solid rgba(255, 240, 210, 0.12);
+    transition: background 0.13s ease, transform 0.13s ease;
+  }
+  .mode .cta:hover { background: rgba(44, 39, 32, 0.92); }
+  .mode .cta:active { transform: scale(0.97); }
+  .mode .cta .chev { font-size: 12px; color: var(--ink-dim); }
+
+  /* Ranked — featured amber treatment */
+  .mode.ranked {
+    border: 1px solid color-mix(in oklch, var(--accent) 60%, transparent);
+    box-shadow:
+      0 0 26px color-mix(in oklch, var(--accent) calc(var(--glow) * 28%), transparent),
+      inset 0 0 30px rgba(232, 130, 40, calc(var(--glow) * 0.12));
+  }
+  .mode.ranked .badge { color: var(--accent); border-color: color-mix(in oklch, var(--accent) 35%, transparent); }
+  .mode.ranked .cta {
+    background: none;
+    border: none;
+    padding: 9px 2px;
+    color: var(--accent);
+  }
+  .mode.ranked .cta:hover { color: var(--accent-hi); background: none; }
+  .mode.ranked .cta .chev { color: var(--accent); }
+
+  /* --- Right column --- */
+  .sidecol {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 0;
+    min-height: 0;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--panel-line);
+    border-radius: 13px;
+    padding: 10px 14px;
+  }
+  .panel-row {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+  }
+  .panel-icon {
+    flex: none;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-size: 14px;
+    color: var(--accent);
+    background: rgba(8, 6, 4, 0.6);
+    border: 1px solid var(--panel-line);
+  }
+  .panel-titles {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+  }
+  .panel-titles .t {
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    line-height: 1.2;
+    color: var(--ink);
+    white-space: nowrap;
+  }
+  .panel-titles .s {
+    font-size: 11px;
+    line-height: 1.2;
+    color: var(--ink-faint);
+    white-space: nowrap;
+  }
+  .panel-count {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    color: var(--accent);
+  }
+  .bar {
+    margin-top: 10px;
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(255, 240, 210, 0.08);
+    overflow: hidden;
+  }
+  .bar .fill {
+    height: 100%;
+    border-radius: 3px;
+    background: linear-gradient(90deg, var(--accent-dim), var(--accent));
+  }
+  .bar.dim .fill { background: #6f685b; }
+
+  .ready-pill {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 11px;
+    border-radius: 12px;
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+    color: var(--accent);
+    background: rgba(193, 64, 38, 0.2);
+  }
+  .ready-pill .spark { font-size: 9px; }
+
+  .mission {
+    margin-top: 10px;
+  }
+  .mission-top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .mission-name {
+    font-size: 12.5px;
+    font-weight: 400;
+    color: var(--ink-dim);
+    white-space: nowrap;
+  }
+  .mission-count {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    color: var(--ink-dim);
+  }
+  .mission .bar { margin-top: 6px; }
+
+  /* ---------- Bottom nav ---------- */
+  .bottomnav {
+    position: absolute;
+    left: 26px;
+    right: 26px;
+    bottom: 0;
+    height: 40px;
+    display: var(--nav-display);
+    align-items: center;
+    justify-content: center;
+    gap: 26px;
+    border-top: 1px solid var(--panel-line);
+  }
+  .navbtn {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: none;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    font-size: 14px;
+    line-height: 1;
+    color: var(--ink-faint);
+    background: transparent;
+    transition: color 0.13s ease, background 0.13s ease;
+  }
+  .navbtn:hover { color: var(--accent); background: rgba(255, 240, 210, 0.05); }
+</style>
+</head>
+<body>
+<div id="stage">
+  <main id="screen" data-screen-label="Main Lobby v2">
+
+    <!-- Header -->
+    <header class="topbar">
+      <div class="player">
+        <div class="avatar-ring">
+          <div class="avatar-fallback" id="playerAvatar" aria-label="player avatar">K</div>
+        </div>
+        <div class="player-meta">
+          <span class="player-name" id="playerName">Khaled_X</span>
+          <span class="rank-chip"><span class="crown">♛</span><span id="playerRank">Diamond II</span></span>
+        </div>
+      </div>
+
+      <div class="wallet">
+        <div class="currency">
+          <span class="amount" id="playerCoins">14,250</span>
+          <button class="add" type="button" aria-label="Buy coins">+</button>
+        </div>
+        <div class="currency">
+          <span class="icon-gem"></span>
+          <span class="amount" id="playerGems">320</span>
+          <button class="add" type="button" aria-label="Buy gems">+</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Masthead -->
+    <section class="masthead">
+      <div>
+        <h1>ESTIMATION</h1>
+        <p class="tagline">The Competitive Egyptian Strategy Card Game</p>
+      </div>
+      <span class="online-pill">128,400 players online</span>
+    </section>
+
+    <!-- Main row -->
+    <section class="mainrow">
+
+      <article class="mode ranked">
+        <img class="card-art" src="uploads/Ranked%20Match.png" alt="Ranked Match art"></img>
+        <div class="scrim"></div>
+        <span class="badge">~0:45 queue</span>
+        <div class="content">
+          <h2>Ranked Match</h2>
+          <p class="sub">Climb the divisions. Earn your crown.</p>
+          <button class="cta" type="button" onclick="GameState.goTo(GameState.STATES.GAME_MODE_SELECTION,{file:'Estimation Ranked Match.html'})">Find Match <span class="chev">›</span></button>
+        </div>
+      </article>
+
+      <article class="mode">
+        <img class="card-art" src="uploads/Play%20with%20Friend.png" alt="Play with Friends art"></img>
+        <div class="scrim"></div>
+        <span class="badge">4 online</span>
+        <div class="content">
+          <h2>Play with Friends</h2>
+          <p class="sub">Private room. Your rules, your table.</p>
+          <button class="cta" type="button" id="createRoomBtn">Create Room <span class="chev">›</span></button>
+          <button class="join-link" type="button" id="joinRoomBtn">Join a room by ID</button>
+          <button class="join-link" type="button" id="toggleReadyBtn">Toggle Ready (current room)</button>
+        </div>
+      </article>
+
+      <article class="mode">
+        <img class="card-art" src="uploads/AI.jpg" alt="Play vs AI art"></img>
+        <div class="scrim"></div>
+        <span class="badge">4 levels</span>
+        <div class="content">
+          <h2>Play vs AI</h2>
+          <p class="sub">Sharpen your strategy against the Sphinx.</p>
+          <button class="cta" type="button" onclick="GameState.goTo(GameState.STATES.GAME_MODE_SELECTION,{file:'Estimation Play vs AI.html'})">Choose Level <span class="chev">›</span></button>
+        </div>
+      </article>
+
+      <!-- Right column -->
+      <aside class="sidecol">
+        <div class="panel">
+          <div class="panel-row">
+            <div class="panel-icon">♛</div>
+            <div class="panel-titles">
+              <span class="t">Season of Sands</span>
+              <span class="s">Tier 18 · 6 days left</span>
+            </div>
+            <span class="panel-count">740/1000</span>
+          </div>
+          <div class="bar"><div class="fill" style="width: 74%;"></div></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-row">
+            <div class="panel-icon">◎</div>
+            <div class="panel-titles">
+              <span class="t">Daily Missions</span>
+            </div>
+            <span class="ready-pill"><span class="spark">◆</span>2 ready</span>
+          </div>
+          <div class="mission">
+            <div class="mission-top">
+              <span class="mission-name">Win 3 Ranked matches</span>
+              <span class="mission-count">2/3</span>
+            </div>
+            <div class="bar dim"><div class="fill" style="width: 66%;"></div></div>
+          </div>
+          <div class="mission">
+            <div class="mission-top">
+              <span class="mission-name">Make 10 exact calls</span>
+              <span class="mission-count">7/10</span>
+            </div>
+            <div class="bar dim"><div class="fill" style="width: 70%;"></div></div>
+          </div>
+        </div>
+      </aside>
+    </section>
+
+    <!-- Bottom nav -->
+    <nav class="bottomnav">
+      <button class="navbtn" type="button" title="Shop" onclick="GameState.goTo(GameState.STATES.SHOP)">◇</button>
+      <button class="navbtn" type="button" title="Settings" onclick="GameState.goTo(GameState.STATES.SETTINGS)">⚙</button>
+    </nav>
+
+  </main>
+</div>
+
+<script>
+  (function () {
+    var screen = document.getElementById("screen");
+    function fit() {
+      var pad = 24;
+      var s = Math.min(
+        (window.innerWidth - pad) / 932,
+        (window.innerHeight - pad) / 430
+      );
+      screen.style.transform = "scale(" + s + ")";
+    }
+    window.addEventListener("resize", fit);
+    fit();
+  })();
+</script>
+
+<script src="game-state.js"></script>
+<script src="session.js"></script>
+<script>GameState.sync(GameState.STATES.LOBBY);</script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="../firebase-init.js"></script>
+<script src="../player-service.js"></script>
+<script src="../session-service.js"></script>
+<script src="../room-service.js"></script>
+<script>
+(function () {
+  var nameEl = document.getElementById("playerName");
+  var avatarEl = document.getElementById("playerAvatar");
+  var rankEl = document.getElementById("playerRank");
+  var coinsEl = document.getElementById("playerCoins");
+  var gemsEl = document.getElementById("playerGems");
+
+  // Sprint 2.8: bind ONLY the UI labels that already exist in this
+  // screen's markup. There is currently no bound element anywhere in
+  // Lobby for RP or Level — populating those is deferred until such
+  // elements exist, per "do not redesign Lobby, do not move components."
+  // See docs/implementation/PlayerProfileIntegration.md.
+  function applyPlayerData(p) {
+    if (!p) return;
+    if (p.name) {
+      nameEl.textContent = p.name;
+      avatarEl.textContent = p.name.charAt(0).toUpperCase();
+      avatarEl.setAttribute("aria-label", p.name + " avatar");
+    }
+    if (p.rank) rankEl.textContent = p.rank;
+    if (typeof p.coins === "number") coinsEl.textContent = p.coins.toLocaleString();
+    if (typeof p.gems === "number") gemsEl.textContent = p.gems.toLocaleString();
+  }
+
+  // Immediate paint from whatever GameState already has locally (from
+  // Login's handoff, or this screen's own hardcoded HTML defaults if
+  // none) — never blocked on a network call, so Lobby always loads
+  // normally regardless of what happens below.
+  applyPlayerData(GameState.getData().player || {});
+
+  // Sprint 2.9: enhance via SessionService ONLY — Lobby no longer
+  // computes a uid itself or calls PlayerService directly (both removed
+  // this sprint); SessionService resolves the signed-in user from real
+  // Firebase Auth state internally and caches/reads the profile via
+  // PlayerService on Lobby's behalf. A missing SessionService, a
+  // signed-out session, a missing profile, or any Firestore failure all
+  // resolve the same way as before: keep whatever is already on screen.
+  if (!window.SessionService) {
+    console.error("[Lobby] SessionService not loaded — showing local/default profile data only.");
+  } else {
+    window.SessionService.subscribe(function (session) {
+      if (!session || !session.profile) return; // signed out, or no profile yet — keep current display as-is
+      applyPlayerData({
+        name: session.profile.displayName,
+        rank: session.profile.rank,
+        coins: session.profile.coins,
+        gems: session.profile.gems
+      });
+      handlePossibleMatchStart(session.profile);
+    });
+  }
+
+  // Sprint 3.1: Lobby -> Profile navigation, via GameState.goTo() only
+  // (never window.location directly). GameState.STATE_SCREEN.Profile is
+  // still null (game-state.js is out of scope this sprint — see
+  // docs/implementation/NavigationFoundation.md), so this uses goTo()'s
+  // existing opts.file override, an already-existing extensibility point
+  // in GameState (originally documented for "one state, multiple
+  // possible screens"), not a new capability added here.
+  document.querySelector(".player").addEventListener("click", function () {
+    GameState.goTo(GameState.STATES.PROFILE, { file: "../profile/index.html" });
+  });
+
+  // Sprint 3.2: Create/Join Room, via RoomService only — Lobby never
+  // touches Firestore directly. No new screen this sprint (deliberately
+  // deferred, see docs/implementation/RoomFoundation.md). Success/error
+  // uses plain alert() — Lobby doesn't load shared-ui.js's UI.toast
+  // helper (only Login/Profile do), and adding it just for this would be
+  // a bigger footprint than the brief's own "simple alert or toast, no
+  // complex UI yet" calls for.
+  function currentPlayerId() {
+    var user = window.SessionService && window.SessionService.getCurrentUser();
+    return user ? user.uid : null;
+  }
+  function requirePlayerId() {
+    var uid = currentPlayerId();
+    if (!uid) alert("Sign in first to create or join a room.");
+    return uid;
+  }
+
+  // Sprint 3.3: tracks whichever room this tab most recently created or
+  // joined, purely so "Toggle Ready" has something to act on without a
+  // real Room screen existing yet (deliberately out of scope this
+  // sprint — see docs/implementation/ReadyStateFoundation.md). This is
+  // NOT a live-synced "current room" concept — it's reset on page
+  // reload and never read from Firestore; it's the smallest possible
+  // thing that lets setReady() be exercised from Lobby at all.
+  var lastRoomId = null;
+  var lastKnownReady = false;
+
+  // Sprint 3.4 (Match Initialization & Game Start): Session -> Room ->
+  // Match -> Screen. Lobby never touches Firestore/MatchService/RoomService
+  // for detection beyond what's below — it detects "a match has started"
+  // ENTIRELY through SessionService, which it already depends on. When
+  // MatchService.startMatch() succeeds (whether triggered by THIS tab's
+  // own setReady() call, or observed via polling below because some
+  // OTHER seated player was the one who readied last), it mirrors
+  // currentMatchId onto every player's own profile and calls
+  // SessionService.refresh() — so the existing SessionService.subscribe
+  // callback above fires again with the new value already in place. No
+  // new RoomService/MatchService method was added for this; subscribing
+  // to a match/room directly (subscribeToRoom/subscribeToMatch) was
+  // considered and rejected as more than this sprint's placeholder-screen
+  // requirement needs — see docs/implementation/MatchInitialization.md.
+  var navigatedToMatch = false;
+  var matchPollTimer = null;
+
+  function stopMatchPolling() {
+    if (matchPollTimer) { clearInterval(matchPollTimer); matchPollTimer = null; }
+  }
+
+  // Polling, not a live listener — an honest, documented limitation
+  // (RoomService.subscribeToRoom/MatchService.subscribeToMatch are not
+  // used here; wiring either in would mean this tab holds an open
+  // listener even when nothing about the room has changed, which is
+  // more than a placeholder screen justifies). This only ever runs while
+  // THIS tab already knows about a room (lastRoomId set) and hasn't
+  // already navigated away — never on a fresh Lobby load with no room.
+  function startMatchPolling() {
+    if (matchPollTimer) return;
+    matchPollTimer = setInterval(function () {
+      if (navigatedToMatch || !lastRoomId || !window.SessionService) { stopMatchPolling(); return; }
+      window.SessionService.refresh();
+    }, 4000);
+  }
+
+  function handlePossibleMatchStart(profile) {
+    if (navigatedToMatch) return;
+    // Deliberately requires lastRoomId (THIS tab's own in-memory room
+    // reference) in addition to profile.currentMatchId — not just the
+    // latter alone. A signed-in profile can carry a currentMatchId from
+    // an earlier session (e.g. a tab that reloaded mid-match); auto-
+    // redirecting purely on that would be a rudimentary form of
+    // reconnect, which the brief explicitly puts out of scope. Gating on
+    // lastRoomId keeps this to exactly the in-session "I just readied up
+    // and a match was created" flow the brief describes, nothing more.
+    if (!profile || !profile.currentMatchId || !lastRoomId) return;
+    navigatedToMatch = true;
+    stopMatchPolling();
+    // Gameplay is not an allowed transition FROM Lobby in game-state.js's
+    // TRANSITIONS graph today (that graph models the placeholder
+    // CreateRoom/WaitingRoom/Bidding screens, none of which this sprint
+    // builds or routes through) — force:true is goTo()'s own, already-
+    // existing escape hatch for exactly this case, not a new capability
+    // added to GameState. game-state.js itself is untouched, matching the
+    // Sprint 3.1 precedent (Profile navigation) of never editing it.
+    GameState.goTo(GameState.STATES.GAMEPLAY, {
+      file: "../match/index.html",
+      force: true,
+      data: { match: { id: profile.currentMatchId, roomId: lastRoomId } }
+    });
+  }
+
+  document.getElementById("createRoomBtn").addEventListener("click", function () {
+    if (!window.RoomService) { console.error("[Lobby] RoomService not loaded."); return; }
+    var uid = requirePlayerId();
+    if (!uid) return;
+    var profile = window.SessionService.getCurrentProfile();
+    var roomName = ((profile && profile.displayName) || "Player") + "'s Room";
+    window.RoomService.createRoom(uid, roomName).then(function (roomId) {
+      lastRoomId = roomId;
+      lastKnownReady = false;
+      startMatchPolling();
+      alert("Room created — ID: " + roomId);
+    }).catch(function (err) {
+      console.error("[Lobby] createRoom failed:", err);
+      alert("Couldn't create a room right now. Please try again.");
+    });
+  });
+
+  document.getElementById("joinRoomBtn").addEventListener("click", function () {
+    if (!window.RoomService) { console.error("[Lobby] RoomService not loaded."); return; }
+    var uid = requirePlayerId();
+    if (!uid) return;
+    var roomId = window.prompt("Enter the Room ID to join:");
+    if (!roomId) return;
+    roomId = roomId.trim();
+    window.RoomService.joinRoom(roomId, uid).then(function () {
+      lastRoomId = roomId;
+      lastKnownReady = false;
+      startMatchPolling();
+      alert("Joined room " + roomId);
+    }).catch(function (err) {
+      console.error("[Lobby] joinRoom failed:", err);
+      alert(err && err.message ? err.message : "Couldn't join that room.");
+    });
+  });
+
+  document.getElementById("toggleReadyBtn").addEventListener("click", function () {
+    if (!window.RoomService) { console.error("[Lobby] RoomService not loaded."); return; }
+    var uid = requirePlayerId();
+    if (!uid) return;
+    if (!lastRoomId) { alert("Create or join a room first."); return; }
+    var nextReady = !lastKnownReady;
+    window.RoomService.setReady(lastRoomId, uid, nextReady).then(function () {
+      lastKnownReady = nextReady;
+      alert(nextReady ? "You are now Ready." : "You are now Not Ready.");
+    }).catch(function (err) {
+      console.error("[Lobby] setReady failed:", err);
+      alert(err && err.message ? err.message : "Couldn't update your ready state.");
+    });
+  });
+})();
+</script>
+</body>
+</html>

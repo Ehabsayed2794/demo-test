@@ -1,0 +1,202 @@
+rules_version = '2';
+
+// Sprint 2.6 — Firebase Player Foundation. Extended in Sprint 3.2.1 with
+// a rooms/{roomId} block (Critical Security & Schema Fix — see
+// docs/implementation/RoomFoundation.md and
+// docs/implementation/RoomSecurityFix.md). Everything else remains
+// denied by default, per docs/architecture/SecurityArchitecture.md —
+// collections not yet implemented (matches, inventory, shop,
+// leaderboards, etc.) have no rules block here on purpose, and the
+// explicit catch-all below denies them, matching the deny-all rule
+// already live on this project before Sprint 2.6
+// (see docs/architecture/ArchitectureDecisionLog.md).
+//
+// NOT YET DEPLOYED — this file is the reviewable artifact. To publish:
+// Firebase Console → Firestore Database → Rules → paste this file's
+// contents → Publish. See docs/implementation/FirebasePlayerFoundation.md
+// and docs/implementation/RoomSecurityFix.md for the exact steps and
+// what to verify afterward.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    // A brand-new profile must exactly match PlayerService's approved
+    // defaults (docs/architecture/FirestoreSchema.md) — a client cannot
+    // create itself a profile with a head start on currency, rank, or
+    // stats. This is the create-time half of the "protected fields"
+    // requirement; onlyAllowedFieldsChanged() below is the update-time half.
+    function isValidNewProfile() {
+      let data = request.resource.data;
+      return data.keys().hasOnly([
+               'displayName', 'accountType', 'email', 'avatarInitial',
+               'rank', 'rp', 'wins', 'streak', 'level',
+               'coins', 'gems', 'createdAt', 'lastSeenAt',
+               'currentRoomId', 'currentMatchId'
+             ])
+             && data.displayName is string && data.displayName.size() > 0
+             && data.accountType in ['guest', 'full']
+             && data.rank == 'Unranked'
+             && data.rp == 0
+             && data.wins == 0
+             && data.streak == 0
+             && data.level == 1
+             && data.coins == 500
+             && data.gems == 10
+             && data.currentRoomId == null
+             && data.currentMatchId == null;
+    }
+
+    // Protected fields (coins, gems, rank, rp, wins, streak, level,
+    // accountType, email, createdAt) can NEVER change via a client update
+    // — only these five may. See docs/architecture/SecurityArchitecture.md's
+    // "protected fields" section and FirebasePlayerFoundation.md's honest
+    // limitation note: this rule stops a client from EDITING those fields,
+    // it does not (and structurally cannot, without Cloud Functions) verify
+    // that a stat change reaching this collection via some OTHER path was
+    // itself computed correctly — there is no other path yet, because
+    // Sprint 2.6 implements no such path. This rule is what keeps it that
+    // way until one is deliberately added.
+    function onlyAllowedFieldsChanged() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['displayName', 'avatarInitial', 'lastSeenAt', 'currentRoomId', 'currentMatchId']);
+    }
+
+    match /players/{uid} {
+      allow get: if isOwner(uid);
+      // Explicitly denied, not just omitted: a client must never be able
+      // to query/enumerate the players collection to list other users'
+      // private profiles.
+      allow list: if false;
+      allow create: if isOwner(uid) && isValidNewProfile();
+      allow update: if isOwner(uid) && onlyAllowedFieldsChanged();
+      allow delete: if false;
+    }
+
+    // ── rooms/{roomId} ──────────────────────────────────────────────────
+    // Shape matches room-service.js's actual implementation (creator:
+    // string, players: array of strings, readyPlayers: array of strings
+    // as of Sprint 3.3) — NOT the older, speculative hostUid/seats[]
+    // draft. See docs/implementation/ReadyStateFoundation.md and
+    // docs/architecture/FirestoreSchema.md's rooms section (re-synced
+    // in Sprint 3.3 to close the drift the Architecture Audit found).
+    //
+    // Sprint 3.3 tightened this block per the Sprint 3.2.5 Architecture
+    // Audit's findings F3 (update had no field-level restriction), F6
+    // (create had no field whitelist), and F7 (create allowed
+    // players.size() >= 1 instead of exactly 1). See below for exactly
+    // what changed and why, including one further deliberate deviation
+    // from a literal audit suggestion (creator is NOT fully immutable —
+    // it must remain reassignable for leave-triggered ownership
+    // transfer; see isValidCreatorChange() below).
+
+    // "roomId" itself is the Firestore document ID, not a document
+    // field — it is structurally immutable by Firestore's own design
+    // (a document's ID cannot be changed by an update), so there is
+    // nothing to add here to protect it specifically. Recorded so this
+    // isn't mistaken for an oversight.
+
+    function isValidNewRoom() {
+      let data = request.resource.data;
+      return data.keys().hasOnly(['creator', 'players', 'readyPlayers', 'status', 'name', 'createdAt', 'updatedAt'])
+             && data.creator is string
+             && data.creator == request.auth.uid
+             && data.players is list
+             // F7 fix: exactly one member (the creator) at creation —
+             // a client can no longer fabricate extra "members" who
+             // never actually joined via joinRoom().
+             && data.players.size() == 1
+             && data.creator in data.players
+             && data.readyPlayers is list
+             && data.readyPlayers.size() == 0
+             && data.status is string
+             && data.status == 'waiting';
+    }
+
+    // A list changed by exactly the acting user adding or removing
+    // THEMSELF — never anyone else, and never more than one entry at
+    // once. Covers join (add self), leave (remove self), and setReady
+    // (add/remove self from readyPlayers) with one shared, tested rule
+    // instead of three separate ad hoc ones.
+    function isSelfOnlyChange(oldArr, newArr) {
+      let uid = request.auth.uid;
+      return (newArr.size() == oldArr.size() + 1 && newArr.hasAll(oldArr) && (uid in newArr) && !(uid in oldArr))
+             || (oldArr.size() == newArr.size() + 1 && oldArr.hasAll(newArr) && (uid in oldArr) && !(uid in newArr))
+             || (newArr.size() == oldArr.size() && newArr.hasAll(oldArr) && oldArr.hasAll(newArr));
+    }
+
+    // creator is NOT fully immutable, on purpose — deviating from a
+    // literal reading of the audit's "prevent clients from changing
+    // immutable fields such as creator" suggestion, for the same reason
+    // Sprint 3.2.1 deviated from a literal rule once before: leaveRoom()
+    // legitimately reassigns creator when the room's creator departs
+    // and others remain (see room-service.js). Fully locking creator
+    // would make that already-shipped, already-tested behavior
+    // impossible. What IS enforced: creator may only be reassigned to
+    // someone who is (still) an actual member of the room — never to a
+    // fabricated or unrelated uid. This does not fully prevent an
+    // existing member from reassigning creator to themself outside of a
+    // real leave event (rules cannot distinguish "part of a legitimate
+    // leave" from "a standalone write" without Cloud Functions) — this
+    // residual gap is recorded here rather than silently left
+    // undocumented, matching docs/implementation/ReadyStateFoundation.md.
+    function isValidCreatorChange() {
+      return request.resource.data.creator == resource.data.creator
+             || (request.resource.data.creator in request.resource.data.players);
+    }
+
+    // status may only be "waiting" or "closed" (never an arbitrary
+    // string), and may only BECOME "closed" when players[] is now
+    // empty — matching leaveRoom()'s actual, only path to closing a room.
+    function isValidStatusChange() {
+      let newStatus = request.resource.data.status;
+      return newStatus in ['waiting', 'closed']
+             && (newStatus == 'closed' ? request.resource.data.players.size() == 0 : true);
+    }
+
+    // F3 fix: field-level validation, replacing the old
+    // isExistingOrIncomingMember() (which gated WHO could write but
+    // placed no limit on WHAT they wrote). Every legitimate mutation
+    // this sprint — join, leave, setReady — is expressible as: only the
+    // allowed fields changed, players/readyPlayers changed by at most
+    // the acting user adding/removing themself, creator (if it changed)
+    // points at a real member, and status (if it changed) is one of the
+    // two real values via the one real transition. A user who is a
+    // member neither before nor after the write still fails every one
+    // of these checks and is denied, exactly as before.
+    function isValidRoomUpdate() {
+      let oldData = resource.data;
+      let newData = request.resource.data;
+      let oldReady = oldData.readyPlayers != null ? oldData.readyPlayers : [];
+      let newReady = newData.readyPlayers != null ? newData.readyPlayers : [];
+      return newData.diff(oldData).affectedKeys().hasOnly(['players', 'readyPlayers', 'status', 'creator', 'updatedAt'])
+             && (request.auth.uid in oldData.players || request.auth.uid in newData.players)
+             && isSelfOnlyChange(oldData.players, newData.players)
+             && isSelfOnlyChange(oldReady, newReady)
+             && isValidCreatorChange()
+             && isValidStatusChange();
+    }
+
+    match /rooms/{roomId} {
+      // Optimization intentionally skipped per the brief ("global auth
+      // read is acceptable for MVP") — any signed-in user may read any
+      // room, including via a list query.
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && isValidNewRoom();
+      allow update: if request.auth != null && isValidRoomUpdate();
+      // Rooms are never deleted by design — leaveRoom() sets
+      // status:"closed" on the last departure instead (see
+      // room-service.js). No client-facing reason to allow delete.
+      allow delete: if false;
+    }
+
+    // Deny-by-default for every collection outside this sprint's scope —
+    // unchanged from the rule already live on this project.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"></meta>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"></meta>
+<title>Estimation — Login</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"></link>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous"></link>
+<link href="https://fonts.googleapis.com/css2?family=Marcellus&amp;family=Saira:wght@400;500;600;700&amp;family=Spline+Sans+Mono:wght@500;600;700&amp;display=swap" rel="stylesheet"></link>
+<link rel="stylesheet" href="shared-ui.css"></link>
+<template id="__bundler_thumbnail" data-bg-color="#0d0a07"><svg viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg"><rect width="1200" height="800" fill="#0d0a07"></rect><text x="600" y="440" font-family="Georgia,serif" font-size="120" fill="#E8A33D" text-anchor="middle">♛</text></svg></template>
+<style>
+  :root{
+    --accent:#E8A33D; --accent-hi:color-mix(in oklch, var(--accent) 70%, #fff3da);
+    --accent-dim:color-mix(in oklch, var(--accent) 55%, #1a1208); --glow:0.6;
+    --ink:#f0eada; --ink-dim:#a89f8e; --ink-faint:#6f685b;
+    --bg:#0d0a07; --panel:#17130e; --panel-hi:#1d1912; --panel-line:rgba(255,240,210,.07); --pill:#1d1a16;
+    --mono:"Spline Sans Mono",monospace;
+  }
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:"Saira",sans-serif;}
+  #stage{position:fixed;inset:0;display:grid;place-items:center;background:#000;}
+  #screen{width:932px;height:430px;position:relative;overflow:hidden;border-radius:20px;transform-origin:center center;color:var(--ink);user-select:none;
+    background:radial-gradient(120% 90% at 50% -10%, color-mix(in oklch, var(--accent) calc(var(--glow) * 16%), transparent), transparent 55%), linear-gradient(180deg,#181209,#0d0a07 70%);
+    box-shadow:0 30px 90px rgba(0,0,0,.7);}
+  #screen *{box-sizing:border-box;}
+
+  .wrap{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:14px;}
+  .masthead{display:flex;flex-direction:column;align-items:center;gap:1px;}
+  .masthead .crest{font-size:14px;color:var(--accent);opacity:.9;line-height:1;}
+  .masthead h1{font-family:"Marcellus",serif;font-size:18px;font-weight:400;letter-spacing:.08em;color:var(--ink);margin:0;line-height:1.2;text-shadow:0 2px 18px rgba(232,163,61,calc(var(--glow) * .35));}
+  .masthead .tagline{font-family:var(--mono);font-size:9px;font-weight:500;letter-spacing:.03em;color:var(--ink-dim);line-height:1.2;}
+
+  .card{width:336px;background:var(--panel);border:1px solid var(--panel-line);border-radius:14px;padding:12px 16px;display:flex;flex-direction:column;gap:7px;box-shadow:0 16px 48px rgba(0,0,0,.5);}
+  .card .ui-field{gap:3px;}
+  .card .ui-label{font-size:9px;}
+  .card .ui-input{padding:7px 10px;font-size:13px;}
+  .card .ui-hint{min-height:9px;font-size:9.5px;line-height:1.2;}
+
+  .tabs{display:flex;background:var(--pill);border-radius:9px;padding:3px;gap:3px;}
+  .tabs button{flex:1;border:none;background:transparent;color:var(--ink-dim);font-family:"Saira",sans-serif;font-size:11px;font-weight:600;letter-spacing:.02em;padding:5px 0;border-radius:7px;cursor:pointer;transition:background .12s ease,color .12s ease;}
+  .tabs button.active{background:var(--panel-hi);color:var(--accent);}
+
+  .fields{display:flex;flex-direction:column;gap:6px;}
+  .fields[hidden]{display:none;}
+
+  .primary-btn{width:100%;border:none;border-radius:9px;padding:8px;font-family:"Saira",sans-serif;font-size:12.5px;font-weight:700;letter-spacing:.03em;color:#1a1208;background:linear-gradient(160deg,var(--accent-hi),var(--accent));cursor:pointer;transition:filter .12s ease,transform .12s ease;margin-top:1px;}
+  .primary-btn:hover{filter:brightness(1.06);}
+  .primary-btn:active{transform:scale(.98);}
+
+  .forgot{align-self:flex-end;font-size:10px;color:var(--ink-dim);background:none;border:none;cursor:pointer;padding:0;}
+  .forgot:hover{color:var(--accent);}
+
+  .divider{display:flex;align-items:center;gap:8px;color:var(--ink-faint);font-family:var(--mono);font-size:9px;letter-spacing:.06em;line-height:1;}
+  .divider::before,.divider::after{content:"";flex:1;height:1px;background:var(--panel-line);}
+
+  .google-btn{width:100%;display:flex;align-items:center;justify-content:center;gap:8px;border:1px solid var(--panel-line);background:var(--pill);color:var(--ink);border-radius:9px;padding:7px;font-family:"Saira",sans-serif;font-size:11.5px;font-weight:600;cursor:pointer;transition:border-color .12s ease,background .12s ease;}
+  .google-btn:hover{border-color:var(--accent-dim);background:var(--panel-hi);}
+  .google-btn .g-mark{width:13px;height:13px;flex:none;}
+
+  .guest-link{align-self:center;font-family:var(--mono);font-size:10px;letter-spacing:.03em;color:var(--ink-faint);background:none;border:none;cursor:pointer;padding:1px 0;}
+  .guest-link:hover{color:var(--accent);}
+  .guest-link .arrow{color:var(--accent);}
+</style>
+</head>
+<body>
+<div id="stage">
+  <main id="screen" data-screen-label="Login / Onboarding">
+    <div class="wrap">
+      <div class="masthead">
+        <div class="crest">♛</div>
+        <h1>ESTIMATION</h1>
+        <div class="tagline">Bid boldly. Play sharp.</div>
+      </div>
+
+      <div class="card">
+        <div class="ui-field">
+          <label class="ui-label" for="displayName">Display Name</label>
+          <input class="ui-input" id="displayName" type="text" placeholder="e.g. Khaled_X" maxlength="18">
+          <div class="ui-hint"></div>
+        </div>
+
+        <div class="tabs" role="tablist">
+          <button type="button" class="active" data-tab="create" role="tab">Create Account</button>
+          <button type="button" data-tab="signin" role="tab">Sign In</button>
+        </div>
+
+        <form id="createForm" class="fields">
+          <div class="ui-field">
+            <label class="ui-label" for="createEmail">Email</label>
+            <input class="ui-input" id="createEmail" type="email" placeholder="you@example.com">
+            <div class="ui-hint"></div>
+          </div>
+          <div class="ui-field">
+            <label class="ui-label" for="createPassword">Password</label>
+            <input class="ui-input" id="createPassword" type="password" placeholder="At least 8 characters">
+            <div class="ui-hint"></div>
+          </div>
+          <button class="primary-btn" type="submit">Create Account</button>
+        </form>
+
+        <form id="signinForm" class="fields" hidden>
+          <div class="ui-field">
+            <label class="ui-label" for="signinEmail">Email</label>
+            <input class="ui-input" id="signinEmail" type="email" placeholder="you@example.com">
+            <div class="ui-hint"></div>
+          </div>
+          <div class="ui-field">
+            <label class="ui-label" for="signinPassword">Password</label>
+            <input class="ui-input" id="signinPassword" type="password" placeholder="Your password">
+            <div class="ui-hint"></div>
+          </div>
+          <button class="forgot" type="button" id="forgotBtn">Forgot password?</button>
+          <button class="primary-btn" type="submit">Sign In</button>
+        </form>
+
+        <div class="divider">OR</div>
+
+        <button class="google-btn" type="button" id="googleBtn">
+          <svg class="g-mark" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.71v2.26h2.9c1.7-1.56 2.7-3.87 2.7-6.6z"></path><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.9-2.26c-.8.54-1.84.86-3.06.86-2.35 0-4.34-1.59-5.05-3.72H.98v2.34A9 9 0 0 0 9 18z"></path><path fill="#FBBC05" d="M3.95 10.7A5.4 5.4 0 0 1 3.66 9c0-.59.1-1.17.29-1.7V4.96H.98A9 9 0 0 0 0 9c0 1.45.35 2.83.98 4.04l2.97-2.34z"></path><path fill="#EA4335" d="M9 3.58c1.32 0 2.51.46 3.44 1.35l2.58-2.58C13.46.9 11.42 0 9 0A9 9 0 0 0 .98 4.96l2.97 2.34C4.66 5.17 6.65 3.58 9 3.58z"></path></svg>
+          Continue with Google
+        </button>
+
+        <button class="guest-link" type="button" id="guestBtn">Continue as Guest <span class="arrow">→</span></button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="game-state.js"></script>
+<script>GameState.sync(GameState.STATES.LOGIN);</script>
+<script src="shared-ui.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="../firebase-init.js"></script>
+<script src="../player-service.js"></script>
+<script>
+(function(){
+  var auth=window.Auth;
+  var screen=document.getElementById("screen");
+  var card=document.querySelector(".card");
+
+  // If Firebase's CDN scripts failed to load (offline, corporate
+  // firewall, ad blocker) window.Auth never gets set. Never leave the
+  // screen stuck on a blank/hidden card with no explanation — reveal
+  // the form and let requireAuth() surface a clear error per-action
+  // instead of a silent dead page.
+  function requireAuth(){
+    if (auth) return auth;
+    UI.toast("Couldn't connect to sign-in — check your internet connection and reload.", { container: screen });
+    return null;
+  }
+
+  // Sprint 2.6 (Firebase Player Foundation): bootstrap/load the player's
+  // Firestore profile after auth resolves. Never lets a Firestore failure
+  // (offline, rules issue, PlayerService failing to load) block the
+  // player from reaching the Lobby — a missing profile sync is recoverable
+  // next time; getting stuck on the Login screen is not. See
+  // docs/implementation/FirebasePlayerFoundation.md.
+  function bootstrapProfile(user){
+    if (!window.PlayerService) {
+      console.error("[Login] PlayerService not loaded — continuing without a synced profile.");
+      return Promise.resolve(null);
+    }
+    return window.PlayerService.ensurePlayerProfile(user).catch(function(err){
+      console.error("[Login] ensurePlayerProfile failed (continuing offline):", err);
+      return null;
+    });
+  }
+
+  if (!requireAuth()) {
+    card.style.visibility="";
+  } else {
+    // Hide the form until we know whether there's already a signed-in
+    // session — avoids a flash of the login card for a returning user
+    // who's about to be bounced straight to the Lobby.
+    card.style.visibility="hidden";
+    try {
+      auth.onAuthStateChanged(function(user){
+        if (user) {
+          bootstrapProfile(user).then(function(profile){
+            var storedName=((GameState.getData() || {}).player || {}).name;
+            var name=(profile && profile.displayName) || user.displayName || storedName || "Player";
+            proceedToLobby(name, { type: user.isAnonymous ? "guest" : "full", email: user.email, uid: user.uid });
+          });
+          return;
+        }
+        card.style.visibility="";
+      });
+    } catch(e) {
+      console.error(e);
+      card.style.visibility="";
+    }
+  }
+
+  function fit(){var pad=24;var s=Math.min((window.innerWidth-pad)/932,(window.innerHeight-pad)/430);screen.style.transform="scale("+s+")";}
+  window.addEventListener("resize",fit); fit();
+
+  var nameField=document.getElementById("displayName");
+  var tabs=document.querySelectorAll(".tabs button");
+  var createForm=document.getElementById("createForm");
+  var signinForm=document.getElementById("signinForm");
+
+  tabs.forEach(function(btn){
+    btn.addEventListener("click",function(){
+      tabs.forEach(function(b){b.classList.toggle("active",b===btn);});
+      var mode=btn.dataset.tab;
+      createForm.hidden = mode!=="create";
+      signinForm.hidden = mode!=="signin";
+    });
+  });
+
+  function fieldOf(input){ return input.closest(".ui-field"); }
+  function requireName(){
+    var name=nameField.value.trim();
+    if(!name){ UI.setFieldError(fieldOf(nameField), "Enter a display name."); nameField.focus(); return null; }
+    UI.setFieldError(fieldOf(nameField), null);
+    return name;
+  }
+  function validEmail(v){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v); }
+
+  function proceedToLobby(name, account){
+    GameState.goTo(GameState.STATES.LOBBY, { data: { player: { name: name }, account: account } });
+  }
+
+  // Maps Firebase Auth error codes to the message shown in the nearest
+  // .ui-hint — Firebase's own err.message is developer-facing, not
+  // player-facing (e.g. "Firebase: Error (auth/wrong-password).").
+  function friendlyAuthError(err){
+    switch(err && err.code){
+      case "auth/email-already-in-use": return "That email is already registered — try Sign In instead.";
+      case "auth/invalid-email": return "Enter a valid email.";
+      case "auth/weak-password": return "At least 8 characters.";
+      case "auth/wrong-password":
+      case "auth/invalid-credential": return "Incorrect email or password.";
+      case "auth/user-not-found": return "No account found with that email.";
+      case "auth/too-many-requests": return "Too many attempts — try again later.";
+      case "auth/operation-not-allowed": return "This sign-in method isn't enabled yet.";
+      case "auth/unauthorized-domain": return "Google sign-in needs a real web address — open this over http(s), not by double-clicking the file.";
+      case "auth/popup-closed-by-user": return null;
+      default: return "Something went wrong. Please try again.";
+    }
+  }
+
+  function withBusy(btn, fn){
+    return function(e){
+      e.preventDefault();
+      if (btn.disabled) return;
+      btn.disabled = true;
+      Promise.resolve(fn(e)).catch(function(err){ console.error(err); }).finally(function(){ btn.disabled = false; });
+    };
+  }
+
+  createForm.addEventListener("submit", withBusy(createForm.querySelector(".primary-btn"), async function(){
+    var name=requireName(); if(!name) return;
+    var auth=requireAuth(); if(!auth) return;
+    var emailEl=document.getElementById("createEmail"), passEl=document.getElementById("createPassword");
+    var email=emailEl.value.trim(), pass=passEl.value;
+    var ok=true;
+    if(!validEmail(email)){ UI.setFieldError(fieldOf(emailEl), "Enter a valid email."); ok=false; } else UI.setFieldError(fieldOf(emailEl), null);
+    if(pass.length<8){ UI.setFieldError(fieldOf(passEl), "At least 8 characters."); ok=false; } else UI.setFieldError(fieldOf(passEl), null);
+    if(!ok) return;
+    try {
+      var cred = await auth.createUserWithEmailAndPassword(email, pass);
+      await cred.user.updateProfile({ displayName: name });
+      var profile = await bootstrapProfile(cred.user);
+      proceedToLobby((profile && profile.displayName) || name, { type: "full", email: cred.user.email, uid: cred.user.uid });
+    } catch (err) {
+      UI.setFieldError(fieldOf(emailEl), friendlyAuthError(err));
+    }
+  }));
+
+  signinForm.addEventListener("submit", withBusy(signinForm.querySelector(".primary-btn"), async function(){
+    var name=requireName(); if(!name) return;
+    var auth=requireAuth(); if(!auth) return;
+    var emailEl=document.getElementById("signinEmail"), passEl=document.getElementById("signinPassword");
+    var email=emailEl.value.trim(), pass=passEl.value;
+    var ok=true;
+    if(!validEmail(email)){ UI.setFieldError(fieldOf(emailEl), "Enter a valid email."); ok=false; } else UI.setFieldError(fieldOf(emailEl), null);
+    if(!pass){ UI.setFieldError(fieldOf(passEl), "Enter your password."); ok=false; } else UI.setFieldError(fieldOf(passEl), null);
+    if(!ok) return;
+    try {
+      var cred = await auth.signInWithEmailAndPassword(email, pass);
+      var profile = await bootstrapProfile(cred.user);
+      proceedToLobby((profile && profile.displayName) || cred.user.displayName || name, { type: "full", email: cred.user.email, uid: cred.user.uid });
+    } catch (err) {
+      UI.setFieldError(fieldOf(passEl), friendlyAuthError(err));
+    }
+  }));
+
+  document.getElementById("forgotBtn").addEventListener("click", async function(){
+    var auth=requireAuth(); if(!auth) return;
+    var emailEl=document.getElementById("signinEmail");
+    var email=emailEl.value.trim();
+    if(!validEmail(email)){ UI.setFieldError(fieldOf(emailEl), "Enter your email first."); emailEl.focus(); return; }
+    UI.setFieldError(fieldOf(emailEl), null);
+    try {
+      await auth.sendPasswordResetEmail(email);
+      UI.toast("Password reset email sent.", { container: document.getElementById("screen") });
+    } catch (err) {
+      UI.setFieldError(fieldOf(emailEl), friendlyAuthError(err));
+    }
+  });
+
+  document.getElementById("googleBtn").addEventListener("click", async function(){
+    var name=requireName(); if(!name) return;
+    var auth=requireAuth(); if(!auth) return;
+    try {
+      var cred = await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+      if (!cred.user.displayName) { try { await cred.user.updateProfile({ displayName: name }); } catch(e){} }
+      var profile = await bootstrapProfile(cred.user);
+      proceedToLobby((profile && profile.displayName) || cred.user.displayName || name, { type: "full", email: cred.user.email, uid: cred.user.uid });
+    } catch (err) {
+      // Google's OAuth popup rejects the file:// origin outright, and it
+      // does so with several different error codes depending on browser/
+      // version rather than one consistent one — so unlike the other
+      // handlers, treat any non-"user closed it" failure here as that
+      // known limitation instead of guessing at friendlyAuthError's codes.
+      if (err && err.code !== "auth/popup-closed-by-user") {
+        UI.toast("Google sign-in needs a real web address — open this over http(s), not by double-clicking the file.", { container: document.getElementById("screen") });
+      }
+    }
+  });
+
+  document.getElementById("guestBtn").addEventListener("click", async function(){
+    var name=requireName(); if(!name) return;
+    var auth=requireAuth(); if(!auth) return;
+    try {
+      var cred = await auth.signInAnonymously();
+      // Anonymous users get no displayName from the provider (unlike
+      // email/password or Google) — set it explicitly so PlayerService's
+      // profile bootstrap has a real name to store instead of a blank one.
+      if (!cred.user.displayName) { try { await cred.user.updateProfile({ displayName: name }); } catch(e){} }
+      var profile = await bootstrapProfile(cred.user);
+      proceedToLobby((profile && profile.displayName) || name, { type: "guest", email: null, uid: cred.user.uid });
+    } catch (err) {
+      UI.toast(friendlyAuthError(err), { container: document.getElementById("screen") });
+    }
+  });
+})();
+</script>
+</body>
+</html>

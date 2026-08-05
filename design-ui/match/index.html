@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"></meta>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"></meta>
+<title>Estimation — Match</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"></link>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous"></link>
+<link href="https://fonts.googleapis.com/css2?family=Marcellus&amp;family=Saira:wght@400;500;600;700&amp;family=Spline+Sans+Mono:wght@500;600;700&amp;display=swap" rel="stylesheet"></link>
+<style>
+  /* Sprint 3.4 — Match Initialization & Game Start. Placeholder screen,
+     explicitly acceptable per the brief ("Placeholder screen is
+     acceptable. The important part is: Session -> Room -> Match ->
+     Screen."). Same visual token system as every other shipped screen
+     (Lobby v2, Profile) — no new design system introduced, no attempt
+     at a real game table. See docs/implementation/MatchInitialization.md. */
+  :root{
+    --accent:#E8A33D; --accent-hi:color-mix(in oklch, var(--accent) 70%, #fff3da);
+    --accent-dim:color-mix(in oklch, var(--accent) 55%, #1a1208); --glow:0.6;
+    --ink:#f0eada; --ink-dim:#a89f8e; --ink-faint:#6f685b;
+    --bg:#0d0a07; --panel:#17130e; --panel-hi:#1d1912; --panel-line:rgba(255,240,210,.07); --pill:#1d1a16;
+    --mono:"Spline Sans Mono",monospace;
+  }
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:"Saira",sans-serif;}
+  #stage{position:fixed;inset:0;display:grid;place-items:center;background:#000;}
+  #screen{width:932px;height:430px;position:relative;overflow:hidden;border-radius:20px;transform-origin:center center;color:var(--ink);user-select:none;
+    background:radial-gradient(120% 90% at 50% -10%, color-mix(in oklch, var(--accent) calc(var(--glow) * 16%), transparent), transparent 55%), linear-gradient(180deg,#181209,#0d0a07 70%);
+    box-shadow:0 30px 90px rgba(0,0,0,.7);}
+  #screen *{box-sizing:border-box;}
+
+  .wrap{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:14px;}
+  .masthead{display:flex;flex-direction:column;align-items:center;gap:1px;}
+  .masthead .crest{font-size:14px;color:var(--accent);opacity:.9;line-height:1;}
+  .masthead h1{font-family:"Marcellus",serif;font-size:18px;font-weight:400;letter-spacing:.08em;color:var(--ink);margin:0;line-height:1.2;text-shadow:0 2px 18px rgba(232,163,61,calc(var(--glow) * .35));}
+  .masthead .tagline{font-family:var(--mono);font-size:9px;font-weight:500;letter-spacing:.03em;color:var(--ink-dim);line-height:1.2;}
+
+  .card{width:460px;background:var(--panel);border:1px solid var(--panel-line);border-radius:14px;padding:20px;display:flex;flex-direction:column;align-items:center;gap:12px;box-shadow:0 16px 48px rgba(0,0,0,.5);}
+
+  .status-pill{display:inline-flex;align-items:center;gap:6px;padding:5px 14px;border-radius:14px;font-family:var(--mono);font-size:12px;font-weight:600;letter-spacing:.03em;color:var(--accent);background:rgba(232,163,61,.14);}
+
+  .stat-row{display:flex;gap:10px;width:100%;}
+  .stat-tile{flex:1;background:var(--pill);border:1px solid var(--panel-line);border-radius:10px;padding:10px 8px;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:0;}
+  .stat-tile .label{font-family:var(--mono);font-size:8.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-faint);}
+  .stat-tile .value{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
+
+  .players-list{width:100%;display:flex;flex-direction:column;gap:5px;}
+  .players-list .row{display:flex;align-items:center;justify-content:space-between;font-family:var(--mono);font-size:11px;color:var(--ink-dim);background:var(--pill);border:1px solid var(--panel-line);border-radius:8px;padding:6px 10px;}
+  .players-list .row .tag{color:var(--accent);font-weight:600;}
+
+  .future-note{font-family:var(--mono);font-size:9.5px;color:var(--ink-faint);letter-spacing:.02em;text-align:center;line-height:1.5;}
+
+  .back-link{font-family:var(--mono);font-size:10px;letter-spacing:.03em;color:var(--ink-faint);background:none;border:none;cursor:pointer;padding:1px 0;}
+  .back-link:hover{color:var(--accent);}
+  .back-link .arrow{color:var(--accent);}
+</style>
+</head>
+<body>
+<div id="stage">
+  <main id="screen" data-screen-label="Match">
+    <div class="wrap">
+      <div class="masthead">
+        <div class="crest">♛</div>
+        <h1>ESTIMATION</h1>
+        <div class="tagline">Match</div>
+      </div>
+
+      <div class="card">
+        <span class="status-pill" id="matchStatus">Loading match…</span>
+
+        <div class="stat-row">
+          <div class="stat-tile">
+            <span class="label">Match ID</span>
+            <span class="value" id="matchIdValue">—</span>
+          </div>
+          <div class="stat-tile">
+            <span class="label">Round</span>
+            <span class="value" id="matchRound">—</span>
+          </div>
+          <div class="stat-tile">
+            <span class="label">Dealer</span>
+            <span class="value" id="matchDealer">—</span>
+          </div>
+        </div>
+
+        <div class="players-list" id="matchPlayers"></div>
+
+        <!-- gameState is an explicit TODO placeholder, not real dealt
+             hands — see docs/implementation/MatchInitialization.md's
+             "Dealer.dealHands() cannot be called yet" finding. This
+             screen shows that fact plainly rather than inventing a
+             game table that isn't backed by real state. -->
+        <div class="future-note" id="matchTodoNote">Bidding, dealing, and gameplay are not implemented yet — this is a placeholder screen confirming the match was created successfully.</div>
+
+        <button class="back-link" type="button" id="backBtn">← Back to Lobby</button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="game-state.js"></script>
+<script>GameState.sync(GameState.STATES.GAMEPLAY);</script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="../firebase-init.js"></script>
+<script src="../player-service.js"></script>
+<script src="../session-service.js"></script>
+<script src="../room-service.js"></script>
+<script src="../match-service.js"></script>
+<script>
+(function () {
+  var screen = document.getElementById("screen");
+  function fit() { var pad = 24; var s = Math.min((window.innerWidth - pad) / 932, (window.innerHeight - pad) / 430); screen.style.transform = "scale(" + s + ")"; }
+  window.addEventListener("resize", fit); fit();
+
+  var statusEl = document.getElementById("matchStatus");
+  var idEl = document.getElementById("matchIdValue");
+  var roundEl = document.getElementById("matchRound");
+  var dealerEl = document.getElementById("matchDealer");
+  var playersEl = document.getElementById("matchPlayers");
+
+  function renderMatch(match) {
+    if (!match) return;
+    statusEl.textContent = match.status || "unknown";
+    idEl.textContent = matchId || "—";
+    roundEl.textContent = (typeof match.currentRound === "number") ? String(match.currentRound) : "—";
+    dealerEl.textContent = match.dealer || "—";
+    playersEl.innerHTML = "";
+    (match.players || []).forEach(function (uid) {
+      var row = document.createElement("div");
+      row.className = "row";
+      var isDealer = uid === match.dealer;
+      var uidSpan = document.createElement("span");
+      uidSpan.textContent = uid;
+      var tagSpan = document.createElement("span");
+      if (isDealer) { tagSpan.className = "tag"; tagSpan.textContent = "Dealer"; }
+      row.appendChild(uidSpan);
+      row.appendChild(tagSpan);
+      playersEl.appendChild(row);
+    });
+  }
+
+  // Sprint 3.4: matchId arrives via GameState's own data-passing
+  // mechanism (opts.data on the goTo() call that brought us here from
+  // Lobby) — the same pattern already used for every other cross-screen
+  // handoff in this project (see game-state.js's setData/getData). No
+  // query string, no new persistence mechanism introduced.
+  var matchId = (GameState.getData().match || {}).id || null;
+
+  if (!matchId) {
+    statusEl.textContent = "No match to show";
+    console.warn("[Match] No matchId found in GameState data — this screen was opened without a real match handoff.");
+  } else if (!window.MatchService) {
+    statusEl.textContent = "MatchService unavailable";
+    console.error("[Match] MatchService not loaded.");
+  } else {
+    // subscribeToMatch, not a one-shot loadMatch — this screen stays
+    // live-updated if the match document changes (e.g. once a future
+    // sprint activates gameplay), via MatchService's own public API only.
+    window.MatchService.subscribeToMatch(matchId, function (data, err) {
+      if (err) {
+        statusEl.textContent = "Couldn't load this match";
+        console.error("[Match] subscribeToMatch error (fail-open — screen stays visible):", err);
+        return;
+      }
+      if (!data) {
+        statusEl.textContent = "Match not found";
+        return;
+      }
+      renderMatch(data);
+    });
+  }
+
+  document.getElementById("backBtn").addEventListener("click", function () {
+    GameState.goTo(GameState.STATES.LOBBY, { force: true });
+  });
+})();
+</script>
+</body>
+</html>
