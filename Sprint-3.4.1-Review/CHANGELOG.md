@@ -1,0 +1,43 @@
+# Changelog — Sprint 3.4.1: Match Start Consistency & Security Hotfix
+
+## Fixed
+
+### Issue 1 — `currentMatchId` propagation was silently broken for every player except the initiator
+- `design-ui/match-service.js`: removed `syncCurrentMatchOnProfiles()` (which looped over every room player and called `PlayerService.updatePlayerProfile(uid, { currentMatchId })` — a write that could only ever succeed for the initiating player, since `players/{uid}` is owner-only; every other player's write was silently swallowed as "non-fatal"). Replaced with `syncOwnCurrentMatchId(matchId)`, which delegates to a new self-only `SessionService.setCurrentMatchId(matchId)` — a method with **no `uid` parameter at all**, making cross-user writes structurally impossible, not just disciplined-by-convention. `MatchService` no longer depends on `PlayerService` directly at all.
+- `design-ui/session-service.js`: added `setCurrentMatchId(matchId)` — self-only, always targets `currentUser.uid`.
+- `design-ui/room-service.js`: added `loadRoom(roomId) → roomDataOrNull` — a plain read-only fetch (mirrors `MatchService.loadMatch()`'s pattern), the new "room polling" primitive.
+- `design-ui/lobby/index.html`: detection reworked from polling `session.profile.currentMatchId` (broken by the bug above) to polling `RoomService.loadRoom(lastRoomId).matchId`. The triggering client navigates immediately from `setReady()`'s own returned `room.matchStart`; every other seated client discovers the match via the poll. Both paths call the same self-only `SessionService.setCurrentMatchId()`.
+- `rooms/{roomId}.matchId` and `matches/{matchId}.players` are now documented as the authoritative multiplayer source; `players/{uid}.currentMatchId` is documented as a same-user convenience mirror only.
+
+### Issue 2 — a match could be fabricated independently of a legitimate room start
+- `firestore.rules`:
+  - `isValidNewMatch()` now additionally requires: the referenced room exists (`exists()`); the acting user is listed in the room's `players[]` (`get()`, pre-transaction state); the room's `status` was `"waiting"` before this write; every room player was in `readyPlayers` before this write; the match's `players[]` exactly equals the room's; and the room's own `matchId`, as it will exist once this same transaction/batch commits (`getAfter()`), equals this match document's own id.
+  - `isValidMatchIdChange()` now additionally requires (on the one write that transitions a room to `"in_game"`): the acting user is a real room member; every room player was ready beforehand; and the match document at the new `matchId`, as it will exist once this same commit lands (`getAfter()`), actually exists, points its own `roomId` back at this room, and carries this room's own `players[]`.
+  - Together these make "the match and room transition must be part of the same atomic write" a rules-enforced requirement, not just a JS-layer convention — creating either document without its paired, same-commit counterpart is now denied from at least one side.
+
+### Issue 3 — `createMatch()` was an unsafe public method
+- `design-ui/match-service.js`: `createMatch()` removed entirely from the public `MatchService` API (it bypassed the all-ready gate, duplicate-start protection, and atomic room transition `startMatch()` provides; nothing in this codebase ever legitimately called it). `RoomService`/the UI use `startMatch()` only. The Sprint 3.4.1-tightened `firestore.rules` above also now structurally reject the write shape `createMatch()` used to produce.
+
+### Issue 4 — match-start failures were unobservable and could leave the flow silently stuck
+- `design-ui/room-service.js`: `maybeStartMatch()` now returns a Promise resolving `{ allReady, started, matchId, error }`; `setReady()` awaits it (was fire-and-forget) and attaches it to the resolved room as `room.matchStart`. `setReady()` itself still never rejects because of a match-start failure.
+- `design-ui/lobby/index.html`: surfaces `room.matchStart.error` via the existing `alert()` pattern (no new UI component); the existing 4-second poll retries a stuck match-start by calling the already-idempotent `setReady(lastRoomId, uid, true)` again, which re-runs `maybeStartMatch()` as a side effect — "documented polling/retry behavior," not a new retry/reconnect system.
+
+## Tests
+- `tests/match-service.test.cjs`: rewritten — removed `createMatch`-specific tests (folded their document-shape assertions into `startMatch`'s tests, since both shared `buildInitialMatchDoc()`); added a confirmation `createMatch` is no longer public; added self-sync tests for `SessionService.setCurrentMatchId` with a whole-run regression guard proving `PlayerService.updatePlayerProfile` is never called with `currentMatchId`; added `room.matchStart` assertions to the cross-service integration section (now possible without manual `setTimeout` waits, since `setReady()` awaits the match-start attempt); added a dedicated Task-4 section proving a simulated transient `startMatch()` failure is observable via `room.matchStart.error`, leaves the room genuinely retryable, and that a retry via the same idempotent `setReady(true)` call succeeds once the failure clears. 59 tests total (was 50).
+- `tests/room-service.test.cjs`: added `loadRoom()` coverage (found/not-found/missing-arg/offline) and `room.matchStart` coverage (not-all-ready, all-ready-but-unavailable, all-ready-and-available with a mock `MatchService`). 31 tests total (was 22).
+- `tests/rules-simulation.test.js`: added 16 new tests — `isValidNewMatchV2`/`isValidMatchIdChangeV2` (the tightened room↔match binding checks, covering fabricated/unrelated rooms, non-member creators, not-all-ready starts, players mismatches, and the atomic-commit binding via simulated `getAfter()`) and a direct `isValidPlayerUpdate` translation of `players/{uid}`'s existing owner-only rule (proving Requirement #1 at the actual enforcement layer). 61 tests total (was 45); the Sprint 3.4 versions of `isValidNewMatch`/`isValidMatchIdChange` are kept, unmodified, as historical context (matching the Sprint 3.2.1→3.3 precedent).
+- Real click-driven Playwright browser tests (not committed as a permanent file, per this project's established pattern): confirmed the triggering client navigates immediately from `setReady()`'s own `matchStart`, confirmed a non-triggering client discovers the match via `RoomService.loadRoom()` polling (not `SessionService.refresh()`), confirmed the reconnect-avoidance regression guard (a stale profile `currentMatchId` with no in-tab room reference never auto-navigates), and re-confirmed the real, unstubbed stack still fails open cleanly (the same known sandbox CDN limitation as every prior sprint).
+
+## Documentation
+- `docs/implementation/MatchInitialization.md` — new "Sprint 3.4.1" section covering all four issues, the alternatives considered and rejected for Issue 1, and the explicit honesty note about JS rules simulation vs. a live Firestore emulator. Superseded Sprint 3.4 paragraphs marked inline (struck through), not deleted.
+- `docs/architecture/FirestoreSchema.md` — `players/{uid}.currentMatchId` field note clarifies it's a same-user mirror only; `rooms/{roomId}`'s update security bullet and `matches/{matchId}`'s create security bullet both describe the new cross-checks.
+- `docs/architecture/SecurityArchitecture.md` — `players/{uid}`, `rooms/{roomId}`, and `matches/{matchId}` rows updated to describe the Sprint 3.4.1 rule tightening.
+- `docs/architecture/ServiceArchitecture.md` — `RoomService.setReady`/`loadRoom` and `MatchService`'s method list re-synced; `createMatch` shown struck through with a pointer to why.
+- `docs/architecture/MatchLifecycle.md` — implementation-status callout extended with a Sprint 3.4.1 paragraph (no new phase implemented; the same LOBBY→WAITING→match-created→in_game slice was hardened).
+- This QA package.
+
+## Not changed
+No gameplay engine file (`bidding-engine.js`/`scoring-engine.js`/`dealer.js`/`cards.js`/`table-engine.js`), `player-service.js`, or the Match placeholder screen (`design-ui/match/`) — verified via `git diff --stat`. No bidding, dealing, gameplay, scoring, chat, reconnect, or matchmaking code was added. No UI redesign — Lobby's existing `alert()`-based feedback pattern was extended, not replaced; no new visual component was introduced.
+
+## Regression check
+Re-ran the full Sprint 3.4 suites after every change — `tests/match-service.test.cjs` (59/59), `tests/room-service.test.cjs` (31/31), `tests/rules-simulation.test.js` (61/61) — plus the real click-driven browser tests for both Lobby's navigation flow and the Match placeholder screen. 151 automated tests total, all passing.
