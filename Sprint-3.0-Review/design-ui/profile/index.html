@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"></meta>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"></meta>
+<title>Estimation — Profile</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"></link>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous"></link>
+<link href="https://fonts.googleapis.com/css2?family=Marcellus&amp;family=Saira:wght@400;500;600;700&amp;family=Spline+Sans+Mono:wght@500;600;700&amp;display=swap" rel="stylesheet"></link>
+<style>
+  :root{
+    --accent:#E8A33D; --accent-hi:color-mix(in oklch, var(--accent) 70%, #fff3da);
+    --accent-dim:color-mix(in oklch, var(--accent) 55%, #1a1208); --glow:0.6;
+    --ink:#f0eada; --ink-dim:#a89f8e; --ink-faint:#6f685b;
+    --bg:#0d0a07; --panel:#17130e; --panel-hi:#1d1912; --panel-line:rgba(255,240,210,.07); --pill:#1d1a16;
+    --mono:"Spline Sans Mono",monospace;
+  }
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:"Saira",sans-serif;}
+  #stage{position:fixed;inset:0;display:grid;place-items:center;background:#000;}
+  #screen{width:932px;height:430px;position:relative;overflow:hidden;border-radius:20px;transform-origin:center center;color:var(--ink);user-select:none;
+    background:radial-gradient(120% 90% at 50% -10%, color-mix(in oklch, var(--accent) calc(var(--glow) * 16%), transparent), transparent 55%), linear-gradient(180deg,#181209,#0d0a07 70%);
+    box-shadow:0 30px 90px rgba(0,0,0,.7);}
+  #screen *{box-sizing:border-box;}
+
+  .wrap{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:14px;}
+  .masthead{display:flex;flex-direction:column;align-items:center;gap:1px;}
+  .masthead .crest{font-size:14px;color:var(--accent);opacity:.9;line-height:1;}
+  .masthead h1{font-family:"Marcellus",serif;font-size:18px;font-weight:400;letter-spacing:.08em;color:var(--ink);margin:0;line-height:1.2;text-shadow:0 2px 18px rgba(232,163,61,calc(var(--glow) * .35));}
+  .masthead .tagline{font-family:var(--mono);font-size:9px;font-weight:500;letter-spacing:.03em;color:var(--ink-dim);line-height:1.2;}
+
+  .card{width:360px;background:var(--panel);border:1px solid var(--panel-line);border-radius:14px;padding:20px;display:flex;flex-direction:column;align-items:center;gap:12px;box-shadow:0 16px 48px rgba(0,0,0,.5);}
+
+  .avatar-ring{width:64px;height:64px;border-radius:50%;border:2px solid var(--accent-dim);display:grid;place-items:center;background:var(--panel-hi);}
+  .avatar-fallback{font-family:"Marcellus",serif;font-size:26px;color:var(--accent);}
+
+  .profile-name{font-family:"Marcellus",serif;font-size:19px;color:var(--ink);}
+  .rank-chip{display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:11px;font-weight:600;letter-spacing:.03em;color:var(--accent);}
+  .rank-chip .crown{font-size:11px;}
+
+  .stat-row{display:flex;gap:10px;width:100%;}
+  .stat-tile{flex:1;background:var(--pill);border:1px solid var(--panel-line);border-radius:10px;padding:10px 8px;display:flex;flex-direction:column;align-items:center;gap:3px;}
+  .stat-tile .label{font-family:var(--mono);font-size:8.5px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-faint);}
+  .stat-tile .value{font-family:var(--mono);font-size:15px;font-weight:700;color:var(--ink);}
+  .stat-tile.coins .value{color:var(--accent);}
+
+  .future-note{font-family:var(--mono);font-size:9.5px;color:var(--ink-faint);letter-spacing:.02em;}
+
+  .back-link{font-family:var(--mono);font-size:10px;letter-spacing:.03em;color:var(--ink-faint);background:none;border:none;cursor:pointer;padding:1px 0;}
+  .back-link:hover{color:var(--accent);}
+  .back-link .arrow{color:var(--accent);}
+</style>
+</head>
+<body>
+<div id="stage">
+  <main id="screen" data-screen-label="Profile">
+    <div class="wrap">
+      <div class="masthead">
+        <div class="crest">♛</div>
+        <h1>ESTIMATION</h1>
+        <div class="tagline">Player Profile</div>
+      </div>
+
+      <div class="card">
+        <div class="avatar-ring">
+          <div class="avatar-fallback" id="profileAvatar" aria-label="player avatar">?</div>
+        </div>
+        <div class="profile-name" id="profileName">—</div>
+        <div class="rank-chip"><span class="crown">♛</span><span id="profileRank">—</span></div>
+
+        <div class="stat-row">
+          <div class="stat-tile coins">
+            <span class="label">Coins</span>
+            <span class="value" id="profileCoins">—</span>
+          </div>
+          <div class="stat-tile">
+            <span class="label">Gems</span>
+            <span class="value" id="profileGems">—</span>
+          </div>
+        </div>
+
+        <!-- RP and Level are intentionally not shown: there is no existing
+             UI element or design for either anywhere in this project yet
+             (same honest gap already documented for Lobby in
+             docs/implementation/PlayerProfileIntegration.md). Rather than
+             fabricate a layout for data that isn't wired up, this is
+             called out plainly instead. See
+             docs/implementation/ProfileFoundation.md. -->
+        <div class="future-note">RP &amp; Level — coming soon</div>
+
+        <button class="back-link" type="button" id="backBtn">← Back to Lobby</button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="game-state.js"></script>
+<script>GameState.sync(GameState.STATES.PROFILE);</script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="../firebase-init.js"></script>
+<script src="../player-service.js"></script>
+<script src="../session-service.js"></script>
+<script>
+(function () {
+  var screen = document.getElementById("screen");
+  function fit() { var pad = 24; var s = Math.min((window.innerWidth - pad) / 932, (window.innerHeight - pad) / 430); screen.style.transform = "scale(" + s + ")"; }
+  window.addEventListener("resize", fit); fit();
+
+  var nameEl = document.getElementById("profileName");
+  var avatarEl = document.getElementById("profileAvatar");
+  var rankEl = document.getElementById("profileRank");
+  var coinsEl = document.getElementById("profileCoins");
+  var gemsEl = document.getElementById("profileGems");
+
+  // Sprint 3.0: Profile is the canonical place player info is displayed,
+  // sourced ENTIRELY from SessionService — no GameState-based local
+  // fallback here (unlike Login/Lobby's historical pattern), since this
+  // screen's whole purpose is to be the single source of truth's own
+  // display surface, not a second copy of the same fallback logic. Until
+  // SessionService resolves, these fields simply stay at their neutral
+  // "—" placeholder — never invented data, never a crash.
+  function applyProfileData(p) {
+    if (!p) return;
+    if (p.displayName) {
+      nameEl.textContent = p.displayName;
+      avatarEl.textContent = p.displayName.charAt(0).toUpperCase();
+      avatarEl.setAttribute("aria-label", p.displayName + " avatar");
+    }
+    if (p.rank) rankEl.textContent = p.rank;
+    if (typeof p.coins === "number") coinsEl.textContent = p.coins.toLocaleString();
+    if (typeof p.gems === "number") gemsEl.textContent = p.gems.toLocaleString();
+  }
+
+  if (!window.SessionService) {
+    console.error("[Profile] SessionService not loaded — showing placeholder values only.");
+  } else {
+    window.SessionService.subscribe(function (session) {
+      if (!session || !session.profile) return; // signed out, or no profile yet — keep current display as-is
+      applyProfileData(session.profile);
+    });
+  }
+
+  document.getElementById("backBtn").addEventListener("click", function () {
+    GameState.goTo(GameState.STATES.LOBBY);
+  });
+})();
+</script>
+</body>
+</html>
