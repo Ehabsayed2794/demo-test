@@ -598,13 +598,37 @@ function emit(intent) {
             });
             GameSession.updateBiddingState({ lastBidderId: state.lastBidderId });
           } else {
+            // BUG FIX (Sprint 4.0, Task B — "Fast-Round Caller" bug):
+            // this branch previously completed bidding with
+            // `callerId: null, withPlayers: []` unconditionally whenever
+            // no Super Call (8+) occurred — but the rules doc (§3, "Caller
+            // / With: the first player to bid the highest number is the
+            // Caller; every other player who bid that same number becomes
+            // 'With'") applies to EVERY fast round, not only Super Call
+            // ones. Fixed to always resolve a real Caller/With from the
+            // highest bid, using the SAME bidding-order tie-break already
+            // established for the Super Call path above (first-to-bid
+            // wins ties) — the Super Call branch above is now just the
+            // special case where that highest bid happens to be 8+.
+            const highestAmount = TURN_ORDER.reduce((max, id) =>
+              state.bids[id].type === "TRICKS" ? Math.max(max, state.bids[id].amount) : max, 0);
+            const highestCandidates = TURN_ORDER
+              .filter(id => state.bids[id].type === "TRICKS" && state.bids[id].amount === highestAmount)
+              .sort((a, b) => biddingOrder.indexOf(a) - biddingOrder.indexOf(b));
+            const fastCallerId = highestCandidates[0] || null;
+            const fastWithPlayers = highestCandidates.slice(1);
+
             pushLog("phase", "ESTIMATION COMPLETE");
             pushLog("intent", `Total bids: ${sum} (${diff > 0 ? "OVER +" + diff : "UNDER " + diff}). Forced trump stands — no Super Call.`, "TrickTaking");
+            if (fastCallerId) {
+              pushLog("intent", `${nameOf(fastCallerId)} (${highestAmount} tricks) is the Caller for this fast round.` +
+                (fastWithPlayers.length ? ` With: ${fastWithPlayers.map(nameOf).join(", ")}.` : ""), "DeclareTrump");
+            }
             state.subPhase = "DONE";
             GameSession.completeBidding({
-              trump: state.declaredTrump, callerId: null, withPlayers: [],
+              trump: state.declaredTrump, callerId: fastCallerId, withPlayers: fastWithPlayers,
               estimates: extractEstimates(state.bids), dashCallers: [],   // fast rounds never have a Dash phase
-              riskPlayerId: state.lastBidderId, leaderId: state.firstBidder
+              riskPlayerId: state.lastBidderId, leaderId: fastCallerId != null ? fastCallerId : state.firstBidder
             });
           }
         } else {
