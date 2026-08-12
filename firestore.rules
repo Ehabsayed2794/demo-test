@@ -1089,38 +1089,75 @@ service cloud.firestore {
              && newData.finalScores.keys().toSet() == oldData.seats.keys().toSet();
     }
 
-    // Player Hand Synchronization sprint (Architecture Gate-approved
-    // Option A): structural validation for `MatchService.dealRound()`'s
-    // paired write on the PARENT match document (the SIBLING write to
-    // this same transaction's own `hands/{seatId}` creates, validated
-    // independently below). This function verifies only the
-    // `gameState` flip — it says nothing about hand CONTENT (that is
-    // the `hands/{seatId}` block's own job) and nothing about whether
-    // the shuffle itself was fair (this project has no way to verify
-    // that server-side without a Cloud Function, exactly the same
-    // "structural only" honest limitation every other rule in this
-    // file already accepts).
-    function isValidHandDealCommit() {
-      let oldData = resource.data;
-      let newData = request.resource.data;
-      return
-             request.auth != null
-             && request.auth.uid in oldData.players
-             && 'gameState' in oldData && 'currentRound' in oldData
-             && ('status' in oldData ? oldData.status != 'complete' : true)
-             && newData.diff(oldData).affectedKeys().hasOnly(['gameState', 'updatedAt'])
-             && newData.gameState.keys().hasOnly(['initialized', 'dealtRound'])
-             && newData.gameState.initialized == true
-             && newData.gameState.dealtRound == oldData.currentRound
-             // Idempotency, re-verified independently of
-             // MatchService.dealRound()'s own transaction-side check:
-             // dealtRound may only ever move FORWARD, never repeat or
-             // regress — a round that's already dealt can never be
-             // re-dealt via this shape.
-             && newData.gameState.dealtRound > oldData.gameState.get('dealtRound', 0);
-    }
-
     match /matches/{matchId} {
+      // Player Hand Synchronization sprint (Architecture Gate-approved
+      // Option A): structural validation for `MatchService.dealRound()`'s
+      // paired write on the PARENT match document (the SIBLING write to
+      // this same transaction's own `hands/{seatId}` creates, validated
+      // independently below). This function verifies only the
+      // `gameState` flip — it says nothing about hand CONTENT (that is
+      // the `hands/{seatId}` block's own job) and nothing about whether
+      // the shuffle itself was fair (this project has no way to verify
+      // that server-side without a Cloud Function, exactly the same
+      // "structural only" honest limitation every other rule in this
+      // file already accepts).
+      //
+      // Sprint E (Hand Write Authority Security Redesign): moved from
+      // ruleset TOP LEVEL into THIS match block — this function now
+      // contains `getAfter()` calls (added this sprint), and the P0-1
+      // hotfix already proved, via the real Firestore Rules Emulator,
+      // that a function containing `getAfter()` throws a spurious
+      // error when declared at the top level rather than nested inside
+      // the match block that calls it (see isValidNewMatch()'s own
+      // comment below for the original finding). Re-confirmed directly
+      // this sprint: leaving this function at top level with the new
+      // getAfter() clauses added reproduced exactly that failure against
+      // the real emulator; moving it here (byte-for-byte otherwise
+      // unchanged) fixed it.
+      function isValidHandDealCommit() {
+        let oldData = resource.data;
+        let newData = request.resource.data;
+        return
+               request.auth != null
+               && request.auth.uid in oldData.players
+               && 'gameState' in oldData && 'currentRound' in oldData
+               && ('status' in oldData ? oldData.status != 'complete' : true)
+               && newData.diff(oldData).affectedKeys().hasOnly(['gameState', 'updatedAt'])
+               && newData.gameState.keys().hasOnly(['initialized', 'dealtRound'])
+               && newData.gameState.initialized == true
+               && newData.gameState.dealtRound == oldData.currentRound
+               // Idempotency, re-verified independently of
+               // MatchService.dealRound()'s own transaction-side check:
+               // dealtRound may only ever move FORWARD, never repeat or
+               // regress — a round that's already dealt can never be
+               // re-dealt via this shape.
+               && newData.gameState.dealtRound > oldData.gameState.get('dealtRound', 0)
+               // Sprint E: the OTHER half of the mutual `getAfter()`
+               // pairing check that makes `hands/{seatId}`'s own
+               // `isValidPairedDeal()` mean something — this write
+               // proves that EVERY occupied seat's hand doc is, in this
+               // SAME transaction, landing on the exact round this
+               // gameState flip advances to. Together the two
+               // directions approximate (never literally prove — see
+               // Deal Authority Security Architecture Report §7-8) the
+               // "these five writes are one atomic deal" relationship
+               // Firestore Rules cannot otherwise express. `?:`, never
+               // `||`, guards each unoccupied-seat case — real
+               // Firestore Rules evaluates every `||` disjunct eagerly
+               // (P0-2's own documented finding above), so an eager
+               // `||` would call getAfter() on a seat's hand path even
+               // when that seat is empty and no such document will
+               // ever exist, throwing instead of skipping.
+               && (oldData.seats.get('p1', null) == null ? true :
+                     getAfter(/databases/$(database)/documents/matches/$(matchId)/hands/p1).data.round == newData.gameState.dealtRound)
+               && (oldData.seats.get('p2', null) == null ? true :
+                     getAfter(/databases/$(database)/documents/matches/$(matchId)/hands/p2).data.round == newData.gameState.dealtRound)
+               && (oldData.seats.get('p3', null) == null ? true :
+                     getAfter(/databases/$(database)/documents/matches/$(matchId)/hands/p3).data.round == newData.gameState.dealtRound)
+               && (oldData.seats.get('p4', null) == null ? true :
+                     getAfter(/databases/$(database)/documents/matches/$(matchId)/hands/p4).data.round == newData.gameState.dealtRound);
+      }
+
       // Only a seated player may read their own match — never a global
       // authenticated read (unlike rooms/{roomId}'s MVP-acceptable
       // looseness), since a match document is meaningfully private
@@ -1572,6 +1609,19 @@ service cloud.firestore {
         function ownsSeat() {
           return request.auth != null && parentMatch().seats.get(seatId, null) == request.auth.uid;
         }
+        // Sprint E (Hand Write Authority Security Redesign, MVP
+        // decision): the WRITE-authority half of the pairing this
+        // block relies on — `isValidHandDealCommit()` above already
+        // proves the SAME transaction's `gameState.dealtRound` will
+        // land on this exact round for every occupied seat; this is
+        // the other direction, proving THIS hand write itself is
+        // landing inside that same round-advancing transaction. Denied
+        // for any lone/partial/standalone hand write that isn't paired
+        // with a real deal-committing update to the parent match doc
+        // in the same transaction.
+        function isValidPairedDeal(round) {
+          return getAfter(/databases/$(database)/documents/matches/$(matchId)).data.gameState.dealtRound == round;
+        }
         function isValidHandCardShape(card) {
           return card.keys().hasOnly(['suit', 'rank'])
                  && card.suit in ['SANS', 'SPADES', 'HEARTS', 'DIAMONDS', 'CLUBS']
@@ -1621,27 +1671,60 @@ service cloud.firestore {
         // ── create (MatchService.dealRound()'s Round-1-only per-seat
         // write — Firestore classifies a write as "create" only when
         // no document exists yet at this path) ───────────────────────
+        // WRITE authority is deliberately NOT `ownsSeat()` — the real
+        // `MatchService.dealRound()` transaction has ONE authenticated
+        // caller creating all FOUR seats' hand documents atomically, so
+        // requiring writer == seat owner would (and, before this
+        // sprint, did) deny 3 of every 4 creates. Any authorized match
+        // MEMBER may create ANY occupied seat's hand, but ONLY as part
+        // of a real, paired deal-commit transaction — see
+        // `isValidPairedDeal()` and `isValidHandDealCommit()` above.
+        // `allow get` keeps `ownsSeat()` unchanged — READ privacy and
+        // WRITE (deal) authority are intentionally different checks.
+        //
+        // KNOWN MVP LIMITATION (Deal Authority Security Architecture
+        // Report, accepted for this zero-cost architecture): Firestore
+        // Rules cannot prove `data.cards` was genuinely produced by
+        // `Dealer.dealHands()` or that the shuffle was fair — only that
+        // the WRITE is authorized, well-formed, and paired with a
+        // genuine round-advancing transaction. A malicious seated
+        // client could still choose shape-valid card contents for any
+        // seat, including opponents', while satisfying every check
+        // below. This is NOT cheat-proof; see docs/architecture/
+        // SecurityArchitecture.md for the accepted-risk record and the
+        // future trusted-backend migration path.
         function isValidNewHand() {
           let parent = parentMatch();
           let data = request.resource.data;
-          return seatId in ['p1', 'p2', 'p3', 'p4']
-                 && ownsSeat()
+          return request.auth != null
+                 && request.auth.uid in parent.players
+                 && seatId in ['p1', 'p2', 'p3', 'p4']
+                 && parent.seats.get(seatId, null) != null
                  && isValidHandShape(data)
-                 && data.round == parent.currentRound;
+                 && data.round == parent.currentRound
+                 && isValidPairedDeal(data.round);
         }
 
         // ── update (MatchService.dealRound()'s Round 2+ per-seat
         // redeal — overwrites the SAME doc; Firestore classifies this
         // as "update" once the doc already exists from an earlier
         // round) ────────────────────────────────────────────────────
+        // Same write-authority change as `isValidNewHand()` above
+        // (authorized match member + paired-deal proof, not
+        // `ownsSeat()`) — see that function's comment for the full
+        // rationale and the KNOWN MVP LIMITATION this equally applies
+        // to on redeal.
         function isValidHandRedeal() {
           let parent = parentMatch();
           let oldData = resource.data;
           let newData = request.resource.data;
-          return seatId in ['p1', 'p2', 'p3', 'p4']
-                 && ownsSeat()
+          return request.auth != null
+                 && request.auth.uid in parent.players
+                 && seatId in ['p1', 'p2', 'p3', 'p4']
+                 && parent.seats.get(seatId, null) != null
                  && isValidHandShape(newData)
                  && newData.round == parent.currentRound
+                 && isValidPairedDeal(newData.round)
                  // Strictly forward-only — the CURRENT round's already-
                  // committed hand can never be rewritten (structurally
                  // the same "write-once per round" guarantee the

@@ -45,6 +45,19 @@ async function run() {
     process.exitCode = 2;
     return;
   }
+  // Sprint E hygiene fix: the emulator project persists data ACROSS
+  // separate `node` invocations of this same file (same projectId,
+  // same host:port) — a prior run's `hands/{seatId}` docs (e.g. D18's
+  // round:2 hand) survive a fresh `matches/{matchId}.set()`, since
+  // `.set()` on the parent doc never clears its subcollections. On a
+  // second run this silently turned D16's intended CREATE into an
+  // UPDATE against stale leftover state, routing it through
+  // `isValidHandRedeal()`'s forward-only check instead of
+  // `isValidNewHand()` and failing for the wrong reason. Not a rules
+  // bug — a test-isolation gap, exposed only once this sprint's tests
+  // started performing real multi-document transactions. Fixed at the
+  // source: start every run from a guaranteed-empty project.
+  await testEnv.clearFirestore();
 
   var uidA = "uidA", uidB = "uidB", uidC = "uidC", uidD = "uidD", uidZ = "uidZ";
 
@@ -147,29 +160,63 @@ async function run() {
   });
 
   // ============ D. ROUND VALIDATION ============
-  await withSeeded("m-round", seedMatch("m-round"), async function () {
+  // Sprint E (Hand Write Authority Security Redesign): a hand write's
+  // create/update ONLY succeeds when paired, in the SAME transaction,
+  // with the parent match's own gameState.dealtRound advance to that
+  // exact round (isValidPairedDeal()) — a standalone `ref.set()` with
+  // no sibling match update, which is what D16/D18 used to do under
+  // the old ownsSeat()-based model, is now correctly denied as a lone
+  // write. D16/D18 are updated to perform the REAL, paired transaction
+  // shape MatchService.dealRound() actually uses — this is a stronger,
+  // more realistic assertion, not a weakened one; every other
+  // assertion in this file (D17/D19's REJECTED cases, and every
+  // shape/seat/membership check elsewhere) is unchanged.
+  // Seats trimmed to just p1 so the pairing check only needs to
+  // account for ONE occupied seat, keeping this block's focus on round
+  // validation specifically — the full 4-seat pairing relationship is
+  // exercised separately in tests/hand-sync.rules-emulator-mvp-deal-authority.test.cjs.
+  await withSeeded("m-round", seedMatch("m-round", { seats: { p1: uidA } }), async function () {
     var p1Ctx = testEnv.authenticatedContext(uidA);
-    var ref = p1Ctx.firestore().collection("matches").doc("m-round").collection("hands").doc("p1");
-    check("D16. A valid current-round hand (round 1, matches currentRound:1) IS accepted",
-      await assertSucceeds(ref.set({ seatId: "p1", round: 1, version: 1, cards: fullHand() })).then(function () { return true; }).catch(function () { return false; }));
+    var db = p1Ctx.firestore();
+    var ref = db.collection("matches").doc("m-round").collection("hands").doc("p1");
+    var matchRef = db.collection("matches").doc("m-round");
+    function pairedDeal(round) {
+      return db.runTransaction(async function (tx) {
+        tx.set(ref, { seatId: "p1", round: round, version: round, cards: fullHand() });
+        tx.update(matchRef, { gameState: { initialized: true, dealtRound: round } });
+      });
+    }
+    check("D16. A valid current-round hand (round 1, matches currentRound:1), paired with the matching gameState commit, IS accepted",
+      await assertSucceeds(pairedDeal(1)).then(function () { return true; }).catch(function () { return false; }));
     check("D17. A stale-round hand (round 1 again, same value, no forward progress) — REJECTED on redeal attempt",
       await assertFails(ref.set({ seatId: "p1", round: 1, version: 1, cards: fullHand() })).then(function () { return true; }).catch(function () { return false; }));
     // Advance the parent's currentRound to 2 (simulating advanceToNextRound()) directly, bypassing rules, to test the LEGITIMATE forward transition.
     await testEnv.withSecurityRulesDisabled(async function (ctx) {
       await ctx.firestore().collection("matches").doc("m-round").update({ currentRound: 2 });
     });
-    check("D18. Forward round transition (round 1 -> round 2, matching new currentRound) IS accepted",
-      await assertSucceeds(ref.set({ seatId: "p1", round: 2, version: 2, cards: fullHand() })).then(function () { return true; }).catch(function () { return false; }));
+    check("D18. Forward round transition (round 1 -> round 2, matching new currentRound), paired with the matching gameState commit, IS accepted",
+      await assertSucceeds(pairedDeal(2)).then(function () { return true; }).catch(function () { return false; }));
     check("D19. An illegal round jump (round 2 -> round 5, currentRound is still only 2) — REJECTED",
       await assertFails(ref.set({ seatId: "p1", round: 5, version: 5, cards: fullHand() })).then(function () { return true; }).catch(function () { return false; }));
   });
 
   // ============ E. DEAL COMMIT (the PARENT match doc's gameState flip) ============
-  await withSeeded("m-commit", seedMatch("m-commit"), async function () {
+  // Seats trimmed to just p1 — isValidHandDealCommit() now ALSO proves
+  // (via getAfter()) that every occupied seat's hand doc lands on the
+  // matching round in the same transaction, so a standalone gameState
+  // update (no hand write at all) is correctly denied unless there's
+  // exactly one occupied seat and it's WRITTEN alongside. E20 is
+  // updated to the real, paired shape; E21-E24 are unchanged (each was
+  // already asserting REJECTED, which remains the correct outcome).
+  await withSeeded("m-commit", seedMatch("m-commit", { seats: { p1: uidA } }), async function () {
     var p1Ctx = testEnv.authenticatedContext(uidA);
     var matchRef = function () { return p1Ctx.firestore().collection("matches").doc("m-commit"); };
-    check("E20. A valid dealRound commit (gameState -> {initialized:true, dealtRound:1}) IS accepted",
-      await assertSucceeds(matchRef().update({ gameState: { initialized: true, dealtRound: 1 } })).then(function () { return true; }).catch(function () { return false; }));
+    check("E20. A valid dealRound commit (gameState -> {initialized:true, dealtRound:1}), paired with hands/p1 in the same transaction, IS accepted",
+      await assertSucceeds(p1Ctx.firestore().runTransaction(async function (tx) {
+        tx.set(p1Ctx.firestore().collection("matches").doc("m-commit").collection("hands").doc("p1"),
+          { seatId: "p1", round: 1, version: 1, cards: fullHand() });
+        tx.update(matchRef(), { gameState: { initialized: true, dealtRound: 1 } });
+      })).then(function () { return true; }).catch(function () { return false; }));
     check("E21. An unauthorized (non-player) deal commit attempt is REJECTED",
       await assertFails(testEnv.authenticatedContext(uidZ).firestore().collection("matches").doc("m-commit").update({ gameState: { initialized: true, dealtRound: 2 } })).then(function () { return true; }).catch(function () { return false; }));
     check("E22. Tampered deal data — smuggling an unrelated field (status) alongside the gameState flip — REJECTED",

@@ -56,6 +56,14 @@ async function run() {
     process.exitCode = 2;
     return;
   }
+  // Sprint E hygiene fix (see hand-sync.rules-emulator.test.cjs for the
+  // full explanation): start every run from a guaranteed-empty
+  // project — leftover `hands/{seatId}` docs from a prior run of this
+  // same file would otherwise silently turn an intended CREATE into
+  // an UPDATE on rerun.
+  {
+    await testEnv.clearFirestore();
+  }
 
   var uidA = "uidA", uidB = "uidB", uidC = "uidC", uidD = "uidD", uidZ = "uidZ";
 
@@ -150,10 +158,21 @@ async function run() {
     })));
 
   // ============ 11-12. HAND SYNC DEAL COMMIT ============
+  // Sprint E (Hand Write Authority Security Redesign): isValidHandDealCommit()
+  // now ALSO proves, via getAfter(), that every occupied seat's hand doc
+  // lands on the matching round in the SAME transaction — a standalone
+  // gameState update with no paired hand writes is correctly denied.
+  // Updated to the real, paired 4-hand transaction shape
+  // MatchService.dealRound() actually uses.
   await seed("m-deal-ok");
-  check("11. legitimate Hand Sync deal commit -> ALLOW",
-    await allowed(testEnv.authenticatedContext(uidA).firestore().collection("matches").doc("m-deal-ok").update({
-      gameState: { initialized: true, dealtRound: 1 }
+  var dealOkDb = testEnv.authenticatedContext(uidA).firestore();
+  check("11. legitimate Hand Sync deal commit, paired with all four hands in the same transaction -> ALLOW",
+    await allowed(dealOkDb.runTransaction(async function (tx) {
+      var matchRef = dealOkDb.collection("matches").doc("m-deal-ok");
+      ["p1", "p2", "p3", "p4"].forEach(function (seatId) {
+        tx.set(matchRef.collection("hands").doc(seatId), { seatId: seatId, round: 1, version: 1, cards: fullHand() });
+      });
+      tx.update(matchRef, { gameState: { initialized: true, dealtRound: 1 } });
     })));
   await seed("m-deal-unauth");
   check("12. unauthorized Hand Sync deal commit (uid not a player) -> DENY",

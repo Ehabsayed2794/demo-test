@@ -43,6 +43,12 @@ async function run() {
     process.exitCode = 2;
     return;
   }
+  // Sprint E hygiene fix (see hand-sync.rules-emulator.test.cjs for the
+  // full explanation): start every run from a guaranteed-empty
+  // project — leftover `hands/{seatId}` docs from a prior run of this
+  // same file would otherwise silently turn an intended CREATE into
+  // an UPDATE on rerun.
+  await testEnv.clearFirestore();
 
   var uidA = "uidA", uidB = "uidB", uidC = "uidC", uidD = "uidD", uidZ = "uidZ";
 
@@ -194,8 +200,21 @@ async function run() {
     await allowed(p1.firestore().collection("matches").doc("m-update-check").update({
       bids: { p1: 4, p2: null, p3: null, p4: null }, lastBidSeat: "p1", version: 2, biddingOpen: true
     })));
-  check("Match update regression — a legitimate hand-deal-commit (isValidHandDealCommit()) still succeeds",
-    await allowed(p1.firestore().collection("matches").doc("m-update-check").update({ gameState: { initialized: true, dealtRound: 1 } })));
+  // Sprint E (Hand Write Authority Security Redesign): isValidHandDealCommit()
+  // now ALSO proves, via getAfter(), that every occupied seat's hand doc
+  // lands on the matching round in the SAME transaction — a standalone
+  // gameState update with no paired hand writes is correctly denied. This
+  // check is updated to the real, paired 4-hand transaction shape
+  // MatchService.dealRound() actually uses — a stronger assertion, not a
+  // weakened one.
+  check("Match update regression — a legitimate hand-deal-commit (isValidHandDealCommit()), paired with all four hands in the same transaction, still succeeds",
+    await allowed(p1.firestore().runTransaction(async function (tx) {
+      var matchRef = p1.firestore().collection("matches").doc("m-update-check");
+      ["p1", "p2", "p3", "p4"].forEach(function (seatId) {
+        tx.set(matchRef.collection("hands").doc(seatId), { seatId: seatId, round: 1, version: 1, cards: cardsList() });
+      });
+      tx.update(matchRef, { gameState: { initialized: true, dealtRound: 1 } });
+    })));
   check("Match update regression — an arbitrary/unauthorized field change (e.g. changing players) is still DENIED",
     await denied(p1.firestore().collection("matches").doc("m-update-check").update({ players: [uidA, uidB, uidC, uidZ] })));
 
