@@ -8,6 +8,13 @@ window.UI = (function () {
     if (!el) {
       el = document.createElement("div");
       el.className = "ui-toast";
+      // PRODUCTION UX AUDIT (Finding #2): errors/rejections shown via
+      // toast were visual-only — a screen reader user got no signal at
+      // all. Set once, at creation, never touched by the reuse branch
+      // below so re-showing the same element doesn't re-trigger
+      // anything unexpected. No effect on timing/styling/positioning.
+      el.setAttribute("role", "alert");
+      el.setAttribute("aria-live", "assertive");
       host.appendChild(el);
     }
     el.textContent = msg;

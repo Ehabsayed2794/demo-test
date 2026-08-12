@@ -196,8 +196,15 @@ function makeRoom(id, patch) {
   check("startMatch: currentRound is 1", doc2.currentRound === 1);
   check("startMatch: dealer defaults to room.creator", doc2.dealer === "p1");
   check("startMatch: turn defaults to dealer", doc2.turn === "p1");
-  check("startMatch: gameState is the documented TODO placeholder, not fabricated dealt hands",
-    doc2.gameState && doc2.gameState.initialized === false && typeof doc2.gameState.todo === "string" && /Deck/.test(doc2.gameState.todo));
+  // Player Hand Synchronization sprint: gameState's shape changed from
+  // an unimplemented-placeholder TODO string to the real, authoritative
+  // dealtRound marker MatchService.dealRound() now writes — the exact,
+  // deliberate schema change this sprint's Architecture Gate approved
+  // (see buildInitialMatchDoc()'s own comment for why). No hands are
+  // fabricated by startMatch() itself either way — dealtRound:0 means
+  // "not dealt yet," not "dealt."
+  check("startMatch: gameState starts undealt (dealtRound:0), not fabricated dealt hands",
+    doc2.gameState && doc2.gameState.initialized === false && doc2.gameState.dealtRound === 0);
   check("startMatch: room status becomes 'in_game'", STORE[key("rooms", "room-start-1")].status === "in_game");
   check("startMatch: room.matchId set to the new matchId", STORE[key("rooms", "room-start-1")].matchId === matchId2);
 
@@ -306,7 +313,8 @@ function makeRoom(id, patch) {
   // dedicated test suite). Every OTHER gameplay method remains
   // unimplemented, unchanged, per this sprint's explicit "only
   // synchronize bidding" scope.
-  ["submitDashCall", "submitPass", "declareTrump", "submitEstimate", "playCard", "resolveTrick", "completeRound", "advanceToNextRound", "endMatch"].forEach(function (m) {
+  // Round Lifecycle sprint: advanceToNextRound() is now a REAL, implemented method (not a stub) — removed from this stub-regression list on purpose, not an oversight. Match Completion sprint: endMatch() is likewise now a REAL, implemented method (not a stub) — removed from this stub-regression list on purpose, not an oversight (see tests/match-completion.test.cjs for its own dedicated suite). completeRound() remains an intentional stub (see its own doc comment in match-service.js for why) and is still checked below.
+  ["submitDashCall", "submitPass", "declareTrump", "submitEstimate", "playCard", "resolveTrick", "completeRound"].forEach(function (m) {
     var threw = false;
     try { MatchService[m](); } catch (e) { threw = /not implemented/i.test(e.message); }
     check("MatchService." + m + "() still throws Not implemented (bidding/estimation/card-play out of scope this sprint)", threw);

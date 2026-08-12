@@ -5,6 +5,7 @@
    Scope: a single round of trick play (13 tricks). Bidding outcome
    (caller / with / risk / estimates / trump) is seeded as the entry state.
    ════════════════════════════════════════════════════════════════════ */
+(function (global) {
 
 // ── Suit model (strength SANS5 > ♠4 > ♥3 > ♦2 > ♣1) ──
 const SUITS = {
@@ -59,7 +60,23 @@ function buildRoundCfg() {
     leaderId,
   };
 }
-const ROUND_CFG = buildRoundCfg();
+// Foundation Fix (Table Controls sprint, authorized): was `const
+// ROUND_CFG = buildRoundCfg();` — computed exactly ONCE, at module
+// load time (i.e. when this <script> tag executes, which happens at
+// page load, BEFORE any real bidding interaction has occurred on a
+// page that loads bidding-engine.js and table-engine.js together).
+// initState() reused this same frozen snapshot forever, so it could
+// never reflect the REAL bidding outcome (trump/callerId/withPlayers/
+// estimates/leaderId/round) once bidding genuinely completed later in
+// the same page session — confirmed by direct reproduction (see
+// docs/reviews/TableEngine_Foundation_Fix_Report.md). Changed to `let`
+// and reassigned at the top of initState() (below) so every call
+// re-derives it fresh from GameSession's CURRENT state — buildRoundCfg()
+// itself is completely unchanged, not one formula/rule touched; this
+// is purely a "read the existing data at the correct lifecycle moment"
+// fix, exactly like the existing `hands = GameSession.ensureHandsDealt()`
+// line a few lines below already does correctly on every initState() call.
+let ROUND_CFG = buildRoundCfg();
 
 let state = null;
 
@@ -79,6 +96,13 @@ function computeRiskId() {
 }
 
 function initState() {
+  // Foundation Fix: re-derive ROUND_CFG fresh from GameSession's
+  // CURRENT round/bidding state on every call — never reuse a snapshot
+  // from a prior call or from module load. This is the one line that
+  // actually fixes the staleness bug; buildRoundCfg()'s own logic is
+  // completely unchanged.
+  ROUND_CFG = buildRoundCfg();
+
   // Card Engine: cards were already dealt once for this round when
   // Bidding Phase started (stored in GameSession). Reuse the same
   // hands here so the trick-play round matches what was actually bid
@@ -398,3 +422,5 @@ window.TableEngine = {
   canPlayCard: canPlayCard,
   previewPlay: previewPlay
 };
+
+})(window);

@@ -397,15 +397,22 @@
    *  this file's header comment.)
    *
    *  gameState is deliberately a TODO placeholder, not a real dealt
-   *  hand: Dealer.dealHands() (design-ui/engine/dealer.js) depends on a
-   *  global `Deck` object that does not exist anywhere in this
-   *  repository — deck.js was never delivered; only referenced in
-   *  dealer.js's own header comment. Calling Dealer.dealHands() as-is
-   *  would throw ReferenceError: Deck is not defined. Writing a Deck
-   *  module here would mean authoring new engine code, exceeding this
-   *  sprint's "only integrate, never duplicate" scope — so per the
-   *  brief's own fallback instruction, this is left as an explicit TODO
-   *  instead. See docs/implementation/MatchInitialization.md.
+   *  hand. UPDATED (Match Screen Engine Wiring sprint) — the claim this
+   *  comment made through Sprint 3.4.x, that `Deck` doesn't exist, is
+   *  STALE and was corrected here: `design-ui/engine/deck.js` has
+   *  existed and been correctly integrated into `dealer.js` since
+   *  Sprint 3.5 (see docs/architecture/GameEngine.md) — calling
+   *  `Dealer.dealHands()` today does NOT throw. The reason this field
+   *  is still a placeholder is different: `MatchService` is documented
+   *  to remain Firestore-only and must never call into the engine
+   *  directly (see this file's header comment) — dealing real hands
+   *  into `matches/{matchId}` would mean either (a) `MatchService`
+   *  itself calling `Dealer.dealHands()`, breaking that boundary, or
+   *  (b) a schema/authority design for server-dealt (or per-client-
+   *  dealt-and-synced) hands that has not been designed yet. Until one
+   *  of those is deliberately decided, this remains an explicit TODO —
+   *  see docs/implementation/MatchInitialization.md and
+   *  docs/architecture/MatchLifecycle.md's own DEALING-phase note.
    *
    *  Sprint 3.8, Tasks 1-3: also establishes `seats` (Task 1), `version`
    *  (Task 2 — starts at 1, meaning "the document as originally
@@ -431,6 +438,18 @@
       status: "starting",
       createdAt: serverTimestamp(),
       currentRound: 1,
+      // Match Completion sprint: the AUTHORITATIVE round ceiling. Starts
+      // at 18 (rules §5, normal match length) and is incremented by
+      // exactly 1 per qualifying Rapid-Round (14-18) event — see
+      // extendMatchRounds() below. `currentRound >= maxRounds` (never a
+      // hardcoded 18) is the ONLY match-completion condition — see
+      // endMatch()'s own comment.
+      maxRounds: 18,
+      // Structural idempotency guard for extendMatchRounds(): each
+      // completed round number may extend the match AT MOST once, no
+      // matter how many clients independently detect the same
+      // qualifying event and call extendMatchRounds() for it.
+      extendedRounds: [],
       dealer: dealerUid,
       // "turn" has no real meaning yet — bidding/estimation (which
       // determines whose actual turn it is) is out of scope through
@@ -457,6 +476,23 @@
       // without inspecting the log's tail.
       cardLog: [],
       lastCardSeat: null,
+      // Sprint 3.7 (Online Bidding Synchronization Contract): the SAME
+      // "opaque, append-only action log" treatment `cardLog` got in
+      // Sprint 4.2, applied to the three bidding sub-phases `bids` (the
+      // Sprint 3.8 exactly-once-per-seat field, unchanged, still owns
+      // Final Estimate only) cannot represent: Dash Call, Auction Bid,
+      // and Confirm Call. Unlike a Final Estimate (exactly one value
+      // per seat, ever), each of these three is a repeatable, ordered
+      // ACTION a seat may take multiple times across an auction (e.g.
+      // several raises before being eliminated) — structurally the same
+      // shape problem `cardLog` already solved for repeatable card
+      // plays, not a new pattern. See match-adapter.js's own Sprint 3.7
+      // header section and docs/reviews/Sprint_3.7_Online_Bidding_Synchronization_Report.md
+      // for the full schema rationale. Every entry is `{seatId,
+      // actionType, ...opaque per-type fields}` — this file never
+      // interprets what a legal Dash/Auction/Confirm action IS; that
+      // remains bidding-engine.js's exclusive, untouched job.
+      biddingLog: [],
       // Sprint 4.2.2 (Atomic Card Turn Progression & Card-Log Desync
       // Hardening), Task 2: the ONE minimal new field this sprint's
       // own "if the schema lacks a safe field for play phase, document
@@ -471,9 +507,19 @@
       // finished), set for real, atomically, alongside every accepted
       // `submitCard()` write (see that function's own comment).
       cardPhase: null,
+      // Player Hand Synchronization sprint: `dealtRound` is the
+      // authoritative "which round's hands are currently committed to
+      // matches/{matchId}/hands/{seatId}" marker — 0 means "no round
+      // has been dealt yet," matching `currentRound`'s own 1-based
+      // start (round 1 is never dealtRound 1 until dealRound() actually
+      // commits it). `initialized` flips true the instant Round 1's
+      // deal commits — kept as its own field, not derived from
+      // `dealtRound > 0`, so a future "match fully set up" signal isn't
+      // forced to mean exactly the same thing as "round 1 is dealt"
+      // forever. See docs/reviews/Player_Hand_Synchronization_Architecture_Report.md.
       gameState: {
         initialized: false,
-        todo: "Dealer.dealHands() cannot be called yet — it depends on a global Deck module that does not exist in this repository. See docs/implementation/MatchInitialization.md before implementing this."
+        dealtRound: 0
       }
     };
   }
@@ -950,7 +996,12 @@
           // should already hold — re-checked anyway, defensively.)
           var freshSeatId = resolveSeatAndAuthorize(freshMatch);
           var cardLog = (freshMatch.cardLog || []).slice();
-          cardLog.push({ seatId: freshSeatId, card: { suit: card.suit, rank: { v: card.rank.v, s: card.rank.s } } });
+          // Round Lifecycle sprint: same round-stamp as buildBiddingLogEntry()
+          // above, for the identical reason — `cardLog` is the other
+          // never-cleared, append-only log this schema decision applies
+          // to. Read from the FRESH in-transaction document's own
+          // `currentRound`, never the caller's local round number.
+          cardLog.push({ seatId: freshSeatId, card: { suit: card.suit, rank: { v: card.rank.v, s: card.rank.s } }, round: freshMatch.currentRound });
           var nextVersion = expectedVersion + 1;
           var patch = {
             cardLog: cardLog,
@@ -970,11 +1021,1173 @@
     });
   }
 
+  // ── Sprint 3.7 (Online Bidding Synchronization Contract) ─────────
+  // Dash Call, Auction Bid, and Confirm Call synchronization. `bids`/
+  // `submitBid()`/`biddingOpen` (Sprint 3.8, unchanged, untouched by
+  // this sprint) remain the ONLY mechanism for Final Estimate — that
+  // shape (exactly one value per seat, ever) was always correct for
+  // Final Estimate and stays exactly as-is. Dash/Auction/Confirm are
+  // structurally different: a seat may act on the SAME sub-phase
+  // multiple times (e.g. several raises during one auction before
+  // being eliminated), which a "one value per seat" field cannot
+  // represent without data loss. This mirrors `cardLog`'s own
+  // Sprint 4.2 "opaque, append-only action log" solution to the exact
+  // same shape problem, applied here to bidding instead of card play.
+  var VALID_BIDDING_ACTION_TYPES = ["SubmitDashCallDecision", "SubmitAuctionBid", "SubmitConfirmCall"];
+  var VALID_BIDDING_SUITS = ["SANS", "SPADES", "HEARTS", "DIAMONDS", "CLUBS"];
+
+  /** GENERIC bidding-action shape validation — NOT bidding legality.
+   *  Mirrors isValidGenericBidValue()/isValidGenericCardValue()'s own
+   *  established line exactly: checks only that `action` is a
+   *  well-formed object naming one of the three known action types,
+   *  with the right TYPES (and structurally-generic RANGES) for
+   *  whichever fields that type carries. It does NOT know or care
+   *  whether this action is legal for this seat right now, whose turn
+   *  it is, suit-strength, Dash limits, Forbidden-13, With-floor, or
+   *  the Caller's cap — every one of those remains bidding-engine.js's
+   *  exclusive, unconsulted, untouched job (see
+   *  BiddingEngine.canSubmit(), called separately, BEFORE any write is
+   *  attempted — see submitBiddingAction() below). */
+  function isValidGenericBiddingAction(action) {
+    if (!action || typeof action !== "object" || Array.isArray(action)) return false;
+    if (VALID_BIDDING_ACTION_TYPES.indexOf(action.actionType) === -1) return false;
+    if (action.declaredDashCall !== undefined && typeof action.declaredDashCall !== "boolean") return false;
+    if (action.isPass !== undefined && typeof action.isPass !== "boolean") return false;
+    if (action.tricks !== undefined && action.tricks !== null) {
+      if (typeof action.tricks !== "number" || !Number.isFinite(action.tricks) || !Number.isInteger(action.tricks)) return false;
+      if (action.tricks < 0 || action.tricks > MAX_BID_VALUE) return false;
+    }
+    if (action.suit !== undefined && action.suit !== null && VALID_BIDDING_SUITS.indexOf(action.suit) === -1) return false;
+    // Per-actionType REQUIRED-field presence — still a generic shape
+    // check (is the right field even THERE), never a legality
+    // decision about its VALUE.
+    if (action.actionType === "SubmitDashCallDecision" && typeof action.declaredDashCall !== "boolean") return false;
+    if (action.actionType === "SubmitAuctionBid") {
+      if (typeof action.isPass !== "boolean") return false;
+      if (!action.isPass && (action.tricks == null || action.suit == null)) return false;
+    }
+    if (action.actionType === "SubmitConfirmCall" && (action.tricks == null || action.suit == null)) return false;
+    return true;
+  }
+
+  /** Builds the CANONICAL, minimal `biddingLog` entry for one accepted
+   *  action — only the fields that action type actually carries, never
+   *  whatever extra fields a caller's `action` object happened to
+   *  include (mirrors submitCard()'s own "card is stored as an OPAQUE,
+   *  reconstructed payload, never the raw caller object" convention). */
+  function buildBiddingLogEntry(seatId, action, round) {
+    var entry = { seatId: seatId, actionType: action.actionType };
+    if (action.actionType === "SubmitDashCallDecision") {
+      entry.declaredDashCall = action.declaredDashCall;
+    } else if (action.actionType === "SubmitAuctionBid") {
+      entry.isPass = !!action.isPass;
+      if (!entry.isPass) { entry.tricks = action.tricks; entry.suit = action.suit; }
+    } else if (action.actionType === "SubmitConfirmCall") {
+      entry.tricks = action.tricks;
+      entry.suit = action.suit;
+    }
+    // Round Lifecycle sprint: stamp EVERY new entry with the round it
+    // was written for — read from the FRESH, in-transaction document's
+    // OWN `currentRound` field (never the caller's local, possibly
+    // stale, GameSession round number) — the same "server decides, never
+    // trust the client's claim" principle `version` already establishes.
+    // This is the schema addition (Option A, see the Round Lifecycle
+    // architecture report) that lets a single, never-cleared,
+    // append-only `biddingLog` safely carry multiple rounds' worth of
+    // entries: `MatchAdapter`'s catch-up loop can now tell "is this
+    // entry for the round I'm currently on" without needing a second
+    // array, a subcollection, or a destructive reset at the round
+    // boundary — see match-adapter.js's own Round Lifecycle section for
+    // the read side of this contract.
+    entry.round = round;
+    return entry;
+  }
+
+  /** Translates a `biddingLog` entry into the exact `BiddingEngine`
+   *  intent shape `emit()`/`canSubmit()` both already accept —
+   *  `actionType` IS the engine's own `intent.type` string, reused
+   *  verbatim (not a second, parallel vocabulary to keep in sync) —
+   *  see docs/reviews/Sprint_3.7_Online_Bidding_Synchronization_Report.md
+   *  §4 for why. */
+  function biddingActionToIntent(seatId, action) {
+    var intent = { type: action.actionType, playerId: seatId };
+    if (action.actionType === "SubmitDashCallDecision") {
+      intent.declaredDashCall = action.declaredDashCall;
+    } else if (action.actionType === "SubmitAuctionBid") {
+      intent.isPass = !!action.isPass;
+      if (!intent.isPass) { intent.tricks = action.tricks; intent.suit = action.suit; }
+    } else if (action.actionType === "SubmitConfirmCall") {
+      intent.tricks = action.tricks;
+      intent.suit = action.suit;
+    }
+    return intent;
+  }
+
+  /** Sprint 3.7 (Online Bidding Synchronization Contract): the ONE
+   *  public API for submitting a Dash Call, Auction Bid, or Confirm
+   *  Call. Deliberately `(matchId, action)` — no `seatId` parameter,
+   *  mirroring `submitCard(matchId, card)`'s exact precedent (Sprint
+   *  4.2.1's own established pattern, not a new one): the acting seat
+   *  is resolved INTERNALLY from the calling uid via
+   *  `MatchAdapter.uidToSeat()`, never trusted as a client-supplied
+   *  claim.
+   *
+   *  Pre-write authority AND legality gate, in one call: this function
+   *  asks the REAL, existing, unmodified `BiddingEngine.canSubmit()`
+   *  (Sprint 3.6.1) whether this exact action would be accepted RIGHT
+   *  NOW — BEFORE `runTransaction()` is ever invoked — exactly
+   *  mirroring `submitCard()`'s own "ask `TableEngine.previewPlay()`
+   *  before writing" precedent (Sprint 4.2.1), applied here to bidding.
+   *  `canSubmit()` already checks BOTH turn ("Not this seat's turn")
+   *  AND phase ("Not the ... phase") AND every content rule (Dash
+   *  limits, suit strength, auction comparison, Caller cap, With-floor,
+   *  Forbidden-13) internally — a SEPARATE `MatchAdapter.assertLocalTurn()`
+   *  call (the gate `submitCard()` uses IN ADDITION to
+   *  `previewPlay()`) is deliberately NOT used here: `assertLocalTurn()`
+   *  checks `matches/{matchId}.turn`, a field nothing in this codebase
+   *  advances through the Dash/Auction/Confirm sub-phases (a
+   *  pre-existing, honestly-documented gap — see
+   *  match-adapter.js's own header comment) — using it here would
+   *  incorrectly reject every action past the very first one. This is
+   *  not a shortcut; `canSubmit()` already unifies what `assertLocalTurn()`
+   *  + `previewPlay()` had to do separately for cards, because Sprint
+   *  3.6.1 built it as one combined turn+legality gate from the start.
+   *
+   *  An illegal or out-of-turn action is rejected — `ILLEGAL_BIDDING_ACTION`
+   *  — with ZERO Firestore writes attempted; `biddingLog` can never
+   *  contain an entry the real engine would reject. `action` is stored
+   *  as an OPAQUE, reconstructed payload (`buildBiddingLogEntry()`) —
+   *  this function still doesn't know or invent WHY an action is legal,
+   *  only whether the real engine says it is.
+   *
+   *  Runs inside a real Firestore transaction, re-verifying the SAME
+   *  version-conflict guard `submitCard()` established (Sprint 4.2.2,
+   *  Task 3): the `canSubmit()` answer above was computed against the
+   *  LOCAL browser's OWN engine state, entirely OUTSIDE this
+   *  transaction — if the document has changed AT ALL since the
+   *  pre-check read, that answer no longer describes the current world
+   *  and must not be trusted. Rejects `STALE_GAME_STATE` and writes
+   *  nothing rather than silently recomputing or reusing a stale
+   *  answer — the same deliberate, stricter-than-`submitBid()` choice
+   *  `submitCard()` already made, for the identical reason (the thing
+   *  being validated lives in local engine state, not inside
+   *  Firestore's own transaction machinery, so re-running the
+   *  transaction callback alone cannot safely re-validate it). */
+  function submitBiddingAction(matchId, action) {
+    if (!matchId) return Promise.reject(bidError("INVALID_ARGUMENT", "submitBiddingAction: matchId is required."));
+    if (!isValidGenericBiddingAction(action)) {
+      return Promise.reject(bidError("INVALID_BIDDING_ACTION_VALUE",
+        "submitBiddingAction: action must be a well-formed {actionType,...} object — see isValidGenericBiddingAction()."));
+    }
+    if (!db()) return Promise.reject(bidError("UNAVAILABLE", "MatchService: Firestore is not initialized on this page."));
+    var callingUid = currentUid();
+    if (!callingUid) return Promise.reject(bidError("UNAUTHENTICATED", "submitBiddingAction: no signed-in user."));
+    if (!global.MatchAdapter || typeof global.MatchAdapter.uidToSeat !== "function") {
+      return Promise.reject(bidError("MATCH_ADAPTER_UNAVAILABLE", "submitBiddingAction: MatchAdapter is not available on this page."));
+    }
+    // Task 1/2: the real engine must be reachable to pre-check BEFORE
+    // any write is attempted — no fallback, no silent skip.
+    if (!global.BiddingEngine || typeof global.BiddingEngine.canSubmit !== "function") {
+      return Promise.reject(bidError("ENGINE_UNAVAILABLE", "submitBiddingAction: BiddingEngine is not available on this page — cannot validate this action before writing it."));
+    }
+
+    var matchRef = db().collection("matches").doc(matchId);
+
+    /** Resolves the seat via `MatchAdapter.uidToSeat()` — factored so
+     *  it can run BOTH as the upfront, pre-transaction lookup AND again
+     *  inside the transaction against a freshly-read document (the SAME
+     *  call, never two different implementations), exactly mirroring
+     *  `submitCard()`'s own `resolveSeatAndAuthorize()` factoring. */
+    function resolveSeat(match) {
+      var seatId = global.MatchAdapter.uidToSeat(match, callingUid);
+      if (!seatId) {
+        throw bidError("PERMISSION_DENIED", "submitBiddingAction: you do not own a seat in this match.");
+      }
+      return seatId;
+    }
+
+    return matchRef.get().then(function (snap) {
+      if (!snap.exists) throw bidError("MATCH_NOT_FOUND", "submitBiddingAction: match '" + matchId + "' was not found.");
+      var match = snap.data();
+      var seatId = resolveSeat(match);
+
+      // Ask the REAL, existing BiddingEngine whether THIS exact action
+      // would be accepted right now. Never mutates anything, never
+      // calls emit(), never duplicates canSubmit()'s own rules. Rejects
+      // here — still BEFORE runTransaction() — for an illegal or
+      // out-of-turn action. Zero writes attempted; biddingLog is never
+      // touched.
+      var intent = biddingActionToIntent(seatId, action);
+      var verdict = global.BiddingEngine.canSubmit(intent);
+      if (!verdict || !verdict.legal) {
+        throw bidError("ILLEGAL_BIDDING_ACTION", "submitBiddingAction: bidding-engine.js rejected this action (" + (verdict && verdict.reason) + ") — not written.");
+      }
+      var expectedVersion = match.version;
+
+      return db().runTransaction(function (tx) {
+        return tx.get(matchRef).then(function (freshSnap) {
+          if (!freshSnap.exists) throw bidError("MATCH_NOT_FOUND", "submitBiddingAction: match '" + matchId + "' was not found.");
+          var freshMatch = freshSnap.data();
+          // Task 3 (mirrors submitCard()'s own identical guard): the
+          // canSubmit() verdict above was computed against the LOCAL
+          // engine's own state, entirely OUTSIDE this transaction — a
+          // changed document since then means that verdict no longer
+          // describes the current world and MUST NOT be trusted.
+          if (freshMatch.version !== expectedVersion) {
+            throw bidError("STALE_GAME_STATE", "submitBiddingAction: the match document changed since this action was validated (expected version " + expectedVersion + ", found " + freshMatch.version + ") — not written; re-fetch and retry.");
+          }
+          var freshSeatId = resolveSeat(freshMatch);
+          var biddingLog = (freshMatch.biddingLog || []).slice();
+          biddingLog.push(buildBiddingLogEntry(freshSeatId, action, freshMatch.currentRound));
+          var nextVersion = expectedVersion + 1;
+          var patch = {
+            biddingLog: biddingLog,
+            version: nextVersion,
+            updatedAt: serverTimestamp()
+          };
+          tx.update(matchRef, patch);
+          return {
+            matchId: matchId, seatId: freshSeatId, actionType: action.actionType,
+            version: nextVersion, logLength: biddingLog.length
+          };
+        });
+      });
+    });
+  }
+
   function playCard(matchId, uid, cardId) { return notImplemented("playCard"); }
   function resolveTrick(matchId) { return notImplemented("resolveTrick"); }
+  /** Round Lifecycle sprint: deliberately LEFT as a stub, not
+   *  implemented as a separate "mark the round complete, but don't
+   *  advance yet" step. A round that is observably "complete" but not
+   *  yet "advanced" is exactly the kind of half-transition state this
+   *  sprint's own brief warns against (a client could read `currentRound
+   *  === N` with the round's 13th trick already resolved, and would
+   *  have to guess whether it is safe to start Round N+1's bidding).
+   *  `advanceToNextRound()` below performs completion-verification AND
+   *  advancement atomically, in ONE transaction — there is no
+   *  observable state in between. See docs/reviews/Sprint_RoundLifecycle_Architecture_Report.md
+   *  §2 ("one transaction" chosen over "two explicit phases"). */
   function completeRound(matchId) { return notImplemented("completeRound"); }
-  function advanceToNextRound(matchId) { return notImplemented("advanceToNextRound"); }
-  function endMatch(matchId, winnerId) { return notImplemented("endMatch"); }
+  /** Round Lifecycle sprint — the ONE real, authoritative round
+   *  transition this file exposes. Atomically verifies `completedRound`
+   *  is genuinely finished (structurally — see below) and advances
+   *  `currentRound` to `completedRound + 1`, in a single Firestore
+   *  transaction. Idempotent and safe to call from MULTIPLE clients at
+   *  once (see docs/reviews/Sprint_RoundLifecycle_Architecture_Report.md
+   *  §2's "who advances the round" analysis — the answer is "any
+   *  client may attempt it; the transaction is what makes that safe,"
+   *  not a designated host/caller):
+   *
+   *  - If, by the time this transaction actually reads the document,
+   *    `currentRound` is no longer `completedRound` (another client's
+   *    call already won the race, or this round was already advanced
+   *    earlier), this is a NO-OP — resolves successfully with
+   *    `{advanced:false, reason:"ALREADY_ADVANCED", currentRound:...}`,
+   *    never an error. Two, three, or a hundred simultaneous callers
+   *    converge on exactly one real advancement.
+   *  - "Genuinely finished" is checked STRUCTURALLY, not by
+   *    recomputing a score: exactly 52 `cardLog` entries tagged
+   *    `round === completedRound` must exist (13 tricks * 4 seats).
+   *    This deliberately does NOT re-run `ScoringEngine`'s rules here —
+   *    scoring is already computed once, deterministically, on every
+   *    synchronized client, by the SAME replayed log (see
+   *    `TableEngine.resolveTrick()` -> `ScoringEngine.applyRoundResult()`
+   *    -> GameSession's own `recordRoundResult()`, all unmodified, all
+   *    untouched by this function) — duplicating that here would be
+   *    exactly the "duplicate scoring logic" this sprint's own brief
+   *    forbids. If a caller's local engine has NOT genuinely reached
+   *    round completion, this structural check still catches it
+   *    (fewer than 52 tagged entries exist) without knowing anything
+   *    about WHY a round completes.
+   *  - The reset patch only ever touches `currentRound`, `version`,
+   *    and the legacy/derived bookkeeping fields (`biddingOpen`,
+   *    `bids`, `lastBidSeat`, `cardPhase`, `turn`) that a fresh round's
+   *    bidding phase starts from — `biddingLog`/`cardLog` themselves
+   *    are NEVER cleared, rewritten, or reset (append-only, prefix-
+   *    immutable, exactly as established since Sprint 4.2.1) — Round 1's
+   *    entries remain in the log forever, simply superseded by Round 2's
+   *    higher `round` tag going forward. */
+  function advanceToNextRound(matchId, completedRound) {
+    if (!matchId) return Promise.reject(bidError("INVALID_ARGUMENT", "advanceToNextRound: matchId is required."));
+    if (typeof completedRound !== "number" || !Number.isFinite(completedRound) || !Number.isInteger(completedRound) || completedRound < 1) {
+      return Promise.reject(bidError("INVALID_ARGUMENT", "advanceToNextRound: completedRound must be a positive integer."));
+    }
+    if (!db()) return Promise.reject(bidError("UNAVAILABLE", "MatchService: Firestore is not initialized on this page."));
+    var callingUid = currentUid();
+    if (!callingUid) return Promise.reject(bidError("UNAUTHENTICATED", "advanceToNextRound: no signed-in user."));
+
+    var matchRef = db().collection("matches").doc(matchId);
+    return db().runTransaction(function (tx) {
+      return tx.get(matchRef).then(function (snap) {
+        if (!snap.exists) throw bidError("MATCH_NOT_FOUND", "advanceToNextRound: match '" + matchId + "' was not found.");
+        var match = snap.data();
+        if (!Array.isArray(match.players) || match.players.indexOf(callingUid) === -1) {
+          throw bidError("PERMISSION_DENIED", "advanceToNextRound: you are not a player in this match.");
+        }
+        // Match Completion sprint: a match that has ALREADY completed
+        // (status:"complete", written by endMatch()) must never be
+        // advanced again — completion is terminal. Without this guard,
+        // a client's advanceToNextRound() call racing an in-flight
+        // endMatch() call for the SAME completedRound could win the
+        // race (this function has no other way to know the match just
+        // ended, since it does not touch `status` at all) and silently
+        // bump `currentRound` past a document that is simultaneously
+        // claiming to be finished — corrupting the completed state
+        // (found via this sprint's own real-browser QA, Phase 4
+        // Scenario N; not caught by any Node-level test because those
+        // exercise each function in isolation, never a genuine
+        // same-tick race between the two). Idempotent no-op, never an
+        // error — exactly the same shape as the ALREADY_ADVANCED case
+        // below, since both mean "there is nothing left for this call
+        // to legitimately do."
+        if (match.status === "complete") {
+          return { advanced: false, reason: "MATCH_ALREADY_COMPLETE", matchId: matchId, currentRound: match.currentRound };
+        }
+        // Idempotent no-op: someone else already advanced this round
+        // (or this round was never at completedRound to begin with) —
+        // never an error, never a duplicate advance.
+        if (match.currentRound !== completedRound) {
+          return { advanced: false, reason: "ALREADY_ADVANCED", matchId: matchId, currentRound: match.currentRound };
+        }
+        // Structural completion check — see this function's own doc
+        // comment for why this counts entries rather than re-deriving a
+        // score. `52` is fixed (13 tricks * 4 seats) — this project has
+        // no variable-player-count mode.
+        var cardLog = Array.isArray(match.cardLog) ? match.cardLog : [];
+        var roundCardCount = cardLog.filter(function (entry) { return entry && entry.round === completedRound; }).length;
+        if (roundCardCount !== 52) {
+          throw bidError("ROUND_NOT_COMPLETE",
+            "advanceToNextRound: round " + completedRound + " has only " + roundCardCount + "/52 recorded card plays — not advancing.");
+        }
+        var seats = match.seats || {};
+        var resetBids = {};
+        Object.keys(seats).forEach(function (seatId) { resetBids[seatId] = null; });
+        var nextVersion = match.version + 1;
+        var patch = {
+          currentRound: completedRound + 1,
+          version: nextVersion,
+          biddingOpen: true,
+          bids: resetBids,
+          lastBidSeat: null,
+          // `turn`/`cardPhase` have no defined meaning until the new
+          // round's real bidding (then card play) resumes — reset to
+          // the SAME "no value yet" convention `cardPhase` already uses
+          // before the first card of a match is ever played (Sprint
+          // 4.2's own `buildInitialMatchDoc()` precedent), rather than
+          // leaving Round N's final PLAY-phase values stale and
+          // misleading for Round N+1's bidding.
+          turn: null,
+          cardPhase: null,
+          updatedAt: serverTimestamp()
+        };
+        tx.update(matchRef, patch);
+        return {
+          advanced: true, matchId: matchId,
+          previousRound: completedRound, currentRound: completedRound + 1,
+          version: nextVersion
+        };
+      });
+    });
+  }
+  // Rapid Rounds window (rules §5) — the ONLY physical round numbers
+  // eligible to extend `maxRounds`, mirroring the SAME fixed 14-18 band
+  // ScoringEngine.computeRoundExtension() already enforces client-side.
+  // Kept as an independent local constant (not a cross-file lookup) for
+  // the same "MatchService stays engine-independent" reason SEAT_IDS is
+  // — this is a structural fact about round numbering, not a
+  // gameplay/engine dependency.
+  var RAPID_ROUND_MIN = 14, RAPID_ROUND_MAX = 18;
+  var VALID_EXTENSION_REASONS = ["SUPER_CALL", "SAAYDA"];
+
+  /** Match Completion sprint: the ONE authoritative place `maxRounds`
+   *  is ever incremented. Atomic + idempotent, mirroring
+   *  `advanceToNextRound()`'s exact shape and the same "any client may
+   *  attempt it" design: safe to call from MULTIPLE clients (or the
+   *  SAME client more than once) for the SAME `completedRound` — only
+   *  the first to actually win the transaction increments `maxRounds`;
+   *  every other caller (or retry) converges on a no-op.
+   *
+   *  Idempotency key is `extendedRounds` (an array of round numbers
+   *  already used to extend this match) rather than `currentRound`
+   *  equality (advanceToNextRound()'s own key) — a round's extension
+   *  and its advancement are two INDEPENDENT events that both reference
+   *  the same `completedRound`, so they need two independent guards;
+   *  reusing `currentRound` here would incorrectly refuse a legitimate
+   *  extension attempt that happens to race with (or follow) an
+   *  advancement already applied for the same round.
+   *
+   *  HONEST LIMITATION (see this file's header comment, "reason" param
+   *  below, and this sprint's own Final Report): this function does
+   *  NOT — and structurally CANNOT, without duplicating
+   *  BiddingEngine/ScoringEngine's rules here — verify that a qualifying
+   *  Super Call or Sa'ayda actually occurred in `completedRound`. It
+   *  only verifies the STRUCTURAL facts firestore.rules can also verify
+   *  independently: `completedRound` is a real Rapid Round (14-18),
+   *  `reason` is one of the two defined values, and this round has never
+   *  been used to extend before. The caller (MatchAdapter) is trusted to
+   *  have already computed `reason` from the SAME real engine facts
+   *  every local client independently derives — exactly the same
+   *  trust boundary `advanceToNextRound()`'s own structural-only
+   *  completion check already documents and accepts. */
+  function extendMatchRounds(matchId, completedRound, reason) {
+    if (!matchId) return Promise.reject(bidError("INVALID_ARGUMENT", "extendMatchRounds: matchId is required."));
+    if (typeof completedRound !== "number" || !Number.isFinite(completedRound) || !Number.isInteger(completedRound) ||
+        completedRound < RAPID_ROUND_MIN || completedRound > RAPID_ROUND_MAX) {
+      return Promise.reject(bidError("INVALID_ARGUMENT",
+        "extendMatchRounds: completedRound must be an integer between " + RAPID_ROUND_MIN + " and " + RAPID_ROUND_MAX + "."));
+    }
+    if (VALID_EXTENSION_REASONS.indexOf(reason) === -1) {
+      return Promise.reject(bidError("INVALID_ARGUMENT", "extendMatchRounds: reason must be one of " + VALID_EXTENSION_REASONS.join("/") + "."));
+    }
+    if (!db()) return Promise.reject(bidError("UNAVAILABLE", "MatchService: Firestore is not initialized on this page."));
+    var callingUid = currentUid();
+    if (!callingUid) return Promise.reject(bidError("UNAUTHENTICATED", "extendMatchRounds: no signed-in user."));
+
+    var matchRef = db().collection("matches").doc(matchId);
+    return db().runTransaction(function (tx) {
+      return tx.get(matchRef).then(function (snap) {
+        if (!snap.exists) throw bidError("MATCH_NOT_FOUND", "extendMatchRounds: match '" + matchId + "' was not found.");
+        var match = snap.data();
+        if (!Array.isArray(match.players) || match.players.indexOf(callingUid) === -1) {
+          throw bidError("PERMISSION_DENIED", "extendMatchRounds: you are not a player in this match.");
+        }
+        // Match Completion sprint: same terminal-state guard as
+        // advanceToNextRound() — a match that has ALREADY completed
+        // must never have its maxRounds bumped again (there is nothing
+        // left to extend). Idempotent no-op, never an error.
+        if (match.status === "complete") {
+          return { extended: false, reason: "MATCH_ALREADY_COMPLETE", matchId: matchId, maxRounds: match.maxRounds };
+        }
+        var extendedRounds = Array.isArray(match.extendedRounds) ? match.extendedRounds : [];
+        // Idempotent no-op: this round already extended the match once
+        // (by this client's earlier attempt, or another client's) —
+        // never a second increment for the same qualifying event.
+        if (extendedRounds.indexOf(completedRound) !== -1) {
+          return { extended: false, reason: "ALREADY_EXTENDED", matchId: matchId, maxRounds: match.maxRounds };
+        }
+        var nextVersion = match.version + 1;
+        var nextMaxRounds = (match.maxRounds || 18) + 1;
+        tx.update(matchRef, {
+          maxRounds: nextMaxRounds,
+          extendedRounds: extendedRounds.concat([completedRound]),
+          version: nextVersion,
+          updatedAt: serverTimestamp()
+        });
+        return { extended: true, matchId: matchId, completedRound: completedRound, reason: reason, maxRounds: nextMaxRounds, version: nextVersion };
+      });
+    });
+  }
+
+  /** Match Completion sprint: structural self-consistency check for a
+   *  client-supplied `finalScores`/`winnerIds` pair — the highest-score
+   *  seat(s) in `finalScores` must be EXACTLY the seats listed in
+   *  `winnerIds`, no more, no fewer. This is the one piece of "is this
+   *  claim internally honest" verification `endMatch()` CAN do without
+   *  re-deriving the actual game score (which would mean duplicating
+   *  the entire bidding/scoring pipeline here — explicitly out of
+   *  scope, see this file's header comment and
+   *  ScoringEngine.computeWinner(), whose exact tie-all-highest-scores
+   *  rule this mirrors). It does NOT (and cannot) verify `finalScores`
+   *  itself is the TRUE outcome of the match — see endMatch()'s own
+   *  "HONEST LIMITATION" note. */
+  function winnerIdsMatchFinalScores(finalScores, winnerIds, seats) {
+    if (!finalScores || typeof finalScores !== "object") return false;
+    if (!Array.isArray(winnerIds) || winnerIds.length === 0) return false;
+    var seatIds = Object.keys(seats);
+    if (seatIds.length === 0) return false;
+    if (seatIds.sort().join(",") !== Object.keys(finalScores).sort().join(",")) return false;
+    var maxScore = -Infinity;
+    seatIds.forEach(function (id) {
+      if (typeof finalScores[id] !== "number" || !Number.isFinite(finalScores[id])) return;
+      if (finalScores[id] > maxScore) maxScore = finalScores[id];
+    });
+    var expectedWinners = seatIds.filter(function (id) { return finalScores[id] === maxScore; });
+    return expectedWinners.slice().sort().join(",") === winnerIds.slice().sort().join(",");
+  }
+
+  /** Match Completion sprint: the ONE authoritative match-completion
+   *  transition. Atomic + idempotent, mirroring `advanceToNextRound()`'s
+   *  exact shape: any client may attempt it once its local engine
+   *  determines `currentRound >= maxRounds` after the round's final
+   *  trick resolves; Firestore's transaction semantics ensure exactly
+   *  one call actually transitions `status` to `"complete"`, and every
+   *  other simultaneous (or later, retried) call converges on the SAME
+   *  already-complete result — never a second completion, never an
+   *  error.
+   *
+   *  `finalScores`/`winnerIds` are supplied by the calling client
+   *  (computed locally via the engine's own match-score/winner
+   *  derivation — MatchAdapter's job, never this file's) and
+   *  structurally verified here
+   *  (see `winnerIdsMatchFinalScores()`) — but see this function's own
+   *  HONEST LIMITATION note: this transaction cannot independently
+   *  recompute the TRUE final score from `biddingLog`/`cardLog` without
+   *  duplicating the entire bidding/scoring engine server-side, which
+   *  is explicitly out of scope for this sprint (same boundary
+   *  `advanceToNextRound()`'s own structural-only completion check
+   *  already documents). A malicious or buggy client could theoretically
+   *  submit a self-consistent but WRONG `finalScores` map; nothing in
+   *  this codebase can catch that today. This is documented here, in
+   *  the Final Report, and in firestore.rules' own comment, rather than
+   *  silently assumed away. */
+  function endMatch(matchId, completedRound, finalScores, winnerIds) {
+    if (!matchId) return Promise.reject(bidError("INVALID_ARGUMENT", "endMatch: matchId is required."));
+    if (typeof completedRound !== "number" || !Number.isFinite(completedRound) || !Number.isInteger(completedRound) || completedRound < 1) {
+      return Promise.reject(bidError("INVALID_ARGUMENT", "endMatch: completedRound must be a positive integer."));
+    }
+    if (!db()) return Promise.reject(bidError("UNAVAILABLE", "MatchService: Firestore is not initialized on this page."));
+    var callingUid = currentUid();
+    if (!callingUid) return Promise.reject(bidError("UNAUTHENTICATED", "endMatch: no signed-in user."));
+
+    var matchRef = db().collection("matches").doc(matchId);
+    return db().runTransaction(function (tx) {
+      return tx.get(matchRef).then(function (snap) {
+        if (!snap.exists) throw bidError("MATCH_NOT_FOUND", "endMatch: match '" + matchId + "' was not found.");
+        var match = snap.data();
+        if (!Array.isArray(match.players) || match.players.indexOf(callingUid) === -1) {
+          throw bidError("PERMISSION_DENIED", "endMatch: you are not a player in this match.");
+        }
+        // Idempotent no-op: the match is already complete (by this
+        // client's earlier attempt, or another client's) — never a
+        // second completion, and status never moves complete -> anything.
+        if (match.status === "complete") {
+          return {
+            complete: false, reason: "ALREADY_COMPLETE", matchId: matchId,
+            winnerIds: match.winnerIds || [], finalScores: match.finalScores || {}
+          };
+        }
+        if (match.currentRound !== completedRound) {
+          return { complete: false, reason: "ALREADY_ADVANCED", matchId: matchId, currentRound: match.currentRound };
+        }
+        // Structural completion check — same 52-entries-per-round
+        // technique advanceToNextRound() already uses, reused (not
+        // duplicated logic — the SAME filter expression) rather than
+        // inventing a second way to confirm a round genuinely finished.
+        var cardLog = Array.isArray(match.cardLog) ? match.cardLog : [];
+        var roundCardCount = cardLog.filter(function (entry) { return entry && entry.round === completedRound; }).length;
+        if (roundCardCount !== 52) {
+          throw bidError("ROUND_NOT_COMPLETE",
+            "endMatch: round " + completedRound + " has only " + roundCardCount + "/52 recorded card plays — not completing.");
+        }
+        // The match may only actually end once the round reached is at
+        // or past the CURRENT authoritative maxRounds — never a
+        // hardcoded 18. If a qualifying extension for THIS round hasn't
+        // been recorded yet, maxRounds here is stale relative to what
+        // the round actually earned — the caller (MatchAdapter) is
+        // responsible for calling extendMatchRounds() BEFORE endMatch()
+        // when applicable (see MatchAdapter.maybeExtendOrCompleteMatch()).
+        var maxRounds = match.maxRounds || 18;
+        if (completedRound + 1 <= maxRounds) {
+          return { complete: false, reason: "MATCH_NOT_OVER", matchId: matchId, currentRound: match.currentRound, maxRounds: maxRounds };
+        }
+        if (!winnerIdsMatchFinalScores(finalScores, winnerIds, match.seats || {})) {
+          throw bidError("INVALID_RESULT", "endMatch: winnerIds does not match the highest score(s) in finalScores.");
+        }
+        var nextVersion = match.version + 1;
+        tx.update(matchRef, {
+          status: "complete",
+          winnerIds: winnerIds.slice(),
+          finalScores: Object.assign({}, finalScores),
+          completedRound: completedRound,
+          version: nextVersion,
+          updatedAt: serverTimestamp()
+        });
+        return {
+          complete: true, matchId: matchId, completedRound: completedRound,
+          winnerIds: winnerIds.slice(), finalScores: Object.assign({}, finalScores), version: nextVersion
+        };
+      });
+    });
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // Player Hand Synchronization sprint (Architecture Gate-approved
+  // Option A): the ONE authoritative dealing transaction. Any seated
+  // client may attempt it — for the round it locally believes needs
+  // dealing (match load, or a round transition it just detected) —
+  // Firestore's transaction semantics guarantee exactly one attempt
+  // actually commits a deal per round; every other attempt (concurrent
+  // or later/retried) observes the already-committed `dealtRound` and
+  // no-ops, the SAME "first commit wins" idiom already proven in this
+  // file by startMatch()/createRematchVote()/advanceToNextRound()/
+  // createRematchMatch(). Dealer.dealHands() itself is UNCHANGED — this
+  // only relocates its CALLER from a client screen's own
+  // ensureHandsDealt() into this one committing transaction attempt.
+  //
+  // Hidden information: card CONTENT is never supplied by, or trusted
+  // from, any client — Dealer.dealHands() runs inside the transaction
+  // callback and its result is written split by seat into
+  // matches/{matchId}/hands/{seatId}, each doc readable only by its own
+  // seat's uid (see firestore.rules' new `hands/{seatId}` block). See
+  // docs/reviews/Player_Hand_Synchronization_Architecture_Report.md for
+  // the full design rationale — this is a direct implementation of
+  // that report's §7/§10, refined by the Architecture Gate's own
+  // findings (the `gameState` shape-lock requirement in particular).
+  /** Deals ONE round, exactly once, for `matchId`/`roundNumber`.
+   *  Idempotent: if `gameState.dealtRound >= roundNumber` already (this
+   *  client's own earlier attempt, or another client's), returns a
+   *  no-op — never a second deal, never an error. Requires
+   *  `global.Dealer` (design-ui/engine/dealer.js) to be loaded on this
+   *  page — the exact same, unmodified dealing algorithm every prior
+   *  sprint has used, just called from here instead of from the
+   *  engine's own ensureHandsDealt() function. */
+  function dealRound(matchId, roundNumber) {
+    if (!matchId) return Promise.reject(bidError("INVALID_ARGUMENT", "dealRound: matchId is required."));
+    if (typeof roundNumber !== "number" || !Number.isFinite(roundNumber) || !Number.isInteger(roundNumber) || roundNumber < 1) {
+      return Promise.reject(bidError("INVALID_ARGUMENT", "dealRound: roundNumber must be a positive integer."));
+    }
+    if (!global.Dealer || typeof global.Dealer.dealHands !== "function") {
+      return Promise.reject(bidError("ENGINE_UNAVAILABLE", "dealRound: Dealer is not available on this page."));
+    }
+    if (!db()) return Promise.reject(bidError("UNAVAILABLE", "MatchService: Firestore is not initialized on this page."));
+    var callingUid = currentUid();
+    if (!callingUid) return Promise.reject(bidError("UNAUTHENTICATED", "dealRound: no signed-in user."));
+
+    var matchRef = db().collection("matches").doc(matchId);
+    return db().runTransaction(function (tx) {
+      return tx.get(matchRef).then(function (snap) {
+        if (!snap.exists) throw bidError("MATCH_NOT_FOUND", "dealRound: match '" + matchId + "' was not found.");
+        var match = snap.data();
+        if (!Array.isArray(match.players) || match.players.indexOf(callingUid) === -1) {
+          throw bidError("PERMISSION_DENIED", "dealRound: you are not a player in this match.");
+        }
+        var gameState = match.gameState || { initialized: false, dealtRound: 0 };
+        // Idempotent no-op: this round (or a later one) is already
+        // dealt — never a second deal, never an error. This is what
+        // makes concurrent dealRound() attempts safe: whichever
+        // transaction actually commits first wins; every loser's
+        // attempt just discovers the work is already done.
+        if ((gameState.dealtRound || 0) >= roundNumber) {
+          return { dealt: false, reason: "ALREADY_DEALT", matchId: matchId, dealtRound: gameState.dealtRound || 0 };
+        }
+        var seats = match.seats || {};
+        var seatIds = SEAT_IDS.filter(function (s) { return seats[s]; });
+        var hands = global.Dealer.dealHands(seatIds.length ? seatIds : undefined);
+        var handRefs = {};
+        seatIds.forEach(function (seatId) {
+          var cards = (hands[seatId] || []).map(function (c) {
+            // Opaque, generically-shaped — mirrors submitCard()'s own
+            // isValidGenericCardValue() shape exactly (suit + rank.v/s
+            // only). `id`/`owner`/`played`/`displayName`/`value` are
+            // engine-internal, derived client-side, never stored
+            // server-side — the same "generic vs. gameplay" line this
+            // codebase has drawn for every other card-shaped field.
+            return { suit: c.suit, rank: { v: c.rank.v, s: c.rank.s } };
+          });
+          handRefs[seatId] = { ref: matchRef.collection("hands").doc(seatId), cards: cards };
+        });
+        Object.keys(handRefs).forEach(function (seatId) {
+          tx.set(handRefs[seatId].ref, {
+            seatId: seatId,
+            round: roundNumber,
+            cards: handRefs[seatId].cards,
+            // `version` == the round it belongs to, deliberately, not a
+            // separately-tracked increment-by-1 counter: this doc is
+            // OVERWRITTEN (not appended) each round — current-hand-only
+            // storage, no history retained, per the Architecture Gate's
+            // Decision 4 — and reading each hand doc's own prior version
+            // inside this transaction (just to compute version+1) would
+            // be 4 extra reads for no real benefit, since `round` is
+            // already a strictly-increasing, per-match-unique stamp on
+            // its own. firestore.rules' isValidHandRedeal() enforces
+            // this same invariant independently (newData.round >
+            // oldData.round).
+            version: roundNumber
+          });
+        });
+        tx.update(matchRef, {
+          gameState: { initialized: true, dealtRound: roundNumber },
+          updatedAt: serverTimestamp()
+        });
+        return { dealt: true, matchId: matchId, dealtRound: roundNumber, seats: seatIds.slice() };
+      });
+    });
+  }
+
+  // Player Hand Synchronization sprint's own ref-counted subscription
+  // registry for the hands subcollection — an independent registry
+  // from `matchSubscriptions`/`rematchVoteSubscriptions` above (a
+  // different document path per matchId+seatId), but the SAME shape:
+  // one real onSnapshot listener no matter how many local callers
+  // subscribe, automatic reconnect with the same backoff constants,
+  // fail-open error delivery. Keyed on "matchId/seatId" — a client only
+  // ever subscribes to its OWN seat's hand, never any other seat's.
+  var handSubscriptions = {};
+
+  function attachHandListener(key, matchId, seatId, entry) {
+    entry.unsubscribeFirestore = db().collection("matches").doc(matchId).collection("hands").doc(seatId).onSnapshot(
+      function (snap) {
+        entry.reconnectAttempt = 0;
+        var data = snap.exists ? snap.data() : null;
+        if (data && typeof data.version === "number") {
+          if (entry.lastVersion != null && data.version <= entry.lastVersion) return;
+          entry.lastVersion = data.version;
+        }
+        if (entry.hasPublished && deepEqual(data, entry.lastPublishedData)) return;
+        entry.hasPublished = true;
+        entry.lastPublishedData = data;
+        entry.listeners.slice().forEach(function (cb) { safeInvoke(cb, data, null); });
+      },
+      function (err) {
+        var deliveredData = entry.hasPublished ? entry.lastPublishedData : null;
+        entry.listeners.slice().forEach(function (cb) { safeInvoke(cb, deliveredData, err); });
+        if (isRetryable(err)) {
+          scheduleHandReconnect(key, matchId, seatId, entry);
+        } else {
+          entry.terminalError = err;
+          console.warn("[MatchService] subscribeToHand(" + matchId + "/" + seatId + "): " + classifyError(err) + " error (code: " +
+            (err && err.code || "none") + ") — reconnect attempts stopped permanently for this subscription.");
+        }
+      }
+    );
+  }
+
+  function scheduleHandReconnect(key, matchId, seatId, entry) {
+    if (entry.reconnectTimer) return;
+    if (entry.listeners.length === 0) return;
+    var attempt = entry.reconnectAttempt || 0;
+    var delay = Math.min(RECONNECT_BASE_MS * Math.pow(2, attempt), RECONNECT_MAX_MS);
+    entry.reconnectAttempt = attempt + 1;
+    entry.reconnectTimer = setTimeout(function () {
+      entry.reconnectTimer = null;
+      if (entry.listeners.length === 0) return;
+      if (typeof entry.unsubscribeFirestore === "function") entry.unsubscribeFirestore();
+      attachHandListener(key, matchId, seatId, entry);
+    }, delay);
+  }
+
+  /** Live-subscribe to ONE seat's own hand document. Same ref-counted,
+   *  reconnecting, fail-open shape as subscribeToRematchVote() above,
+   *  targeting matches/{matchId}/hands/{seatId}. Delivers `null` (not
+   *  an error) if no deal has committed yet for any round — a normal,
+   *  expected state right after match creation, before dealRound()'s
+   *  first commit. This is the ONE genuinely new consumption path this
+   *  sprint introduces (see the Architecture Report's §11) — every
+   *  other signal (e.g. "has dealing happened") still rides on the
+   *  existing subscribeToMatch() listener via `gameState.dealtRound`. */
+  function subscribeToHand(matchId, seatId, callback) {
+    if (!db()) {
+      callback(null, new Error("MatchService: Firestore is not initialized on this page."));
+      return function unsubscribe() {};
+    }
+    var key = matchId + "/" + seatId;
+    var entry = handSubscriptions[key];
+    if (!entry) {
+      entry = handSubscriptions[key] = {
+        listeners: [callback], unsubscribeFirestore: null, hasPublished: false,
+        lastPublishedData: null, lastVersion: null, reconnectAttempt: 0, reconnectTimer: null,
+        terminalError: null
+      };
+      attachHandListener(key, matchId, seatId, entry);
+    } else {
+      entry.listeners.push(callback);
+      if (entry.terminalError) safeInvoke(callback, entry.hasPublished ? entry.lastPublishedData : null, entry.terminalError);
+      else if (entry.hasPublished) safeInvoke(callback, entry.lastPublishedData, null);
+    }
+    return function unsubscribe() {
+      var idx = entry.listeners.indexOf(callback);
+      if (idx !== -1) entry.listeners.splice(idx, 1);
+      if (entry.listeners.length === 0) {
+        if (entry.reconnectTimer) { clearTimeout(entry.reconnectTimer); entry.reconnectTimer = null; }
+        if (typeof entry.unsubscribeFirestore === "function") entry.unsubscribeFirestore();
+        delete handSubscriptions[key];
+      }
+    };
+  }
+  // ══════════════════════════════════════════════════════════════════
+
+  // ══════════════════════════════════════════════════════════════════
+  // Post-Match Rematch Vote sprint. A dedicated subcollection document,
+  // matches/{matchId}/rematchVote/current — deliberately NOT a field on
+  // the completed match document itself, so nothing here ever needs
+  // write access to that document's already-terminal, protected fields
+  // (status/winnerIds/finalScores/completedRound — endMatch() above
+  // remains the only writer of those, unchanged). All four functions
+  // below follow this file's own established shape for every gameplay
+  // write: one Firestore transaction, an idempotent no-op return (never
+  // an error) for "someone already did this," version+1 optimistic
+  // concurrency, and independent server-side re-verification in
+  // firestore.rules — neither layer trusts the other alone.
+  //
+  // TIMER AUTHORITY (read before touching this section): this project
+  // is Spark-only — no Cloud Functions exist or are planned (see
+  // CardAuthorityHotfix_4.2.1.md / CHANGELOG.md's repeated "Spark only"
+  // scope boundary). There is no scheduled function that can fire at
+  // T+30s server-side. Instead, `createdAt` is written as a REAL
+  // serverTimestamp() (resolved to the actual server commit time, never
+  // any client's clock), and the 30-second deadline is DERIVED, never
+  // stored as its own field: `createdAt + 30s`. Any client MAY attempt
+  // the timeout transition once its own local clock suggests the
+  // deadline has passed (an optimization, not an authority) — but
+  // firestore.rules independently re-derives the SAME deadline from
+  // `createdAt` and compares it against `request.time` (Firestore
+  // Rules' own server-clock primitive) before ever allowing that write.
+  // A malicious client claiming "the timer expired" when the real
+  // server clock disagrees is rejected by the rule, not by any code in
+  // this file. The UI's own countdown (match/index.html) is REQUIRED to
+  // be presentational only — it renders `createdAt + 30s` for display,
+  // it never gates a write.
+  var REMATCH_VOTE_DURATION_SECONDS = 30;
+  var REMATCH_VOTE_VALUES = ["YES", "NO"];
+
+  /** Creates the vote document for a completed match. Idempotent: if
+   *  the vote already exists (another client's earlier, possibly
+   *  concurrent, call already created it), returns the EXISTING vote
+   *  rather than erroring or overwriting it — exactly the same
+   *  "idempotent no-op, never a second write" shape startMatch() uses
+   *  for `room.matchId` already being set. `seats`/`votes` are copied
+   *  VERBATIM from the parent match's own, already-immutable `seats`
+   *  map — never derived from anything a client supplies — closing the
+   *  "arbitrary UID injection" risk at the one place seats first appear
+   *  on this new document. */
+  function createRematchVote(matchId) {
+    if (!matchId) return Promise.reject(bidError("INVALID_ARGUMENT", "createRematchVote: matchId is required."));
+    if (!db()) return Promise.reject(bidError("UNAVAILABLE", "MatchService: Firestore is not initialized on this page."));
+    var callingUid = currentUid();
+    if (!callingUid) return Promise.reject(bidError("UNAUTHENTICATED", "createRematchVote: no signed-in user."));
+
+    var matchRef = db().collection("matches").doc(matchId);
+    var voteRef = matchRef.collection("rematchVote").doc("current");
+    return db().runTransaction(function (tx) {
+      return tx.get(matchRef).then(function (matchSnap) {
+        if (!matchSnap.exists) throw bidError("MATCH_NOT_FOUND", "createRematchVote: match '" + matchId + "' was not found.");
+        var match = matchSnap.data();
+        if (!Array.isArray(match.players) || match.players.indexOf(callingUid) === -1) {
+          throw bidError("PERMISSION_DENIED", "createRematchVote: you are not a player in this match.");
+        }
+        if (match.status !== "complete") {
+          throw bidError("MATCH_NOT_COMPLETE", "createRematchVote: match '" + matchId + "' has not completed yet.");
+        }
+        return tx.get(voteRef).then(function (voteSnap) {
+          if (voteSnap.exists) {
+            // Idempotent no-op — never a second create, never an error.
+            return { created: false, matchId: matchId, vote: voteSnap.data() };
+          }
+          var seats = match.seats || {};
+          var votes = {};
+          Object.keys(seats).forEach(function (seatId) { votes[seatId] = null; });
+          var voteDoc = {
+            matchId: matchId,
+            seats: Object.assign({}, seats),
+            votes: votes,
+            status: "OPEN",
+            newMatchId: null,
+            createdAt: serverTimestamp(),
+            version: 1
+          };
+          tx.set(voteRef, voteDoc);
+          return { created: true, matchId: matchId, vote: voteDoc };
+        });
+      });
+    });
+  }
+
+  /** Casts exactly one seat's vote. LOCKED once cast — per this
+   *  sprint's own final product decision, a vote can never flip value.
+   *  A duplicate submission of the SAME value is an idempotent no-op
+   *  (no write at all — nothing to change); a conflicting SECOND value
+   *  for an already-cast seat is rejected, never silently applied.
+   *  A "NO" vote fails the whole rematch IMMEDIATELY, in this SAME
+   *  transaction (no separate resolve step needed for that case) — per
+   *  the product decision "do not wait for the remaining players."
+   *  A "YES" vote that happens to complete all real seats' votes moves
+   *  status to "ALL_YES" in this same write, but does NOT itself create
+   *  the new match — see createRematchMatch() below; keeping "record
+   *  a vote" and "create the next match" as separate, independently-
+   *  callable, idempotent operations is what lets ANY seated client
+   *  safely attempt either step, with no host/master role anywhere. */
+  function submitRematchVote(matchId, choice) {
+    if (!matchId) return Promise.reject(bidError("INVALID_ARGUMENT", "submitRematchVote: matchId is required."));
+    if (REMATCH_VOTE_VALUES.indexOf(choice) === -1) {
+      return Promise.reject(bidError("INVALID_ARGUMENT", "submitRematchVote: choice must be one of " + REMATCH_VOTE_VALUES.join("/") + "."));
+    }
+    if (!db()) return Promise.reject(bidError("UNAVAILABLE", "MatchService: Firestore is not initialized on this page."));
+    var callingUid = currentUid();
+    if (!callingUid) return Promise.reject(bidError("UNAUTHENTICATED", "submitRematchVote: no signed-in user."));
+
+    var voteRef = db().collection("matches").doc(matchId).collection("rematchVote").doc("current");
+    return db().runTransaction(function (tx) {
+      return tx.get(voteRef).then(function (snap) {
+        if (!snap.exists) throw bidError("VOTE_NOT_FOUND", "submitRematchVote: no rematch vote exists for match '" + matchId + "' — call createRematchVote() first.");
+        var vote = snap.data();
+        // Resolve the acting uid's OWN seat from the vote's own,
+        // parent-derived `seats` map — never trust a client-supplied
+        // seat id, mirroring resolveSeatAndAuthorize()'s established
+        // convention elsewhere in this file.
+        var seats = vote.seats || {};
+        var actingSeat = Object.keys(seats).filter(function (s) { return seats[s] === callingUid; })[0] || null;
+        if (!actingSeat) {
+          throw bidError("PERMISSION_DENIED", "submitRematchVote: you do not own a seat in this match's rematch vote.");
+        }
+        if (vote.status !== "OPEN") {
+          // Idempotent no-op — the vote is already decided (by this
+          // seat's own earlier attempt, or by the timeout/any-NO path
+          // racing ahead of this write); never a second transition.
+          return { accepted: false, reason: "VOTE_CLOSED", matchId: matchId, status: vote.status, seatId: actingSeat };
+        }
+        // Independent client-side deadline pre-check — this file's own
+        // established "neither layer trusts the other alone" convention
+        // (see this section's header comment on timer authority),
+        // mirrored here for a FAST, honest rejection rather than
+        // relying solely on firestore.rules to catch a late vote. Not
+        // the authority (that remains request.time in the rule) — only
+        // a fast pre-check using the SAME real serverTimestamp-derived
+        // `createdAt` the rule itself compares against.
+        var createdAtMsForCast = vote.createdAt && typeof vote.createdAt.toMillis === "function" ? vote.createdAt.toMillis() : null;
+        if (createdAtMsForCast != null && Date.now() > createdAtMsForCast + REMATCH_VOTE_DURATION_SECONDS * 1000) {
+          return { accepted: false, reason: "VOTE_EXPIRED", matchId: matchId, seatId: actingSeat };
+        }
+        var existing = vote.votes[actingSeat];
+        if (existing != null) {
+          if (existing === choice) {
+            // Duplicate of the SAME value — idempotent no-op, no write.
+            return { accepted: true, reason: "ALREADY_VOTED", matchId: matchId, seatId: actingSeat, choice: choice };
+          }
+          // A conflicting second value for an already-locked vote —
+          // rejected, never silently applied. Not an error: this is a
+          // legitimate outcome a client should handle gracefully (its
+          // own earlier vote already won), not a thrown exception.
+          return { accepted: false, reason: "VOTE_LOCKED", matchId: matchId, seatId: actingSeat, existing: existing };
+        }
+        var newVotes = Object.assign({}, vote.votes);
+        newVotes[actingSeat] = choice;
+        var newStatus = vote.status; // stays "OPEN" unless one of the two structural transitions below fires
+        if (choice === "NO") {
+          newStatus = "FAILED_NO";
+        } else {
+          // choice === "YES": ALL_YES only if EVERY real seat (per
+          // `seats`, never a hardcoded 4) now has a "YES" vote — a
+          // pure count of what THIS document's own seats/votes
+          // actually contain, never a re-derivation of who's "supposed"
+          // to be seated.
+          var allYes = Object.keys(seats).every(function (s) { return newVotes[s] === "YES"; });
+          if (allYes) newStatus = "ALL_YES";
+        }
+        var nextVersion = vote.version + 1;
+        tx.update(voteRef, { votes: newVotes, status: newStatus, version: nextVersion });
+        return { accepted: true, reason: "RECORDED", matchId: matchId, seatId: actingSeat, choice: choice, status: newStatus, version: nextVersion };
+      });
+    });
+  }
+
+  /** Any seated client may safely attempt this once its OWN local
+   *  clock suggests the 30-second window has passed — that local
+   *  judgment is only ever an optimization for WHEN to try, never the
+   *  authority for WHETHER the transition is valid (see this section's
+   *  own header comment on timer authority). The transaction re-reads
+   *  `createdAt` and compares against `Date.now()` here as a fast,
+   *  honest client-side mirror of the SAME check firestore.rules
+   *  independently re-derives from `request.time` — this file's own
+   *  established "neither layer trusts the other alone" convention,
+   *  applied to time instead of to a value. Idempotent: a vote that's
+   *  already terminal (by the time this transaction runs) is a no-op,
+   *  never a second write. */
+  function resolveRematchVoteTimeout(matchId) {
+    if (!matchId) return Promise.reject(bidError("INVALID_ARGUMENT", "resolveRematchVoteTimeout: matchId is required."));
+    if (!db()) return Promise.reject(bidError("UNAVAILABLE", "MatchService: Firestore is not initialized on this page."));
+    var callingUid = currentUid();
+    if (!callingUid) return Promise.reject(bidError("UNAUTHENTICATED", "resolveRematchVoteTimeout: no signed-in user."));
+
+    var voteRef = db().collection("matches").doc(matchId).collection("rematchVote").doc("current");
+    return db().runTransaction(function (tx) {
+      return tx.get(voteRef).then(function (snap) {
+        if (!snap.exists) throw bidError("VOTE_NOT_FOUND", "resolveRematchVoteTimeout: no rematch vote exists for match '" + matchId + "'.");
+        var vote = snap.data();
+        if (vote.status !== "OPEN") {
+          return { resolved: false, reason: "ALREADY_RESOLVED", matchId: matchId, status: vote.status };
+        }
+        var createdAtMs = vote.createdAt && typeof vote.createdAt.toMillis === "function" ? vote.createdAt.toMillis() : null;
+        if (createdAtMs == null) {
+          // createdAt hasn't round-tripped through the server yet
+          // (the sentinel is still pending on this client's own local
+          // cache) — never guess a deadline; wait for a real read.
+          return { resolved: false, reason: "DEADLINE_UNKNOWN", matchId: matchId };
+        }
+        var deadlineMs = createdAtMs + REMATCH_VOTE_DURATION_SECONDS * 1000;
+        if (Date.now() < deadlineMs) {
+          return { resolved: false, reason: "NOT_YET_EXPIRED", matchId: matchId, deadlineMs: deadlineMs };
+        }
+        var nextVersion = vote.version + 1;
+        tx.update(voteRef, { status: "FAILED_TIMEOUT", version: nextVersion });
+        return { resolved: true, matchId: matchId, status: "FAILED_TIMEOUT", version: nextVersion };
+      });
+    });
+  }
+
+  /** Any seated client may safely attempt this once it observes
+   *  `status:"ALL_YES"` — race-safe by construction: whichever
+   *  transaction actually commits first creates the new match AND
+   *  links it (`newMatchId`) in ONE atomic transaction (Firestore
+   *  fully supports creating one document and updating another in the
+   *  same transaction — this file's own startMatch() already does
+   *  exactly this, for rooms/{roomId} + matches/{matchId}); every other
+   *  simultaneous attempt re-reads, observes `newMatchId` already set,
+   *  and idempotently returns the EXISTING new match id rather than
+   *  creating a second one. `seats`/`players` for the new match are
+   *  copied VERBATIM from the vote document's own `seats` (itself
+   *  copied verbatim from the ORIGINAL match at vote-creation time) —
+   *  never from any client-supplied list — so "same four players, same
+   *  seat assignments" is a structural guarantee, not a trust
+   *  assumption. The OLD match document is never read for writing and
+   *  never touched by this function — only `get()` for eligibility. */
+  function createRematchMatch(matchId) {
+    if (!matchId) return Promise.reject(bidError("INVALID_ARGUMENT", "createRematchMatch: matchId is required."));
+    if (!db()) return Promise.reject(bidError("UNAVAILABLE", "MatchService: Firestore is not initialized on this page."));
+    var callingUid = currentUid();
+    if (!callingUid) return Promise.reject(bidError("UNAUTHENTICATED", "createRematchMatch: no signed-in user."));
+
+    var oldMatchRef = db().collection("matches").doc(matchId);
+    var voteRef = oldMatchRef.collection("rematchVote").doc("current");
+    return db().runTransaction(function (tx) {
+      return tx.get(voteRef).then(function (voteSnap) {
+        if (!voteSnap.exists) throw bidError("VOTE_NOT_FOUND", "createRematchMatch: no rematch vote exists for match '" + matchId + "'.");
+        var vote = voteSnap.data();
+        if (vote.newMatchId) {
+          // Idempotent no-op — a rematch match already exists for this
+          // vote (created by this call, or by a simultaneous one that
+          // won the race first).
+          return { created: false, matchId: matchId, newMatchId: vote.newMatchId };
+        }
+        if (vote.status !== "ALL_YES") {
+          return { created: false, reason: "NOT_ALL_YES", matchId: matchId, status: vote.status };
+        }
+        return tx.get(oldMatchRef).then(function (oldMatchSnap) {
+          if (!oldMatchSnap.exists) throw bidError("MATCH_NOT_FOUND", "createRematchMatch: original match '" + matchId + "' was not found.");
+          var oldMatch = oldMatchSnap.data();
+          if (oldMatch.status !== "complete") {
+            throw bidError("MATCH_NOT_COMPLETE", "createRematchMatch: original match '" + matchId + "' is not complete.");
+          }
+          var seats = vote.seats || {};
+          // Deterministic seat-order player list — never re-derived
+          // from a client, purely a projection of THIS vote's own,
+          // already-authoritative seats map.
+          var players = SEAT_IDS.filter(function (s) { return seats[s]; }).map(function (s) { return seats[s]; });
+          var bids = {};
+          Object.keys(seats).forEach(function (seatId) { bids[seatId] = null; });
+          var newMatchRef = db().collection("matches").doc();
+          var newMatchDoc = {
+            roomId: oldMatch.roomId,
+            rematchOfMatchId: matchId,
+            players: players,
+            status: "starting",
+            createdAt: serverTimestamp(),
+            currentRound: 1,
+            maxRounds: 18,
+            extendedRounds: [],
+            dealer: players[0],
+            turn: players[0],
+            // Player Hand Synchronization sprint: a rematch is a
+            // genuinely new deal — never a copy/reuse of the old
+            // match's hands (see the Architecture Report's §10
+            // "Rematch" note) — so this starts at 0 exactly like a
+            // fresh match's own gameState.
+            gameState: { initialized: false, dealtRound: 0 },
+            seats: Object.assign({}, seats),
+            version: 1,
+            biddingOpen: true,
+            bids: bids,
+            lastBidSeat: null,
+            cardLog: [],
+            lastCardSeat: null,
+            cardPhase: null,
+            biddingLog: []
+          };
+          tx.set(newMatchRef, newMatchDoc);
+          var nextVersion = vote.version + 1;
+          tx.update(voteRef, { status: "NEW_MATCH_CREATED", newMatchId: newMatchRef.id, version: nextVersion });
+          return { created: true, matchId: matchId, newMatchId: newMatchRef.id };
+        });
+      });
+    });
+  }
+
+  // Sprint's own ref-counted subscription registry for the rematch
+  // vote subcollection — an independent registry from `matchSubscriptions`
+  // above (different document path entirely), but the SAME shape:
+  // one real onSnapshot listener per matchId no matter how many local
+  // callers subscribe, automatic reconnect with the same backoff
+  // constants, fail-open error delivery. A second (or third) call for
+  // the same matchId never creates a second Firestore listener.
+  var rematchVoteSubscriptions = {};
+
+  function attachRematchVoteListener(matchId, entry) {
+    entry.unsubscribeFirestore = db().collection("matches").doc(matchId).collection("rematchVote").doc("current").onSnapshot(
+      function (snap) {
+        entry.reconnectAttempt = 0;
+        var data = snap.exists ? snap.data() : null;
+        if (data && typeof data.version === "number") {
+          if (entry.lastVersion != null && data.version <= entry.lastVersion) return;
+          entry.lastVersion = data.version;
+        }
+        if (entry.hasPublished && deepEqual(data, entry.lastPublishedData)) return;
+        entry.hasPublished = true;
+        entry.lastPublishedData = data;
+        entry.listeners.slice().forEach(function (cb) { safeInvoke(cb, data, null); });
+      },
+      function (err) {
+        var deliveredData = entry.hasPublished ? entry.lastPublishedData : null;
+        entry.listeners.slice().forEach(function (cb) { safeInvoke(cb, deliveredData, err); });
+        if (isRetryable(err)) {
+          scheduleRematchVoteReconnect(matchId, entry);
+        } else {
+          entry.terminalError = err;
+          console.warn("[MatchService] subscribeToRematchVote(" + matchId + "): " + classifyError(err) + " error (code: " +
+            (err && err.code || "none") + ") — reconnect attempts stopped permanently for this subscription.");
+        }
+      }
+    );
+  }
+
+  function scheduleRematchVoteReconnect(matchId, entry) {
+    if (entry.reconnectTimer) return;
+    if (entry.listeners.length === 0) return;
+    var attempt = entry.reconnectAttempt || 0;
+    var delay = Math.min(RECONNECT_BASE_MS * Math.pow(2, attempt), RECONNECT_MAX_MS);
+    entry.reconnectAttempt = attempt + 1;
+    entry.reconnectTimer = setTimeout(function () {
+      entry.reconnectTimer = null;
+      if (entry.listeners.length === 0) return;
+      if (typeof entry.unsubscribeFirestore === "function") entry.unsubscribeFirestore();
+      attachRematchVoteListener(matchId, entry);
+    }, delay);
+  }
+
+  /** Live-subscribe to the rematch vote subcollection document for a
+   *  match. Same ref-counted, reconnecting, fail-open shape as
+   *  subscribeToMatch() above, targeting a different document path.
+   *  Delivers `null` (not an error) if no vote has been created yet —
+   *  a perfectly normal state (the match may not even be complete),
+   *  never treated as a failure. */
+  function subscribeToRematchVote(matchId, callback) {
+    if (!db()) {
+      callback(null, new Error("MatchService: Firestore is not initialized on this page."));
+      return function unsubscribe() {};
+    }
+    var entry = rematchVoteSubscriptions[matchId];
+    if (!entry) {
+      entry = rematchVoteSubscriptions[matchId] = {
+        listeners: [callback], unsubscribeFirestore: null, hasPublished: false,
+        lastPublishedData: null, lastVersion: null, reconnectAttempt: 0, reconnectTimer: null,
+        terminalError: null
+      };
+      attachRematchVoteListener(matchId, entry);
+    } else {
+      entry.listeners.push(callback);
+      if (entry.terminalError) safeInvoke(callback, entry.hasPublished ? entry.lastPublishedData : null, entry.terminalError);
+      else if (entry.hasPublished) safeInvoke(callback, entry.lastPublishedData, null);
+    }
+    return function unsubscribe() {
+      var idx = entry.listeners.indexOf(callback);
+      if (idx !== -1) entry.listeners.splice(idx, 1);
+      if (entry.listeners.length === 0) {
+        if (entry.reconnectTimer) { clearTimeout(entry.reconnectTimer); entry.reconnectTimer = null; }
+        if (typeof entry.unsubscribeFirestore === "function") entry.unsubscribeFirestore();
+        delete rematchVoteSubscriptions[matchId];
+      }
+    };
+  }
+  // ══════════════════════════════════════════════════════════════════
 
   /** Live-subscribe to a match document. Returns an unsubscribe
    *  function. Failures are delivered to callback(null, err) rather
@@ -1046,11 +2259,26 @@
     // unimplemented stub, unchanged, since nothing in this codebase
     // (or this sprint's own brief) ever calls it.
     submitCard: submitCard,
+    // Sprint 3.7 (Online Bidding Synchronization Contract): Dash Call /
+    // Auction Bid / Confirm Call. Final Estimate remains submitBid()'s
+    // job, unchanged — see submitBiddingAction()'s own header comment
+    // for why these are structurally different shapes.
+    submitBiddingAction: submitBiddingAction,
     playCard: playCard,
     resolveTrick: resolveTrick,
     completeRound: completeRound,
     advanceToNextRound: advanceToNextRound,
+    extendMatchRounds: extendMatchRounds,
     endMatch: endMatch,
-    subscribeToMatch: subscribeToMatch
+    subscribeToMatch: subscribeToMatch,
+    // Player Hand Synchronization sprint.
+    dealRound: dealRound,
+    subscribeToHand: subscribeToHand,
+    // Post-Match Rematch Vote sprint.
+    createRematchVote: createRematchVote,
+    submitRematchVote: submitRematchVote,
+    resolveRematchVoteTimeout: resolveRematchVoteTimeout,
+    createRematchMatch: createRematchMatch,
+    subscribeToRematchVote: subscribeToRematchVote
   };
 })(window);

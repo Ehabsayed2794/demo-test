@@ -11,7 +11,7 @@
   :root{
     --accent:#E8A33D; --accent-hi:color-mix(in oklch, var(--accent) 70%, #fff3da);
     --accent-dim:color-mix(in oklch, var(--accent) 55%, #1a1208); --glow:0.6;
-    --ink:#f0eada; --ink-dim:#a89f8e; --ink-faint:#6f685b;
+    --ink:#f0eada; --ink-dim:#a89f8e; --ink-faint:#8a8272; /* PRODUCTION UX AUDIT (Finding #4): was #6f685b, failed WCAG 4.5:1 contrast. Computed replacement. */
     --bg:#0d0a07; --panel:#17130e; --panel-hi:#1d1912; --panel-line:rgba(255,240,210,.07); --pill:#1d1a16;
     --mono:"Spline Sans Mono",monospace;
   }

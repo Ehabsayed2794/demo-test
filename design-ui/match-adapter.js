@@ -654,6 +654,313 @@
     return Object.prototype.hasOwnProperty.call(lastAppliedVersionByMatch, matchId) ? lastAppliedVersionByMatch[matchId] : null;
   }
 
+  // ── Sprint 3.7 (Online Bidding Synchronization Contract): Remote
+  // Bidding Action (Dash Call / Auction Bid / Confirm Call) Application
+  // ─────────────────────────────────────────────────────────────────
+  // matchId -> the highest matchDoc.version this adapter has ever
+  // successfully processed FOR biddingLog. A FOURTH independent
+  // registry — deliberately separate from bids' (`lastAppliedVersionByMatch`),
+  // turn's, and cards' own — same reasoning as every prior sprint's
+  // identical design choice (see applyRemoteTurn()'s own comment for
+  // the full account): a single delivery can legitimately carry a new
+  // Final Estimate bid AND a new biddingLog entry AND a new card at
+  // once; a shared gate would let whichever function's check ran first
+  // silently consume the version for the others.
+  var lastAppliedBiddingActionVersionByMatch = {};
+  // matchId -> how many `biddingLog` ENTRIES this adapter has already
+  // replayed into the engine, ever. Mirrors `lastAppliedCardCountByMatch`
+  // exactly, for the identical reason: a single accepted (newer-version)
+  // snapshot can legitimately carry MULTIPLE new entries (a late
+  // subscriber, or a reconnect that missed several deliveries) — a
+  // per-VERSION gate alone is not sufficient, since Dash/Auction/Confirm
+  // are (unlike a single Final Estimate bid) repeatable, ordered actions.
+  var lastAppliedBiddingActionCountByMatch = {};
+
+  /** Sprint 3.7: replays every `biddingLog` entry this adapter has not
+   *  yet applied, IN ORDER, through `BiddingEngine.emit({type:
+   *  entry.actionType, playerId: entry.seatId, ...})` — mirrors
+   *  `applyRemoteCard()`'s exact "replay every new log entry" structure
+   *  (same dual version+count gate, same "stop at the first problem,
+   *  never look past it" contract), applied here to `biddingLog`
+   *  instead of `cardLog`. Never mutates Firestore; every effect flows
+   *  one way, into the local `GameSession` (via `BiddingEngine.emit()`
+   *  — this function never calls a `GameSession` setter directly for
+   *  bidding data), and only ever THROUGH the real, unmodified
+   *  `bidding-engine.js` reducer — this function never decides
+   *  legality itself, it only reads the engine's own response.
+   *
+   *  CRITICAL DIFFERENCE from `applyRemoteCard()`'s own echo-detection,
+   *  explained here because it is the one genuinely new piece of logic
+   *  this sprint adds (everything else is a direct structural mirror):
+   *  `TableEngine`'s `state.plays` array lets `applyRemoteCard()` ask
+   *  "does the local engine ALREADY have THIS seat's THIS card
+   *  recorded for the CURRENT trick" directly. `bidding-engine.js` has
+   *  no equivalent single field that works uniformly across all three
+   *  action types. Instead, this function asks `BiddingEngine.canSubmit()`
+   *  FIRST, for every entry, before ever calling `emit()` — exactly
+   *  mirroring `MatchService.submitBiddingAction()`'s own pre-write
+   *  gate, just applied here to a REPLAY instead of a fresh submission.
+   *  If `canSubmit()` says illegal SPECIFICALLY because the phase/turn
+   *  has already moved past where this entry would apply (reason ===
+   *  "Not this seat's turn" or reason matches "Not the ... phase") —
+   *  this is a BENIGN, EXPECTED case: either this exact action was
+   *  already applied locally (e.g. this client's own action, now
+   *  echoing back through Firestore) and the engine has already
+   *  advanced past it, or a late-delivered entry for a sub-phase this
+   *  engine has already resolved past. Skip it — advance the count,
+   *  never treat it as a desync. A `canSubmit()` rejection for any
+   *  OTHER reason (a genuine content-rule mismatch — the local engine
+   *  and the remote Firestore log disagree about what's LEGAL, not
+   *  merely about WHEN) is treated exactly like `applyRemoteCard()`'s
+   *  own `ENGINE_REJECTED`: a real desync, stop immediately, never
+   *  look at a later entry in this delivery.
+   *
+   *  Returns a small, structured result object — `{applied, reason,
+   *  appliedCount, results}` (and `desync:true` on the stop path) —
+   *  covering every path, including every rejection, exactly like every
+   *  other `applyRemote*()` function in this file. Never throws for
+   *  ordinary "nothing to do" cases. */
+  function applyRemoteBiddingAction(matchId, matchDoc) {
+    if (!matchId) return { applied: false, reason: "MALFORMED_SNAPSHOT" };
+    if (!matchDoc || typeof matchDoc !== "object" || Array.isArray(matchDoc)) {
+      return { applied: false, reason: "MALFORMED_SNAPSHOT" };
+    }
+    if (typeof matchDoc.version !== "number" || !Number.isFinite(matchDoc.version)) {
+      return { applied: false, reason: "MALFORMED_SNAPSHOT" };
+    }
+    if (!Array.isArray(matchDoc.biddingLog)) {
+      return { applied: false, reason: "MALFORMED_SNAPSHOT" };
+    }
+
+    var lastVersion = Object.prototype.hasOwnProperty.call(lastAppliedBiddingActionVersionByMatch, matchId)
+      ? lastAppliedBiddingActionVersionByMatch[matchId] : null;
+    if (lastVersion != null && matchDoc.version <= lastVersion) {
+      return { applied: false, reason: matchDoc.version === lastVersion ? "DUPLICATE_VERSION" : "STALE_VERSION" };
+    }
+
+    var lastCount = lastAppliedBiddingActionCountByMatch[matchId] || 0;
+    if (matchDoc.biddingLog.length <= lastCount) {
+      // A structurally newer version whose log has not actually grown
+      // beyond what we've already replayed (e.g. a version bump caused
+      // by a concurrent bid/card write on the SAME document) — genuinely
+      // new information for THIS field, just none of it about bidding.
+      lastAppliedBiddingActionVersionByMatch[matchId] = matchDoc.version;
+      return { applied: false, reason: "NO_NEW_BIDDING_ACTIONS" };
+    }
+
+    if (!global.BiddingEngine || typeof global.BiddingEngine.emit !== "function" ||
+        typeof global.BiddingEngine.canSubmit !== "function" || typeof global.BiddingEngine.getState !== "function") {
+      return { applied: false, reason: "ENGINE_UNAVAILABLE" };
+    }
+    var BiddingEngine = global.BiddingEngine;
+
+    var results = [];
+    for (var i = lastCount; i < matchDoc.biddingLog.length; i++) {
+      var entry = matchDoc.biddingLog[i];
+      if (!entry || typeof entry !== "object" || !entry.seatId || !entry.actionType ||
+          ["SubmitDashCallDecision", "SubmitAuctionBid", "SubmitConfirmCall"].indexOf(entry.actionType) === -1) {
+        // Mirrors applyRemoteCard()'s own MALFORMED_ENTRY treatment
+        // exactly (Sprint 4.2.2, Task 4): stop immediately, advance the
+        // count only up to (never past) this index, do NOT advance the
+        // version registry at all, so a future delivery re-attempts
+        // this SAME stuck index rather than treating this version as
+        // fully handled.
+        results.push({ index: i, applied: false, reason: "MALFORMED_ENTRY" });
+        lastAppliedBiddingActionCountByMatch[matchId] = i;
+        return {
+          applied: false, desync: true, reason: "MALFORMED_ENTRY", matchId: matchId, index: i,
+          appliedCount: results.filter(function (r) { return r.applied; }).length,
+          version: matchDoc.version, results: results
+        };
+      }
+
+      // Round Lifecycle sprint — CRITICAL: check this entry's round tag
+      // against the LOCAL engine's own current round BEFORE ever asking
+      // canSubmit()/emit() about it. Without this, a client that has
+      // not yet locally transitioned to Round N+1 (see
+      // applyRemoteRoundTransition()/startRoundSync() below) would have
+      // a Round N+1 biddingLog entry rejected by canSubmit() with
+      // "Bidding is already complete" (this engine is still on Round
+      // N's DONE state) — and THAT reason is already, correctly,
+      // classified as a benign phase/turn-mismatch skip by
+      // isPhaseOrTurnMismatchReason() below, which ADVANCES the count
+      // past it. Once advanced, this adapter's monotonic count-based
+      // catch-up would NEVER revisit that index — even after this same
+      // client later calls BiddingEngine.initState() for Round N+1 —
+      // permanently losing that entry for this client. This is the
+      // exact cross-round contamination this sprint's own brief warns
+      // against ("Client A: GameSession.nextRound() while Client B:
+      // still observes Round 1"). The fix: an entry whose round is
+      // AHEAD of the local engine's own round is not a rejection at
+      // all — it is "not yet ready for me" — so this stops the loop
+      // WITHOUT touching either registry, leaving this exact index for
+      // a future delivery (after this client's own round transition)
+      // to re-attempt correctly.
+      var localBiddingRound = (function () {
+        try {
+          var s = BiddingEngine.getState();
+          return s ? s.round : null;
+        } catch (e) { return null; }
+      })();
+      if (entry.round != null && localBiddingRound != null && entry.round > localBiddingRound) {
+        results.push({ index: i, applied: false, reason: "AWAITING_ROUND_TRANSITION", seatId: entry.seatId, entryRound: entry.round, localRound: localBiddingRound });
+        return {
+          applied: false, desync: false, reason: "AWAITING_ROUND_TRANSITION", matchId: matchId, index: i,
+          appliedCount: results.filter(function (r) { return r.applied; }).length,
+          version: matchDoc.version, results: results
+        };
+      }
+      // A defensive counterpart to the check above — should never
+      // actually trigger given the "stop dead, never advance past an
+      // AWAITING_ROUND_TRANSITION index" behavior just established (a
+      // stale-round entry would always be caught BEFORE this client's
+      // own count could ever move past it), but this file's own
+      // established convention is "never trust a monotonic assumption
+      // blindly" — an entry for a round strictly BEHIND the local
+      // engine is simply already-superseded history; skip it exactly
+      // like ALREADY_APPLIED_LOCALLY, never a desync.
+      if (entry.round != null && localBiddingRound != null && entry.round < localBiddingRound) {
+        results.push({ index: i, applied: false, reason: "STALE_ROUND", seatId: entry.seatId, entryRound: entry.round, localRound: localBiddingRound });
+        continue;
+      }
+
+      var intent = biddingLogEntryToIntent(entry);
+      // Sprint 3.7.x (Bidding Trust-Boundary Hardening): canSubmit()
+      // itself is now hardened (bidding-engine.js) to never crash on a
+      // malformed intent — but this replay path is exactly the kind of
+      // place "neither layer trusts the other alone" applies most:
+      // never let ANY unexpected engine exception (a malformed intent
+      // this hardening pass didn't anticipate, or a future engine
+      // change) escape uncaught into this Firestore snapshot callback.
+      // Mirrors this exact same MALFORMED_ENTRY/ENGINE_REJECTED "stop
+      // immediately, advance count only up to this index, never
+      // advance the version registry" contract every other failure
+      // path in this function already uses — an exception is treated
+      // as a desync, never silently swallowed, never a fabricated
+      // success, and never followed by a mutating emit() call.
+      var verdict;
+      try {
+        verdict = BiddingEngine.canSubmit(intent);
+      } catch (e) {
+        results.push({ index: i, applied: false, reason: "ENGINE_THREW", seatId: entry.seatId, engineReason: e.message });
+        lastAppliedBiddingActionCountByMatch[matchId] = i;
+        return {
+          applied: false, desync: true, reason: "ENGINE_THREW", matchId: matchId, index: i, seatId: entry.seatId,
+          engineReason: e.message,
+          appliedCount: results.filter(function (r) { return r.applied; }).length,
+          version: matchDoc.version, results: results
+        };
+      }
+      if (!verdict || !verdict.legal) {
+        if (isPhaseOrTurnMismatchReason(verdict && verdict.reason)) {
+          // Benign, expected: either this client's own action already
+          // applied locally (this is its echo), or a late entry for a
+          // sub-phase already resolved past. Never a desync — advance
+          // past it and keep going, exactly like a genuine
+          // ALREADY_APPLIED_LOCALLY skip elsewhere in this file.
+          results.push({ index: i, applied: false, reason: "ALREADY_APPLIED_LOCALLY", seatId: entry.seatId });
+          continue;
+        }
+        // A genuine content-rule mismatch — the real engine's rules and
+        // what Firestore's log claims was accepted disagree. Treated
+        // exactly like `applyRemoteCard()`'s own `ENGINE_REJECTED`:
+        // stop immediately, never advance the version registry.
+        results.push({ index: i, applied: false, reason: "ENGINE_REJECTED", seatId: entry.seatId, engineReason: verdict && verdict.reason });
+        lastAppliedBiddingActionCountByMatch[matchId] = i;
+        return {
+          applied: false, desync: true, reason: "ENGINE_REJECTED", matchId: matchId, index: i, seatId: entry.seatId,
+          engineReason: verdict && verdict.reason,
+          appliedCount: results.filter(function (r) { return r.applied; }).length,
+          version: matchDoc.version, results: results
+        };
+      }
+
+      // The ONLY call in this codebase's bidding-action sync path into
+      // bidding-engine.js's mutating reducer. Every legality/ordering
+      // decision was already made by the canSubmit() check above —
+      // this call's own result is re-checked defensively (mirrors
+      // applyRemoteCard()'s own belt-and-suspenders re-check after a
+      // successful preview) but should never disagree with `verdict`.
+      var engineResult;
+      try {
+        engineResult = BiddingEngine.emit(intent);
+      } catch (e) {
+        results.push({ index: i, applied: false, reason: "ENGINE_THREW", seatId: entry.seatId, engineReason: e.message });
+        lastAppliedBiddingActionCountByMatch[matchId] = i;
+        return {
+          applied: false, desync: true, reason: "ENGINE_THREW", matchId: matchId, index: i, seatId: entry.seatId,
+          engineReason: e.message,
+          appliedCount: results.filter(function (r) { return r.applied; }).length,
+          version: matchDoc.version, results: results
+        };
+      }
+      if (!engineResult || engineResult.rejected) {
+        results.push({ index: i, applied: false, reason: "ENGINE_REJECTED", seatId: entry.seatId, engineReason: engineResult && engineResult.reason });
+        lastAppliedBiddingActionCountByMatch[matchId] = i;
+        return {
+          applied: false, desync: true, reason: "ENGINE_REJECTED", matchId: matchId, index: i, seatId: entry.seatId,
+          engineReason: engineResult && engineResult.reason,
+          appliedCount: results.filter(function (r) { return r.applied; }).length,
+          version: matchDoc.version, results: results
+        };
+      }
+      results.push({ index: i, applied: true, seatId: entry.seatId, actionType: entry.actionType });
+    }
+
+    lastAppliedBiddingActionCountByMatch[matchId] = matchDoc.biddingLog.length;
+    lastAppliedBiddingActionVersionByMatch[matchId] = matchDoc.version;
+    var appliedCount = results.filter(function (r) { return r.applied; }).length;
+    return { applied: appliedCount > 0, desync: false, appliedCount: appliedCount, version: matchDoc.version, results: results };
+  }
+
+  /** Translates a `biddingLog` entry into the exact `BiddingEngine`
+   *  intent shape — the SAME translation `MatchService.submitBiddingAction()`
+   *  performs in the opposite direction (its own `biddingActionToIntent()`),
+   *  kept as an independent local copy since these are separate files
+   *  with no shared module — `actionType` IS the engine's own
+   *  `intent.type` string either way, so this is a direct field
+   *  passthrough, never a re-derivation. */
+  function biddingLogEntryToIntent(entry) {
+    var intent = { type: entry.actionType, playerId: entry.seatId };
+    if (entry.actionType === "SubmitDashCallDecision") {
+      intent.declaredDashCall = entry.declaredDashCall;
+    } else if (entry.actionType === "SubmitAuctionBid") {
+      intent.isPass = !!entry.isPass;
+      if (!intent.isPass) { intent.tricks = entry.tricks; intent.suit = entry.suit; }
+    } else if (entry.actionType === "SubmitConfirmCall") {
+      intent.tricks = entry.tricks;
+      intent.suit = entry.suit;
+    }
+    return intent;
+  }
+
+  /** `true` iff a `canSubmit()` rejection reason is one of the 5
+   *  phase/turn-guard strings `bidding-engine.js`'s `canSubmit()` (Sprint
+   *  3.6.1) returns for EVERY intent type's first two checks — never a
+   *  content-rule reason (Dash limits, suit strength, Caller cap,
+   *  With-floor, Forbidden-13, auction comparison), which always use
+   *  a DIFFERENT, distinct reason string. Matched against the EXACT,
+   *  literal strings `canSubmit()`'s own source uses (bidding-engine.js)
+   *  — not a heuristic/substring guess. */
+  function isPhaseOrTurnMismatchReason(reason) {
+    return reason === "Not this seat's turn" ||
+      reason === "Not the Dash-Call phase" ||
+      reason === "Not the Auction phase" ||
+      reason === "Not the Confirmation phase" ||
+      reason === "Not the Final Estimates phase" ||
+      reason === "Bidding is already complete";
+  }
+
+  /** Test/diagnostic-only accessors for `applyRemoteBiddingAction()`'s
+   *  own registries — the Sprint 3.7 analogs of `getLastAppliedVersion()`/
+   *  `getLastAppliedCardVersion()`/`getLastAppliedCardCount()`. */
+  function getLastAppliedBiddingActionVersion(matchId) {
+    return Object.prototype.hasOwnProperty.call(lastAppliedBiddingActionVersionByMatch, matchId) ? lastAppliedBiddingActionVersionByMatch[matchId] : null;
+  }
+  function getLastAppliedBiddingActionCount(matchId) {
+    return lastAppliedBiddingActionCountByMatch[matchId] || 0;
+  }
+
   /** Test/diagnostic-only reset — clears this adapter's own version-
    *  gate bookkeeping for one matchId (or, with no argument, all of
    *  them). No production code path ever needs to call this — a real
@@ -667,12 +974,25 @@
       delete lastAppliedCardVersionByMatch[matchId];
       delete lastAppliedCardCountByMatch[matchId];
       delete lastResolvedTrickNoByMatch[matchId];
+      delete lastAppliedBiddingActionVersionByMatch[matchId];
+      delete lastAppliedBiddingActionCountByMatch[matchId];
+      delete roundAdvanceAttemptedByMatch[matchId];
+      delete matchCompletionAppliedByMatch[matchId];
+      delete lastRematchVoteByMatch[matchId];
+      if (rematchVoteTimeoutTimerByMatch[matchId]) { clearInterval(rematchVoteTimeoutTimerByMatch[matchId]); delete rematchVoteTimeoutTimerByMatch[matchId]; }
     } else {
       lastAppliedVersionByMatch = {};
       lastAppliedTurnVersionByMatch = {};
       lastAppliedCardVersionByMatch = {};
       lastAppliedCardCountByMatch = {};
       lastResolvedTrickNoByMatch = {};
+      roundAdvanceAttemptedByMatch = {};
+      matchCompletionAppliedByMatch = {};
+      lastAppliedBiddingActionVersionByMatch = {};
+      lastAppliedBiddingActionCountByMatch = {};
+      lastRematchVoteByMatch = {};
+      Object.keys(rematchVoteTimeoutTimerByMatch).forEach(function (k) { clearInterval(rematchVoteTimeoutTimerByMatch[k]); });
+      rematchVoteTimeoutTimerByMatch = {};
     }
   }
 
@@ -955,6 +1275,42 @@
           results: results
         };
       }
+
+      // Round Lifecycle sprint: the identical round-tag guard
+      // applyRemoteBiddingAction() applies above, for the identical
+      // reason — a client that hasn't yet locally re-initialized
+      // TableEngine for Round N+1 (see maybeEnterPlayPhase() in
+      // match/index.html, unchanged, round-aware since this sprint)
+      // still reports `TableEngine.getState().round === N`. A Round
+      // N+1 cardLog entry arriving before that must be deferred, never
+      // silently consumed by the count registry — see the identical
+      // comment on applyRemoteBiddingAction()'s own check for the full
+      // account of why a monotonic count-only gate cannot self-correct
+      // once an entry is skipped past.
+      var localTableRound = (function () {
+        try {
+          var s = TableEngine.getState();
+          return s ? s.round : null;
+        } catch (e) { return null; }
+      })();
+      if (entry.round != null && localTableRound != null && entry.round > localTableRound) {
+        results.push({ index: i, applied: false, reason: "AWAITING_ROUND_TRANSITION", seatId: entry.seatId, entryRound: entry.round, localRound: localTableRound });
+        return {
+          applied: false,
+          desync: false,
+          reason: "AWAITING_ROUND_TRANSITION",
+          matchId: matchId,
+          index: i,
+          appliedCount: results.filter(function (r) { return r.applied; }).length,
+          version: matchDoc.version,
+          results: results
+        };
+      }
+      if (entry.round != null && localTableRound != null && entry.round < localTableRound) {
+        results.push({ index: i, applied: false, reason: "STALE_ROUND", seatId: entry.seatId, entryRound: entry.round, localRound: localTableRound });
+        continue;
+      }
+
       var engineState = TableEngine.getState();
       // Sprint 4.2.1's own "local card" case, HARDENED in Sprint 4.2.2
       // Task 5 — a direct review found `ALREADY_APPLIED_LOCALLY`
@@ -1270,6 +1626,32 @@
     });
   }
 
+  // ── Sprint 3.7: Bidding Action Sync Pipeline ────────────────────
+
+  /** The bidding-action-sync analog of `startBidSync()` — subscribes
+   *  through the SAME `MatchService.subscribeToMatch()` (no second
+   *  listener — Firestore/`MatchService` ref-counts by matchId, not by
+   *  which adapter-level function subscribed) and pipes every delivery
+   *  through `applyRemoteBiddingAction()` instead. Fail-open on a
+   *  delivery error, same as every other `start*Sync()` function.
+   *  Unlike `startTrickSync()`, no outer catch-up loop is needed:
+   *  `applyRemoteBiddingAction()` already replays ALL new entries in
+   *  ONE call (a for-loop over the new `biddingLog` indices, exactly
+   *  like `applyRemoteCard()` does for `cardLog`) — there is no
+   *  separate "resolution step" analogous to trick resolution that
+   *  would require alternating two functions. Throws
+   *  `MATCH_SERVICE_UNAVAILABLE` if `MatchService` isn't loaded. */
+  function startBiddingActionSync(matchId) {
+    if (!matchId) throw adapterError("INVALID_ARGUMENT", "startBiddingActionSync: matchId is required.");
+    if (!global.MatchService || typeof global.MatchService.subscribeToMatch !== "function") {
+      throw adapterError("MATCH_SERVICE_UNAVAILABLE", "startBiddingActionSync: MatchService is not available on this page.");
+    }
+    return global.MatchService.subscribeToMatch(matchId, function (data, err) {
+      if (err || !data) return;
+      applyRemoteBiddingAction(matchId, data);
+    });
+  }
+
   // ── Sprint 4.1, Task 1: Turn Sync Pipeline ──────────────────────
 
   /** The turn-sync analog of `startBidSync()` above — subscribes
@@ -1368,8 +1750,477 @@
         var trickResult = applyRemoteTrick(matchId, data);
         if (!trickResult.applied) break;
       }
+      maybeAdvanceRound(matchId, data);
     });
   }
+
+  // ── Round Lifecycle sprint: Round Transition Sync ───────────────
+  // matchId -> the highest round number this adapter has already
+  // ATTEMPTED to advance PAST, via advanceToNextRound(). Deliberately
+  // NOT a version/count-style gate (there is no log to count entries
+  // in) — this only exists to stop a client from calling
+  // MatchService.advanceToNextRound() again on every single delivery
+  // once its own TableEngine reaches phase "DONE" (that call is itself
+  // idempotent/safe to repeat — see MatchService's own doc comment —
+  // but repeating it on every delivery forever would be needless
+  // Firestore traffic for no benefit).
+  var roundAdvanceAttemptedByMatch = {};
+
+  /** Detects "MY local TableEngine just reached phase DONE for round
+   *  R" and attempts EXACTLY ONE `MatchService.advanceToNextRound(matchId,
+   *  R)` call — never a second, third, ... call for the SAME round from
+   *  THIS client. Deliberately does NOT wait for confirmation that this
+   *  particular call is the one that "wins" the transaction — per
+   *  advanceToNextRound()'s own idempotent-any-client-may-attempt
+   *  design (see docs/reviews/Sprint_RoundLifecycle_Architecture_Report.md
+   *  §2), every client that independently reaches this same DONE state
+   *  may safely make this same call; Firestore's transaction semantics
+   *  ensure exactly one of them actually advances `currentRound`, and
+   *  every other caller's attempt resolves harmlessly as
+   *  `{advanced:false, reason:"ALREADY_ADVANCED"}` — never an error,
+   *  never a duplicate round. A rejection for a genuine reason
+   *  (`ROUND_NOT_COMPLETE` — this client's own local engine disagrees
+   *  with the server about completion, which should never actually
+   *  happen given both derive from the SAME replayed cardLog — or a
+   *  network failure) is logged, never thrown into the caller's
+   *  snapshot callback; a LATER delivery (or another client) gets
+   *  another chance. */
+  function maybeAdvanceRound(matchId, matchDoc) {
+    if (!global.TableEngine || typeof global.TableEngine.getState !== "function") return;
+    var state;
+    try { state = global.TableEngine.getState(); } catch (e) { return; }
+    if (!state || state.phase !== "DONE" || state.round == null) return;
+    if (roundAdvanceAttemptedByMatch[matchId] === state.round) return;
+    roundAdvanceAttemptedByMatch[matchId] = state.round;
+    maybeExtendOrCompleteMatch(matchId, state.round);
+  }
+
+  // ── Match Completion sprint: Extension + Completion Orchestration ──
+  /** Runs exactly once per round (gated by `maybeAdvanceRound()`'s own
+   *  `roundAdvanceAttemptedByMatch` guard, above — this function is
+   *  never a second entry point, just the continuation of the SAME
+   *  "local TableEngine just reached DONE for round R" trigger).
+   *
+   *  Sequencing (mirrors the SAME "any client may attempt it; the
+   *  transaction makes that safe" design as `advanceToNextRound()`):
+   *   1. If round R's LOCAL result (GameSession.getLastRoundResult(),
+   *      already computed and cached by ScoringEngine.applyRoundResult()
+   *      — never re-derived here) qualifies for a maxRounds extension
+   *      (`.roundExtension.extend`), attempt
+   *      `MatchService.extendMatchRounds(matchId, R, reason)` FIRST —
+   *      before deciding whether the match is over, since the
+   *      extension can be exactly what keeps it alive.
+   *   2. Whether or not step 1 ran, ask the LOCAL engine
+   *      (`GameSession.isMatchComplete()`, which already reads the
+   *      LOCAL `round.maxRounds` — bumped synchronously by
+   *      `ScoringEngine.applyRoundResult()` the moment extension
+   *      applied, with zero Firestore round-trip needed for THIS
+   *      client's own decision) whether `R` was the match's last round.
+   *   3. If complete: compute `finalScores`/`winnerIds` locally
+   *      (`GameSession.getMatchScores()` / `ScoringEngine.computeWinner()`
+   *      — the SAME authoritative functions every client independently
+   *      runs against the SAME replicated score) and attempt
+   *      `MatchService.endMatch(matchId, R, finalScores, winnerIds)`.
+   *   4. Otherwise: attempt `MatchService.advanceToNextRound(matchId, R)`
+   *      exactly as before this sprint.
+   *  Every step is independently idempotent/safe-to-repeat (see each
+   *  MatchService function's own doc comment) — a rejection here is
+   *  logged, never thrown into the caller's snapshot callback; another
+   *  client (or a later local retry) may still succeed. */
+  function maybeExtendOrCompleteMatch(matchId, completedRound) {
+    if (!global.MatchService) return;
+    var lastResult = (global.GameSession && typeof global.GameSession.getLastRoundResult === "function")
+      ? global.GameSession.getLastRoundResult() : null;
+    var extension = (lastResult && lastResult.round === completedRound) ? lastResult.roundExtension : null;
+
+    var extendStep = (extension && extension.extend && typeof global.MatchService.extendMatchRounds === "function")
+      ? global.MatchService.extendMatchRounds(matchId, completedRound, extension.reason).catch(function (e) {
+          console.error("[MatchAdapter] extendMatchRounds() attempt failed (non-fatal — another client, or a later delivery, may still succeed):", e);
+        })
+      : Promise.resolve();
+
+    extendStep.then(function () {
+      var complete = global.GameSession && typeof global.GameSession.isMatchComplete === "function" && global.GameSession.isMatchComplete();
+      if (complete) {
+        if (typeof global.MatchService.endMatch !== "function") return;
+        var finalScores = global.GameSession.getMatchScores();
+        var winnerIds = (global.ScoringEngine && typeof global.ScoringEngine.computeWinner === "function")
+          ? global.ScoringEngine.computeWinner(finalScores) : [];
+        global.MatchService.endMatch(matchId, completedRound, finalScores, winnerIds).then(function (result) {
+          if (result && result.complete && typeof global.GameSession.setWinnerIds === "function") {
+            global.GameSession.setWinnerIds(result.winnerIds);
+          }
+        }).catch(function (e) {
+          console.error("[MatchAdapter] endMatch() attempt failed (non-fatal — another client, or a later delivery, may still succeed):", e);
+        });
+      } else {
+        if (typeof global.MatchService.advanceToNextRound !== "function") return;
+        global.MatchService.advanceToNextRound(matchId, completedRound).catch(function (e) {
+          console.error("[MatchAdapter] advanceToNextRound() attempt failed (non-fatal — another client, or a later delivery, may still succeed):", e);
+        });
+      }
+    });
+  }
+
+  /** Detects "the match document's own `currentRound` has moved past
+   *  what THIS client's local GameSession knows about" and drives the
+   *  LOCAL round-local reset — the read side of the schema decision in
+   *  `MatchService.advanceToNextRound()`'s own doc comment. Uses ONLY
+   *  existing, unmodified public APIs:
+   *  - `GameSession.nextRound()` (pre-existing, already used by the
+   *    single-player flow — never a new state store, exactly like this
+   *    sprint's brief requires) — called once per round the local
+   *    client is behind (a loop, not a single call, so a reconnecting
+   *    client that missed MULTIPLE transitions catches up correctly in
+   *    one delivery rather than needing one delivery per round).
+   *  - `BiddingEngine.initState()` (pre-existing, already idempotent/
+   *    safe-to-repeat — see bootstrapEngineOnce()'s own comment in
+   *    match/index.html) — re-derives the new round's fresh config from
+   *    GameSession, exactly like Round 1's own first call.
+   *
+   *  Deliberately does NOT touch `TableEngine` here — TableEngine's own
+   *  re-initialization for the new round remains
+   *  `maybeEnterPlayPhase()`'s job (match/index.html), triggered
+   *  reactively once THIS round's real bidding ALSO reaches DONE,
+   *  exactly mirroring Round 1's existing flow; this function's only
+   *  job is making that flow possible for round 2+ by advancing
+   *  BiddingEngine's own round number first.
+   *
+   *  HONEST LIMITATION (see this sprint's own Final Report): calling
+   *  `GameSession.nextRound()` clears the local `hands` map, and the
+   *  next `ensureHandsDealt()` call (inside `BiddingEngine.initState()`)
+   *  deals a BRAND-NEW, independently-random hand for this client. This
+   *  is the SAME pre-existing hand-synchronization gap Sprint 5 already
+   *  documented for Round 1 (hands are never written to Firestore) —
+   *  this function does not create a new gap, it only means Round 2
+   *  inherits the identical one, unchanged, unresolved. */
+  function applyRemoteRoundTransition(matchId, matchDoc) {
+    if (!matchId) return { applied: false, reason: "MALFORMED_SNAPSHOT" };
+    if (!matchDoc || typeof matchDoc !== "object" || Array.isArray(matchDoc)) {
+      return { applied: false, reason: "MALFORMED_SNAPSHOT" };
+    }
+    if (typeof matchDoc.currentRound !== "number" || !Number.isFinite(matchDoc.currentRound)) {
+      return { applied: false, reason: "MALFORMED_SNAPSHOT" };
+    }
+    if (!global.GameSession || typeof global.GameSession.getRound !== "function" ||
+        typeof global.GameSession.nextRound !== "function") {
+      return { applied: false, reason: "ENGINE_UNAVAILABLE" };
+    }
+    var GameSession = global.GameSession;
+    var localRoundState = GameSession.getRound();
+    var localNumber = localRoundState ? localRoundState.number : null;
+    if (localNumber == null) return { applied: false, reason: "LOCAL_ROUND_UNKNOWN" };
+    // Match Completion sprint: sync the AUTHORITATIVE maxRounds down to
+    // this client whenever Firestore is ahead of the local value —
+    // independent of whether currentRound itself also moved this
+    // delivery. Every client's OWN engine independently arrives at the
+    // same maxRounds the moment its own ScoringEngine.applyRoundResult()
+    // processes the same qualifying round (see computeRoundExtension()),
+    // but this keeps a client that hasn't caught up YET from making an
+    // isMatchComplete() decision against a stale local ceiling in the
+    // meantime — same "never trust a lagging local copy over the
+    // synced document" principle as the round-number sync below.
+    if (typeof matchDoc.maxRounds === "number" && Number.isFinite(matchDoc.maxRounds) &&
+        matchDoc.maxRounds > (localRoundState.maxRounds || 18)) {
+      GameSession.setRound({ maxRounds: matchDoc.maxRounds });
+    }
+    if (matchDoc.currentRound <= localNumber) {
+      return { applied: false, reason: "NO_NEW_ROUND" };
+    }
+    var steps = matchDoc.currentRound - localNumber;
+    for (var i = 0; i < steps; i++) GameSession.nextRound();
+    if (global.BiddingEngine && typeof global.BiddingEngine.initState === "function") {
+      try {
+        global.BiddingEngine.initState();
+      } catch (e) {
+        console.error("[MatchAdapter] BiddingEngine.initState() threw during a round transition:", e);
+        return { applied: false, reason: "ENGINE_THREW", matchId: matchId, error: e.message };
+      }
+    }
+    return { applied: true, matchId: matchId, previousRound: localNumber, newRound: matchDoc.currentRound, steps: steps };
+  }
+
+  /** The round-transition-sync analog of `startBidSync()`/etc. —
+   *  subscribes through the SAME `MatchService.subscribeToMatch()` (no
+   *  second listener — same ref-counted registry every other
+   *  `start*Sync()` function shares). Deliberately meant to be
+   *  registered BEFORE `startBiddingActionSync()`/`startCardSync()`/
+   *  `startTrickSync()` by the caller (match/index.html — mirrors the
+   *  EXISTING documented ordering requirement for
+   *  `startBiddingActionSync()`/`startBidSync()` relative to the render
+   *  callback) so a delivery that carries BOTH a round bump AND that
+   *  new round's first bidding entry applies the round transition
+   *  first — though this is a latency optimization only, not a
+   *  correctness requirement: `applyRemoteBiddingAction()`/
+   *  `applyRemoteCard()`'s own AWAITING_ROUND_TRANSITION deferral
+   *  (above) makes a one-delivery-late ordering self-correcting either
+   *  way. Throws `MATCH_SERVICE_UNAVAILABLE` if `MatchService` isn't
+   *  loaded. */
+  function startRoundSync(matchId) {
+    if (!matchId) throw adapterError("INVALID_ARGUMENT", "startRoundSync: matchId is required.");
+    if (!global.MatchService || typeof global.MatchService.subscribeToMatch !== "function") {
+      throw adapterError("MATCH_SERVICE_UNAVAILABLE", "startRoundSync: MatchService is not available on this page.");
+    }
+    return global.MatchService.subscribeToMatch(matchId, function (data, err) {
+      if (err || !data) return;
+      applyRemoteRoundTransition(matchId, data);
+    });
+  }
+
+  // ── Match Completion sprint: Match Completion Sync ──────────────
+  // matchId -> true once THIS adapter has already applied a remote
+  // "status: complete" delivery — mirrors roundAdvanceAttemptedByMatch's
+  // role but for the terminal, one-time-only completion event (there is
+  // no "next" completion for the SAME client to catch, so a boolean is
+  // enough — a round can advance/extend repeatedly across a match, but
+  // a match can only ever complete once).
+  var matchCompletionAppliedByMatch = {};
+
+  /** Detects "the match document's own `status` is now `complete`" and
+   *  drives the LOCAL read side: syncs `winnerIds` onto this client's
+   *  `GameSession` even if THIS client's own `endMatch()` attempt lost
+   *  the race (or was never attempted — e.g. a client that reconnects
+   *  after the match already ended). Deliberately idempotent per
+   *  matchId (see `matchCompletionAppliedByMatch` above) — a repeat
+   *  delivery of the same completed document is a harmless no-op, never
+   *  a second `setWinnerIds()` call. Uses ONLY the already-synced
+   *  `matchDoc.winnerIds` — never recomputes them, never re-derives
+   *  `finalScores` — this is a pure "trust the authoritative document"
+   *  read, exactly like `applyRemoteRoundTransition()`'s own role for
+   *  `currentRound`/`maxRounds`. */
+  function applyRemoteMatchCompletion(matchId, matchDoc) {
+    if (!matchId) return { applied: false, reason: "MALFORMED_SNAPSHOT" };
+    if (!matchDoc || typeof matchDoc !== "object" || Array.isArray(matchDoc)) {
+      return { applied: false, reason: "MALFORMED_SNAPSHOT" };
+    }
+    if (matchDoc.status !== "complete") return { applied: false, reason: "NOT_COMPLETE" };
+    if (matchCompletionAppliedByMatch[matchId]) return { applied: false, reason: "ALREADY_APPLIED" };
+    if (!global.GameSession || typeof global.GameSession.setWinnerIds !== "function") {
+      return { applied: false, reason: "ENGINE_UNAVAILABLE" };
+    }
+    matchCompletionAppliedByMatch[matchId] = true;
+    var winnerIds = Array.isArray(matchDoc.winnerIds) ? matchDoc.winnerIds.slice() : [];
+    global.GameSession.setWinnerIds(winnerIds);
+    return { applied: true, matchId: matchId, winnerIds: winnerIds, finalScores: matchDoc.finalScores || {} };
+  }
+
+  /** The match-completion-sync analog of `startRoundSync()` — same
+   *  single shared listener, no second subscription. Registered
+   *  alongside `startRoundSync()` by match/index.html. */
+  function startMatchCompletionSync(matchId) {
+    if (!matchId) throw adapterError("INVALID_ARGUMENT", "startMatchCompletionSync: matchId is required.");
+    if (!global.MatchService || typeof global.MatchService.subscribeToMatch !== "function") {
+      throw adapterError("MATCH_SERVICE_UNAVAILABLE", "startMatchCompletionSync: MatchService is not available on this page.");
+    }
+    return global.MatchService.subscribeToMatch(matchId, function (data, err) {
+      if (err || !data) return;
+      applyRemoteMatchCompletion(matchId, data);
+    });
+  }
+
+  // ══════════════════════════════════════════════════════════════════
+  // Player Hand Synchronization sprint (Architecture Gate-approved
+  // Option A). Two independent responsibilities, mirroring the split
+  // already used everywhere else in this file:
+  //  1. WATCH the already-active subscribeToMatch() listener (no
+  //     second match-level listener) for `gameState.dealtRound` falling
+  //     behind `currentRound`, and safely ATTEMPT
+  //     `MatchService.dealRound()` — the exact same "any client may
+  //     attempt it, the transaction makes it safe" shape
+  //     maybeAdvanceRound()/maybeAdvanceRematchVote() already use.
+  //  2. CONSUME this client's OWN seat's hand document (never any
+  //     other seat's) via the new `MatchService.subscribeToHand()`,
+  //     translating it INTO GameSession — the one genuinely new
+  //     translation path this sprint adds.
+  var dealAttemptedByMatch = {};
+
+  /** Detects "this match's currentRound has no committed deal yet" and
+   *  attempts EXACTLY ONE `MatchService.dealRound(matchId, currentRound)`
+   *  call per round from THIS client — never a second call for the SAME
+   *  round, mirroring `maybeAdvanceRound()`'s own
+   *  `roundAdvanceAttemptedByMatch` guard exactly. Does not wait for
+   *  confirmation that THIS call is the one that wins the transaction —
+   *  every client that independently observes the same stale
+   *  `dealtRound` may safely make this same call; Firestore's
+   *  transaction semantics ensure exactly one attempt actually commits.
+   *  A rejection (a genuine error, or another client's transaction
+   *  already won) is swallowed here, never thrown into the caller's
+   *  snapshot callback. */
+  function maybeDealRound(matchId, matchDoc) {
+    if (!global.MatchService || typeof global.MatchService.dealRound !== "function") return;
+    if (typeof matchDoc.currentRound !== "number") return;
+    var currentRound = matchDoc.currentRound;
+    var gameState = matchDoc.gameState || { dealtRound: 0 };
+    if ((gameState.dealtRound || 0) >= currentRound) return;
+    if (dealAttemptedByMatch[matchId] === currentRound) return;
+    dealAttemptedByMatch[matchId] = currentRound;
+    global.MatchService.dealRound(matchId, currentRound).catch(function () {});
+  }
+
+  /** Reconstructs this seat's full, playable Card objects (id/
+   *  displayName/value/owner/played — the EXACT shape Dealer.dealHands()
+   *  already produces, via the SAME Cards.createCard()/Dealer.sortHand()
+   *  calls, just given opaque {suit, rank} entries instead of a fresh
+   *  shuffle) from the server-committed hand document, and pushes the
+   *  result into GameSession as the CURRENT round's authoritative hand.
+   *  Only ever called with THIS client's own seat/hand — never another
+   *  seat's, since subscribeToHand() itself only ever delivers the one
+   *  document this client subscribed to. */
+  function applyRemoteHand(seatId, handDoc) {
+    if (!handDoc || typeof handDoc !== "object") return { applied: false, reason: "NO_HAND_YET" };
+    if (!Array.isArray(handDoc.cards) || typeof handDoc.round !== "number") {
+      return { applied: false, reason: "MALFORMED_HAND" };
+    }
+    if (!global.GameSession || typeof global.GameSession.setAuthoritativeHand !== "function") {
+      return { applied: false, reason: "ENGINE_UNAVAILABLE" };
+    }
+    if (!global.Cards || typeof global.Cards.createCard !== "function") {
+      return { applied: false, reason: "ENGINE_UNAVAILABLE" };
+    }
+    var cards = handDoc.cards.map(function (c) { return global.Cards.createCard(c.suit, c.rank, seatId); });
+    if (global.Dealer && typeof global.Dealer.sortHand === "function") cards = global.Dealer.sortHand(cards);
+    global.GameSession.setAuthoritativeHand(seatId, cards, handDoc.round);
+    return { applied: true, seatId: seatId, round: handDoc.round, count: cards.length };
+  }
+
+  /** The hand-sync analog of `startRoundSync()`/`startMatchCompletionSync()`
+   *  — puts GameSession into "firestore" hand-authority mode (see
+   *  session.js's own doc comment: `ensureHandsDealt()` never falls
+   *  back to a local deal in this mode) before either subscription
+   *  attaches, watches the ALREADY-ACTIVE `subscribeToMatch()` listener
+   *  for the deal-needed signal (no second match-level listener), and
+   *  separately subscribes to THIS seat's own hand document. Returns a
+   *  combined unsubscribe tearing down both. Throws
+   *  `MATCH_SERVICE_UNAVAILABLE` if `MatchService` isn't loaded;
+   *  `INVALID_ARGUMENT` if `mySeatId` is missing (this sprint's whole
+   *  point is that a client only ever learns its OWN seat's hand, so
+   *  there is no sensible "sync all hands" call). */
+  function startHandSync(matchId, mySeatId) {
+    if (!matchId) throw adapterError("INVALID_ARGUMENT", "startHandSync: matchId is required.");
+    if (!mySeatId) throw adapterError("INVALID_ARGUMENT", "startHandSync: mySeatId is required.");
+    if (!global.MatchService || typeof global.MatchService.subscribeToMatch !== "function" ||
+        typeof global.MatchService.subscribeToHand !== "function") {
+      throw adapterError("MATCH_SERVICE_UNAVAILABLE", "startHandSync: MatchService is not available on this page.");
+    }
+    if (global.GameSession && typeof global.GameSession.setHandAuthorityMode === "function") {
+      global.GameSession.setHandAuthorityMode("firestore");
+    }
+    var unsubscribeMatch = global.MatchService.subscribeToMatch(matchId, function (data, err) {
+      if (err || !data) return;
+      maybeDealRound(matchId, data);
+    });
+    var unsubscribeHand = global.MatchService.subscribeToHand(matchId, mySeatId, function (data, err) {
+      if (err || !data) return;
+      applyRemoteHand(mySeatId, data);
+    });
+    return function () {
+      unsubscribeMatch();
+      unsubscribeHand();
+    };
+  }
+  // ══════════════════════════════════════════════════════════════════
+
+  // ══════════════════════════════════════════════════════════════════
+  // Post-Match Rematch Vote sprint. This subcollection carries ZERO
+  // engine state (no bidding/card/trick concept applies to a vote) —
+  // unlike every other sync function above, there is nothing here to
+  // translate INTO BiddingEngine/TableEngine. This section's role is
+  // instead the same one maybeExtendOrCompleteMatch() already plays
+  // for round extension/completion: WATCH the synced document and, the
+  // moment a structural condition becomes true, safely ATTEMPT the
+  // next authoritative transaction — never itself deciding the outcome
+  // (MatchService's own transaction + firestore.rules remain the sole
+  // authority; a redundant/premature attempt from this watcher is
+  // always a harmless, idempotent no-op on the server side). This is
+  // exactly the mechanism that makes "no host — any seated client may
+  // safely attempt timeout/all-YES/rematch-creation" true: EVERY
+  // subscribed client's own copy of this watcher tries, and Firestore's
+  // transaction semantics guarantee only one attempt ever actually
+  // commits per transition.
+  var lastRematchVoteByMatch = {};
+
+  /** Diagnostic-only accessor — mirrors this file's established
+   *  getLastAppliedVersion()-style convention. Returns the latest
+   *  rematch-vote document this adapter has observed for a matchId, or
+   *  null if none has been delivered yet. The UI renders directly from
+   *  this — never recomputing vote outcome itself (see
+   *  match/index.html's own renderRematchVote() comment). */
+  function getRematchVoteState(matchId) {
+    return lastRematchVoteByMatch[matchId] || null;
+  }
+
+  /** Watches the synced vote document and safely ATTEMPTS (never
+   *  decides) the next authoritative step:
+   *   - status "OPEN" past its own (locally-computed, non-authoritative)
+   *     deadline -> attempt resolveRematchVoteTimeout()
+   *   - status "ALL_YES" with no newMatchId yet -> attempt
+   *     createRematchMatch()
+   *  Both calls are transactional and idempotent on the MatchService
+   *  side — calling either redundantly (this same watcher firing again
+   *  on the next snapshot, or a DIFFERENT client's copy of this exact
+   *  watcher racing this one) is always a safe no-op. Never throws —
+   *  a rejected attempt (e.g. another client's transaction already
+   *  won) is expected, normal traffic, not an error to surface. */
+  function maybeAdvanceRematchVote(matchId, voteDoc) {
+    if (!voteDoc || !global.MatchService) return;
+    if (voteDoc.status === "OPEN") {
+      var createdAtMs = voteDoc.createdAt && typeof voteDoc.createdAt.toMillis === "function" ? voteDoc.createdAt.toMillis() : null;
+      if (createdAtMs != null && Date.now() >= createdAtMs + 30000) {
+        global.MatchService.resolveRematchVoteTimeout(matchId).catch(function () {});
+      }
+      return;
+    }
+    if (voteDoc.status === "ALL_YES" && !voteDoc.newMatchId) {
+      global.MatchService.createRematchMatch(matchId).catch(function () {});
+    }
+  }
+
+  /** Registers the ref-counted rematch-vote subscription for a match
+   *  and starts the watcher above. Shares MatchService's OWN ref-
+   *  counting for this document path (see subscribeToRematchVote()'s
+   *  own comment) — a second call for the same matchId never creates a
+   *  second Firestore listener. */
+  // Real production defect found and fixed during this sprint's own
+  // browser QA: maybeAdvanceRematchVote()'s TIMEOUT branch can only
+  // ever fire from INSIDE the subscription callback above — but if a
+  // vote sits completely untouched (nobody votes at all) for the full
+  // 30 seconds, NO new snapshot delivery ever arrives to re-invoke it,
+  // so the timeout would never actually be attempted by anyone. A
+  // periodic re-check timer closes this: while any local vote-doc
+  // subscription is active, re-run maybeAdvanceRematchVote() against
+  // the LAST DELIVERED (cached) doc every few seconds — this doesn't
+  // need a new snapshot to notice real time has passed, since the
+  // check itself is a pure function of the ALREADY-KNOWN `createdAt`
+  // vs `Date.now()`. Cleared automatically once the vote reaches any
+  // terminal status (nothing left to time out), and on unsubscribe.
+  var rematchVoteTimeoutTimerByMatch = {};
+  function startRematchVoteSync(matchId) {
+    if (!matchId) throw adapterError("INVALID_ARGUMENT", "startRematchVoteSync: matchId is required.");
+    if (!global.MatchService || typeof global.MatchService.subscribeToRematchVote !== "function") {
+      throw adapterError("MATCH_SERVICE_UNAVAILABLE", "startRematchVoteSync: MatchService is not available on this page.");
+    }
+    if (!rematchVoteTimeoutTimerByMatch[matchId]) {
+      rematchVoteTimeoutTimerByMatch[matchId] = setInterval(function () {
+        var cached = lastRematchVoteByMatch[matchId];
+        if (cached && cached.status === "OPEN") {
+          maybeAdvanceRematchVote(matchId, cached);
+        }
+      }, 2000);
+    }
+    var unsubscribe = global.MatchService.subscribeToRematchVote(matchId, function (data, err) {
+      if (err) return;
+      lastRematchVoteByMatch[matchId] = data || null;
+      maybeAdvanceRematchVote(matchId, data);
+    });
+    return function () {
+      unsubscribe();
+      if (rematchVoteTimeoutTimerByMatch[matchId]) {
+        clearInterval(rematchVoteTimeoutTimerByMatch[matchId]);
+        delete rematchVoteTimeoutTimerByMatch[matchId];
+      }
+    };
+  }
+  // ══════════════════════════════════════════════════════════════════
 
   global.MatchAdapter = {
     uidToSeat: uidToSeat,
@@ -1379,9 +2230,19 @@
     matchDocToEngineSnapshot: matchDocToEngineSnapshot,
     engineSnapshotToMatchPatch: engineSnapshotToMatchPatch,
     bootstrapGameSession: bootstrapGameSession,
+    // Player Hand Synchronization sprint.
+    applyRemoteHand: applyRemoteHand,
+    startHandSync: startHandSync,
     applyRemoteBid: applyRemoteBid,
     startBidSync: startBidSync,
     getLastAppliedVersion: getLastAppliedVersion,
+    // Sprint 3.7 (Online Bidding Synchronization Contract): Dash Call /
+    // Auction Bid / Confirm Call. Final Estimate remains applyRemoteBid()'s
+    // job, unchanged.
+    applyRemoteBiddingAction: applyRemoteBiddingAction,
+    startBiddingActionSync: startBiddingActionSync,
+    getLastAppliedBiddingActionVersion: getLastAppliedBiddingActionVersion,
+    getLastAppliedBiddingActionCount: getLastAppliedBiddingActionCount,
     applyRemoteTurn: applyRemoteTurn,
     isLocalSeatsTurn: isLocalSeatsTurn,
     assertLocalTurn: assertLocalTurn,
@@ -1394,6 +2255,21 @@
     applyRemoteTrick: applyRemoteTrick,
     startTrickSync: startTrickSync,
     getLastResolvedTrickNo: getLastResolvedTrickNo,
+    // Round Lifecycle sprint: round-transition detection + the
+    // one-attempt-per-round advance trigger. See each function's own
+    // doc comment above.
+    applyRemoteRoundTransition: applyRemoteRoundTransition,
+    startRoundSync: startRoundSync,
+    // Match Completion sprint: extension + completion orchestration and
+    // the read-side sync for a remotely-completed match. See each
+    // function's own doc comment above.
+    maybeExtendOrCompleteMatch: maybeExtendOrCompleteMatch,
+    applyRemoteMatchCompletion: applyRemoteMatchCompletion,
+    startMatchCompletionSync: startMatchCompletionSync,
+    // Post-Match Rematch Vote sprint.
+    maybeAdvanceRematchVote: maybeAdvanceRematchVote,
+    startRematchVoteSync: startRematchVoteSync,
+    getRematchVoteState: getRematchVoteState,
     resetSyncState: resetSyncState
   };
 })(window);

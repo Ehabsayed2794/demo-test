@@ -518,7 +518,8 @@ function independentlyComputeWinner(plays, trump) {
   // MOCKED — Regression sanity: MatchService's other gameplay stubs
   // and MatchAdapter's Sprint 3.9/4.0/4.1/4.2 API are untouched.
   // ============================================================
-  ["submitDashCall", "submitPass", "declareTrump", "submitEstimate", "playCard", "resolveTrick", "completeRound", "advanceToNextRound", "endMatch"].forEach(function (m) {
+  // Round Lifecycle sprint: advanceToNextRound() is now a REAL, implemented method (not a stub) — removed from this stub-regression list on purpose, not an oversight. Match Completion sprint: endMatch() is likewise now a REAL, implemented method (not a stub) — removed from this stub-regression list on purpose, not an oversight (see tests/match-completion.test.cjs for its own dedicated suite). completeRound() remains an intentional stub (see its own doc comment in match-service.js for why) and is still checked below.
+  ["submitDashCall", "submitPass", "declareTrump", "submitEstimate", "playCard", "resolveTrick", "completeRound"].forEach(function (m) {
     var threw = false;
     try { MatchService[m](); } catch (e) { threw = /not implemented/i.test(e.message); }
     check("MOCKED — no regression: MatchService." + m + "() is still an unimplemented stub, unchanged by this sprint", threw);
