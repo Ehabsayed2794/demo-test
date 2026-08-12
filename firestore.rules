@@ -1013,7 +1013,23 @@ service cloud.firestore {
              // recorded (the idempotency guard MatchService's own
              // transaction also checks, re-verified here independently).
              && newRounds.size() == oldRounds.size() + 1
-             && newRounds[0:oldRounds.size()] == oldRounds
+             // Sprint A (Multiplayer Integration Audit, Real Firestore
+             // Emulator Write-Path Closure): the bare
+             // `newRounds[0:oldRounds.size()] == oldRounds` this line
+             // used to read throws "Index out of bound error" in the
+             // real Firestore Rules Emulator specifically when
+             // `oldRounds` is EMPTY — i.e. on every match's FIRST
+             // extendMatchRounds() call, since `extendedRounds` always
+             // starts as `[]`. Reproduced and isolated against the real
+             // emulator (non-empty `oldRounds` cases were unaffected).
+             // This ternary guard is the fix: when there are zero prior
+             // entries, "every prior entry is unchanged" is vacuously
+             // true — there is nothing to compare — so the crashing
+             // zero-length-slice expression is never evaluated at all
+             // (CEL's `?:` genuinely short-circuits, unlike `&&`/`||`).
+             // The non-empty branch is the exact same comparison as
+             // before, byte-for-byte — no security invariant changed.
+             && (oldRounds.size() == 0 ? true : newRounds[0:oldRounds.size()] == oldRounds)
              && appendedRound is int
              && appendedRound >= 14 && appendedRound <= 18
              && !(appendedRound in oldRounds);
