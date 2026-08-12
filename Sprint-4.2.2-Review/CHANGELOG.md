@@ -1,0 +1,38 @@
+# Changelog — Sprint 4.2.2: Atomic Card Turn Progression & Card-Log Desync Hardening
+
+**A hotfix, not a feature sprint.** Closes three remaining correctness defects a direct review of Sprint 4.2.1's shipped code found. NOT Trick Resolution, NOT Trick Winner Persistence, NOT Scoring, NOT Next Round, NOT Match End, NOT a UI redesign, NOT gameplay rule duplication, NOT a `table-engine.js` rewrite, NOT Cloud Functions. Spark only.
+
+## The three defects closed
+
+1. **`MatchService.submitCard()` appended the card but never updated `matches/{matchId}.turn`.** The next player's own submission was rejected `NOT_YOUR_TURN`, because Firestore still named the PREVIOUS player as the active turn. Sprint 4.2.1's own tests hid this behind a test-only `setTurn()`/`syncTurnFieldToRealEngine()` helper called between submissions — no production write ever moved the turn.
+2. **`MatchAdapter.applyRemoteCard()` silently skipped a `MALFORMED_ENTRY` item and kept processing**, later advancing the processed count/version registries past it.
+3. **`ALREADY_APPLIED_LOCALLY` checked only `seatId`, not card identity.** A different card from the same seat could be silently treated as an identical local echo and dropped.
+
+## Added
+
+- **`design-ui/engine/table-engine.js` — `previewPlay(playerId, card)`**: ONE new, purely additive, non-mutating export. Composes ONLY the existing `canPlayCard()` (Sprint 4.2.1) legality answer plus the exact `state.plays.length`/`nextCCW()` arithmetic `emit()` already performs internally — zero new rules, zero changes to `emit()`/`canPlayCard()`/`isLegal()`. Returns `{legal:false, reason}` or `{legal:true, nextTurnSeat, nextPhase}` — `nextTurnSeat: null, nextPhase: "RESOLVING"` on a trick's 4th card. Mirrors the same "minimum wiring export" precedent as `resolveTrick`/`getState` (Sprint 3.6) and `canPlayCard` (Sprint 4.2.1).
+- **`design-ui/match-service.js` — `submitCard()` rewritten** (Tasks 2/3): calls `TableEngine.previewPlay()` BEFORE the transaction, resolves the previewed next seat to a real UID via `MatchAdapter.seatToUid()` (or leaves `turn: null` at the resolving boundary), and writes `cardLog`, `lastCardSeat`, `turn`, `cardPhase`, `version+1`, `updatedAt` — ALL in the SAME `tx.update()` call. An `expectedVersion` fingerprint captured before the transaction is re-checked on every invocation of the transaction callback (including automatic Firestore SDK retries); a mismatch throws `STALE_GAME_STATE` and writes nothing, never auto-retrying with a recomputed preview.
+- **`design-ui/match-service.js` — `buildInitialMatchDoc()` extended**: new `cardPhase: null` field — the one minimal schema addition this hotfix required, since no existing field could safely double for it.
+- **`design-ui/match-adapter.js` — `applyRemoteCard()` hardened** (Tasks 4/5): on `MALFORMED_ENTRY`, now stops processing immediately, never looks at a later entry in that delivery, advances the count registry only up to (never past) the malformed index, and does not advance the version registry at all — identical semantics to the existing `ENGINE_REJECTED` contract. The local-echo check now finds the actual locally-applied play for a matching seat and compares its exact `suit`/`rank.v` against the remote entry; a genuine match still resolves as the existing, benign `ALREADY_APPLIED_LOCALLY` skip, while a mismatch now returns a structured `{desync:true, reason:"LOCAL_ECHO_MISMATCH", matchId, index, seatId, localCard, remoteCard}` and stops processing.
+- **`firestore.rules` — `isValidCardSubmission()` extended in place**: verifies the caller owned the previous active turn (`oldData.turn == request.auth.uid`); the new `turn` is either `null` or a UID present among `oldData.seats`' own values (`.keys().exists(s, oldData.seats[s] == newData.turn)`, since CEL has no `.values()` method); `newData.cardPhase in ['PLAY', 'RESOLVING']`. `turn`/`cardPhase` added to the field-presence guard and the affected-keys allowlist.
+- **`firestore.rules` — `isValidNewMatchV5`**: extends V4 with the `cardPhase: null` creation-time check, per this project's "CREATE rules get versioned suffixes" convention.
+
+## Not changed
+
+- `bidding-engine.js`, `scoring-engine.js`, `Dealer`, `Deck`, `Cards`, `ScoringEngine` — byte-for-byte unchanged.
+- `RoomService`, `PlayerService`, `SessionService` — byte-for-byte unchanged.
+- `table-engine.js` above the new `previewPlay()` addition — byte-for-byte unchanged; no gameplay rule was duplicated, rewritten, or reimplemented anywhere.
+- No trick resolution, trick winner persistence, scoring, next round, match end, replay, voice chat, AI, or matchmaking work was started.
+
+## Testing (labeled MOCKED, SIMULATED, EMULATOR, or REAL — never mixed; no EMULATOR/production-validation claims made anywhere)
+
+- `tests/submit-card.test.cjs` (substantially rewritten, MOCKED, against a `previewPlay()`-shaped fake `TableEngine` with an internal seat-rotation model): the full p1→p2→p3→p4→resolving production sequence with ZERO manual turn mutation; wrong-turn zero-writes with `previewPlay()` never even called; `STALE_GAME_STATE` via an intercepted transaction-callback first invocation, proving no silent stale-preview reuse across an automatic retry.
+- `tests/match-adapter.test.cjs` (+checks, MOCKED): `MALFORMED_ENTRY` stop-and-desync semantics (stuck index, no later-entry processing, version not advanced); genuine same-seat/same-card echo resolves normally; same-seat/different-card echo produces `LOCAL_ECHO_MISMATCH` with full diagnostics; entries after either failure are never processed.
+- `tests/card-sync.test.cjs` (rewritten, MOCKED, against the REAL `table-engine.js`): the forbidden test-only `syncTurnFieldToRealEngine()` helper removed entirely; `seedMockMatch()`'s ONE remaining direct turn assignment is a legitimate one-time setup seed (reading the real engine's own live turn), never a between-submissions mutation. Every scenario (multiple sequential cards, duplicate snapshot, stale/rollback, local echo, late subscriber, listener restart, wrong-turn rejection, adapter corruption) now relies entirely on `submitCard()`'s own atomic write to advance `turn`.
+- `tests/rules-simulation.test.js` (SIMULATED): `isValidCardSubmission()`'s translation extended with the same turn-ownership/new-turn-validity/`cardPhase`-enum checks as the real rule; new SECURITY tests for wrong-turn rejection, unknown-uid-as-next-turn rejection, invalid-`cardPhase` rejection, and the RESOLVING-boundary ALLOWED case; `isValidNewMatchV5` create-time tests added.
+- Full regression suite re-run, zero unintended regression: `deck` (39), `bid-sync` (39), `turn-sync` (26), `match-service` (67), `match-sync` (58), `submit-bid` (66), `room-service` (31), `match-flow-integration` (156), `match-flow-normal-dash-scoring-fix` (16), `match-flow-scoring-scenarios` (31), `match-adapter` (119), `card-sync` (41), `submit-card` (34), `rules-simulation` (149).
+- **889 automated tests total, all passing** (up from 870).
+
+## Documentation
+
+Updated `CardAuthorityHotfix_4.2.1.md`, `CardSyncImplementation_4.2.md` (correction banners pointing forward, historical record left otherwise unedited), `EngineAdapter.md`, `MatchSynchronization.md`, `ServiceArchitecture.md`, `MatchLifecycle.md`, `SecurityArchitecture.md`. New `docs/reviews/CardTurnProgressionHotfix_4.2.2.md` (the full implementation report). Every doc states directly: card append and next-turn transition are ONE atomic write; no manual/test-only turn movement is part of the production flow; malformed history causes desync; echo identity requires exact card equality; gameplay legality (the CORRECT next seat) remains client-authoritative in this Spark MVP.

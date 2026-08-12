@@ -196,10 +196,30 @@ function makeRoom(id, patch) {
   check("startMatch: currentRound is 1", doc2.currentRound === 1);
   check("startMatch: dealer defaults to room.creator", doc2.dealer === "p1");
   check("startMatch: turn defaults to dealer", doc2.turn === "p1");
-  check("startMatch: gameState is the documented TODO placeholder, not fabricated dealt hands",
-    doc2.gameState && doc2.gameState.initialized === false && typeof doc2.gameState.todo === "string" && /Deck/.test(doc2.gameState.todo));
+  // Player Hand Synchronization sprint: gameState's shape changed from
+  // an unimplemented-placeholder TODO string to the real, authoritative
+  // dealtRound marker MatchService.dealRound() now writes — the exact,
+  // deliberate schema change this sprint's Architecture Gate approved
+  // (see buildInitialMatchDoc()'s own comment for why). No hands are
+  // fabricated by startMatch() itself either way — dealtRound:0 means
+  // "not dealt yet," not "dealt."
+  check("startMatch: gameState starts undealt (dealtRound:0), not fabricated dealt hands",
+    doc2.gameState && doc2.gameState.initialized === false && doc2.gameState.dealtRound === 0);
   check("startMatch: room status becomes 'in_game'", STORE[key("rooms", "room-start-1")].status === "in_game");
   check("startMatch: room.matchId set to the new matchId", STORE[key("rooms", "room-start-1")].matchId === matchId2);
+
+  // ============ Sprint 3.8: seat identity + version + bidding sync fields ============
+  check("startMatch (Sprint 3.8, Task 1): seats assigned positionally from room.players — p1->\"p1\", p2->\"p2\"",
+    JSON.stringify(doc2.seats) === JSON.stringify({ p1: "p1", p2: "p2" }));
+  check("startMatch (Sprint 3.8, Task 1): only real seats exist — no fabricated p3/p4 for a 2-player match",
+    Object.keys(doc2.seats).length === 2 && !("p3" in doc2.seats) && !("p4" in doc2.seats));
+  check("startMatch (Sprint 3.8, Task 2): version starts at 1", doc2.version === 1);
+  check("startMatch (Sprint 3.8, Task 3): biddingOpen starts true", doc2.biddingOpen === true);
+  check("startMatch (Sprint 3.8, Task 3): bids starts with one null slot per real seat, no more",
+    JSON.stringify(doc2.bids) === JSON.stringify({ p1: null, p2: null }));
+  check("startMatch (Sprint 3.8, Task 3): lastBidSeat starts null", doc2.lastBidSeat === null);
+  check("startMatch (Sprint 4.2): cardLog starts as an empty array", Array.isArray(doc2.cardLog) && doc2.cardLog.length === 0);
+  check("startMatch (Sprint 4.2): lastCardSeat starts null", doc2.lastCardSeat === null);
 
   // ============ Sprint 3.4.1: currentMatchId propagation fix ============
   check("startMatch: self-syncs currentMatchId via SessionService.setCurrentMatchId(matchId) — SELF ONLY",
@@ -254,12 +274,22 @@ function makeRoom(id, patch) {
   var subEvents = [];
   var unsub = MatchService.subscribeToMatch(matchId2, function (data, err) { subEvents.push({ data: data, err: err }); });
   check("subscribeToMatch delivers an immediate snapshot with the current data", subEvents.length === 1 && subEvents[0].data && subEvents[0].data.roomId === "room-start-1");
+  // Sprint 3.8: matches/{matchId} documents now carry a real `version`
+  // FIELD (Task 2 — distinct from this mock's OWN, unrelated VERSION[]
+  // transaction-conflict counter bumped above). subscribeToMatch()'s
+  // Sprint 3.7 ordering guard (dormant until this sprint) is now LIVE
+  // for every match document, so a direct test mutation that changes
+  // content WITHOUT bumping `.version` is correctly treated as stale
+  // and ignored — exactly like a real out-of-band write with no
+  // version bump would be. Bumping `.version` here simulates what any
+  // REAL write path (i.e. submitBid()) always does.
   STORE[key("matches", matchId2)].status = "in_progress";
-  VERSION[key("matches", matchId2)]++;
+  STORE[key("matches", matchId2)].version = (STORE[key("matches", matchId2)].version || 0) + 1;
   notifyListeners(key("matches", matchId2));
   check("subscribeToMatch delivers a second snapshot on change", subEvents.length === 2 && subEvents[1].data.status === "in_progress");
   unsub();
   STORE[key("matches", matchId2)].status = "changed-after-unsub";
+  STORE[key("matches", matchId2)].version = (STORE[key("matches", matchId2)].version || 0) + 1;
   notifyListeners(key("matches", matchId2));
   check("subscribeToMatch's unsubscribe function actually stops delivery", subEvents.length === 2);
 
@@ -278,11 +308,26 @@ function makeRoom(id, patch) {
   FIRESTORE_AVAILABLE = true;
 
   // ============ Not-yet-implemented gameplay methods remain stubs ============
-  ["submitDashCall", "submitBid", "submitPass", "declareTrump", "submitEstimate", "playCard", "resolveTrick", "completeRound", "advanceToNextRound", "endMatch"].forEach(function (m) {
+  // Sprint 3.8: submitBid() is EXCLUDED from this loop — it is no
+  // longer a stub (see tests/submit-bid.test.cjs for its own full,
+  // dedicated test suite). Every OTHER gameplay method remains
+  // unimplemented, unchanged, per this sprint's explicit "only
+  // synchronize bidding" scope.
+  // Round Lifecycle sprint: advanceToNextRound() is now a REAL, implemented method (not a stub) — removed from this stub-regression list on purpose, not an oversight. Match Completion sprint: endMatch() is likewise now a REAL, implemented method (not a stub) — removed from this stub-regression list on purpose, not an oversight (see tests/match-completion.test.cjs for its own dedicated suite). completeRound() remains an intentional stub (see its own doc comment in match-service.js for why) and is still checked below.
+  ["submitDashCall", "submitPass", "declareTrump", "submitEstimate", "playCard", "resolveTrick", "completeRound"].forEach(function (m) {
     var threw = false;
     try { MatchService[m](); } catch (e) { threw = /not implemented/i.test(e.message); }
     check("MatchService." + m + "() still throws Not implemented (bidding/estimation/card-play out of scope this sprint)", threw);
   });
+
+  // Sprint 3.8: submitBid() with missing arguments rejects (it's now a
+  // real, Promise-based, transactional method — argument validation
+  // rejects rather than throwing synchronously, matching startMatch()'s
+  // own established convention).
+  var submitBidNoArgsErr = null;
+  try { await MatchService.submitBid(); } catch (e) { submitBidNoArgsErr = e; }
+  check("MatchService.submitBid() with no arguments rejects with a structured INVALID_ARGUMENT error (not a synchronous throw, not silently resolved)",
+    submitBidNoArgsErr && submitBidNoArgsErr.reason === "INVALID_ARGUMENT");
 
   // ============================================================
   // Cross-service integration: RoomService.setReady triggers

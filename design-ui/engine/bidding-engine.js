@@ -5,6 +5,7 @@
    This is a DESIGN PROTOTYPE — same shapes & rules as the Kotlin model,
    so a BiddingControls composable maps onto it 1:1.
    ════════════════════════════════════════════════════════════════════ */
+(function (global) {
 
 // ── Suit model (mirrors Suit enum: strength SANS5 > ♠4 > ♥3 > ♦2 > ♣1) ──
 const SUITS = {
@@ -54,6 +55,53 @@ function computeRiskId(callerId) {
   return prev;
 }
 
+// ════════════════════════════════════════════════════════════════════
+//  Sprint 3.6.1 (Bidding Engine Contract): LEGALITY PREDICATES — pure,
+//  read-only conditions extracted verbatim out of emit()'s own reducer
+//  branches below, so canSubmit() (this file's new public export) and
+//  emit() itself share exactly ONE source of truth for each rule.
+//  Extracting an inline boolean/condition into a named function changes
+//  nothing about WHEN or WHY a bid is accepted or rejected — every call
+//  site below passes the exact same inputs emit() already had in scope
+//  at that point and gets back the exact same value the inline
+//  expression already produced. No gameplay rule is reinterpreted here.
+// ════════════════════════════════════════════════════════════════════
+function auctionBidBeatsTop(bidVal, bidSuit, auctionTop, auctionSuit) {
+  return bidVal > auctionTop ||
+    (bidVal === auctionTop && SUITS[bidSuit]?.strength > (SUITS[auctionSuit]?.strength || 0));
+}
+function auctionBidIsWith(pId, bidVal, bidSuit, auctionTop, auctionSuit, auctionBidder) {
+  return bidVal === auctionTop && bidSuit === auctionSuit && pId !== auctionBidder && auctionBidder != null;
+}
+function bidBelowWinningCall(t, auctionTop) {
+  return t < auctionTop;
+}
+function confirmSuitTooWeak(t, s, auctionTop, auctionSuit, noSuitConstraint) {
+  return !noSuitConstraint && t === auctionTop && SUITS[s].strength < SUITS[auctionSuit].strength;
+}
+function estimateExceedsCap(tricks, cap) {
+  return tricks > cap;
+}
+function estimateBelowWithFloor(pId, tricks, withPlayers) {
+  if (!withPlayers.includes(pId)) return false;
+  const floor = withFloorFor(pId);
+  return floor != null && tricks < floor;
+}
+// Shared by estimateIsForbidden13() (below) and canSubmit()'s own
+// SubmitFinalEstimate case — the single place "what number is
+// forbidden for this seat right now" is computed, mirroring R1's
+// original inline `13 - otherSum` exactly.
+function forbiddenEstimateFor(pId, bids) {
+  const others = TURN_ORDER.filter(id => id !== pId && bids[id]);
+  if (others.length !== PLAYERS.length - 1) return null;
+  const otherSum = others.reduce((s, id) => s + (bids[id].type === "TRICKS" ? bids[id].amount : 0), 0);
+  return 13 - otherSum;
+}
+function estimateIsForbidden13(pId, tricks, bids) {
+  const forbidden = forbiddenEstimateFor(pId, bids);
+  return forbidden != null && tricks === forbidden;
+}
+
 // dense {p1,p2,p3,p4} ↔ sparse {id:{type,amount}} bid-map conversions,
 // so the engine's existing sparse reducer shape and GameSession's
 // documented dense biddingState.bids shape can both stay as-is.
@@ -67,12 +115,32 @@ function denseBidsToSparse(dense) {
   TURN_ORDER.forEach(id => { if (dense && dense[id] != null) sparse[id] = dense[id]; });
   return sparse;
 }
-// Final committed estimates only include TRICKS-type bids (pre-existing
-// behavior, unchanged — see BiddingState.md § Open Rule Questions for
-// the Dash-Call-as-final-estimate edge case this preserves as-is).
+// Sprint 3.6.1 (Normal Dash Scoring Hotfix): committed estimates include
+// both TRICKS and DASH bids — a Normal Dash (a final estimate of exactly
+// 0 tricks, submitted via SubmitFinalEstimate; see that handler a few
+// lines below) is JUST AS VALID a final estimate as a TRICKS bid, and 0
+// is legitimate data, not missing data. Sprint 3.6's integration testing
+// found this function silently dropped DASH-type bids entirely, which
+// left the affected seat completely ABSENT from GameSession.round.estimates
+// — indistinguishable from "never estimated at all" — and that missing
+// entry later corrupted table-engine.js's bids reconstruction into
+// {type:"TRICKS", amount:undefined}, producing a NaN score. See
+// docs/reviews/MatchFlowIntegration_3.6.md and
+// docs/reviews/MatchFlowIntegration_3.6.1.md for the full root-cause
+// writeup. Fixed at the SOURCE (here, where the value was actually being
+// dropped) rather than compensated for downstream. DASHCALL (the
+// pre-bidding Dash Call, a different, earlier bid type entirely — see
+// dashCallerIds() below) is deliberately still excluded here; it never
+// reaches the Final Estimates phase at all and is carried separately via
+// dashCallers, exactly as before — this is not a behavior change for
+// that path, only for the Normal Dash (post-auction, 0-trick final
+// estimate) path.
 function extractEstimates(sparseBids) {
   const out = {};
-  Object.keys(sparseBids).forEach(id => { if (sparseBids[id].type === "TRICKS") out[id] = sparseBids[id].amount; });
+  Object.keys(sparseBids).forEach(id => {
+    const bid = sparseBids[id];
+    if (bid.type === "TRICKS" || bid.type === "DASH") out[id] = bid.amount;
+  });
   return out;
 }
 
@@ -274,10 +342,8 @@ function emit(intent) {
       } else {
         const bidVal = intent.tricks;
         const bidSuit = intent.suit;
-        const isWith = bidVal === state.auctionTop && bidSuit === state.auctionSuit &&
-                       pId !== state.auctionBidder && state.auctionBidder != null;
-        const beatsTop = bidVal > state.auctionTop ||
-          (bidVal === state.auctionTop && SUITS[bidSuit]?.strength > (SUITS[state.auctionSuit]?.strength || 0));
+        const isWith = auctionBidIsWith(pId, bidVal, bidSuit, state.auctionTop, state.auctionSuit, state.auctionBidder);
+        const beatsTop = auctionBidBeatsTop(bidVal, bidSuit, state.auctionTop, state.auctionSuit);
 
         if (isWith) {
           if (!state.withPlayers.includes(pId)) state.withPlayers.push(pId);
@@ -380,14 +446,14 @@ function emit(intent) {
       if (state.subPhase !== "CONFIRM") return;
       if (state.waitingFor !== intent.playerId) return;
       const t = intent.tricks, s = intent.suit;
-      if (t < state.auctionTop) {
+      if (bidBelowWinningCall(t, state.auctionTop)) {
         pushLog("reject", `REJECTED: ${t} is below the winning call of ${state.auctionTop}.`, "SubmitConfirmCall");
         return { rejected: true, reason: "Can't lower your winning call" };
       }
       // A fast-round Super Call isn't outbidding anyone — it overrides the
       // forced trump outright, so the "equal-or-stronger suit" rule (which
       // only makes sense relative to a competing auction bid) doesn't apply.
-      if (!state.noSuitConstraint && t === state.auctionTop && SUITS[s].strength < SUITS[state.auctionSuit].strength) {
+      if (confirmSuitTooWeak(t, s, state.auctionTop, state.auctionSuit, state.noSuitConstraint)) {
         pushLog("reject", `REJECTED: at the same number, the suit must be equal or stronger than ${SUITS[state.auctionSuit].name}.`, "SubmitConfirmCall");
         return { rejected: true, reason: "Same number needs an equal or stronger suit" };
       }
@@ -447,7 +513,7 @@ function emit(intent) {
       const cap = state.auctionTop;
 
       // R2 — caller bid cap
-      if (intent.tricks > cap) {
+      if (estimateExceedsCap(intent.tricks, cap)) {
         pushLog("reject", `REJECTED: ${nameOf(pId)} tried ${intent.tricks} — exceeds Caller's cap of ${cap}.`, "SubmitFinalEstimate");
         return { rejected: true, reason: `Max is ${cap} (Caller's cap)` };
       }
@@ -455,24 +521,17 @@ function emit(intent) {
       // R2b — a With (Wazz) player can't drop below the last number they
       // actually bid in the auction (their own floor); above that and up
       // to the Caller's cap (R2, just above) is fair game.
-      if (state.withPlayers.includes(pId)) {
+      if (estimateBelowWithFloor(pId, intent.tricks, state.withPlayers)) {
         const floor = withFloorFor(pId);
-        if (floor != null && intent.tricks < floor) {
-          pushLog("reject", `REJECTED: ${nameOf(pId)} tried ${intent.tricks} — With can't drop below their own ${floor}.`, "SubmitFinalEstimate");
-          return { rejected: true, reason: `Min is ${floor} (your own With bid)` };
-        }
+        pushLog("reject", `REJECTED: ${nameOf(pId)} tried ${intent.tricks} — With can't drop below their own ${floor}.`, "SubmitFinalEstimate");
+        return { rejected: true, reason: `Min is ${floor} (your own With bid)` };
       }
 
       // R1 — forbidden 13 for the last estimator
-      const others = TURN_ORDER.filter(id => id !== pId && state.bids[id]);
-      const isLast = others.length === PLAYERS.length - 1;
-      if (isLast) {
-        const otherSum = others.reduce((s, id) => s + (state.bids[id].type === "TRICKS" ? state.bids[id].amount : 0), 0);
-        const forbidden = 13 - otherSum;
-        if (intent.tricks === forbidden) {
-          pushLog("reject", `REJECTED: ${nameOf(pId)} tried ${intent.tricks} — bids cannot total 13 (forbidden ${forbidden}).`, "SubmitFinalEstimate");
-          return { rejected: true, reason: `Can't pick ${forbidden} — totals 13` };
-        }
+      if (estimateIsForbidden13(pId, intent.tricks, state.bids)) {
+        const forbidden = forbiddenEstimateFor(pId, state.bids);
+        pushLog("reject", `REJECTED: ${nameOf(pId)} tried ${intent.tricks} — bids cannot total 13 (forbidden ${forbidden}).`, "SubmitFinalEstimate");
+        return { rejected: true, reason: `Can't pick ${forbidden} — totals 13` };
       }
 
       state.bids[pId] = intent.tricks === 0 ? { type: "DASH", amount: 0 } : { type: "TRICKS", amount: intent.tricks };
@@ -567,6 +626,158 @@ function emit(intent) {
 }
 
 function nameOf(id) { return PLAYERS.find(p => p.id === id).name; }
+
+// ════════════════════════════════════════════════════════════════════
+//  Sprint 3.6.1 (Bidding Engine Contract): canSubmit(intent) — the
+//  minimum additive, PURE, read-only legality API a future Bidding UI
+//  needs to ask "is this action legal right now?" without mutating
+//  state and without calling emit() merely to probe it. Every branch
+//  below calls the SAME predicate functions defined above emit() (or
+//  re-checks the SAME phase/turn conditions emit()'s own switch cases
+//  check first) — this function is a read-only PROJECTION of emit()'s
+//  existing legality logic, never a second, independently-derived
+//  copy of it. It never calls pushLog(), never mutates `state`, never
+//  calls any GameSession setter, and never calls emit() itself.
+//
+//  Returns `{legal: true}` or `{legal: false, reason: "..."}` for
+//  every one of the four real intent shapes emit() accepts
+//  (SubmitDashCallDecision / SubmitAuctionBid / SubmitConfirmCall /
+//  SubmitFinalEstimate); `{legal: false, reason: "Unknown intent type"}`
+//  for anything else, and defensive `{legal: false, ...}` answers if
+//  called before initState() or after bidding has already completed
+//  (state.subPhase === "DONE") — neither of those is a "rule," they are
+//  the same guard emit() itself has at the top of its own switch
+//  (`if (state.subPhase === "DONE") return;`), reused here rather than
+//  reinterpreted.
+//
+//  Deliberately NOT implemented for the two intents whose only
+//  "legality" condition IS the phase/turn check (SubmitDashCallDecision
+//  always processes — an over-the-limit Dash Call auto-converts to a
+//  PASS inside emit(), it is never rejected — and SubmitAuctionBid's
+//  own "does this bid beat the top" outcome is likewise never an
+//  explicit `{rejected}` return in emit(), only a reinterpretation into
+//  a forced pass). For these two, canSubmit() answers the SAME
+//  question a UI actually needs ("would submitting this be accepted as
+//  a real action, or silently reinterpreted into something else") using
+//  the identical extracted predicates emit() itself now calls (see
+//  auctionBidBeatsTop()/auctionBidIsWith() above) — not a new rule.
+// ════════════════════════════════════════════════════════════════════
+// Sprint 3.7.x (Bidding Trust-Boundary Hardening): STRUCTURAL presence
+// validation for each intent type canSubmit() accepts — "does this
+// intent even carry the fields its own type requires," never a
+// gameplay-legality decision. Added because the content-rule
+// predicates canSubmit() already calls (bidBelowWinningCall(),
+// confirmSuitTooWeak(), estimateExceedsCap(), etc.) all short-circuit
+// to `false`/no-op on an `undefined` field via ordinary JS comparison
+// semantics (`undefined < x` is `false`; `a === b` with one side
+// `undefined` is `false` unless BOTH are `undefined`) — meaning a
+// malformed intent missing a required field was previously classified
+// `{legal:true}` by canSubmit(), only to then crash emit() (e.g.
+// `SUITS[undefined].name`) once actually applied. Fixing this at the
+// SOURCE (here, the one place every caller already asks "is this
+// legal") is the same "fix root cause, not downstream" convention
+// this project used for the Sprint 3.6.1 Normal Dash Scoring Hotfix.
+// Required fields are taken directly from the EXISTING intent shapes
+// emit() already reads a few lines below in this same switch — no new
+// schema invented, no gameplay rule touched, no legal/illegal outcome
+// changed for any well-formed intent.
+//
+// Deliberately checked AFTER each case's own phase/turn guard, not
+// before the switch — an intent for the wrong phase/turn must still be
+// reported as "Not the X phase"/"Not this seat's turn" even if it also
+// happens to be missing a field, exactly matching this file's own
+// pre-existing, already-tested precedence (confirmed against
+// tests/bidding-contract.test.cjs's own "DASH: an AUCTION-phase intent
+// is illegal — wrong phase" case, which submits a SubmitAuctionBid
+// intent with no `isPass` field at all and expects the PHASE reason,
+// not a malformed-intent one).
+function isMalformedBiddingIntent(intent) {
+  switch (intent.type) {
+    case "SubmitDashCallDecision":
+      return typeof intent.declaredDashCall !== "boolean";
+    case "SubmitAuctionBid":
+      if (typeof intent.isPass !== "boolean") return true;
+      if (intent.isPass) return false; // a pass carries no tricks/suit — nothing further required
+      return typeof intent.tricks !== "number" || !Number.isFinite(intent.tricks) ||
+        typeof intent.suit !== "string" || !SUITS[intent.suit];
+    case "SubmitConfirmCall":
+      return typeof intent.tricks !== "number" || !Number.isFinite(intent.tricks) ||
+        typeof intent.suit !== "string" || !SUITS[intent.suit];
+    case "SubmitFinalEstimate":
+      return typeof intent.tricks !== "number" || !Number.isFinite(intent.tricks);
+    default:
+      return false; // an unrecognized type is handled by the switch's own default case, not here
+  }
+}
+
+function canSubmit(intent) {
+  if (!state) return { legal: false, reason: "Bidding has not been initialized yet" };
+  if (!intent || typeof intent !== "object" || !intent.type) return { legal: false, reason: "Malformed intent" };
+  if (state.subPhase === "DONE") return { legal: false, reason: "Bidding is already complete" };
+
+  const pId = intent.playerId;
+
+  switch (intent.type) {
+    case "SubmitDashCallDecision": {
+      if (state.subPhase !== "DASH") return { legal: false, reason: "Not the Dash-Call phase" };
+      if (state.waitingFor !== pId) return { legal: false, reason: "Not this seat's turn" };
+      if (isMalformedBiddingIntent(intent)) return { legal: false, reason: "Malformed intent" };
+      return { legal: true };
+    }
+
+    case "SubmitAuctionBid": {
+      if (state.subPhase !== "AUCTION") return { legal: false, reason: "Not the Auction phase" };
+      if (state.waitingFor !== pId) return { legal: false, reason: "Not this seat's turn" };
+      if (isMalformedBiddingIntent(intent)) return { legal: false, reason: "Malformed intent" };
+      if (intent.isPass) return { legal: true };
+      if (intent.tricks == null || intent.tricks < 4 || intent.tricks > 13) {
+        return { legal: false, reason: "Bid must be between 4 and 13 tricks" };
+      }
+      const isWith = auctionBidIsWith(pId, intent.tricks, intent.suit, state.auctionTop, state.auctionSuit, state.auctionBidder);
+      const beatsTop = auctionBidBeatsTop(intent.tricks, intent.suit, state.auctionTop, state.auctionSuit);
+      if (isWith || beatsTop) return { legal: true };
+      return {
+        legal: false,
+        reason: `Bid does not beat the current top bid of ${state.auctionTop}` +
+          (state.auctionSuit ? ` ${SUITS[state.auctionSuit].name}` : "")
+      };
+    }
+
+    case "SubmitConfirmCall": {
+      if (state.subPhase !== "CONFIRM") return { legal: false, reason: "Not the Confirmation phase" };
+      if (state.waitingFor !== pId) return { legal: false, reason: "Not this seat's turn" };
+      if (isMalformedBiddingIntent(intent)) return { legal: false, reason: "Malformed intent" };
+      if (bidBelowWinningCall(intent.tricks, state.auctionTop)) {
+        return { legal: false, reason: "Can't lower your winning call" };
+      }
+      if (confirmSuitTooWeak(intent.tricks, intent.suit, state.auctionTop, state.auctionSuit, state.noSuitConstraint)) {
+        return { legal: false, reason: "Same number needs an equal or stronger suit" };
+      }
+      return { legal: true };
+    }
+
+    case "SubmitFinalEstimate": {
+      if (state.subPhase !== "ESTIMATES") return { legal: false, reason: "Not the Final Estimates phase" };
+      if (state.waitingFor !== pId) return { legal: false, reason: "Not this seat's turn" };
+      if (isMalformedBiddingIntent(intent)) return { legal: false, reason: "Malformed intent" };
+      if (estimateExceedsCap(intent.tricks, state.auctionTop)) {
+        return { legal: false, reason: `Max is ${state.auctionTop} (Caller's cap)` };
+      }
+      if (estimateBelowWithFloor(pId, intent.tricks, state.withPlayers)) {
+        const floor = withFloorFor(pId);
+        return { legal: false, reason: `Min is ${floor} (your own With bid)` };
+      }
+      if (estimateIsForbidden13(pId, intent.tricks, state.bids)) {
+        const forbidden = forbiddenEstimateFor(pId, state.bids);
+        return { legal: false, reason: `Can't pick ${forbidden} — totals 13` };
+      }
+      return { legal: true };
+    }
+
+    default:
+      return { legal: false, reason: "Unknown intent type" };
+  }
+}
 
 // Pre-bidding Dash Callers never re-enter estimation, so extractEstimates()
 // (TRICKS-only) silently drops them — without this, a real (reachable, up
@@ -697,3 +908,35 @@ window.addEventListener("DOMContentLoaded", () => {
   bindStatic();
   advance();
 });
+
+// Sprint 3.6 (Match Flow Integration): the minimum export required to
+// make this file's reducer callable from outside a browser page —
+// nothing above this line was touched. This file has no module
+// wrapper and no export of any kind through Sprint 3.5; as delivered,
+// every function above (including `state` itself) is unreachable once
+// the file finishes loading, which made it impossible to drive from an
+// automated test at all. `render`/`buildHand`/`bindStatic`/`showDone`
+// remain undefined here exactly as before — real browser usage is
+// unaffected (the DOMContentLoaded handler above still defines and
+// calls them exactly as it always has, once loaded on a real page
+// alongside its paired HTML screen's own inline script). Integration
+// tests instead call `initState()`/`emit()` directly and never trigger
+// `advance()`, so those UI-side functions are simply never invoked.
+// See docs/reviews/MatchFlowIntegration_3.6.md for the full account of
+// why this was the smallest viable change, and the discovered (not
+// fixed) architectural notes this sprint did not attempt to resolve.
+window.BiddingEngine = {
+  initState: initState,
+  emit: emit,
+  getState: function () { return state; },
+  canSubmit: canSubmit,
+  // Match Completion sprint: exposed READ-ONLY so ScoringEngine/
+  // MatchAdapter can determine "what was Rapid Round N's MANDATORY
+  // trump" (needed for Super Call round-extension eligibility — rules
+  // §5) without re-deriving or duplicating the FIXED_SUITS cycle
+  // defined once, here. Pure functions — no state read/written.
+  isFastRound: isFastRound,
+  fixedTrumpFor: fixedTrumpFor
+};
+
+})(window);

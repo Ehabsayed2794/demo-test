@@ -238,14 +238,59 @@
       console.warn("[ScoringEngine] applyRoundResult called again for round " + result.round + " — ignoring duplicate call.");
       return last;
     }
+    // Sprint 3.6.1 (Normal Dash Scoring Hotfix): `(result.deltas[id] || 0)`
+    // used to sit here — a second, distinct masking effect of the same
+    // bug documented in MatchInitialization/MatchFlowIntegration_3.6.md:
+    // since NaN is falsy in JavaScript, that fallback silently turned a
+    // corrupted (NaN) delta into a plausible-looking 0, making the
+    // corruption invisible at the running-match-total level even though
+    // it was plainly visible in result.deltas itself. `calculateRoundScore()`
+    // always populates a real, numeric deltas[id] for every id it was
+    // given in `order` — a delta of exactly 0 (e.g. a Sa'ayda round) is
+    // legitimate data and must be added as 0, not "defaulted" to 0 as if
+    // it were absent. hasOwnProperty distinguishes "genuinely no delta
+    // recorded for this seat" (a real data-flow gap, worth a loud
+    // warning — this should not happen for a properly completed round)
+    // from "a real, legitimate delta that happens to be 0" (add it
+    // as-is). Only `current[id] || 0` remains — that fallback is an
+    // unrelated, legitimate default (a player's first-ever recorded
+    // score, starting from 0), not corruption-masking.
     var current = GameSession.getMatchScores();
     var updated = {};
-    Object.keys(current).forEach(function (id) { updated[id] = (current[id] || 0) + (result.deltas[id] || 0); });
+    Object.keys(current).forEach(function (id) {
+      var hasDelta = Object.prototype.hasOwnProperty.call(result.deltas, id);
+      if (!hasDelta) {
+        console.warn("[ScoringEngine] applyRoundResult: no score delta recorded for seat " + id + " for round " + result.round + " — this indicates a real data-flow gap upstream, not a normal completed round. Treating as 0, but NOT silently — see docs/reviews/MatchFlowIntegration_3.6.1.md.");
+      }
+      var delta = hasDelta ? result.deltas[id] : 0;
+      updated[id] = (current[id] || 0) + delta;
+    });
     GameSession.setMatchScores(updated);
 
+    var entryTrump = meta.trump != null ? meta.trump : GameSession.getRound().trump;
+    var entryCallerId = meta.callerId != null ? meta.callerId : result.riskPlayerId && GameSession.getRound().callerId;
+
+    // Match Completion sprint: derive this round's extension eligibility
+    // from facts already computed above (result.breakdown, result.isSaayda)
+    // — see computeRoundExtension()'s own comment for why this never
+    // re-derives Super Call legality/success. Applied to the LOCAL
+    // session's maxRounds immediately (single-player / local-mock mode);
+    // the multiplayer-authoritative equivalent is
+    // MatchService.extendMatchRounds(), called by MatchAdapter using
+    // this SAME computeRoundExtension() function against the SAME
+    // inputs — see match-adapter.js's maybeExtendOrCompleteMatch().
+    var extension = computeRoundExtension({
+      round: result.round, callerId: entryCallerId, trump: entryTrump,
+      breakdown: result.breakdown, isSaayda: result.isSaayda
+    });
+    if (extension.extend) {
+      var round = GameSession.getRound();
+      GameSession.setRound({ maxRounds: (round.maxRounds || 18) + 1 });
+    }
+
     var entry = {
-      trump: meta.trump != null ? meta.trump : GameSession.getRound().trump,
-      callerId: meta.callerId != null ? meta.callerId : result.riskPlayerId && GameSession.getRound().callerId,
+      trump: entryTrump,
+      callerId: entryCallerId,
       tricksWon: meta.tricksWon || {},
       estimates: meta.estimates || {},
       scoreDeltas: result.deltas,
@@ -255,7 +300,8 @@
       isOver: result.isOver,
       isSaayda: result.isSaayda,
       appliedMultiplier: result.appliedMultiplier,
-      nextMultiplier: result.nextMultiplier
+      nextMultiplier: result.nextMultiplier,
+      roundExtension: extension
     };
     GameSession.recordRoundResult(entry);
     GameSession.setRound({ multiplier: result.nextMultiplier });
@@ -275,11 +321,90 @@
    *  ScoringEngine.md § Open Rule Questions #2. */
   function calculateTeamScore() { return null; }
 
+  // Rapid Rounds window (rules §5) — the ONLY physical rounds eligible
+  // for a maxRounds extension, regardless of how many times maxRounds
+  // has already grown. Matches bidding-engine.js's own fast-round
+  // window (isFastRound(round) === round >= 14) narrowed to the fixed
+  // 14-18 band the extension rule specifically calls out — a Super
+  // Call in an ALREADY-EXTENDED round (19, 20, ...) is still a fast
+  // round (isFastRound stays true forever past 14) but is NOT eligible
+  // to extend further, per the rules doc's explicit "only during Rapid
+  // Rounds 14-18" restriction.
+  var RAPID_ROUND_MIN = 14, RAPID_ROUND_MAX = 18;
+
+  /** Match Completion sprint: determine whether the round that just
+   *  completed qualifies to extend `maxRounds` by exactly +1 — reusing
+   *  ALREADY-COMPUTED authoritative facts, never re-deriving Super Call
+   *  legality or success itself (both remain bidding-engine.js's /
+   *  calculateRoundScore()'s exclusive jobs):
+   *
+   *  - "successful qualifying Super Call": round is in the Rapid Rounds
+   *    window (14-18); `callerId` is set (in a fast round, this is ONLY
+   *    ever populated by bidding-engine.js's own Super Call path — a
+   *    non-Super-Call fast round explicitly completes with
+   *    `callerId: null`, so a non-null callerId here already IS the
+   *    reused Super Call signal, not a re-derivation of it);
+   *    `breakdown[callerId].succeeded` (calculateRoundScore's own,
+   *    already-computed success flag) is true; and the round's actual
+   *    `trump` differs from that round's mandatory trump
+   *    (`BiddingEngine.fixedTrumpFor(round)` — the SAME fixed-suit
+   *    table bidding-engine.js already uses, read-only, not
+   *    duplicated).
+   *  - "all players lose" (Sa'ayda): round is in the Rapid Rounds
+   *    window and `isSaayda` (calculateRoundScore's own, already-
+   *    computed `successCount === 0` flag) is true — no new detection
+   *    logic, just reusing the existing Sa'ayda flag inside the
+   *    eligible window.
+   *
+   *  These two conditions are mutually exclusive by construction
+   *  (isSaayda means successCount===0, which means the caller's bid
+   *  also failed, so `breakdown[callerId].succeeded` is false) — this
+   *  function never returns more than +1 for a single round.
+   *
+   *  input: { round, callerId, trump, breakdown, isSaayda } — every
+   *  field already exists on GameSession.getRound() / the
+   *  calculateRoundScore() result the caller already has in hand. */
+  function computeRoundExtension(input) {
+    var round = input.round;
+    if (typeof round !== "number" || round < RAPID_ROUND_MIN || round > RAPID_ROUND_MAX) {
+      return { extend: false, reason: null };
+    }
+    if (input.isSaayda) {
+      return { extend: true, reason: "SAAYDA" };
+    }
+    var callerId = input.callerId;
+    if (callerId && input.breakdown && input.breakdown[callerId] && input.breakdown[callerId].succeeded) {
+      var mandatoryTrump = (global.BiddingEngine && typeof global.BiddingEngine.fixedTrumpFor === "function")
+        ? global.BiddingEngine.fixedTrumpFor(round) : null;
+      if (mandatoryTrump != null && input.trump !== mandatoryTrump) {
+        return { extend: true, reason: "SUPER_CALL" };
+      }
+    }
+    return { extend: false, reason: null };
+  }
+
+  /** Match Completion sprint: determine the winner(s) after the match ends.
+   *  Per house rules, multiple winners are allowed: if two or more seats
+   *  end with the same highest score, ALL tied seats are Kings. Pure
+   *  calculation: reads matchScores, finds max, returns array of seat ids
+   *  with that max score. Returns empty array if matchScores is empty
+   *  (defensive) or all scores are zero/missing. */
+  function computeWinner(matchScores) {
+    if (!matchScores || typeof matchScores !== "object") return [];
+    var seats = Object.keys(matchScores);
+    if (seats.length === 0) return [];
+    var maxScore = Math.max.apply(null, seats.map(function (id) { return matchScores[id] || 0; }));
+    var winners = seats.filter(function (id) { return (matchScores[id] || 0) === maxScore; });
+    return winners;
+  }
+
   global.ScoringEngine = {
     calculateRoundScore: calculateRoundScore,
     applyRoundResult: applyRoundResult,
     calculateMatchScore: calculateMatchScore,
     calculateTeamScore: calculateTeamScore,
+    computeWinner: computeWinner,
+    computeRoundExtension: computeRoundExtension,
     computeRiskPlayerId: computeRiskPlayerId, // exposed for tests/inspection
     calculateClassicScore: calculateClassicScore, // exposed for tests/inspection (per-player Classic formula)
     classicRoleFor: classicRoleFor

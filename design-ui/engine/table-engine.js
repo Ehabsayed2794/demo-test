@@ -5,6 +5,7 @@
    Scope: a single round of trick play (13 tricks). Bidding outcome
    (caller / with / risk / estimates / trump) is seeded as the entry state.
    ════════════════════════════════════════════════════════════════════ */
+(function (global) {
 
 // ── Suit model (strength SANS5 > ♠4 > ♥3 > ♦2 > ♣1) ──
 const SUITS = {
@@ -59,7 +60,23 @@ function buildRoundCfg() {
     leaderId,
   };
 }
-const ROUND_CFG = buildRoundCfg();
+// Foundation Fix (Table Controls sprint, authorized): was `const
+// ROUND_CFG = buildRoundCfg();` — computed exactly ONCE, at module
+// load time (i.e. when this <script> tag executes, which happens at
+// page load, BEFORE any real bidding interaction has occurred on a
+// page that loads bidding-engine.js and table-engine.js together).
+// initState() reused this same frozen snapshot forever, so it could
+// never reflect the REAL bidding outcome (trump/callerId/withPlayers/
+// estimates/leaderId/round) once bidding genuinely completed later in
+// the same page session — confirmed by direct reproduction (see
+// docs/reviews/TableEngine_Foundation_Fix_Report.md). Changed to `let`
+// and reassigned at the top of initState() (below) so every call
+// re-derives it fresh from GameSession's CURRENT state — buildRoundCfg()
+// itself is completely unchanged, not one formula/rule touched; this
+// is purely a "read the existing data at the correct lifecycle moment"
+// fix, exactly like the existing `hands = GameSession.ensureHandsDealt()`
+// line a few lines below already does correctly on every initState() call.
+let ROUND_CFG = buildRoundCfg();
 
 let state = null;
 
@@ -79,6 +96,13 @@ function computeRiskId() {
 }
 
 function initState() {
+  // Foundation Fix: re-derive ROUND_CFG fresh from GameSession's
+  // CURRENT round/bidding state on every call — never reuse a snapshot
+  // from a prior call or from module load. This is the one line that
+  // actually fixes the staleness bug; buildRoundCfg()'s own logic is
+  // completely unchanged.
+  ROUND_CFG = buildRoundCfg();
+
   // Card Engine: cards were already dealt once for this round when
   // Bidding Phase started (stored in GameSession). Reuse the same
   // hands here so the trick-play round matches what was actually bid
@@ -327,3 +351,76 @@ window.addEventListener("DOMContentLoaded", () => {
   bindStatic();
   advance();
 });
+
+// Sprint 3.6 (Match Flow Integration): same minimum-export treatment as
+// bidding-engine.js's matching addition — see that file's comment and
+// docs/reviews/MatchFlowIntegration_3.6.md for the full rationale.
+// Nothing above this line was touched. `resolveTrick` is exported too:
+// integration tests bypass `advance()`'s setTimeout-based auto-resolve
+// (real per-turn delays would make an automated test impractically
+// slow) and instead call `emit()` for all four plays of a trick, then
+// call `resolveTrick()` directly once `state.phase === "RESOLVING"` —
+// the exact same function the real turn loop already calls internally,
+// just invoked explicitly instead of via a timer.
+// Sprint 4.2.1 (Pre-Write Card Authority & Desync Safety): ONE more
+// minimum-export addition, same treatment as Sprint 3.6's own
+// `resolveTrick`/`getState` above — nothing above this line was
+// touched, and `canPlayCard` itself introduces NO new rule: it is a
+// PURE, non-mutating composition of the exact same three conditions
+// `emit()` already checks before it mutates anything (`state.phase`,
+// `state.turn`, and `isLegal()` — all pre-existing, unchanged). This
+// is what closes Sprint 4.2.1's Task 2 gap (a caller needing to know
+// "would this play be accepted" WITHOUT calling `emit()` and without
+// duplicating `isLegal()`'s own follow-suit/hand-ownership logic) — see
+// design-ui/match-service.js's submitCard() for the one caller that
+// uses it. Never mutates `state`; safe to call any number of times
+// with zero side effects; never calls `emit()` itself.
+function canPlayCard(playerId, card) {
+  if (!state) return { legal: false, reason: "NOT_INITIALIZED" };
+  if (state.phase !== "PLAY") return { legal: false, reason: "NOT_PLAY_PHASE" };
+  if (state.turn !== playerId) return { legal: false, reason: "NOT_THIS_SEATS_TURN" };
+  if (!card || typeof card !== "object" || !card.suit || !card.rank || !isLegal(playerId, card)) {
+    return { legal: false, reason: "ILLEGAL_CARD" };
+  }
+  return { legal: true };
+}
+
+// Sprint 4.2.2 (Atomic Card Turn Progression & Card-Log Desync
+// Hardening), Task 1: ONE more minimum-export addition, same
+// additive-only treatment as `canPlayCard` above and Sprint 3.6's
+// original `resolveTrick`/`getState` — nothing above this line was
+// touched. `previewPlay` introduces NO new rule and NO new state
+// transition of its own: it reuses `canPlayCard`'s own legality
+// answer verbatim, then reads the EXACT same "how many plays would
+// this trick have, and who's next" arithmetic `emit()` already
+// performs (`state.plays.length` vs. `4`, `nextCCW()`) — just without
+// ever calling `emit()`, mutating `state`, removing a card from a
+// hand, or touching `GameSession`. This is what makes it safe to call
+// from `design-ui/match-service.js`'s `submitCard()` BEFORE a
+// Firestore write even starts (Sprint 4.2.2's Task 2) — the answer it
+// gives is exactly what `emit()` would decide, read in advance, never
+// duplicated or reimplemented independently. Winner/trick-resolution
+// logic (what happens once `nextPhase` is `"RESOLVING"`) is
+// deliberately NOT computed here — this function answers "is this
+// legal, and what turn/phase does accepting it lead to," nothing about
+// who wins the completed trick, per this sprint's own stop list. */
+function previewPlay(playerId, card) {
+  var validation = canPlayCard(playerId, card);
+  if (!validation.legal) return { legal: false, reason: validation.reason };
+  var nextPlayCount = state.plays.length + 1; // the exact count AFTER this (not-yet-applied) play, mirroring emit()'s own check
+  if (nextPlayCount < 4) {
+    return { legal: true, nextTurnSeat: nextCCW(playerId), nextPhase: "PLAY" };
+  }
+  return { legal: true, nextTurnSeat: null, nextPhase: "RESOLVING" };
+}
+
+window.TableEngine = {
+  initState: initState,
+  emit: emit,
+  resolveTrick: resolveTrick,
+  getState: function () { return state; },
+  canPlayCard: canPlayCard,
+  previewPlay: previewPlay
+};
+
+})(window);

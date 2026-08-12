@@ -7,6 +7,15 @@
 <link rel="preconnect" href="https://fonts.googleapis.com"></link>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous"></link>
 <link href="https://fonts.googleapis.com/css2?family=Marcellus&amp;family=Saira:wght@400;500;600;700&amp;family=Spline+Sans+Mono:wght@500;600;700&amp;display=swap" rel="stylesheet"></link>
+<!-- Render Layer Foundation sprint (Task 2 — Shared Match Components):
+     the existing, already-shipped generic Toast/Modal/Input/Skeleton
+     kit (login/shared-ui.css + shared-ui.js), loaded here for the
+     first time — same token system every screen already uses, no new
+     colors introduced. Not yet USED by anything on this screen this
+     sprint (no toast/modal is triggered) — loading it now is the
+     additive, low-risk half of Task 2; wiring an actual toast/modal
+     is deferred to whichever future sprint's control needs one. -->
+<link rel="stylesheet" href="../login/shared-ui.css"></link>
 <style>
   /* Sprint 3.4 — Match Initialization & Game Start. Placeholder screen,
      explicitly acceptable per the brief ("Placeholder screen is
@@ -17,7 +26,7 @@
   :root{
     --accent:#E8A33D; --accent-hi:color-mix(in oklch, var(--accent) 70%, #fff3da);
     --accent-dim:color-mix(in oklch, var(--accent) 55%, #1a1208); --glow:0.6;
-    --ink:#f0eada; --ink-dim:#a89f8e; --ink-faint:#6f685b;
+    --ink:#f0eada; --ink-dim:#a89f8e; --ink-faint:#8a8272; /* PRODUCTION UX AUDIT (Finding #4): was #6f685b (3.14-3.58:1, fails 4.5:1 WCAG minimum against every real background it renders over — see Fix Plan). Computed replacement, not guessed. */
     --bg:#0d0a07; --panel:#17130e; --panel-hi:#1d1912; --panel-line:rgba(255,240,210,.07); --pill:#1d1a16;
     --mono:"Spline Sans Mono",monospace;
   }
@@ -47,10 +56,191 @@
   .players-list .row{display:flex;align-items:center;justify-content:space-between;font-family:var(--mono);font-size:11px;color:var(--ink-dim);background:var(--pill);border:1px solid var(--panel-line);border-radius:8px;padding:6px 10px;}
   .players-list .row .tag{color:var(--accent);font-weight:600;}
 
+  /* Render Layer Foundation sprint (Task 1/3): the Match Shell's own
+     view-container placeholder (Task 1) plus the Player/Seat renderer
+     (Task 3). Seat layout (p1 bottom / p2 right / p3 top / p4 left) is
+     NOT invented here — it is the documented layout already stated in
+     design-ui/engine/dealer.js's own header comment ("Table seat
+     layout is p1 bottom / p2 right / p3 top / p4 left"), reused as-is
+     since table-engine.js's own equivalent SEAT_POS constant is
+     private/unexported (confirmed by the Implementation Plan's own
+     Engine Contract Map, §5). This is display-only positioning — no
+     gameplay rule lives here. */
+  #matchGameView{width:100%;position:relative;min-height:180px;background:var(--pill);border:1px solid var(--panel-line);border-radius:12px;padding:10px;box-sizing:border-box;}
+  #matchGameView .view-placeholder{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:9.5px;color:var(--ink-faint);text-align:center;padding:0 30px;}
+  #matchSeats{position:relative;width:100%;height:160px;}
+
+  /* Bidding Renderer sprint: read-only projection of BiddingEngine.getState().
+     Same panel/pill/mono vocabulary already established by match/index.html's
+     own .status-pill/.stat-tile and by lobby/index.html's .badge/.rank-chip
+     family (Claude Design's established visual language) — no new colors,
+     no new component pattern invented. */
+  #biddingPanel{width:100%;display:flex;flex-direction:column;gap:6px;font-family:"Saira",sans-serif;}
+  #biddingPanel .bidding-phase-row{display:flex;align-items:center;gap:8px;}
+  #biddingPanel .bidding-phase-badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:12px;font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.04em;color:var(--accent);background:rgba(232,163,61,.14);text-transform:uppercase;}
+  #biddingPanel .bidding-turn{font-family:var(--mono);font-size:9.5px;color:var(--ink-dim);}
+  #biddingPanel .bidding-turn .who{color:var(--accent);font-weight:600;}
+  #biddingPanel .bidding-fields{display:flex;flex-wrap:wrap;gap:6px;}
+  #biddingPanel .bidding-field{background:var(--panel-hi);border:1px solid var(--panel-line);border-radius:8px;padding:4px 9px;font-family:var(--mono);font-size:9px;color:var(--ink-dim);}
+  #biddingPanel .bidding-field .k{color:var(--ink-faint);text-transform:uppercase;letter-spacing:.05em;margin-right:4px;}
+  #biddingPanel .bidding-field .v{color:var(--ink);font-weight:600;}
+  #biddingPanel .bidding-empty{font-family:var(--mono);font-size:9px;color:var(--ink-faint);text-align:center;padding:8px 0;}
+
+  /* Bidding Controls sprint: the INTERACTIVE half of the bidding UI —
+     strictly separate from #biddingPanel above (pure Engine State ->
+     Renderer -> UI, never touched by this sprint). Reuses the existing
+     button vocabulary already shipped in login/index.html
+     (.primary-btn's accent gradient / .google-btn's pill-bordered
+     secondary style) — no new visual language invented, per the
+     brief's "maintain existing component language" requirement. */
+  #biddingControls{width:100%;display:flex;flex-direction:column;gap:8px;font-family:"Saira",sans-serif;margin-top:2px;}
+  #biddingControls .bd-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
+  #biddingControls .bd-waiting{font-family:var(--mono);font-size:9px;color:var(--ink-faint);text-align:center;padding:4px 0;}
+  .bd-btn{border:1px solid var(--panel-line);background:var(--pill);color:var(--ink);border-radius:9px;padding:7px 14px;font-family:"Saira",sans-serif;font-size:11.5px;font-weight:600;cursor:pointer;transition:border-color .12s ease,background .12s ease,opacity .12s ease;position:relative;}
+  .bd-btn:hover:not(:disabled){border-color:var(--accent-dim);background:var(--panel-hi);}
+  .bd-btn-primary{border:none;border-radius:9px;padding:7px 16px;font-family:"Saira",sans-serif;font-size:11.5px;font-weight:700;letter-spacing:.02em;color:#1a1208;background:linear-gradient(160deg,var(--accent-hi),var(--accent));cursor:pointer;transition:filter .12s ease,opacity .12s ease;position:relative;}
+  .bd-btn-primary:hover:not(:disabled){filter:brightness(1.06);}
+  .bd-btn:disabled,.bd-btn-primary:disabled{opacity:.42;cursor:not-allowed;filter:none;}
+  /* PRODUCTION UX AUDIT — Touch Target Hit-Area Fix (Finding #1): the
+     visible box stays exactly as-is (font-size/padding/line-height
+     unchanged, so no layout-flow or overflow impact — the surrounding
+     .card is already tight on vertical slack, confirmed by direct
+     measurement before this change). Only the CLICKABLE/TAPPABLE area
+     is expanded to the UX guideline's 44x44px minimum, via an invisible
+     pseudo-element centered on the button — the same technique iOS/
+     Android HIGs recommend for a control that can't grow its own box.
+     Never affects rendering, only hit-testing. */
+  .bd-btn::before,.bd-btn-primary::before{content:"";position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:max(100%,44px);height:max(100%,44px);}
+  .bd-suit-chip{border:1px solid var(--panel-line);background:var(--pill);color:var(--ink-dim);border-radius:12px;padding:4px 10px;font-family:var(--mono);font-size:10px;font-weight:600;cursor:pointer;transition:border-color .12s ease,color .12s ease,background .12s ease;}
+  .bd-suit-chip:hover:not(:disabled){border-color:var(--accent-dim);}
+  .bd-suit-chip.is-selected{border-color:var(--accent);color:var(--accent);background:rgba(232,163,61,.14);}
+  .bd-suit-chip:disabled{opacity:.42;cursor:not-allowed;}
+  .bd-stepper{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:12px;color:var(--ink);}
+  .bd-stepper .bd-step-btn{width:24px;height:24px;border-radius:50%;border:1px solid var(--panel-line);background:var(--pill);color:var(--ink);cursor:pointer;display:grid;place-items:center;font-size:14px;line-height:1;transition:border-color .12s ease;}
+  .bd-stepper .bd-step-btn:hover:not(:disabled){border-color:var(--accent);}
+  .bd-stepper .bd-step-btn:disabled{opacity:.42;cursor:not-allowed;}
+  .bd-stepper .bd-step-value{min-width:26px;text-align:center;font-weight:700;}
+  .bd-hint{font-family:var(--mono);font-size:9px;color:var(--ink-faint);min-height:11px;}
+  .bd-hint.is-illegal{color:#e0836a;}
+  .hidden{display:none !important;}
+
+  /* Table Controls sprint: the Play-phase panel. Same panel/pill/mono
+     vocabulary as #biddingPanel/.bd-* above — no new visual language.
+     A card chip mirrors .bidding-field's own shape (panel-hi bg,
+     panel-line border, mono font); the only new color is the existing
+     shared-ui.css error-hint red (#e0836a), reused for red suits
+     rather than inventing a new token. */
+  #tablePanel{width:100%;display:flex;flex-direction:column;gap:8px;font-family:"Saira",sans-serif;}
+  #tablePanel .table-turn{font-family:var(--mono);font-size:9.5px;color:var(--ink-dim);text-align:center;}
+  #tablePanel .table-turn .who{color:var(--accent);font-weight:600;}
+  #trickPanel{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;}
+  #trickPanel .trick-slot{display:flex;flex-direction:column;align-items:center;gap:3px;min-width:44px;}
+  #trickPanel .trick-slot .trick-seat{font-family:var(--mono);font-size:8px;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.05em;}
+  #handPanel{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;}
+  .card-chip{background:var(--panel-hi);border:1px solid var(--panel-line);border-radius:8px;padding:5px 8px;font-family:var(--mono);font-size:11px;font-weight:700;color:var(--ink);min-width:28px;text-align:center;}
+  .card-chip.is-red{color:#e0836a;}
+  .card-chip.is-empty{color:var(--ink-faint);font-weight:500;background:transparent;border-style:dashed;}
+  button.card-chip{cursor:pointer;transition:border-color .12s ease,transform .12s ease,opacity .12s ease;}
+  button.card-chip:hover:not(:disabled){border-color:var(--accent);transform:translateY(-2px);}
+  button.card-chip:disabled{opacity:.4;cursor:not-allowed;transform:none;}
+  button.card-chip.is-pending{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in oklch, var(--accent) 30%, transparent);opacity:1;}
+  #tablePanel .table-empty{font-family:var(--mono);font-size:9px;color:var(--ink-faint);text-align:center;padding:8px 0;}
+  #lastTrickInfo{font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-align:center;}
+  #lastTrickInfo .who{color:var(--accent);font-weight:600;}
+
+  /* Sprint 5 (Trick Resolution & Round Completion Display): the
+     Round Complete panel. Deliberately reuses #biddingPanel's own
+     .bidding-phase-badge/.bidding-fields/.bidding-field classes
+     verbatim below (in the JS, not re-declared here) — same visual
+     language, zero new chip pattern invented. Only the outer panel
+     container and score-row emphasis are new. */
+  #roundCompletePanel{width:100%;display:none;flex-direction:column;gap:8px;font-family:"Saira",sans-serif;background:var(--panel-hi);border:1px solid var(--panel-line);border-radius:12px;padding:10px;}
+  #roundCompletePanel.is-visible{display:flex;}
+  #roundCompletePanel .rc-title{font-family:"Marcellus",serif;font-size:13px;color:var(--accent);text-align:center;letter-spacing:.03em;}
+  #roundCompletePanel .rc-scores{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;}
+  #roundCompletePanel .rc-score-tile{background:var(--pill);border:1px solid var(--panel-line);border-radius:8px;padding:5px 9px;font-family:var(--mono);font-size:9px;color:var(--ink-dim);text-align:center;min-width:52px;}
+  #roundCompletePanel .rc-score-tile .name{color:var(--ink-faint);text-transform:uppercase;letter-spacing:.04em;font-size:8px;}
+  #roundCompletePanel .rc-score-tile .delta{color:var(--ink);font-weight:700;font-size:12px;display:block;margin-top:2px;}
+  #roundCompletePanel .rc-score-tile .delta.is-positive{color:var(--accent);}
+  #roundCompletePanel .rc-score-tile .total{color:var(--ink-faint);font-size:8px;}
+  .seat{position:absolute;display:flex;flex-direction:column;align-items:center;gap:4px;width:78px;}
+  .seat .avatar{width:30px;height:30px;border-radius:50%;background:var(--panel-hi);border:1px solid var(--panel-line);display:grid;place-items:center;font-family:"Marcellus",serif;font-size:13px;color:var(--accent);}
+  .seat.is-turn .avatar{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent);}
+  .seat .seat-name{font-family:var(--mono);font-size:9px;color:var(--ink-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;}
+  .seat .seat-dealer{font-family:var(--mono);font-size:7.5px;letter-spacing:.06em;color:var(--accent);text-transform:uppercase;}
+  .seat.seat-p1{left:50%;bottom:2px;transform:translateX(-50%);}
+  .seat.seat-p2{right:4px;top:50%;transform:translateY(-50%);}
+  .seat.seat-p3{left:50%;top:2px;transform:translateX(-50%);}
+  .seat.seat-p4{left:4px;top:50%;transform:translateY(-50%);}
+
   .future-note{font-family:var(--mono);font-size:9.5px;color:var(--ink-faint);letter-spacing:.02em;text-align:center;line-height:1.5;}
 
   .back-link{font-family:var(--mono);font-size:10px;letter-spacing:.03em;color:var(--ink-faint);background:none;border:none;cursor:pointer;padding:1px 0;}
   .back-link:hover{color:var(--accent);}
+
+  /* Match Completion UI sprint — reuses login/shared-ui.css's existing
+     .ui-modal-backdrop/.ui-modal-box (UI.openModal/closeModal), and
+     mirrors #roundCompletePanel's own established visual language
+     above (.rc-title/.rc-scores/.rc-score-tile: Marcellus title,
+     mono-font pill tiles) rather than inventing a new style. Landscape-
+     mobile sized: the box caps at a width/height that fits comfortably
+     inside 800x480 with no overflow, scores wrap into 2 columns at the
+     narrowest widths tested (see this sprint's own Scenario M). */
+  #matchCompleteModal .ui-modal-box{width:min(92vw,420px);max-height:88vh;overflow-y:auto;display:flex;flex-direction:column;gap:10px;font-family:"Saira",sans-serif;}
+  .mc-title{font-family:var(--mono);font-size:10px;letter-spacing:.12em;color:var(--ink-faint);text-align:center;text-transform:uppercase;}
+  .mc-crown{font-size:30px;text-align:center;line-height:1;filter:drop-shadow(0 2px 6px color-mix(in oklch, var(--accent) 50%, transparent));}
+  .mc-king-label{font-family:"Marcellus",serif;font-size:20px;letter-spacing:.08em;color:var(--accent);text-align:center;text-transform:uppercase;}
+  .mc-king-names{font-family:"Saira",sans-serif;font-weight:600;font-size:14px;color:var(--ink);text-align:center;}
+  .mc-king-names .sep{color:var(--ink-faint);margin:0 6px;font-weight:400;}
+  .mc-scoreboard{display:flex;flex-direction:column;gap:5px;background:var(--panel-hi);border:1px solid var(--panel-line);border-radius:10px;padding:8px;}
+  .mc-row{display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:7px;background:var(--pill);}
+  .mc-row.is-king{background:color-mix(in oklch, var(--accent) 14%, var(--pill));border:1px solid var(--accent-dim);}
+  .mc-row .mc-name{flex:1;font-family:var(--mono);font-size:11px;color:var(--ink-dim);letter-spacing:.02em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .mc-row.is-king .mc-name{color:var(--ink);}
+  .mc-row .mc-score{font-family:var(--mono);font-weight:700;font-size:13px;color:var(--ink);min-width:32px;text-align:right;}
+  .mc-row .mc-result{font-size:11px;color:var(--accent);white-space:nowrap;letter-spacing:.03em;}
+  .mc-summary{font-family:var(--mono);font-size:9.5px;color:var(--ink-faint);text-align:center;line-height:1.6;letter-spacing:.02em;}
+  .mc-summary b{color:var(--ink-dim);font-weight:700;}
+  .mc-extension{font-family:var(--mono);font-size:9px;color:var(--accent-dim);text-align:center;letter-spacing:.02em;}
+  .mc-actions{display:flex;gap:8px;margin-top:2px;align-items:flex-start;}
+  .mc-actions button{flex:1;font-family:"Saira",sans-serif;font-weight:600;font-size:12px;letter-spacing:.03em;border-radius:9px;padding:11px 8px;cursor:pointer;border:1px solid var(--panel-line);min-height:40px;}
+  .mc-actions .mc-btn-primary{background:var(--accent);color:#1a1208;border-color:var(--accent);}
+  .mc-actions .mc-btn-primary:hover{background:var(--accent-hi);}
+  .mc-actions .mc-btn-secondary{background:var(--pill);color:var(--ink-dim);}
+  .mc-actions .mc-btn-secondary:disabled{opacity:.45;cursor:not-allowed;}
+  /* Post-Match Rematch Vote sprint: "Play Again" is now REAL (see
+     renderRematchVote()) — the Hardening sprint's disabled-button
+     markup/CSS (.mc-action-col, the "Coming Soon" .bd-hint wrapper) is
+     removed as part of this same change, since a disabled Play Again
+     button sitting next to a working YES/NO vote would be actively
+     confusing, not merely stale. `.mc-actions` now holds only "Return
+     to Lobby," which stays available at all times (voting never
+     blocks it). The vote panel below reuses the EXISTING
+     .mc-btn-primary/.mc-btn-secondary button styles for YES/NO rather
+     than inventing a third button treatment. */
+  .mc-vote{display:flex;flex-direction:column;gap:8px;align-items:center;}
+  .mc-vote-title{font-family:"Marcellus",serif;font-size:16px;letter-spacing:.06em;color:var(--accent);text-align:center;text-transform:uppercase;}
+  /* Countdown: a simple numeral, per this sprint's own explicit "no
+     circular timer, no new visual system" instruction — same mono
+     font already used for every other numeric readout in this modal
+     (.mc-score), just larger, since it must be "visually obvious." */
+  .mc-vote-countdown{font-family:var(--mono);font-weight:700;font-size:34px;color:var(--ink);line-height:1;text-align:center;}
+  .mc-vote-question{font-family:"Saira",sans-serif;font-size:12px;color:var(--ink-dim);text-align:center;}
+  .mc-vote-buttons{display:flex;gap:8px;width:100%;}
+  .mc-vote-btn{flex:1;font-family:"Saira",sans-serif;font-weight:700;font-size:13px;letter-spacing:.04em;border-radius:9px;padding:11px 8px;cursor:pointer;border:1px solid var(--panel-line);min-height:44px;}
+  .mc-vote-btn:disabled{opacity:.45;cursor:not-allowed;}
+  /* "YOUR VOTE: YES/NO" — an explicit TEXT confirmation, never color
+     alone, satisfying "no critical information conveyed only by
+     color" for the one state where a color-only signal would have
+     been tempting (a highlighted button). */
+  .mc-vote-own{font-family:var(--mono);font-weight:700;font-size:13px;letter-spacing:.04em;color:var(--accent);text-align:center;}
+  .mc-vote-count{font-family:var(--mono);font-size:9.5px;color:var(--ink-faint);letter-spacing:.03em;text-align:center;}
+  .mc-vote-waiting{font-family:var(--mono);font-size:9px;color:var(--ink-faint);letter-spacing:.02em;text-align:center;}
+  .mc-vote-outcome-title{font-family:"Marcellus",serif;font-size:16px;letter-spacing:.06em;color:var(--accent);text-align:center;text-transform:uppercase;}
+  .mc-vote-outcome-sub{font-family:var(--mono);font-size:10px;color:var(--ink-faint);text-align:center;margin-top:4px;line-height:1.5;}
+  @media (max-width:620px){
+    .mc-scoreboard{max-height:34vh;overflow-y:auto;}
+  }
   .back-link .arrow{color:var(--accent);}
 </style>
 </head>
@@ -84,17 +274,122 @@
 
         <div class="players-list" id="matchPlayers"></div>
 
+        <!-- Render Layer Foundation sprint: the Match Shell's own
+             view-container (Task 1) — a single, persistent container
+             this screen swaps content into as future sprints add the
+             Bidding/Table renderers, per the Hybrid Match Shell
+             architecture (no page navigation between phases — see
+             docs/reviews/Gameplay_Render_Layer_Implementation_Plan.md
+             §6). This sprint's own content is ONLY the Player/Seat
+             renderer (Task 3) — no Bidding/Table visual polish, no
+             cards, no legality UI. -->
+        <div id="matchGameView">
+          <div class="view-placeholder" id="matchViewPlaceholder">Game view — Bidding/Table renderers land in a future sprint</div>
+          <div id="matchSeats"></div>
+          <!-- Bidding Renderer sprint: read-only projection of
+               BiddingEngine.getState(). No controls yet — see
+               renderBidding() below for the exact read-only contract. -->
+          <div id="biddingPanel"></div>
+          <!-- Bidding Controls sprint: the INTERACTIVE layer. Kept as
+               its own sibling container, never inside #biddingPanel —
+               see renderBidding()'s own comment on why rendering and
+               interaction stay separate. -->
+          <div id="biddingControls"></div>
+          <!-- Table Controls sprint: the Play-phase panel — hidden
+               until bidding genuinely reaches DONE and TableEngine is
+               initialized for real (see maybeEnterPlayPhase() below).
+               Sibling to the bidding panels, never merged with them —
+               same rendering/interaction separation convention. -->
+          <div id="tablePanel" class="hidden">
+            <div class="table-turn" id="tableTurn"></div>
+            <div id="trickPanel"></div>
+            <div id="lastTrickInfo"></div>
+            <div id="handPanel"></div>
+          </div>
+          <!-- Sprint 5: Round Complete panel — sibling to #tablePanel,
+               shown only once TableEngine.getState().phase === "DONE".
+               Never shown alongside an active, interactive hand. -->
+          <div id="roundCompletePanel"></div>
+        </div>
+
         <!-- gameState is an explicit TODO placeholder, not real dealt
-             hands — see docs/implementation/MatchInitialization.md's
-             "Dealer.dealHands() cannot be called yet" finding. This
-             screen shows that fact plainly rather than inventing a
-             game table that isn't backed by real state. -->
+             hands. This is NOT because Deck/Dealer are missing (they
+             exist and are wired since Sprint 3.5 — see
+             docs/architecture/GameEngine.md) — it's because MatchService
+             must remain Firestore-only and never call the engine
+             directly, and no dealing-authority design has been decided
+             yet. See docs/implementation/MatchInitialization.md and
+             docs/architecture/MatchLifecycle.md. This screen shows that
+             fact plainly rather than inventing a game table that isn't
+             backed by real state. -->
         <div class="future-note" id="matchTodoNote">Bidding, dealing, and gameplay are not implemented yet — this is a placeholder screen confirming the match was created successfully.</div>
+
+        <!-- Match Screen Engine Wiring sprint: the gameplay engine
+             (cards/deck/dealer/session/bidding-engine/table-engine/
+             scoring-engine) and MatchAdapter are now loaded on this
+             page and bootstrapped from the real match document below —
+             this line is the ONLY observable evidence of that, since
+             the Bidding/Game Table render layer that would actually
+             DISPLAY hands/bids/tricks does not exist anywhere in this
+             repository (see docs/reviews/Project_Structure_and_Source_of_Truth_Audit.md).
+             Diagnostic only — never a substitute for real gameplay UI. -->
+        <div class="future-note" id="matchEngineDiag">Engine: not yet bootstrapped</div>
 
         <button class="back-link" type="button" id="backBtn">← Back to Lobby</button>
       </div>
     </div>
   </main>
+
+  <!-- Match Completion UI sprint: a RENDERER ONLY. Every value below is
+       read directly from the synced Firestore match document
+       (matches/{matchId}.status/winnerIds/finalScores/completedRound/
+       maxRounds/extendedRounds) inside renderMatchCompletion() — no
+       winner/score/tie/Super-Call/extension recalculation happens here.
+       Visibility is driven exclusively by matchDoc.status === "complete"
+       (see renderMatchCompletion()'s own comment). Reuses the existing
+       shared UI.openModal()/closeModal()/bindModalDismiss() kit
+       (login/shared-ui.js) — no new modal system introduced. -->
+  <div class="ui-modal-backdrop" id="matchCompleteModal" hidden>
+    <div class="ui-modal-box">
+      <button class="ui-modal-close" type="button" data-close aria-label="Close">✕</button>
+      <div class="mc-title">Match Complete</div>
+      <div class="mc-crown" id="mcCrown">👑</div>
+      <div class="mc-king-label" id="mcKingLabel">King</div>
+      <div class="mc-king-names" id="mcKingNames">—</div>
+      <div class="mc-scoreboard" id="mcScoreboard"></div>
+      <div class="mc-summary" id="mcSummary"></div>
+      <div class="mc-extension" id="mcExtension" hidden></div>
+
+      <!-- Post-Match Rematch Vote sprint: a RENDERER ONLY, exactly like
+           every other element in this modal. Every value below is read
+           directly from the synced matches/{matchId}/rematchVote/current
+           document via MatchAdapter.getRematchVoteState() — no YES/NO
+           tally, no ALL_YES/FAILED_NO/FAILED_TIMEOUT outcome, and no
+           30-second deadline is ever COMPUTED here as an authority; the
+           countdown below is presentational only, derived from the
+           document's own authoritative `createdAt` — see
+           renderRematchVote()'s own comment for the exact rule. -->
+      <div class="mc-vote" id="rematchVotePanel" hidden>
+        <div id="mcVoteActive">
+          <div class="mc-vote-title">Play Again?</div>
+          <div class="mc-vote-countdown" id="mcVoteCountdown">30</div>
+          <div class="mc-vote-question">Do you want to play another match?</div>
+          <div class="mc-vote-buttons" id="mcVoteButtons">
+            <button class="mc-vote-btn mc-btn-primary" type="button" id="mcVoteYesBtn">YES</button>
+            <button class="mc-vote-btn mc-btn-secondary" type="button" id="mcVoteNoBtn">NO</button>
+          </div>
+          <div class="mc-vote-own" id="mcVoteOwn" hidden></div>
+          <div class="mc-vote-count" id="mcVoteCount"></div>
+          <div class="mc-vote-waiting" id="mcVoteWaiting" hidden></div>
+        </div>
+        <div class="mc-vote-outcome" id="mcVoteOutcome" hidden></div>
+      </div>
+
+      <div class="mc-actions">
+        <button class="mc-btn-primary" type="button" id="mcLobbyBtn">Return to Lobby</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script src="game-state.js"></script>
@@ -107,6 +402,46 @@
 <script src="../session-service.js"></script>
 <script src="../room-service.js"></script>
 <script src="../match-service.js"></script>
+<!-- Render Layer Foundation sprint (Task 2): the shared Toast/Modal/
+     Input/Skeleton kit — see the <link> above for the matching CSS.
+     Loaded after the service scripts, before the engine scripts,
+     matching this file's own existing load-order convention (utility
+     scripts before gameplay scripts). -->
+<script src="../login/shared-ui.js"></script>
+<!-- Match Screen Engine Wiring sprint: the gameplay engine, loaded in
+     its required dependency order (each file's own header comment
+     states what it needs loaded before it — cards before deck, deck
+     before dealer, dealer+cards before session, session before
+     bidding-engine/table-engine, which both read GameSession at their
+     own load time). None of these six files is modified by this
+     sprint. match-adapter.js loads last — it is the ONLY file allowed
+     to call into both MatchService's Firestore world and this engine's
+     seat-id world (see docs/architecture/EngineAdapter.md).
+
+     HONEST, KNOWN CONSEQUENCE of loading bidding-engine.js/
+     table-engine.js on a real page (documented already in
+     docs/reviews/MatchFlowIntegration_3.6.md, not introduced by this
+     sprint): each registers its own `DOMContentLoaded` listener that
+     calls `render()`/`bindStatic()`/etc. — UI hooks that were always
+     meant to be defined by a paired Bidding/Game Table screen's own
+     inline script, which does not exist anywhere in this repository.
+     That listener firing will throw a ReferenceError for those
+     specific undefined functions once the page finishes parsing. This
+     sprint does not fix or hide that (it would mean writing the
+     missing render layer, explicitly out of scope) — this page's own
+     diagnostics below use ONLY the engine's already-safe, independent
+     public APIs (`TableEngine.initState()`/`getState()`,
+     `BiddingEngine.initState()`/`getState()`, `GameSession.*`,
+     `MatchAdapter.bootstrapGameSession()`), called directly, never
+     through the broken `advance()`/`bindStatic()` path. -->
+<script src="../engine/cards.js"></script>
+<script src="../engine/deck.js"></script>
+<script src="../engine/dealer.js"></script>
+<script src="../engine/session.js"></script>
+<script src="../engine/bidding-engine.js"></script>
+<script src="../engine/table-engine.js"></script>
+<script src="../engine/scoring-engine.js"></script>
+<script src="../match-adapter.js"></script>
 <script>
 (function () {
   var screen = document.getElementById("screen");
@@ -118,6 +453,1557 @@
   var roundEl = document.getElementById("matchRound");
   var dealerEl = document.getElementById("matchDealer");
   var playersEl = document.getElementById("matchPlayers");
+  var engineDiagEl = document.getElementById("matchEngineDiag");
+
+  // Match Screen Engine Wiring sprint: connects MatchService's already-
+  // live match document to the engine, via MatchAdapter's EXISTING
+  // public API only (no new API invented, per the brief). Runs ONCE,
+  // the first time a real match document arrives — bootstrapGameSession()
+  // is a one-shot translation (see docs/architecture/EngineAdapter.md),
+  // not an ongoing sync; this screen renders no bid/turn/card/trick
+  // state, so none of MatchAdapter's start*Sync() pipelines
+  // (startBidSync/startTurnSync/startCardSync/startTrickSync) are
+  // started here — starting one would have no observable effect on
+  // this placeholder screen and risks being mistaken for real
+  // functionality it doesn't have.
+  var engineBootstrapped = false;
+  function bootstrapEngineOnce(matchDocData) {
+    if (engineBootstrapped || !matchDocData || !engineDiagEl) return;
+    engineBootstrapped = true;
+
+    if (!window.MatchAdapter || typeof window.MatchAdapter.bootstrapGameSession !== "function") {
+      engineDiagEl.textContent = "Engine: MatchAdapter unavailable — cannot bootstrap.";
+      console.error("[Match] MatchAdapter not loaded — cannot bootstrap GameSession.");
+      return;
+    }
+    try {
+      // The ONLY MatchAdapter call this screen makes — translates the
+      // real Firestore match document (round/dealer/turn) into
+      // GameSession's existing setters. Never mutates Firestore, never
+      // touches TableEngine/BiddingEngine directly (see
+      // bootstrapGameSession()'s own doc comment).
+      var snapshot = window.MatchAdapter.bootstrapGameSession(matchDocData);
+      var seatCount = snapshot && snapshot.seats ? Object.keys(snapshot.seats).length : 0;
+
+      // Diagnostic only, per the brief's own example ("show that hands
+      // were dealt") — GameSession.ensureHandsDealt() is an existing,
+      // unmodified public API (unchanged since Sprint 3.5) that proves
+      // the real Dealer -> Deck chain executes on THIS page, exactly as
+      // it already does in tests/deck.test.cjs. This screen has no hand
+      // UI to show these cards in — this is observability, not gameplay.
+      var handsSummary = "not available";
+      if (window.GameSession && typeof window.GameSession.ensureHandsDealt === "function") {
+        var hands = window.GameSession.ensureHandsDealt();
+        handsSummary = Object.keys(hands || {}).map(function (seat) {
+          return seat + ":" + (hands[seat] ? hands[seat].length : 0);
+        }).join(" ");
+      }
+
+      // Engine initialization status. Calls EACH engine's own existing
+      // initState() directly — never their broken advance()/bindStatic()
+      // path (see the note above the <script> tags) — so this reflects
+      // real initialization, not merely "the <script> tag loaded." Each
+      // is independently try/caught so one engine's problem doesn't
+      // hide the other's status. Idempotent/safe to call even if
+      // table-engine.js's own DOMContentLoaded listener already called
+      // initState() once itself before hitting its own known
+      // bindStatic() ReferenceError — initState() has no side effect
+      // that isn't safe to repeat (see that function's own logic).
+      // Table Controls sprint (Foundation Fix follow-through): this
+      // diagnostic block used to call window.TableEngine.initState()
+      // unconditionally here, at first-snapshot time — i.e. before
+      // bidding has any chance to complete. table-engine.js's own
+      // ROUND_CFG staleness bug (fixed this sprint — see
+      // docs/reviews/TableEngine_Foundation_Fix_Report.md) meant this
+      // call would freeze in mock trump/caller/estimates FOREVER, and
+      // — independently — GameSession's own persisted playState
+      // "resume" branch (session.js's isPlayStateValidForCurrentRound())
+      // would then treat THIS premature call's leaderId/turn as the
+      // real round's legitimate resume point on every later call for
+      // the same round, discarding the real bidding outcome's leaderId
+      // even after the Foundation Fix. The correct, single moment to
+      // call TableEngine.initState() is once, when bidding genuinely
+      // reaches DONE — see maybeEnterPlayPhase() below, the ONLY call
+      // site now. This diagnostic never calls it; it only reports
+      // whether the script loaded.
+      var tableEngineStatus = window.TableEngine ? "loaded (awaiting PLAY phase)" : "MISSING (script did not load)";
+      var biddingEngineStatus = "MISSING (script did not load)";
+      if (window.BiddingEngine && typeof window.BiddingEngine.initState === "function") {
+        try {
+          window.BiddingEngine.initState();
+          var bState = window.BiddingEngine.getState();
+          biddingEngineStatus = bState ? ("initialized (subPhase: " + bState.subPhase + ")") : "loaded, not initialized";
+        } catch (e) {
+          biddingEngineStatus = "loaded, initState() threw: " + e.message;
+        }
+      }
+
+      engineDiagEl.textContent =
+        "Engine: GameSession bootstrapped (seats resolved: " + seatCount + ")" +
+        " · hands dealt (" + handsSummary + ")" +
+        " · TableEngine: " + tableEngineStatus +
+        " · BiddingEngine: " + biddingEngineStatus;
+    } catch (e) {
+      engineDiagEl.textContent = "Engine: bootstrap failed — " + e.message;
+      console.error("[Match] MatchAdapter.bootstrapGameSession() threw:", e);
+    }
+  }
+
+  // Render Layer Foundation sprint (Task 3 — Player/Seat Renderer).
+  // Seat layout is NOT invented — it is the layout design-ui/engine/
+  // dealer.js's own header comment already documents ("Table seat
+  // layout is p1 bottom / p2 right / p3 top / p4 left"), reused here
+  // as this renderer's own local constant since table-engine.js's
+  // equivalent SEAT_POS is a private, unexported module constant (see
+  // docs/reviews/Gameplay_Render_Layer_Implementation_Plan.md §5's own
+  // finding). Purely a CSS class map — no gameplay logic.
+  var SEAT_LAYOUT = { p1: "seat-p1", p2: "seat-p2", p3: "seat-p3", p4: "seat-p4" };
+
+  // Read-only: which seat is "on turn" right now, for the highlight
+  // only — never used to decide whether an action is legal.
+  //
+  // Bidding Renderer sprint (Section 11's own flagged issue, addressed
+  // here — not invented around): this screen's diagnostic bootstrap
+  // (bootstrapEngineOnce() above) calls BOTH TableEngine.initState()
+  // AND BiddingEngine.initState() for diagnostics, regardless of the
+  // match's real progress — so "TableEngine is initialized" is NOT
+  // evidence that Table play is the genuinely active phase. There is
+  // currently no engine-exposed signal for "which phase the match is
+  // ACTUALLY in" beyond each engine's own subPhase/phase field, and
+  // this sprint does not invent one. The one thing that IS always
+  // true, by the real rules (every round bids before it plays — see
+  // bidding-engine.js's/table-engine.js's own header comments), is
+  // that Bidding precedes Table within a round — so preferring
+  // BiddingEngine's own waitingFor while it hasn't reached "DONE" is
+  // the correct precedence, not an arbitrary guess. Once Bidding
+  // genuinely completes (subPhase === "DONE"), Table's own turn field
+  // takes over. This corrects Render Layer Foundation's own prior
+  // TableEngine-first order (documented there as a known display
+  // quirk, not a regression being introduced now).
+  function currentTurnSeat() {
+    try {
+      if (window.BiddingEngine && typeof window.BiddingEngine.getState === "function") {
+        var bState = window.BiddingEngine.getState();
+        if (bState && bState.subPhase && bState.subPhase !== "DONE") return bState.waitingFor || null;
+      }
+    } catch (e) {}
+    try {
+      if (window.TableEngine && typeof window.TableEngine.getState === "function") {
+        var tState = window.TableEngine.getState();
+        if (tState && tState.phase) return tState.turn || null;
+      }
+    } catch (e) {}
+    return null;
+  }
+
+  // Renders all 4 seats from GameSession's OWN already-tested public
+  // getters only (getPlayers()/getDealer()) — no invented data, no
+  // seat-position field pulled from anywhere else. Safe to call
+  // repeatedly (idempotent innerHTML rebuild); called once after each
+  // engine bootstrap/diagnostic pass below.
+  function renderSeats() {
+    var seatsEl = document.getElementById("matchSeats");
+    if (!seatsEl || !window.GameSession || typeof window.GameSession.getPlayers !== "function") return;
+    var players = window.GameSession.getPlayers();
+    var dealerId = window.GameSession.getDealer();
+    var turnSeat = currentTurnSeat();
+    seatsEl.innerHTML = "";
+    players.forEach(function (p) {
+      var seatClass = SEAT_LAYOUT[p.id];
+      if (!seatClass) return; // defensive: an unrecognized seat id is never rendered, never guessed at
+      var el = document.createElement("div");
+      el.className = "seat " + seatClass + (p.id === turnSeat ? " is-turn" : "");
+      var avatar = document.createElement("div");
+      avatar.className = "avatar";
+      avatar.textContent = p.initial || "?";
+      var name = document.createElement("div");
+      name.className = "seat-name";
+      name.textContent = p.name || p.id;
+      el.appendChild(avatar);
+      el.appendChild(name);
+      if (p.id === dealerId) {
+        var dealerTag = document.createElement("div");
+        dealerTag.className = "seat-dealer";
+        dealerTag.textContent = "Dealer";
+        el.appendChild(dealerTag);
+      }
+      seatsEl.appendChild(el);
+    });
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  //  Bidding Renderer sprint — READ-ONLY projection of
+  //  BiddingEngine.getState(). No controls, no emit()/canSubmit()
+  //  calls, no MatchService.submitBiddingAction() calls anywhere below
+  //  — interaction is explicitly a separate, later sprint. Every field
+  //  read below already exists on BiddingEngine's own documented
+  //  state shape (see docs/reviews/Gameplay_Render_Layer_Implementation_Plan.md
+  //  §3/§4) — nothing here recomputes a legality/comparison formula
+  //  (With-floor, Forbidden-13, suit strength, Dash limits, auction
+  //  comparison all remain exclusively inside bidding-engine.js).
+  // ════════════════════════════════════════════════════════════════
+
+  /** Player display name for a seat id, via GameSession's own already-
+   *  tested getter — never a raw seat id shown to the user when a real
+   *  name is available. Falls back to the raw id only if GameSession
+   *  or the seat is unavailable (defensive, never throws). */
+  function playerLabel(seatId) {
+    if (!seatId) return "—";
+    try {
+      var p = window.GameSession && window.GameSession.getPlayer(seatId);
+      return (p && p.name) ? p.name : seatId;
+    } catch (e) { return seatId; }
+  }
+
+  // ── Match Completion sprint: Results screen (RENDERER ONLY) ──────
+  // Every field read below (matchDoc.status/winnerIds/finalScores/
+  // completedRound/maxRounds/extendedRounds) is the AUTHORITATIVE
+  // Firestore state this screen is already synced to (via
+  // MatchAdapter.startMatchCompletionSync() + the main
+  // MatchService.subscribeToMatch() callback below) — nothing here
+  // recomputes a winner, a score, a tie, a Super Call outcome, or an
+  // extension. Idempotent by construction: this function only ever
+  // sets textContent/className on the SAME fixed set of DOM nodes
+  // declared once in the HTML above — a repeated identical snapshot
+  // produces the same UI, never a duplicated panel/listener.
+  var matchCompleteModalEl = null, matchCompleteRenderedForVersion = null;
+  var rematchVoteCreateAttemptedForMatch = {};
+  function renderMatchCompletion(matchDoc) {
+    if (!matchCompleteModalEl) matchCompleteModalEl = document.getElementById("matchCompleteModal");
+    if (!matchCompleteModalEl) return;
+    if (!matchDoc || matchDoc.status !== "complete") {
+      // Before completion (or if a stale/malformed delivery ever
+      // lacked a real status), the screen must never claim the match
+      // is over — close/hide is itself idempotent (UI.closeModal() on
+      // an already-hidden element is a harmless no-op).
+      if (!matchCompleteModalEl.hidden || matchCompleteModalEl.classList.contains("is-open")) {
+        window.UI && window.UI.closeModal ? window.UI.closeModal(matchCompleteModalEl) : (matchCompleteModalEl.hidden = true);
+      }
+      matchCompleteRenderedForVersion = null;
+      return;
+    }
+    // Post-Match Rematch Vote sprint: the moment this screen observes
+    // status:"complete", every seated client attempts to create the
+    // vote document — exactly the same "any client may safely attempt,
+    // Firestore's own transaction + idempotent-no-op return make a
+    // second attempt harmless" pattern this codebase already uses for
+    // extendMatchRounds()/endMatch() elsewhere. Guarded by a simple
+    // per-matchId flag purely to avoid redundant network calls on every
+    // render — the REAL safety is createRematchVote()'s own
+    // idempotency, not this flag.
+    if (matchId && !rematchVoteCreateAttemptedForMatch[matchId] && window.MatchService && typeof window.MatchService.createRematchVote === "function") {
+      rematchVoteCreateAttemptedForMatch[matchId] = true;
+      // try/catch guards against a SYNCHRONOUS throw (matches this
+      // file's own established convention for every other MatchService/
+      // MatchAdapter call in its boot sequence) — createRematchVote()
+      // returns a Promise on every normal path, but this call site must
+      // never assume that alone, exactly like every start*Sync() call
+      // below it already doesn't.
+      try {
+        window.MatchService.createRematchVote(matchId).catch(function (e) {
+          console.error("[Match] createRematchVote() rejected:", e);
+          rematchVoteCreateAttemptedForMatch[matchId] = false; // allow a retry on the next render
+        });
+      } catch (e) {
+        console.error("[Match] createRematchVote() threw synchronously:", e);
+        rematchVoteCreateAttemptedForMatch[matchId] = false;
+      }
+    }
+    // Re-rendering the SAME already-applied version is a harmless
+    // no-op (repeated identical snapshot delivery — see this
+    // function's own header comment); a genuinely NEW version (e.g. a
+    // late field correction) still re-renders in place, never opening
+    // a second panel.
+    if (matchDoc.version === matchCompleteRenderedForVersion && matchCompleteModalEl.classList.contains("is-open")) return;
+    matchCompleteRenderedForVersion = matchDoc.version;
+
+    var winnerIds = Array.isArray(matchDoc.winnerIds) ? matchDoc.winnerIds : [];
+    var finalScores = matchDoc.finalScores || {};
+    var seatIds = matchDoc.seats ? Object.keys(matchDoc.seats) : Object.keys(finalScores);
+
+    var kingLabelEl = document.getElementById("mcKingLabel");
+    var kingNamesEl = document.getElementById("mcKingNames");
+    if (kingLabelEl) kingLabelEl.textContent = winnerIds.length > 1 ? "Kings" : "King";
+    if (kingNamesEl) {
+      kingNamesEl.textContent = "";
+      winnerIds.forEach(function (seatId, i) {
+        if (i > 0) {
+          var sep = document.createElement("span");
+          sep.className = "sep";
+          sep.textContent = "•";
+          kingNamesEl.appendChild(sep);
+        }
+        var span = document.createElement("span");
+        span.textContent = playerLabel(seatId);
+        kingNamesEl.appendChild(span);
+      });
+      if (!winnerIds.length) kingNamesEl.textContent = "—";
+    }
+
+    var scoreboardEl = document.getElementById("mcScoreboard");
+    if (scoreboardEl) {
+      scoreboardEl.textContent = "";
+      // Highest-score-first is a pure DISPLAY ordering (sorting by a
+      // value already computed by the authoritative source) — never a
+      // re-derivation of WHO the winner(s) are, which remains
+      // winnerIds alone.
+      seatIds.slice().sort(function (a, b) { return (finalScores[b] || 0) - (finalScores[a] || 0); }).forEach(function (seatId) {
+        var isKing = winnerIds.indexOf(seatId) !== -1;
+        var row = document.createElement("div");
+        row.className = "mc-row" + (isKing ? " is-king" : "");
+        var nameEl = document.createElement("div");
+        nameEl.className = "mc-name";
+        nameEl.textContent = playerLabel(seatId);
+        var scoreEl = document.createElement("div");
+        scoreEl.className = "mc-score";
+        scoreEl.textContent = (finalScores[seatId] != null ? finalScores[seatId] : "—");
+        row.appendChild(nameEl);
+        row.appendChild(scoreEl);
+        if (isKing) {
+          var resultEl = document.createElement("div");
+          resultEl.className = "mc-result";
+          resultEl.textContent = "👑 King";
+          row.appendChild(resultEl);
+        }
+        scoreboardEl.appendChild(row);
+      });
+    }
+
+    var summaryEl = document.getElementById("mcSummary");
+    if (summaryEl) {
+      var roundsPlayed = matchDoc.completedRound != null ? matchDoc.completedRound : matchDoc.currentRound;
+      summaryEl.innerHTML = "Match Complete &middot; <b>" + (roundsPlayed != null ? roundsPlayed : "?") + "</b> Round" + (roundsPlayed === 1 ? "" : "s") + " Played";
+    }
+
+    // Super Call extension summary — displayed ONLY if the authoritative
+    // document actually exposes extension history (extendedRounds).
+    // Never fabricated, never recalculated (see this sprint's own
+    // scope restriction) — if the field is absent/empty, the section
+    // stays hidden rather than guessing.
+    var extensionEl = document.getElementById("mcExtension");
+    if (extensionEl) {
+      var extendedRounds = Array.isArray(matchDoc.extendedRounds) ? matchDoc.extendedRounds : [];
+      if (extendedRounds.length > 0) {
+        extensionEl.hidden = false;
+        extensionEl.textContent = "+" + extendedRounds.length + " Extended Round" + (extendedRounds.length === 1 ? "" : "s") + " From Successful Super Call" + (extendedRounds.length === 1 ? "" : "s");
+      } else {
+        extensionEl.hidden = true;
+        extensionEl.textContent = "";
+      }
+    }
+
+    window.UI && window.UI.openModal ? window.UI.openModal(matchCompleteModalEl) : (matchCompleteModalEl.hidden = false);
+  }
+
+  // ── Post-Match Rematch Vote sprint: vote panel (RENDERER ONLY) ────
+  // Every value below is read directly from the synced
+  // matches/{matchId}/rematchVote/current document (status/seats/votes/
+  // createdAt/newMatchId) — this function NEVER computes whether the
+  // vote succeeded, whether the timeout is authoritative, whether all
+  // players voted, or whether a new match was created. All of that is
+  // MatchService's transaction + firestore.rules' independent
+  // re-verification (see match-service.js's own header comment on this
+  // section) — this function only ever reads `voteDoc.status` and
+  // reflects it. The countdown is the ONE presentational exception:
+  // it is a local, non-authoritative REFLECTION of the document's own
+  // real `createdAt` (a server timestamp) — it never gates a write, and
+  // a client's own clock being wrong only ever affects what THIS
+  // client sees on screen, never what firestore.rules will accept.
+  var rematchVoteCountdownTimer = null;
+  var rematchVoteHandledForVersion = null;
+  function renderRematchVote(voteDoc) {
+    var panel = document.getElementById("rematchVotePanel");
+    if (!panel) return;
+    if (!voteDoc) {
+      panel.hidden = true;
+      if (rematchVoteCountdownTimer) { clearInterval(rematchVoteCountdownTimer); rematchVoteCountdownTimer = null; }
+      rematchVoteHandledForVersion = null;
+      return;
+    }
+    panel.hidden = false;
+
+    var activeEl = document.getElementById("mcVoteActive");
+    var outcomeEl = document.getElementById("mcVoteOutcome");
+    var countdownEl = document.getElementById("mcVoteCountdown");
+    var buttonsEl = document.getElementById("mcVoteButtons");
+    var yesBtn = document.getElementById("mcVoteYesBtn");
+    var noBtn = document.getElementById("mcVoteNoBtn");
+    var ownEl = document.getElementById("mcVoteOwn");
+    var countEl = document.getElementById("mcVoteCount");
+    var waitingEl = document.getElementById("mcVoteWaiting");
+
+    var seats = voteDoc.seats || {};
+    var votes = voteDoc.votes || {};
+    var seatIds = Object.keys(seats);
+
+    if (voteDoc.status === "OPEN") {
+      activeEl.hidden = false;
+      outcomeEl.hidden = true;
+      outcomeEl.innerHTML = "";
+
+      // Presentational-only countdown — see this function's own header
+      // comment. Re-armed on every render call rather than gated by
+      // rematchVoteHandledForVersion, since it must keep ticking between
+      // document deliveries, not just once per version.
+      var createdAtMs = voteDoc.createdAt && typeof voteDoc.createdAt.toMillis === "function" ? voteDoc.createdAt.toMillis() : null;
+      var tick = function () {
+        var remaining = createdAtMs != null ? Math.max(0, Math.ceil((createdAtMs + 30000 - Date.now()) / 1000)) : 30;
+        countdownEl.textContent = String(remaining);
+      };
+      tick();
+      if (rematchVoteCountdownTimer) clearInterval(rematchVoteCountdownTimer);
+      rematchVoteCountdownTimer = setInterval(tick, 250);
+
+      var myVote = localSeatId ? votes[localSeatId] : null;
+      if (myVote) {
+        // LOCKED — a cast vote never flips (product decision). Buttons
+        // are hidden entirely, replaced by an explicit TEXT
+        // confirmation (never color alone) of which value was cast.
+        buttonsEl.hidden = true;
+        ownEl.hidden = false;
+        ownEl.textContent = "YOUR VOTE: " + myVote;
+      } else {
+        buttonsEl.hidden = false;
+        yesBtn.disabled = false;
+        noBtn.disabled = false;
+        ownEl.hidden = true;
+      }
+
+      var votedCount = seatIds.filter(function (s) { return votes[s] != null; }).length;
+      countEl.hidden = false;
+      countEl.textContent = votedCount + "/" + seatIds.length + " PLAYERS VOTED";
+
+      var waitingNames = seatIds.filter(function (s) { return votes[s] == null; }).map(playerLabel);
+      if (waitingNames.length) {
+        waitingEl.hidden = false;
+        waitingEl.textContent = "WAITING FOR: " + waitingNames.join(", ");
+      } else {
+        waitingEl.hidden = true;
+      }
+      rematchVoteHandledForVersion = null; // no terminal navigation pending while OPEN
+      return;
+    }
+
+    // ── Terminal states: FAILED_NO / FAILED_TIMEOUT / ALL_YES /
+    // NEW_MATCH_CREATED. Stop the countdown; show the outcome only.
+    if (rematchVoteCountdownTimer) { clearInterval(rematchVoteCountdownTimer); rematchVoteCountdownTimer = null; }
+    activeEl.hidden = true;
+    outcomeEl.hidden = false;
+
+    if (voteDoc.status === "FAILED_NO") {
+      outcomeEl.innerHTML = '<div class="mc-vote-outcome-title">Rematch Declined</div><div class="mc-vote-outcome-sub">Returning to Lobby&hellip;</div>';
+    } else if (voteDoc.status === "FAILED_TIMEOUT") {
+      outcomeEl.innerHTML = '<div class="mc-vote-outcome-title">Rematch Declined</div><div class="mc-vote-outcome-sub">Not all players accepted.<br>Returning to Lobby&hellip;</div>';
+    } else if (voteDoc.status === "ALL_YES" || voteDoc.status === "NEW_MATCH_CREATED") {
+      outcomeEl.innerHTML = '<div class="mc-vote-outcome-title">Rematch Accepted</div><div class="mc-vote-outcome-sub">Starting New Match&hellip;</div>';
+    }
+
+    // Idempotent navigation trigger — gated on voteDoc.version so a
+    // repeated identical snapshot (or this same terminal state
+    // delivered again) never schedules a second timer/navigation.
+    // Any seated client may safely reach this point (no host) — the
+    // navigation itself is client-side only and never races against
+    // another client's own copy of the same trigger, since each
+    // client only ever navigates ITSELF.
+    if (rematchVoteHandledForVersion === voteDoc.version) return;
+    rematchVoteHandledForVersion = voteDoc.version;
+
+    if (voteDoc.status === "FAILED_NO" || voteDoc.status === "FAILED_TIMEOUT") {
+      setTimeout(function () {
+        GameState.goTo(GameState.STATES.LOBBY, { force: true });
+      }, 1800);
+    } else if (voteDoc.status === "NEW_MATCH_CREATED" && voteDoc.newMatchId) {
+      setTimeout(function () {
+        // Full page navigation to the SAME match screen file with the
+        // NEW matchId — the existing, already-proven mechanism this
+        // codebase uses for entering any match (see Lobby's own
+        // GameState.goTo(GAMEPLAY,{file:...}) call) — never a dynamic,
+        // in-page match-switch. A fresh page load means every
+        // MatchService/MatchAdapter subscription for the OLD matchId
+        // is torn down naturally (module-level registries are simply
+        // never touched again after navigation) and the new page's own
+        // boot sequence initializes fresh registries for the new
+        // matchId — exactly matchAdapter.js's own resetSyncState()
+        // comment: "a real page load simply starts with a fresh, empty
+        // registry already."
+        GameState.goTo(GameState.STATES.GAMEPLAY, {
+          file: "index.html",
+          force: true,
+          data: { match: { id: voteDoc.newMatchId } }
+        });
+      }, 1800);
+    }
+    // ALL_YES (no newMatchId yet) shows the same "Starting New Match…"
+    // message but does not itself navigate — MatchAdapter's own
+    // maybeAdvanceRematchVote() watcher (any seated client, no host)
+    // is what actually calls createRematchMatch() to reach
+    // NEW_MATCH_CREATED; this render function only ever reflects
+    // whichever state the document is ALREADY in.
+  }
+
+  /** Suit display text via Cards.SUITS — DATA (a name/symbol lookup),
+   *  never a rule (suit STRENGTH comparisons stay inside
+   *  bidding-engine.js/table-engine.js; this only ever reads a suit's
+   *  existing display name for text, the same way Cards.js's own
+   *  createCard() already uses SUITS[x].sym for a card's displayName). */
+  function suitLabel(suitKey) {
+    if (!suitKey) return null;
+    try {
+      var s = window.Cards && window.Cards.SUITS && window.Cards.SUITS[suitKey];
+      return s ? (s.name + " " + s.sym) : suitKey;
+    } catch (e) { return suitKey; }
+  }
+
+  /** Builds one small "field" chip — a label/value pair — matching the
+   *  existing .stat-tile/.bidding-field visual vocabulary. Skips
+   *  rendering entirely (returns null) when the value is null/undefined
+   *  — an intentionally absent field is omitted, never shown as a
+   *  fake "0" or empty string standing in for missing engine data. */
+  function biddingField(label, value) {
+    if (value == null || value === "") return null;
+    var el = document.createElement("div");
+    el.className = "bidding-field";
+    var k = document.createElement("span"); k.className = "k"; k.textContent = label;
+    var v = document.createElement("span"); v.className = "v"; v.textContent = String(value);
+    el.appendChild(k); el.appendChild(v);
+    return el;
+  }
+
+  function appendFields(container, fields) {
+    var wrap = document.createElement("div");
+    wrap.className = "bidding-fields";
+    var any = false;
+    fields.forEach(function (f) { if (f) { wrap.appendChild(f); any = true; } });
+    if (any) container.appendChild(wrap);
+  }
+
+  /** DASH sub-phase: whose turn, and how many of the 4 seats have
+   *  already decided — a plain .length of BiddingEngine's own already-
+   *  public state.bids, never a re-derivation of the Dash-limit rule
+   *  itself (MAX_DASH_CALLS stays exclusively inside bidding-engine.js). */
+  function renderDash(state, container) {
+    var decided = Object.keys(state.bids || {}).length;
+    appendFields(container, [
+      biddingField("Decided", decided + " / 4"),
+      biddingField("Waiting on", playerLabel(state.waitingFor))
+    ]);
+  }
+
+  /** AUCTION sub-phase: the current top bid/suit/bidder, and how many
+   *  seats remain active — all direct reads of already-public fields,
+   *  never a recomputation of "does this bid beat the top" (that
+   *  formula stays exclusively inside bidding-engine.js's
+   *  auctionBidBeatsTop()/auctionBidIsWith()). */
+  function renderAuction(state, container) {
+    appendFields(container, [
+      biddingField("Top bid", state.auctionTop > 0 ? state.auctionTop : null),
+      biddingField("Suit", suitLabel(state.auctionSuit)),
+      biddingField("Leading", state.auctionBidder ? playerLabel(state.auctionBidder) : null),
+      biddingField("Active bidders", Array.isArray(state.activeBidders) ? state.activeBidders.length + " / 4" : null),
+      biddingField("With", (state.withPlayers && state.withPlayers.length) ? state.withPlayers.map(playerLabel).join(", ") : null),
+      biddingField("Waiting on", playerLabel(state.waitingFor))
+    ]);
+  }
+
+  /** CONFIRM sub-phase: the call awaiting the Caller's confirmation —
+   *  direct reads only; the "can this be lowered / must the suit be
+   *  equal-or-stronger" rules stay exclusively inside
+   *  bidding-engine.js's bidBelowWinningCall()/confirmSuitTooWeak(). */
+  function renderConfirm(state, container) {
+    appendFields(container, [
+      biddingField("Call to confirm", state.auctionTop > 0 ? state.auctionTop : null),
+      biddingField("Suit", suitLabel(state.auctionSuit)),
+      biddingField("Caller", playerLabel(state.callerId || state.waitingFor))
+    ]);
+  }
+
+  /** ESTIMATES sub-phase: the Caller's cap and each seat's estimate so
+   *  far — direct reads only; the Caller's-cap/With-floor/Forbidden-13
+   *  checks stay exclusively inside bidding-engine.js's
+   *  estimateExceedsCap()/estimateBelowWithFloor()/estimateIsForbidden13(). */
+  function renderEstimates(state, container) {
+    var estimateParts = Object.keys(state.bids || {}).map(function (seatId) {
+      var b = state.bids[seatId];
+      if (!b || (b.type !== "TRICKS" && b.type !== "DASH")) return null;
+      return playerLabel(seatId) + ": " + b.amount;
+    }).filter(Boolean);
+    appendFields(container, [
+      biddingField("Caller", playerLabel(state.callerId)),
+      biddingField("Trump", suitLabel(state.declaredTrump)),
+      biddingField("Cap", state.auctionTop > 0 ? state.auctionTop : null),
+      biddingField("Estimates so far", estimateParts.length ? estimateParts.join(", ") : null),
+      biddingField("Waiting on", playerLabel(state.waitingFor))
+    ]);
+  }
+
+  /** DONE: bidding has concluded for this round — summary only, no
+   *  further waitingFor. */
+  function renderBiddingDone(state, container) {
+    appendFields(container, [
+      biddingField("Trump", suitLabel(state.declaredTrump)),
+      biddingField("Caller", state.callerId ? playerLabel(state.callerId) : null)
+    ]);
+    var note = document.createElement("div");
+    note.className = "bidding-empty";
+    note.textContent = "Bidding complete for this round.";
+    container.appendChild(note);
+  }
+
+  // subPhase -> phase-specific renderer. A plain lookup table, not a
+  // second state machine — it holds no memory of its own and cannot
+  // reach any subPhase the real engine didn't already reach first
+  // (see the Implementation Plan §7's own "no hidden state machine in
+  // the renderer" boundary).
+  var BIDDING_SUBPHASE_RENDERERS = {
+    DASH: renderDash,
+    AUCTION: renderAuction,
+    CONFIRM: renderConfirm,
+    ESTIMATES: renderEstimates,
+    DONE: renderBiddingDone
+  };
+
+  // ════════════════════════════════════════════════════════════════
+  //  Bidding Controls sprint — the INTERACTIVE layer.
+  //
+  //  Strict separation from the renderers above (per the brief):
+  //    RENDERING:    Engine State -> Renderer -> UI        (unchanged)
+  //    INTERACTION:  User Input -> Intent -> canSubmit() ->
+  //                  MatchService.submitBiddingAction() ->
+  //                  synchronization -> Engine State -> Renderer
+  //
+  //  This screen NEVER calls BiddingEngine.emit() itself — only
+  //  canSubmit() (a read-only legality check, never a mutation) before
+  //  a submission, to decide what to show/enable. The actual engine
+  //  state change happens exclusively through the existing, unmodified
+  //  MatchAdapter.applyRemoteBiddingAction()/applyRemoteBid() sync
+  //  pipelines (wired below via startBiddingActionSync()/
+  //  startBidSync()) once the write round-trips through Firestore —
+  //  exactly the architecture the brief requires, and the same
+  //  pipeline every other online player's client also goes through.
+  //  No bidding legality formula (Dash limits, auction comparison,
+  //  suit strength, With floor, Forbidden-13, caller cap, turn/phase
+  //  legality) is reimplemented anywhere below — every one of those
+  //  questions is answered by asking BiddingEngine.canSubmit(intent).
+  // ════════════════════════════════════════════════════════════════
+
+  // Single in-flight-submission guard — deliberately a plain boolean,
+  // not a second state machine (the brief's own "do not introduce a
+  // second application-level game state machine" constraint). Cleared
+  // in the .finally() of every submission attempt, success or failure,
+  // so a stuck network call can never permanently lock the controls.
+  var pendingBiddingSubmission = false;
+  // Diagnostic-only counter (Quality Gate Finding #2) — incremented at
+  // the exact point submitBiddingIntent()/submitFinalEstimate()'s own
+  // pendingBiddingSubmission guard blocks a call. Never read by any
+  // production code path; exists purely so a test can observe that a
+  // rapid second click was genuinely intercepted by the real guard,
+  // rather than inferring it indirectly from write counts alone.
+  var blockedDuplicateSubmissionAttempts = 0;
+
+  // AUCTION/CONFIRM candidate selection — plain UI-only scratch state
+  // (which suit/trick-count the player is currently considering before
+  // submitting), reset to a sensible default every time renderBiddingControls()
+  // redraws for a NEW subPhase/waitingFor. This is presentation
+  // convenience only — the actual legality of whatever is selected is
+  // always re-verified via canSubmit() immediately before enabling
+  // Submit AND again immediately before the real submission call.
+  var auctionSel = { tricks: null, suit: null };
+  var confirmSel = { tricks: null, suit: null };
+  var estimateSel = { tricks: null };
+  var lastControlsKey = null;
+
+  /** Translates a `BiddingEngine` intent (the `{type, playerId, ...}`
+   *  shape `canSubmit()`/`emit()` accept) into the `action`
+   *  (`{actionType, ...}`) shape `MatchService.submitBiddingAction()`
+   *  requires — the exact reverse of that file's own internal
+   *  `biddingActionToIntent()`. Kept as an independent local copy
+   *  since match-service.js and this screen are separate files with no
+   *  shared module (same convention match-adapter.js's own
+   *  `biddingLogEntryToIntent()` already uses). Never invents a field
+   *  neither shape already has. */
+  function biddingIntentToAction(intent) {
+    var action = { actionType: intent.type };
+    if (intent.type === "SubmitDashCallDecision") {
+      action.declaredDashCall = intent.declaredDashCall;
+    } else if (intent.type === "SubmitAuctionBid") {
+      action.isPass = !!intent.isPass;
+      if (!action.isPass) { action.tricks = intent.tricks; action.suit = intent.suit; }
+    } else if (intent.type === "SubmitConfirmCall") {
+      action.tricks = intent.tricks;
+      action.suit = intent.suit;
+    }
+    return action;
+  }
+
+  /** Every FIXED_SUITS-family suit, in the same strength order
+   *  Cards.SUITS already encodes (SANS > SPADES > HEARTS > DIAMONDS >
+   *  CLUBS) — display order only, never a re-derivation of the
+   *  strength comparison itself (that stays inside bidding-engine.js's
+   *  own SUITS table). */
+  var SUIT_CHIP_ORDER = ["SANS", "SPADES", "HEARTS", "DIAMONDS", "CLUBS"];
+
+  /** Renders a friendly, honest error message for a rejected
+   *  submission — uses the REAL engine/service reason verbatim
+   *  (never an invented alternate legality explanation, per the
+   *  brief). Distinguishes a few well-known error codes only for
+   *  wording, never for a different legality outcome. */
+  function describeSubmissionError(err) {
+    var code = err && err.code;
+    var msg = (err && err.message) || String(err);
+    if (code === "STALE_GAME_STATE") return "Match state changed — please try again.";
+    if (code === "UNAUTHENTICATED" || code === "PERMISSION_DENIED") return "You don't have a seat in this match.";
+    if (code === "UNAVAILABLE" || code === "ENGINE_UNAVAILABLE" || code === "MATCH_ADAPTER_UNAVAILABLE") return "Connection unavailable — please try again.";
+    return msg;
+  }
+
+  /** The ONE path every DASH/AUCTION/CONFIRM control submits through.
+   *  `intent` is the exact BiddingEngine intent shape. Re-checks
+   *  canSubmit() immediately before writing (the selection may have
+   *  gone stale between when a button was enabled and when it was
+   *  actually clicked — e.g. a remote action arrived in between) —
+   *  never trusts a previously-computed "this looked legal" flag alone. */
+  function submitBiddingIntent(intent) {
+    if (pendingBiddingSubmission) { blockedDuplicateSubmissionAttempts++; return; } // duplicate-click guard
+    if (!window.BiddingEngine || typeof window.BiddingEngine.canSubmit !== "function") {
+      window.UI && window.UI.toast("Bidding engine unavailable.");
+      return;
+    }
+    var verdict = window.BiddingEngine.canSubmit(intent);
+    if (!verdict || !verdict.legal) {
+      window.UI && window.UI.toast((verdict && verdict.reason) || "That action isn't legal right now.");
+      renderBiddingControls(window.BiddingEngine.getState());
+      return;
+    }
+    if (!window.MatchService || typeof window.MatchService.submitBiddingAction !== "function") {
+      window.UI && window.UI.toast("Match service unavailable.");
+      return;
+    }
+    pendingBiddingSubmission = true;
+    renderBiddingControls(window.BiddingEngine.getState()); // disable controls immediately
+    window.MatchService.submitBiddingAction(matchId, biddingIntentToAction(intent))
+      .catch(function (err) {
+        console.error("[Match] submitBiddingAction() rejected:", err);
+        window.UI && window.UI.toast(describeSubmissionError(err));
+      })
+      .then(function () {
+        pendingBiddingSubmission = false;
+        // Re-enable/redraw immediately — on success the real advance
+        // arrives moments later via the Firestore round-trip (through
+        // startBiddingActionSync() -> applyRemoteBiddingAction()) and
+        // triggers its own renderBidding() call; calling it again here
+        // is harmless and idempotent, and is what actually unlocks the
+        // controls on a REJECTED submission (which never round-trips).
+        try { renderBiddingControls(window.BiddingEngine.getState()); } catch (e) {}
+      });
+  }
+
+  /** ESTIMATES submits through the pre-existing, unchanged
+   *  `MatchService.submitBid(matchId, seatId, tricks)` path (Sprint
+   *  3.8) — NOT `submitBiddingAction()` — per this project's own,
+   *  already-documented architecture (see match-adapter.js's
+   *  `applyRemoteBid()` header comment: Final Estimate deliberately
+   *  stays on the pre-existing bids/submitBid() mechanism). Still
+   *  gated by the exact same canSubmit() pre-check as every other
+   *  action — this screen never assumes an estimate is legal just
+   *  because it's in range. */
+  function submitFinalEstimate(tricks) {
+    if (pendingBiddingSubmission) { blockedDuplicateSubmissionAttempts++; return; }
+    if (!localSeatId) { window.UI && window.UI.toast("You don't have a seat in this match."); return; }
+    if (!window.BiddingEngine || typeof window.BiddingEngine.canSubmit !== "function") {
+      window.UI && window.UI.toast("Bidding engine unavailable.");
+      return;
+    }
+    var verdict = window.BiddingEngine.canSubmit({ type: "SubmitFinalEstimate", playerId: localSeatId, tricks: tricks });
+    if (!verdict || !verdict.legal) {
+      window.UI && window.UI.toast((verdict && verdict.reason) || "That estimate isn't legal right now.");
+      renderBiddingControls(window.BiddingEngine.getState());
+      return;
+    }
+    if (!window.MatchService || typeof window.MatchService.submitBid !== "function") {
+      window.UI && window.UI.toast("Match service unavailable.");
+      return;
+    }
+    pendingBiddingSubmission = true;
+    renderBiddingControls(window.BiddingEngine.getState());
+    window.MatchService.submitBid(matchId, localSeatId, tricks)
+      .catch(function (err) {
+        console.error("[Match] submitBid() rejected:", err);
+        window.UI && window.UI.toast(describeSubmissionError(err));
+      })
+      .then(function () {
+        pendingBiddingSubmission = false;
+        try { renderBiddingControls(window.BiddingEngine.getState()); } catch (e) {}
+      });
+  }
+
+  /** Builds one stepper row: -/value/+ across [min, max], clamped —
+   *  UX convenience bounds only, never a legality determination (a
+   *  value inside [min,max] can still be illegal; canSubmit() is what
+   *  actually decides that, via `onChange`). */
+  function buildStepper(value, min, max, onChange) {
+    var wrap = document.createElement("div");
+    wrap.className = "bd-stepper";
+    var dec = document.createElement("button");
+    dec.type = "button"; dec.className = "bd-step-btn"; dec.textContent = "−";
+    dec.disabled = pendingBiddingSubmission || value <= min;
+    dec.addEventListener("click", function () { onChange(Math.max(min, value - 1)); });
+    var val = document.createElement("span");
+    val.className = "bd-step-value"; val.textContent = String(value);
+    var inc = document.createElement("button");
+    inc.type = "button"; inc.className = "bd-step-btn"; inc.textContent = "+";
+    inc.disabled = pendingBiddingSubmission || value >= max;
+    inc.addEventListener("click", function () { onChange(Math.min(max, value + 1)); });
+    wrap.appendChild(dec); wrap.appendChild(val); wrap.appendChild(inc);
+    return wrap;
+  }
+
+  /** Builds the suit-chip row. `selected` is the currently-chosen suit
+   *  key; clicking a chip calls `onChange(suitKey)`. Purely a picker —
+   *  which suit is legal to pick is never decided here. */
+  function buildSuitChips(selected, onChange) {
+    var wrap = document.createElement("div");
+    wrap.className = "bd-row";
+    SUIT_CHIP_ORDER.forEach(function (suitKey) {
+      var chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "bd-suit-chip" + (selected === suitKey ? " is-selected" : "");
+      chip.textContent = suitLabel(suitKey);
+      chip.disabled = pendingBiddingSubmission;
+      chip.addEventListener("click", function () { onChange(suitKey); });
+      wrap.appendChild(chip);
+    });
+    return wrap;
+  }
+
+  /** DASH controls: the waiting seat's own two-button decision. Both
+   *  "Dash" and "Continue" are always legal candidates for the waiting
+   *  seat during DASH (bidding-engine.js's own MAX_DASH_CALLS handling
+   *  lives entirely inside emit(), not canSubmit() — see Sprint 3.7.x's
+   *  own isMalformedBiddingIntent() comment) — still verified via
+   *  canSubmit() immediately before every submission, never assumed. */
+  function renderDashControls(state, container) {
+    var row = document.createElement("div");
+    row.className = "bd-row";
+    var dashBtn = document.createElement("button");
+    dashBtn.type = "button"; dashBtn.className = "bd-btn-primary"; dashBtn.textContent = "Dash";
+    dashBtn.disabled = pendingBiddingSubmission;
+    dashBtn.addEventListener("click", function () {
+      submitBiddingIntent({ type: "SubmitDashCallDecision", playerId: localSeatId, declaredDashCall: true });
+    });
+    var continueBtn = document.createElement("button");
+    continueBtn.type = "button"; continueBtn.className = "bd-btn"; continueBtn.textContent = "Continue";
+    continueBtn.disabled = pendingBiddingSubmission;
+    continueBtn.addEventListener("click", function () {
+      submitBiddingIntent({ type: "SubmitDashCallDecision", playerId: localSeatId, declaredDashCall: false });
+    });
+    row.appendChild(dashBtn); row.appendChild(continueBtn);
+    container.appendChild(row);
+  }
+
+  /** AUCTION controls: a suit/tricks candidate picker (default: raise
+   *  the current top by the minimum legal step, in the current
+   *  auction suit) plus Pass. Every candidate is re-validated via
+   *  canSubmit() as the user changes their selection, purely to decide
+   *  whether to enable Bid and what hint to show — never to compute
+   *  the comparison itself. */
+  function renderAuctionControls(state, container) {
+    if (auctionSel.tricks == null) {
+      auctionSel.tricks = Math.min(13, Math.max(4, (state.auctionTop > 0 ? state.auctionTop + 1 : 4)));
+      auctionSel.suit = state.auctionSuit || "SANS";
+    }
+    container.appendChild(buildSuitChips(auctionSel.suit, function (suitKey) {
+      auctionSel.suit = suitKey;
+      renderBiddingControls(window.BiddingEngine.getState());
+    }));
+    container.appendChild(buildStepper(auctionSel.tricks, 4, 13, function (v) {
+      auctionSel.tricks = v;
+      renderBiddingControls(window.BiddingEngine.getState());
+    }));
+
+    var candidate = { type: "SubmitAuctionBid", playerId: localSeatId, isPass: false, tricks: auctionSel.tricks, suit: auctionSel.suit };
+    var verdict = window.BiddingEngine.canSubmit(candidate);
+
+    var hint = document.createElement("div");
+    hint.className = "bd-hint" + (verdict.legal ? "" : " is-illegal");
+    hint.textContent = verdict.legal ? "" : verdict.reason;
+    container.appendChild(hint);
+
+    var row = document.createElement("div");
+    row.className = "bd-row";
+    var bidBtn = document.createElement("button");
+    bidBtn.type = "button"; bidBtn.className = "bd-btn-primary"; bidBtn.textContent = "Bid";
+    bidBtn.disabled = pendingBiddingSubmission || !verdict.legal;
+    bidBtn.addEventListener("click", function () { submitBiddingIntent(candidate); });
+    var passBtn = document.createElement("button");
+    passBtn.type = "button"; passBtn.className = "bd-btn"; passBtn.textContent = "Pass";
+    passBtn.disabled = pendingBiddingSubmission;
+    passBtn.addEventListener("click", function () {
+      submitBiddingIntent({ type: "SubmitAuctionBid", playerId: localSeatId, isPass: true });
+    });
+    row.appendChild(bidBtn); row.appendChild(passBtn);
+    container.appendChild(row);
+  }
+
+  /** CONFIRM controls: the Caller's own suit/tricks adjustment (default:
+   *  keep the exact winning call) plus Confirm. Same candidate ->
+   *  canSubmit() -> enable/hint pattern as AUCTION. */
+  function renderConfirmControls(state, container) {
+    if (confirmSel.tricks == null) {
+      confirmSel.tricks = state.auctionTop > 0 ? state.auctionTop : 4;
+      confirmSel.suit = state.auctionSuit || "SANS";
+    }
+    container.appendChild(buildSuitChips(confirmSel.suit, function (suitKey) {
+      confirmSel.suit = suitKey;
+      renderBiddingControls(window.BiddingEngine.getState());
+    }));
+    container.appendChild(buildStepper(confirmSel.tricks, state.auctionTop > 0 ? state.auctionTop : 4, 13, function (v) {
+      confirmSel.tricks = v;
+      renderBiddingControls(window.BiddingEngine.getState());
+    }));
+
+    var candidate = { type: "SubmitConfirmCall", playerId: localSeatId, tricks: confirmSel.tricks, suit: confirmSel.suit };
+    var verdict = window.BiddingEngine.canSubmit(candidate);
+
+    var hint = document.createElement("div");
+    hint.className = "bd-hint" + (verdict.legal ? "" : " is-illegal");
+    hint.textContent = verdict.legal ? "" : verdict.reason;
+    container.appendChild(hint);
+
+    var row = document.createElement("div");
+    row.className = "bd-row";
+    var confirmBtn = document.createElement("button");
+    confirmBtn.type = "button"; confirmBtn.className = "bd-btn-primary"; confirmBtn.textContent = "Confirm";
+    confirmBtn.disabled = pendingBiddingSubmission || !verdict.legal;
+    confirmBtn.addEventListener("click", function () { submitBiddingIntent(candidate); });
+    row.appendChild(confirmBtn);
+    container.appendChild(row);
+  }
+
+  /** ESTIMATES controls: a tricks-only stepper (0..Caller's cap, read
+   *  from BiddingEngine's own already-public state.auctionTop — the
+   *  SAME field renderEstimates() already displays as "Cap" — never a
+   *  re-derivation) plus Submit. With-floor/Forbidden-13 are NOT
+   *  computed here; an out-of-those-bounds selection simply shows
+   *  canSubmit()'s own reason and stays disabled. */
+  function renderEstimatesControls(state, container) {
+    var cap = state.auctionTop > 0 ? state.auctionTop : 13;
+    if (estimateSel.tricks == null) estimateSel.tricks = 0;
+    if (estimateSel.tricks > cap) estimateSel.tricks = cap;
+    container.appendChild(buildStepper(estimateSel.tricks, 0, cap, function (v) {
+      estimateSel.tricks = v;
+      renderBiddingControls(window.BiddingEngine.getState());
+    }));
+
+    var verdict = window.BiddingEngine.canSubmit({ type: "SubmitFinalEstimate", playerId: localSeatId, tricks: estimateSel.tricks });
+
+    var hint = document.createElement("div");
+    hint.className = "bd-hint" + (verdict.legal ? "" : " is-illegal");
+    hint.textContent = verdict.legal ? "" : verdict.reason;
+    container.appendChild(hint);
+
+    var row = document.createElement("div");
+    row.className = "bd-row";
+    var submitBtn = document.createElement("button");
+    submitBtn.type = "button"; submitBtn.className = "bd-btn-primary"; submitBtn.textContent = "Submit Estimate";
+    submitBtn.disabled = pendingBiddingSubmission || !verdict.legal;
+    submitBtn.addEventListener("click", function () { submitFinalEstimate(estimateSel.tricks); });
+    row.appendChild(submitBtn);
+    container.appendChild(row);
+  }
+
+  var BIDDING_CONTROL_RENDERERS = {
+    DASH: renderDashControls,
+    AUCTION: renderAuctionControls,
+    CONFIRM: renderConfirmControls,
+    ESTIMATES: renderEstimatesControls
+  };
+
+  /** The interactive layer's own single entry point — mirrors
+   *  renderBidding()'s own defensive shape (never throws out into its
+   *  caller). Renders NOTHING (clears the container) unless it is
+   *  genuinely this browser's OWN seat's turn, in a phase this sprint
+   *  implements controls for — "controls must appear only during the
+   *  appropriate phase... only for the correct player" (the brief's
+   *  own Turn/Phase Behavior section), enforced structurally here, not
+   *  just by disabling. */
+  function renderBiddingControls(state) {
+    var container = document.getElementById("biddingControls");
+    if (!container) return;
+    container.innerHTML = "";
+    if (!state || !state.subPhase || state.subPhase === "DONE") { lastControlsKey = null; return; }
+
+    // A NEW round/subPhase/waiting-seat resets the candidate-selection
+    // scratch state — otherwise a stale AUCTION selection from a prior
+    // turn could linger and look like it belongs to a different
+    // decision. Includes state.round (Quality Gate Finding #1): without
+    // it, the SAME seat being first-to-act in the SAME subPhase across
+    // two different rounds produced an identical key, letting a stale
+    // trick/suit value from round N carry over as round N+1's default —
+    // never an illegal submission (still re-validated live via
+    // canSubmit() below), but a confusing stale default value.
+    var key = state.round + ":" + state.subPhase + ":" + state.waitingFor;
+    if (key !== lastControlsKey) {
+      auctionSel = { tricks: null, suit: null };
+      confirmSel = { tricks: null, suit: null };
+      estimateSel = { tricks: null };
+      lastControlsKey = key;
+    }
+
+    if (!localSeatId) return; // this browser has no seat in this match — never render controls
+    if (state.waitingFor !== localSeatId) {
+      var waiting = document.createElement("div");
+      waiting.className = "bd-waiting";
+      waiting.textContent = "Waiting on " + playerLabel(state.waitingFor) + "…";
+      container.appendChild(waiting);
+      return;
+    }
+    var controlRenderer = BIDDING_CONTROL_RENDERERS[state.subPhase];
+    if (!controlRenderer) return; // an unrecognized subPhase already got its own message in renderBidding() above
+    try {
+      controlRenderer(state, container);
+    } catch (e) {
+      console.error("[Match] renderBiddingControls() renderer threw:", e);
+      container.innerHTML = "";
+      var errEl = document.createElement("div");
+      errEl.className = "bd-waiting";
+      errEl.textContent = "Controls unavailable (see console).";
+      container.appendChild(errEl);
+    }
+  }
+
+  /** The one entry point this sprint adds: reads BiddingEngine's OWN
+   *  state (never Firestore directly — MatchAdapter/BiddingEngine
+   *  remain the only path to this data) and renders it read-only.
+   *  Handles every error/empty case Section 9 requires without
+   *  crashing the rest of the Match Shell: engine not initialized, no
+   *  bidding state yet, an unrecognized subPhase, or a missing
+   *  waitingFor — all degrade to a plain, honest empty/fallback
+   *  message, never a fabricated value and never an uncaught throw
+   *  that could take down renderSeats()/renderMatch() alongside it. */
+  function renderBidding() {
+    var panel = document.getElementById("biddingPanel");
+    if (!panel) return;
+    panel.innerHTML = "";
+
+    if (!window.BiddingEngine || typeof window.BiddingEngine.getState !== "function") {
+      var noEngine = document.createElement("div");
+      noEngine.className = "bidding-empty";
+      noEngine.textContent = "Bidding engine not available.";
+      panel.appendChild(noEngine);
+      return;
+    }
+
+    var state;
+    try {
+      state = window.BiddingEngine.getState();
+    } catch (e) {
+      console.error("[Match] BiddingEngine.getState() threw:", e);
+      var errEl = document.createElement("div");
+      errEl.className = "bidding-empty";
+      errEl.textContent = "Bidding state unavailable (engine error — see console).";
+      panel.appendChild(errEl);
+      return;
+    }
+
+    if (!state || !state.subPhase) {
+      var empty = document.createElement("div");
+      empty.className = "bidding-empty";
+      empty.textContent = "Bidding has not started yet.";
+      panel.appendChild(empty);
+      return;
+    }
+
+    var phaseRow = document.createElement("div");
+    phaseRow.className = "bidding-phase-row";
+    var badge = document.createElement("span");
+    badge.className = "bidding-phase-badge";
+    badge.textContent = state.subPhase;
+    phaseRow.appendChild(badge);
+    if (state.subPhase !== "DONE") {
+      var turn = document.createElement("span");
+      turn.className = "bidding-turn";
+      var whoSpan = document.createElement("span");
+      whoSpan.className = "who";
+      whoSpan.textContent = playerLabel(state.waitingFor);
+      turn.appendChild(document.createTextNode("Waiting on "));
+      turn.appendChild(whoSpan);
+      phaseRow.appendChild(turn);
+    }
+    panel.appendChild(phaseRow);
+
+    var renderer = BIDDING_SUBPHASE_RENDERERS[state.subPhase];
+    if (renderer) {
+      renderer(state, panel);
+    } else {
+      // An unrecognized subPhase is reported plainly, per Section 9
+      // ("do not hide actual engine errors") — never silently ignored,
+      // never guessed at with invented fields.
+      var unknown = document.createElement("div");
+      unknown.className = "bidding-empty";
+      unknown.textContent = "Unrecognized bidding sub-phase: " + state.subPhase;
+      panel.appendChild(unknown);
+    }
+
+    // Bidding Controls sprint: the interactive layer renders into its
+    // OWN sibling container (#biddingControls), never into `panel`
+    // above — renderDash()/renderAuction()/renderConfirm()/
+    // renderEstimates()/renderBiddingDone() remain exactly what they
+    // were (pure Engine State -> Renderer -> UI, read-only). Rejection/
+    // error feedback for an actual submission now happens via
+    // UI.toast() inside submitBiddingIntent()/submitFinalEstimate()
+    // below, using the engine's own reason string — never invented here.
+    renderBiddingControls(state);
+
+    var placeholder = document.getElementById("matchViewPlaceholder");
+    if (placeholder) placeholder.style.display = "none";
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  //  Table Controls sprint — Play-phase interaction.
+  //
+  //  Same architecture and separation as Bidding Controls:
+  //    RENDERING:    Engine State -> Renderer -> UI
+  //    INTERACTION:  User Input -> Intent -> TableEngine.canPlayCard()
+  //                  -> MatchService.submitCard() -> synchronization
+  //                  -> TableEngine state -> Renderer
+  //
+  //  This screen NEVER calls TableEngine.emit() itself — only
+  //  canPlayCard() (read-only) to decide what to render/enable. The
+  //  actual state mutation happens exclusively through the existing,
+  //  unmodified MatchAdapter.startTrickSync()/startTurnSync() pipelines
+  //  (wired below) once a write round-trips through Firestore — the
+  //  same pipeline every other online player's client also goes
+  //  through. No card-play legality (follow-suit, trump, card ranking,
+  //  trick-winner calculation, turn order) is reimplemented anywhere
+  //  below — every one of those questions is answered by asking
+  //  TableEngine.canPlayCard().
+  // ════════════════════════════════════════════════════════════════
+
+  // Becomes true exactly once per page load, the FIRST time bidding is
+  // observed to have reached DONE — see maybeEnterPlayPhase(). This is
+  // the ONLY call site for TableEngine.initState() on this screen (the
+  // Foundation Fix's whole point: calling it here, and only here, is
+  // what makes ROUND_CFG/GameSession's playState resume branch see the
+  // REAL bidding outcome instead of a page-load snapshot).
+  // Round Lifecycle sprint: was a plain one-shot `false`/`true` boolean
+  // — correct for a single round, but it would permanently block
+  // `maybeEnterPlayPhase()` from ever calling `TableEngine.initState()`
+  // again once Round 2's bidding also reaches DONE. Now stores WHICH
+  // round TableEngine was last started for (`null` before the first
+  // round's play begins) — the guard below compares against the
+  // CURRENT round instead of a forever-flag, so it re-triggers exactly
+  // once per round, never a redesign of the guard's own one-shot-per-
+  // round intent.
+  var tableEngineStartedForRound = null;
+
+  // Single in-flight-submission guard for card play — the exact same
+  // pattern already established and browser-verified in Bidding
+  // Controls' own pendingBiddingSubmission (Section 7's own explicit
+  // "reuse the pattern... do not create a second submission state
+  // machine"). Cleared in the .finally() of every submission attempt.
+  var pendingCardSubmission = false;
+  // Which card is currently mid-submission — {suit, rank} or null —
+  // purely presentational (drives the "selected/pending" chip style);
+  // never consulted for legality.
+  var pendingCardKey = null;
+  function cardKey(card) { return card.suit + "-" + card.rank.v; }
+
+  /** Called from the main subscribeToMatch snapshot callback, every
+   *  delivery, alongside renderSeats()/renderBidding(). No-ops unless
+   *  bidding has genuinely reached DONE for the first time this page
+   *  load — mirrors bootstrapEngineOnce()'s own "engineBootstrapped"
+   *  one-shot guard pattern. Wires the existing, unmodified
+   *  MatchAdapter sync pipelines (never started before this sprint,
+   *  for the same reason startBiddingActionSync()/startBidSync()
+   *  weren't started before the Bidding Controls sprint — starting one
+   *  before there's a real card to synchronize would have no
+   *  observable effect and risks being mistaken for functionality that
+   *  doesn't exist yet). */
+  function maybeEnterPlayPhase() {
+    if (!window.BiddingEngine || typeof window.BiddingEngine.getState !== "function") return;
+    var bState;
+    try { bState = window.BiddingEngine.getState(); } catch (e) { return; }
+    if (!bState || bState.subPhase !== "DONE") return;
+    // Round-aware one-shot: already entered play for THIS exact round —
+    // no-op. Once Round 2's bidding also reaches DONE, bState.round is
+    // 2, this no longer matches the round-1 value stored below, and
+    // this function runs again for real.
+    if (tableEngineStartedForRound === bState.round) return;
+    if (!window.TableEngine || typeof window.TableEngine.initState !== "function") return;
+
+    tableEngineStartedForRound = bState.round;
+    try {
+      // A SECOND, related staleness source discovered while verifying
+      // the Foundation Fix in the real browser: table-engine.js's own
+      // DOMContentLoaded listener (pre-existing, undocumented-as-a-bug
+      // until now) ALWAYS fires once, automatically, at page load —
+      // before this screen has any chance to know bidding hasn't
+      // started yet — and calls initState() itself, which persists a
+      // playState (GameSession.initializePlayState()) seeded from
+      // the SAME page-load mock leaderId the Foundation Fix's own
+      // ROUND_CFG bug produced. GameSession.isPlayStateValidForCurrentRound()
+      // only checks round NUMBER, not whether the persisted state was
+      // seeded before or after real bidding — so THIS call (the
+      // correct, timely one) would otherwise "resume" that stale
+      // leaderId/turn forever, even though ROUND_CFG itself is now
+      // fresh. Detected here, entirely with existing GameSession
+      // public APIs (getPlayState/getRound/getTurn/getDealer/
+      // clearPlayState — no engine file touched a second time): if a
+      // persisted playState's leaderId disagrees with what the JUST-
+      // COMPLETED real bidding outcome says it should be (the exact
+      // same leaderId formula table-engine.js's own buildRoundCfg()
+      // uses), it can only have been seeded before bidding completed
+      // — discard it. A genuine mid-play refresh's persisted state
+      // could only ever have been created AFTER bidding completed, so
+      // it will always already agree and is never discarded by this
+      // check.
+      if (window.GameSession && typeof window.GameSession.getPlayState === "function") {
+        var existingPlayState = window.GameSession.getPlayState();
+        var currentRound = window.GameSession.getRound();
+        var realLeaderId = (currentRound && currentRound.callerId) || window.GameSession.getTurn() || window.GameSession.getDealer();
+        if (existingPlayState && existingPlayState.initialized &&
+            currentRound && existingPlayState.roundNumber === currentRound.number &&
+            existingPlayState.leaderId !== realLeaderId) {
+          window.GameSession.clearPlayState();
+        }
+      }
+      window.TableEngine.initState();
+    } catch (e) {
+      console.error("[Match] TableEngine.initState() threw:", e);
+      tableEngineStartedForRound = null; // allow a later delivery to retry rather than getting permanently stuck
+      return;
+    }
+    if (window.MatchAdapter && typeof window.MatchAdapter.startTrickSync === "function") {
+      // startTrickSync() alone already calls applyRemoteCard() as part
+      // of its own per-delivery catch-up loop (Sprint 4.3) — a
+      // separate startCardSync() call would be redundant (harmless,
+      // since applyRemoteCard()'s own version gate is idempotent, but
+      // pure duplication of work for every future delivery). One call
+      // covers both card application and trick resolution.
+      try { window.MatchAdapter.startTrickSync(matchId); } catch (e) { console.error("[Match] startTrickSync() threw:", e); }
+    }
+    if (window.MatchAdapter && typeof window.MatchAdapter.startTurnSync === "function") {
+      try { window.MatchAdapter.startTurnSync(matchId); } catch (e) { console.error("[Match] startTurnSync() threw:", e); }
+    }
+  }
+
+  /** Suit display text — same DATA lookup (never a rule) renderAuction()/
+   *  renderConfirm()/renderEstimates() already use via suitLabel(); a
+   *  card chip needs only the symbol + red/black classification, both
+   *  already-existing fields on Cards.SUITS, never re-derived. */
+  function cardChipClass(card) {
+    var sym = null, red = false;
+    try {
+      var s = window.Cards && window.Cards.SUITS && window.Cards.SUITS[card.suit];
+      red = !!(s && s.red);
+    } catch (e) {}
+    return "card-chip" + (red ? " is-red" : "");
+  }
+  function cardChipText(card) {
+    var sym = card.suit;
+    try {
+      var s = window.Cards && window.Cards.SUITS && window.Cards.SUITS[card.suit];
+      if (s) sym = s.sym;
+    } catch (e) {}
+    return (card.rank && card.rank.s ? card.rank.s : "?") + " " + sym;
+  }
+
+  /** The ONE path every hand card submits through. Re-checks
+   *  canPlayCard() immediately before writing — the card may have
+   *  gone stale between when it was rendered as playable and when it
+   *  was actually tapped (e.g. a remote play arrived in between) —
+   *  never trusts a previously-computed "this looked legal" flag
+   *  alone, exactly like submitBiddingIntent()'s own re-check. */
+  function submitCardPlay(card) {
+    if (pendingCardSubmission) return; // duplicate-tap guard
+    if (!localSeatId) { window.UI && window.UI.toast("You don't have a seat in this match."); return; }
+    if (!window.TableEngine || typeof window.TableEngine.canPlayCard !== "function") {
+      window.UI && window.UI.toast("Table engine unavailable.");
+      return;
+    }
+    var verdict = window.TableEngine.canPlayCard(localSeatId, card);
+    if (!verdict || !verdict.legal) {
+      window.UI && window.UI.toast((verdict && verdict.reason) || "That card isn't legal right now.");
+      renderTablePanel();
+      return;
+    }
+    if (!window.MatchService || typeof window.MatchService.submitCard !== "function") {
+      window.UI && window.UI.toast("Match service unavailable.");
+      return;
+    }
+    pendingCardSubmission = true;
+    pendingCardKey = cardKey(card);
+    renderTablePanel(); // disable the whole hand immediately
+    window.MatchService.submitCard(matchId, card)
+      .catch(function (err) {
+        console.error("[Match] submitCard() rejected:", err);
+        window.UI && window.UI.toast(describeSubmissionError(err));
+      })
+      .then(function () {
+        pendingCardSubmission = false;
+        pendingCardKey = null;
+        // Re-enable/redraw immediately — on success the real advance
+        // arrives moments later via the Firestore round-trip (through
+        // startTrickSync() -> applyRemoteCard()/applyRemoteTrick())
+        // and triggers its own renderTablePanel() call; calling it
+        // again here is harmless/idempotent, and is what actually
+        // unlocks the hand on a REJECTED submission (which never
+        // round-trips) — mirrors submitBiddingIntent()'s identical
+        // .finally()-shaped cleanup exactly.
+        try { renderTablePanel(); } catch (e) {}
+      });
+  }
+
+  /** The interactive Play-phase panel's single entry point. Mirrors
+   *  renderBiddingControls()'s own defensive shape and structural
+   *  turn-gating (renders no PLAYABLE hand at all unless it is
+   *  genuinely this browser's own seat's turn — never just a disabled
+   *  hand). No-ops entirely (leaves #tablePanel hidden) until
+   *  maybeEnterPlayPhase() has actually initialized TableEngine. */
+  function renderTablePanel() {
+    var panel = document.getElementById("tablePanel");
+    var biddingPanelEl = document.getElementById("biddingPanel");
+    var biddingControlsEl = document.getElementById("biddingControls");
+    if (!panel) return;
+    if (tableEngineStartedForRound == null || !window.TableEngine || typeof window.TableEngine.getState !== "function") {
+      panel.classList.add("hidden");
+      return;
+    }
+    var state;
+    try {
+      state = window.TableEngine.getState();
+    } catch (e) {
+      console.error("[Match] TableEngine.getState() threw:", e);
+      return;
+    }
+    if (!state) { panel.classList.add("hidden"); return; }
+
+    // Bidding is over — swap the visible panel. Bidding's own panels
+    // are left exactly as renderBidding()/renderBiddingControls() last
+    // drew them (a harmless "Bidding complete for this round"
+    // message) — just no longer shown, so the screen doesn't show two
+    // simultaneous, unrelated panels at once.
+    if (biddingPanelEl) biddingPanelEl.classList.add("hidden");
+    if (biddingControlsEl) biddingControlsEl.classList.add("hidden");
+    panel.classList.remove("hidden");
+
+    var turnEl = document.getElementById("tableTurn");
+    if (turnEl) {
+      turnEl.innerHTML = "";
+      if (state.phase === "DONE") {
+        turnEl.textContent = "Round complete.";
+      } else {
+        var who = document.createElement("span");
+        who.className = "who";
+        who.textContent = state.turn === localSeatId ? "Your turn" : playerLabel(state.turn);
+        if (state.turn === localSeatId) {
+          turnEl.appendChild(who);
+        } else {
+          turnEl.appendChild(document.createTextNode("Waiting on "));
+          turnEl.appendChild(who);
+        }
+      }
+    }
+
+    renderTrick(state);
+    renderLastTrickInfo(state);
+    renderHand(state);
+
+    // Sprint 5: Round Complete panel — shown ONLY once the real,
+    // synchronized engine reaches phase "DONE" (never a UI-side trick
+    // count). Never shown alongside the active hand/trick controls —
+    // renderHand() above already degrades to a read-only, non-
+    // interactive display once phase !== "PLAY", and the panel itself
+    // is hidden below whenever phase isn't "DONE", so completion can
+    // never be mistaken for active play in either direction.
+    var roundCompleteEl = document.getElementById("roundCompletePanel");
+    if (roundCompleteEl) {
+      if (state.phase === "DONE") {
+        renderRoundComplete();
+      } else {
+        roundCompleteEl.classList.remove("is-visible");
+        roundCompleteEl.innerHTML = "";
+      }
+    }
+  }
+
+  /** Read-only "last trick" summary — who won the trick that just
+   *  resolved, and what they won it with. Reads TableEngine's own
+   *  already-computed state.lastTrick.winnerId directly; never
+   *  recomputes trickWinner()/cardValue() itself. state.plays is
+   *  cleared back to [] the instant a trick resolves (the next trick
+   *  starts immediately), so this is deliberately a SEPARATE element
+   *  from the live #trickPanel above, not a highlight overlaid on it. */
+  function renderLastTrickInfo(state) {
+    var el = document.getElementById("lastTrickInfo");
+    if (!el) return;
+    el.innerHTML = "";
+    if (!state.lastTrick || !state.lastTrick.winnerId) return;
+    var who = document.createElement("span");
+    who.className = "who";
+    who.textContent = playerLabel(state.lastTrick.winnerId);
+    el.appendChild(document.createTextNode("Last trick won by "));
+    el.appendChild(who);
+    var winningPlay = (state.lastTrick.plays || []).filter(function (p) { return p.playerId === state.lastTrick.winnerId; })[0];
+    if (winningPlay) {
+      el.appendChild(document.createTextNode(" (" + cardChipText(winningPlay.card) + ")"));
+    }
+  }
+
+  /** Read-only trick display: each seat's card for the CURRENT trick
+   *  (or an empty slot if not played yet), in seat order. Direct field
+   *  reads only (state.plays) — trick-winner comparison stays
+   *  exclusively inside table-engine.js's own trickWinner()/cardValue(). */
+  function renderTrick(state) {
+    var el = document.getElementById("trickPanel");
+    if (!el) return;
+    el.innerHTML = "";
+    var seatOrder = ["p1", "p2", "p3", "p4"];
+    seatOrder.forEach(function (seatId) {
+      var slot = document.createElement("div");
+      slot.className = "trick-slot";
+      var label = document.createElement("div");
+      label.className = "trick-seat";
+      label.textContent = playerLabel(seatId);
+      slot.appendChild(label);
+      var play = (state.plays || []).filter(function (p) { return p.playerId === seatId; })[0];
+      var chip = document.createElement("div");
+      if (play) {
+        chip.className = cardChipClass(play.card);
+        chip.textContent = cardChipText(play.card);
+      } else {
+        chip.className = "card-chip is-empty";
+        chip.textContent = "—";
+      }
+      slot.appendChild(chip);
+      el.appendChild(slot);
+    });
+  }
+
+  /** The interactive hand. Renders NOTHING (an honest empty message)
+   *  unless it is genuinely this browser's own seat's turn in the PLAY
+   *  phase — structurally, not just via disabled buttons, mirroring
+   *  renderBiddingControls()'s own "only for the correct player" gate.
+   *  For each card, asks TableEngine.canPlayCard() — per Section 5's
+   *  own instruction — never recomputes follow-suit itself. */
+  function renderHand(state) {
+    var el = document.getElementById("handPanel");
+    if (!el) return;
+    el.innerHTML = "";
+    if (!localSeatId) return;
+    var hand = (window.GameSession && typeof window.GameSession.getHand === "function") ? window.GameSession.getHand(localSeatId) : [];
+    if (!hand.length) return;
+
+    if (state.phase !== "PLAY" || state.turn !== localSeatId) {
+      var empty = document.createElement("div");
+      empty.className = "table-empty";
+      empty.textContent = state.phase === "DONE" ? "" : "Waiting on " + playerLabel(state.turn) + "…";
+      if (empty.textContent) el.appendChild(empty);
+      // Still show the hand itself, read-only (unplayable), so the
+      // player can see their own cards while waiting — every chip
+      // below is rendered as a plain (non-button) chip, never
+      // interactive, when it isn't this seat's turn.
+      hand.forEach(function (card) {
+        var chip = document.createElement("div");
+        chip.className = cardChipClass(card);
+        chip.textContent = cardChipText(card);
+        el.appendChild(chip);
+      });
+      return;
+    }
+
+    hand.forEach(function (card) {
+      var verdict;
+      try { verdict = window.TableEngine.canPlayCard(localSeatId, card); } catch (e) { verdict = { legal: false }; }
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = cardChipClass(card) + (pendingCardKey === cardKey(card) ? " is-pending" : "");
+      btn.textContent = cardChipText(card);
+      btn.disabled = pendingCardSubmission || !verdict.legal;
+      btn.addEventListener("click", function () { submitCardPlay(card); });
+      el.appendChild(btn);
+    });
+  }
+
+  /** Round Complete panel — pure presentation of two ALREADY-EXISTING,
+   *  ALREADY-POPULATED public results: GameSession.getLastRoundResult()
+   *  (written by ScoringEngine.applyRoundResult(), called internally
+   *  by TableEngine.resolveTrick() the instant the round's 13th trick
+   *  resolves — the SAME call every synchronized client makes,
+   *  deterministically, from the same replayed cardLog, so this needs
+   *  no separate sync channel of its own) and GameSession.getMatchScores()
+   *  (the running match totals the SAME call already updates). Never
+   *  computes a score delta, caller bonus, estimate success/failure,
+   *  Sa'ayda, or multiplier itself — every one of those values is read
+   *  directly off the existing result object. Per this sprint's own
+   *  explicit stop instruction: if a required display value were
+   *  missing from that object, this function would need to report an
+   *  API gap rather than invent one — none was missing; every field
+   *  used below already exists on ScoringEngine.applyRoundResult()'s
+   *  own documented entry shape. */
+  function renderRoundComplete() {
+    var el = document.getElementById("roundCompletePanel");
+    if (!el) return;
+    el.innerHTML = "";
+    if (!window.GameSession || typeof window.GameSession.getLastRoundResult !== "function") return;
+    var result = window.GameSession.getLastRoundResult();
+    if (!result) {
+      // Round genuinely reached DONE (engine-confirmed) but the score
+      // result hasn't been read back yet — an honest, momentary empty
+      // state, never a fabricated placeholder score.
+      return;
+    }
+    el.classList.add("is-visible");
+
+    var badge = document.createElement("div");
+    badge.className = "bidding-phase-badge";
+    badge.textContent = result.isSaayda ? "SA'AYDA — ROUND ZEROED" : "ROUND COMPLETE";
+    el.appendChild(badge);
+
+    var title = document.createElement("div");
+    title.className = "rc-title";
+    title.textContent = "Round " + (result.round != null ? result.round : "—");
+    el.appendChild(title);
+
+    appendFields(el, [
+      biddingField("Trump", suitLabel(result.trump)),
+      biddingField("Caller", result.callerId ? playerLabel(result.callerId) : "None (all Dash)"),
+      biddingField("Multiplier", result.appliedMultiplier > 1 ? ("×" + result.appliedMultiplier) : null),
+      biddingField("Next multiplier", result.nextMultiplier > 1 ? ("×" + result.nextMultiplier) : null)
+    ]);
+
+    var estimateFields = ["p1", "p2", "p3", "p4"].map(function (seatId) {
+      var tricks = result.tricksWon && result.tricksWon[seatId] != null ? result.tricksWon[seatId] : null;
+      var est = result.estimates && result.estimates[seatId] != null ? result.estimates[seatId] : null;
+      if (tricks == null && est == null) return null;
+      return biddingField(playerLabel(seatId), (est != null ? est : "—") + " est / " + (tricks != null ? tricks : "—") + " won");
+    });
+    appendFields(el, estimateFields);
+
+    var scoresEl = document.createElement("div");
+    scoresEl.className = "rc-scores";
+    var matchScores = (window.GameSession.getMatchScores && window.GameSession.getMatchScores()) || {};
+    ["p1", "p2", "p3", "p4"].forEach(function (seatId) {
+      var delta = result.scoreDeltas && result.scoreDeltas[seatId] != null ? result.scoreDeltas[seatId] : null;
+      if (delta == null) return;
+      var tile = document.createElement("div");
+      tile.className = "rc-score-tile";
+      var name = document.createElement("div");
+      name.className = "name";
+      name.textContent = playerLabel(seatId);
+      var deltaEl = document.createElement("span");
+      deltaEl.className = "delta" + (delta > 0 ? " is-positive" : "");
+      deltaEl.textContent = (delta > 0 ? "+" : "") + delta;
+      var total = document.createElement("div");
+      total.className = "total";
+      total.textContent = "Total " + (matchScores[seatId] != null ? matchScores[seatId] : "—");
+      tile.appendChild(name);
+      tile.appendChild(deltaEl);
+      tile.appendChild(total);
+      scoresEl.appendChild(tile);
+    });
+    el.appendChild(scoresEl);
+  }
 
   function renderMatch(match) {
     if (!match) return;
@@ -147,6 +2033,16 @@
   // query string, no new persistence mechanism introduced.
   var matchId = (GameState.getData().match || {}).id || null;
 
+  // Bidding Controls sprint: which seat THIS browser controls — never
+  // trusted from the caller, resolved the same way match-service.js's
+  // own submitBiddingAction() resolves it server-side (uid ->
+  // MatchAdapter.uidToSeat()), via SessionService's already-established
+  // getCurrentUser() convention (session-service.js, loaded above).
+  // Recomputed on every snapshot (cheap, defensive — a match's seats
+  // map is expected to be stable once assigned, but this never assumes
+  // that rather than re-deriving it).
+  var localSeatId = null;
+
   if (!matchId) {
     statusEl.textContent = "No match to show";
     console.warn("[Match] No matchId found in GameState data — this screen was opened without a real match handoff.");
@@ -154,6 +2050,75 @@
     statusEl.textContent = "MatchService unavailable";
     console.error("[Match] MatchService not loaded.");
   } else {
+    // Bidding Controls sprint: activates the existing, UNMODIFIED
+    // MatchAdapter sync pipelines (Sprint 3.7/4.0) that translate a
+    // Firestore delivery into a real BiddingEngine.emit() call —
+    // without this, remote Dash/Auction/Confirm/Estimate actions
+    // (including THIS client's own, once they round-trip back through
+    // Firestore) would never actually reach the engine, and this
+    // screen would only ever show its own local, pre-write canSubmit()
+    // check, never a real state advance. Registered BEFORE the
+    // render-owning subscribeToMatch() call below so their internal
+    // callbacks run FIRST on every delivery (MatchService.subscribeToMatch()
+    // invokes its listeners in registration order) — the engine is
+    // always updated before this screen re-renders it. Both call
+    // MatchService.subscribeToMatch() themselves for the SAME matchId,
+    // which — per that function's own ref-counting contract — never
+    // creates a second Firestore listener; this remains exactly one
+    // real onSnapshot registration no matter how many local callbacks
+    // are attached to it.
+    // Round Lifecycle sprint: registered BEFORE startBiddingActionSync()/
+    // startBidSync() for the same "earlier registration -> dispatched
+    // first on every delivery" reason those two are already registered
+    // before the render callback — a delivery that carries BOTH a round
+    // bump and that new round's first bidding entry applies the round
+    // transition first. Not required for correctness (see
+    // applyRemoteRoundTransition()'s own doc comment — a one-delivery-
+    // late ordering self-corrects via the AWAITING_ROUND_TRANSITION
+    // deferral either way), only a latency optimization.
+    if (window.MatchAdapter && typeof window.MatchAdapter.startRoundSync === "function") {
+      try { window.MatchAdapter.startRoundSync(matchId); } catch (e) { console.error("[Match] startRoundSync() threw:", e); }
+    }
+    // Match Completion sprint: registered alongside startRoundSync() for
+    // the same reason — a client that reconnects, or simply never won
+    // the endMatch() race itself, still needs winnerIds/finalScores
+    // synced down the moment the match document's own status flips to
+    // 'complete'. Shares the SAME single Firestore listener as every
+    // other start*Sync() call here (see MatchService.subscribeToMatch()).
+    if (window.MatchAdapter && typeof window.MatchAdapter.startMatchCompletionSync === "function") {
+      try { window.MatchAdapter.startMatchCompletionSync(matchId); } catch (e) { console.error("[Match] startMatchCompletionSync() threw:", e); }
+    }
+    if (window.MatchAdapter && typeof window.MatchAdapter.startBiddingActionSync === "function") {
+      try { window.MatchAdapter.startBiddingActionSync(matchId); } catch (e) { console.error("[Match] startBiddingActionSync() threw:", e); }
+    }
+    if (window.MatchAdapter && typeof window.MatchAdapter.startBidSync === "function") {
+      try { window.MatchAdapter.startBidSync(matchId); } catch (e) { console.error("[Match] startBidSync() threw:", e); }
+    }
+    // Post-Match Rematch Vote sprint: registered alongside
+    // startMatchCompletionSync() for the same reason — this starts the
+    // "any seated client may safely attempt timeout/all-YES/rematch-
+    // creation" watcher (MatchAdapter.maybeAdvanceRematchVote()), which
+    // needs to run whether or not this particular client is the one
+    // actively looking at the completion screen. Harmless before the
+    // match is complete — the vote document simply doesn't exist yet,
+    // delivering null (see startMatchCompletionSync's own equivalent
+    // behavior).
+    if (window.MatchAdapter && typeof window.MatchAdapter.startRematchVoteSync === "function") {
+      try { window.MatchAdapter.startRematchVoteSync(matchId); } catch (e) { console.error("[Match] startRematchVoteSync() threw:", e); }
+    }
+    // This screen's OWN render trigger for the vote panel — a SEPARATE
+    // local callback against MatchService's own ref-counted listener
+    // for this document (see subscribeToRematchVote()'s own comment);
+    // registering this does NOT create a second Firestore listener,
+    // exactly like every other multi-consumer subscribeToMatch() call
+    // in this same boot sequence.
+    if (window.MatchService && typeof window.MatchService.subscribeToRematchVote === "function") {
+      window.MatchService.subscribeToRematchVote(matchId, function (voteData, voteErr) {
+        if (voteErr) { console.error("[Match] subscribeToRematchVote error (fail-open):", voteErr); return; }
+        renderRematchVote(voteData);
+      });
+    }
+
     // subscribeToMatch, not a one-shot loadMatch — this screen stays
     // live-updated if the match document changes (e.g. once a future
     // sprint activates gameplay), via MatchService's own public API only.
@@ -167,13 +2132,133 @@
         statusEl.textContent = "Match not found";
         return;
       }
+      if (window.MatchAdapter && typeof window.MatchAdapter.uidToSeat === "function" &&
+          window.SessionService && typeof window.SessionService.getCurrentUser === "function") {
+        var currentUser = window.SessionService.getCurrentUser();
+        localSeatId = currentUser ? window.MatchAdapter.uidToSeat(data, currentUser.uid) : null;
+      }
       renderMatch(data);
+      bootstrapEngineOnce(data);
+      // Table Controls sprint: checked BEFORE renderSeats() so
+      // currentTurnSeat()'s own TableEngine-vs-BiddingEngine
+      // precedence (Bidding Renderer sprint) sees an initialized
+      // TableEngine on the very first delivery bidding is DONE, not
+      // one delivery late.
+      maybeEnterPlayPhase();
+      renderSeats();
+      renderBidding();
+      renderTablePanel();
+      // Match Completion sprint: checked on EVERY delivery, using the
+      // raw synced document directly (matchDoc.status), never a round
+      // number or local guess — see renderMatchCompletion()'s own
+      // comment for why this is a pure renderer.
+      renderMatchCompletion(data);
+      // Sprint 5 discovery: startTrickSync()/startTurnSync() (started
+      // by maybeEnterPlayPhase() above, the first time bidding reaches
+      // DONE) register their OWN MatchService.subscribeToMatch()
+      // listener dynamically, mid-session — which places it AFTER this
+      // callback in the same match's listener list from then on. Every
+      // delivery is dispatched to all listeners in registration order,
+      // so THIS callback's renderTablePanel() call above always runs
+      // BEFORE that sync applies the delivery's card/trick update to
+      // TableEngine — the render above reflects the PREVIOUS delivery's
+      // engine state, one delivery behind, which never catches up once
+      // no further delivery arrives (e.g. the round's final trick).
+      // Reordering the subscriptions themselves is not safe: starting
+      // card/trick sync any earlier risks applying a remote card
+      // against the still-stale, pre-initState() TableEngine. Instead,
+      // queue a microtask re-render: it runs only after ALL of this
+      // delivery's synchronous listeners (including trick/turn sync)
+      // have finished applying their update, so it always reflects
+      // this delivery's true final engine state. Harmless/idempotent
+      // if TableEngine hasn't started yet or nothing changed.
+      if (tableEngineStartedForRound != null) {
+        Promise.resolve().then(function () {
+          try { renderTablePanel(); } catch (e) { console.error("[Match] deferred renderTablePanel() threw:", e); }
+        });
+      }
     });
   }
 
   document.getElementById("backBtn").addEventListener("click", function () {
     GameState.goTo(GameState.STATES.LOBBY, { force: true });
   });
+
+  // Match Completion sprint: "Return to Lobby" reuses the EXACT same
+  // existing navigation call as backBtn above — no new routing system.
+  // Rematch Vote sprint: available at ALL times, including during an
+  // active vote — voting never blocks it (no host, nothing tracks
+  // "did everyone leave the screen").
+  document.getElementById("mcLobbyBtn").addEventListener("click", function () {
+    GameState.goTo(GameState.STATES.LOBBY, { force: true });
+  });
+
+  // Post-Match Rematch Vote sprint: casts exactly this seat's vote.
+  // Immediately, optimistically disables BOTH buttons on click (never
+  // trusting the click handler alone as the source of the lock — the
+  // vote's own render, driven by the synced document, is what actually
+  // decides button visibility on the next delivery; this local disable
+  // only prevents a rapid double-click from firing two submissions
+  // before that delivery arrives). submitRematchVote() itself is
+  // idempotent either way — see its own doc comment.
+  function submitRematchVoteChoice(choice) {
+    if (!matchId || !window.MatchService || typeof window.MatchService.submitRematchVote !== "function") return;
+    document.getElementById("mcVoteYesBtn").disabled = true;
+    document.getElementById("mcVoteNoBtn").disabled = true;
+    window.MatchService.submitRematchVote(matchId, choice).catch(function (e) {
+      console.error("[Match] submitRematchVote() threw:", e);
+      // Re-enable on a genuine failure (e.g. offline) so the player can
+      // retry — a legitimate VOTE_LOCKED/VOTE_CLOSED outcome is not an
+      // error and resolves via the next real document delivery instead.
+      document.getElementById("mcVoteYesBtn").disabled = false;
+      document.getElementById("mcVoteNoBtn").disabled = false;
+    });
+  }
+  document.getElementById("mcVoteYesBtn").addEventListener("click", function () { submitRematchVoteChoice("YES"); });
+  document.getElementById("mcVoteNoBtn").addEventListener("click", function () { submitRematchVoteChoice("NO"); });
+  if (window.UI && typeof window.UI.bindModalDismiss === "function") {
+    window.UI.bindModalDismiss(document.getElementById("matchCompleteModal"));
+  }
+
+  // Test/diagnostic-only accessor — mirrors this project's existing
+  // convention for such hooks (e.g. match-adapter.js's own
+  // getLastAppliedVersion()/resetSyncState()). No production code path
+  // calls this; it exists purely so a real-browser verification pass
+  // can re-trigger a re-render after driving the engine directly via
+  // emit(), without needing a live Firestore snapshot delivery for
+  // every intermediate phase.
+  window.MatchScreenDebug = {
+    renderBidding: renderBidding, renderSeats: renderSeats,
+    // Bidding Controls sprint additions — diagnostic-only, mirrors this
+    // project's established convention (e.g. match-adapter.js's own
+    // getLastAppliedVersion()/resetSyncState()); no production code
+    // path calls these directly.
+    renderBiddingControls: renderBiddingControls,
+    setLocalSeatId: function (seatId) { localSeatId = seatId; },
+    getLocalSeatId: function () { return localSeatId; },
+    // Follow-up Hardening (Quality Gate Finding #2): diagnostic-only —
+    // lets a test observe the existing pendingBiddingSubmission guard
+    // directly instead of racing a synchronous fake-transaction's own
+    // round-trip timing. Does not change the guard's behavior in any way.
+    isBiddingSubmissionPending: function () { return pendingBiddingSubmission; },
+    getBlockedDuplicateSubmissionAttempts: function () { return blockedDuplicateSubmissionAttempts; },
+    // Match Completion UI sprint — diagnostic-only, same convention.
+    renderMatchCompletion: renderMatchCompletion,
+    isMatchCompleteModalOpen: function () {
+      var el = document.getElementById("matchCompleteModal");
+      return !!(el && !el.hidden && el.classList.contains("is-open"));
+    },
+    // Post-Match Rematch Vote sprint — diagnostic-only, same convention.
+    renderRematchVote: renderRematchVote,
+    isRematchVotePanelOpen: function () {
+      var el = document.getElementById("rematchVotePanel");
+      return !!(el && !el.hidden);
+    },
+    getRematchVoteCountdownText: function () {
+      var el = document.getElementById("mcVoteCountdown");
+      return el ? el.textContent : null;
+    }
+  };
 })();
 </script>
 </body>

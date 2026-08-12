@@ -1,0 +1,42 @@
+# Implementation Report — Sprint 4.1: Turn Authority & Remote Play Validation
+
+**Sprint type:** synchronizes turn OWNERSHIP, not card play. "This sprint is NOT about card play. This sprint is ONLY about determining WHO is allowed to act." No gameplay logic added, no `bidding-engine.js`/`table-engine.js`/`scoring-engine.js`/`Dealer`/`Deck`/`Cards` change, no `firestore.rules` change, no card play/trick/scoring synchronization.
+
+## 1. Executive Summary
+
+`design-ui/match-adapter.js` gained four new functions — `applyRemoteTurn(matchId, matchDoc)` (Task 2), `isLocalSeatsTurn(matchDoc, localSeat)`/`assertLocalTurn(matchDoc, localSeat)` (Task 3), and `startTurnSync(matchId)` (Task 1) — plus one test-only accessor (`getLastAppliedTurnVersion`), and an extension to the existing `resetSyncState()` to also clear the new turn registry. No existing function's behavior changed. `bidding-engine.js`, `table-engine.js`, `scoring-engine.js`, `GameSession`'s existing API surface, `Dealer`, `Deck`, `Cards`, `design-ui/match-service.js`, and `firestore.rules` are byte-for-byte unchanged.
+
+## 2. The central design decision, and why it's correct
+
+`GameSession` has two fields that could plausibly answer "whose turn is it": the top-level `turnId` (`getTurn()`/`setTurn()` — a Firestore-facing mirror, previously written only once at bootstrap by Sprint 3.9's `bootstrapGameSession()`) and `GameSession.getBiddingState().turnId` (a bidding-phase-specific field `bidding-engine.js`'s own reducer already owns and correctly maintains, unchanged since Sprint 3.6).
+
+This sprint makes the FIRST field an ongoing sync (Task 1's "Firestore snapshots must update the local turn") and deliberately leaves the SECOND untouched. Task 3's local-authority check reads the first field too, not the second — because the second becomes meaningless the moment bidding ends (a future card-play phase has no `waitingFor`), while the first stays meaningful across every future phase. This is the same "translate identities, never gameplay decisions" boundary every prior sprint's own adapter design already drew, applied to a new field.
+
+## 3. Task-by-task verification
+
+- **Task 1 (Turn Synchronization):** `startTurnSync()` calls the existing, unmodified `MatchService.subscribeToMatch()` and pipes every delivery through `applyRemoteTurn()`. No second listener — verified via the mock's `onSnapshot()` call counter staying at 1 across `startBidSync()` + `startTurnSync()` called together for the same matchId (both reuse the same ref-counted registry). `design-ui/match-service.js` remains byte-for-byte unchanged — zero reference to `GameSession`/`setTurn`/any engine file, confirmed by this sprint's own forbidden-scope sweep.
+- **Task 2 (Remote Turn Application):** `applyRemoteTurn()` never calls any Firestore write path (confirmed by code inspection — no `db()`/`.update()`/`.set()` anywhere in the function) and its only GameSession mutation is `GameSession.setTurn()`, an existing, unmodified public setter. Ignores duplicate turn updates (equal version → `DUPLICATE_VERSION`), ignores stale versions (lower version → `STALE_VERSION`, verified the mirror is never rolled back), and rejects malformed snapshots (non-object, non-numeric version, unresolvable turn uid) without throwing.
+- **Task 3 (Local Authority Validation):** `isLocalSeatsTurn()`/`assertLocalTurn()` compare `matches/{matchId}.turn` (translated to seat) against `localSeat`. `assertLocalTurn()` throws a structured `NOT_LOCAL_TURN` error on mismatch rather than proceeding — verified directly: calling it for the wrong seat throws before any write-path code would ever run (there being no write-path caller yet, this is verified at the unit level against hand-constructed matchDocs and, in `tests/turn-sync.test.cjs`, against a live subscription-delivered matchDoc).
+- **Task 4 (Duplicate Protection):** verified directly in both test files — receiving an identical turn snapshot twice (via a raw duplicate SDK delivery in `tests/turn-sync.test.cjs`'s "listener duplicate event" section, and via `resetSyncState`-isolated unit checks in `tests/match-adapter.test.cjs`) causes zero change to `GameSession.getTurn()`, zero advancement of the adapter's own version registry, and (trivially, since this function never calls a reducer) zero re-run of any engine logic.
+- **Task 5 (Adapter Isolation):** `design-ui/match-adapter.js` remains the only file that calls `GameSession.setTurn()` on behalf of a remote update — confirmed by this sprint's own forbidden-scope sweep (`git diff --stat` shows no other source file touched).
+
+## 4. Honest verification method
+
+Every one of the 49 new checks (23 unit-level in `tests/match-adapter.test.cjs`, 26 end-to-end in `tests/turn-sync.test.cjs`) is labeled **MOCKED** — no SIMULATED checks (this sprint touches no `firestore.rules`), no Firebase Emulator, no real Firestore project, no real browser. The end-to-end suite exercises the REAL `design-ui/match-service.js` and `design-ui/engine/session.js` — not stubs — proving `startTurnSync()` genuinely drives `GameSession.getTurn()` through the full `MatchService.subscribeToMatch()` pipeline, including a simulated disconnect/reconnect cycle.
+
+One design detail this sprint's own tests exist specifically to prove, not just assert: `applyRemoteBid()`'s and `applyRemoteTurn()`'s version gates are genuinely independent registries. A dedicated check applies a bid and a turn update to the SAME matchId at the SAME version and confirms both `getLastAppliedVersion()` and `getLastAppliedTurnVersion()` report that version correctly and independently — proving neither function's gate blocks the other's from ever seeing that version.
+
+## 5. Regression
+
+Full suite re-run after every change: `deck` (39), `match-adapter` (82, up from 59), `bid-sync` (39), `turn-sync` (26, new), `match-service` (65), `match-sync` (58), `submit-bid` (66), `room-service` (31), `rules-simulation` (109, SIMULATED), `match-flow-integration` (156), `match-flow-normal-dash-scoring-fix` (16), `match-flow-scoring-scenarios` (31) — all unchanged except the two touched by this sprint, zero regression. **718 automated tests total, all passing** (669 pre-existing + 49 new).
+
+## 6. Honest limitations / what remains
+
+- `matches/{matchId}.turn` is still only ever written once, at match creation — nothing in this codebase writes `bidding-engine.js`'s own, real, locally-advancing `turnId` back into Firestore yet. `applyRemoteTurn()` faithfully mirrors whatever value IS there, but a remote opponent's client does not yet see bidding's real turn progression through this pipeline. Closing this gap (a write-back path from the engine's `turnId` into `matches/{matchId}.turn`) is explicitly future work, not built this sprint.
+- `isLocalSeatsTurn()`/`assertLocalTurn()` are called by nothing in this codebase yet — no gameplay-write function beyond bidding exists for them to gate. Delivered ahead of their first real caller, per this project's established pattern.
+- No server-side (`firestore.rules`) counterpart to `assertLocalTurn()` exists yet, since no gameplay-write field beyond bidding is defined to write such a rule against. The "neither layer trusts the other alone" principle is currently one-sided (client only) for turn authority specifically — this is stated honestly, not implied to be complete.
+- `firestore.rules`' own CEL constructs remain unverified against a real Firestore emulator — unchanged, pre-existing limitation, not touched this sprint (this sprint doesn't touch `firestore.rules` at all).
+
+## 7. Conclusion
+
+The acceptance criteria are met and tested: only the player whose turn it is may perform a gameplay action per `assertLocalTurn()`'s gate (verified for both the correct and incorrect seat); remote turn changes synchronize exactly once per genuinely new version (verified across duplicate/stale/late-subscriber/listener-restart/listener-duplicate scenarios); no duplicated engine execution occurs (this function never calls an engine reducer at all); no duplicated rendering occurs (`GameSession.getTurn()` is provably unchanged across every redundant delivery); no duplicated listener is created; no gameplay rule was changed, duplicated, or invented. Stopping here per the brief's stop condition — no card synchronization, card play, trick resolution, score synchronization, replay, voice chat, AI, matchmaking, or Cloud Functions were started. Waiting for review.

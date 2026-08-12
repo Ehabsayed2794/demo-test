@@ -6,6 +6,19 @@
    PLAYERS/state constants. Mock data only — no networking. Field names
    and shapes are written so a future networking layer can replace the
    mock generators without changing the public API (see GameSession.md).
+
+   Sprint 3.7 (Real-Time Match Synchronization): GameSession now also
+   holds a live MIRROR of whatever MatchService publishes for one
+   matchId — see subscribeToRemoteMatch()/onRemoteMatchUpdate() below
+   and docs/architecture/MatchSynchronization.md. This is deliberately
+   a thin, separate mirror (remoteMatch), not a merge into the seat-id
+   (p1..p4) fields above: matches/{matchId} identifies players/dealer/
+   turn by real Firebase Auth uid, and reconciling that with this
+   engine's seat-id space is out of this sprint's scope (see
+   MatchSynchronization.md's "Known Limitation" note). GameSession
+   still never talks to Firestore directly — every remote update
+   arrives already-decoded through MatchService.subscribeToMatch(), the
+   sole Firestore-facing entry point for this.
    ════════════════════════════════════════════════════════════════════ */
 (function (global) {
   var STORAGE_KEY = "estimation_game_session_v1";
@@ -97,7 +110,12 @@
       teamScores: {},          // reserved: partnership variants, unused in solo-vs-3 mode
       matchScores: { p1: 0, p2: 0, p3: 0, p4: 0 },
       roundHistory: [],        // [{round, trump, callerId, tricksWon, estimates}]
-      winnerId: null,
+      // Match Completion sprint: MULTIPLE winners are a real house rule
+      // (all seats tied at the highest final score are Kings — no
+      // numeric/suit tie-breaker) — always an array, never a singular
+      // scalar. See ScoringEngine.computeWinner() and getWinnerIds()/
+      // setWinnerIds() below.
+      winnerIds: [],
       startedAt: Date.now()
     };
   }
@@ -111,6 +129,21 @@
   function persist() {
     try { sessionStorage.setItem(STORAGE_KEY, JSON.stringify(session)); } catch (e) {}
   }
+
+  // Player Hand Synchronization sprint: which authority `ensureHandsDealt()`
+  // trusts for THIS page. "local" (default, unchanged behavior) means
+  // dealing continues exactly as before — Dealer.dealHands() runs
+  // in-browser via Math.random(), same as every prior sprint. "firestore"
+  // means this page is running against a real MatchService/MatchAdapter
+  // sync layer (see match-adapter.js's startHandSync()) — in that mode
+  // ensureHandsDealt() must NEVER fall back to a local deal when a hand
+  // isn't cached yet; it waits for setAuthoritativeHand() to be called
+  // once the server-committed hands/{seatId} document arrives. This is
+  // a page-session runtime flag, deliberately NOT persisted to
+  // sessionStorage (same reasoning as remoteMatchSubscription below — a
+  // fresh load must always redeclare its own context, never "resume" a
+  // stale mode from storage).
+  var handAuthorityMode = "local";
 
   var session = load() || freshSession(null);
   // Backward compatibility: sessions saved before playState/biddingState
@@ -129,6 +162,16 @@
     if (!session.scoringMode) { session.scoringMode = "normal"; dirty = true; }
     if (session.round && !session.round.dashCallers) { session.round.dashCallers = []; dirty = true; }
     if (session.biddingState && !session.biddingState.dashCallers) { session.biddingState.dashCallers = []; dirty = true; }
+    // Match Completion sprint: retire the old singular `winnerId` field
+    // (never read by anything — see this sprint's discovery) in favor
+    // of `winnerIds` (array, supports the real multi-King house rule).
+    // A session persisted before this sprint gets a fresh empty array,
+    // never a [oldWinnerId] guess — nothing ever set the old field
+    // for a genuinely completed match, so there is nothing meaningful
+    // to migrate.
+    if (session.winnerId !== undefined) { delete session.winnerId; dirty = true; }
+    if (!session.winnerIds) { session.winnerIds = []; dirty = true; }
+    if (session.round && session.round.maxRounds == null) { session.round.maxRounds = 18; dirty = true; }
     if (dirty) persist();
   })();
   if (!load()) persist();
@@ -211,6 +254,31 @@
    *  them all, and that must still count as "dealt" for this round. */
   function hasDealtHands() {
     return !!(session.dealState && session.dealState.completed && session.dealState.roundNumber === session.round.number);
+  }
+
+  /** Player Hand Synchronization sprint: "firestore" pages call this
+   *  once, up front, before anything reads hands. Never persisted (see
+   *  the flag's own declaration above) — a fresh load must re-declare
+   *  its context every time, exactly like remoteMatchSubscription. */
+  function setHandAuthorityMode(mode) {
+    handAuthorityMode = (mode === "firestore") ? "firestore" : "local";
+  }
+  function getHandAuthorityMode() { return handAuthorityMode; }
+
+  /** Player Hand Synchronization sprint: populate the CURRENT round's
+   *  hand from the server-committed matches/{matchId}/hands/{seatId}
+   *  document (via MatchAdapter's hand-sync bridge) — never from
+   *  Dealer.dealHands()/Math.random(). Marks dealState exactly like
+   *  dealNewHands() does, so hasDealtHands()/ensureHandsDealt() treat an
+   *  authoritative hand identically to a local deal; the only
+   *  difference is where the cards came from. Only ever writes the
+   *  ONE seat passed in — this client never learns (and this function
+   *  never accepts) any other seat's cards. */
+  function setAuthoritativeHand(seatId, cards, round) {
+    session.hands = Object.assign({}, session.hands, { [seatId]: cards });
+    session.dealState = { roundNumber: round, completed: true, dealtAt: Date.now() };
+    persist();
+    return session.hands;
   }
 
   // ── round play state (trick-taking progress) ───────────────────
@@ -418,6 +486,17 @@
    *  redeal regardless. */
   function ensureHandsDealt(opts) {
     opts = opts || {};
+    // Player Hand Synchronization sprint: in "firestore" mode this
+    // function must NEVER fall back to a local Math.random() deal when
+    // the authoritative hand hasn't arrived yet — it waits (returns
+    // whatever is already cached, which may be `{}` before the first
+    // setAuthoritativeHand() call lands). `opts.force` has no meaning
+    // here either: forcing a REAL redeal is a server-transaction
+    // decision (MatchService.dealRound()), never something a single
+    // client can do unilaterally once Firestore is the authority.
+    if (handAuthorityMode === "firestore") {
+      return session.hands;
+    }
     if (opts.force || !hasDealtHands()) return dealNewHands();
     return session.hands;
   }
@@ -436,13 +515,113 @@
     return session.roundHistory.length ? session.roundHistory[session.roundHistory.length - 1] : null;
   }
 
-  function getWinner() { return session.winnerId; }
-  function setWinner(id) { session.winnerId = id; persist(); }
+  /** Match Completion sprint: derived query to determine if the match has
+   *  ended. Match is complete when currentRound >= maxRounds (after
+   *  accounting for Super Call extensions, which increment maxRounds
+   *  dynamically). This does NOT compute a winner — that is
+   *  ScoringEngine's responsibility. See ScoringEngine.computeWinner()
+   *  and Match Completion docs. */
+  function isMatchComplete() {
+    return session.round.number >= session.round.maxRounds;
+  }
+
+  /** Match Completion sprint: the authoritative multi-winner result.
+   *  Always an array — empty before/during the match, 1+ seat ids once
+   *  `endMatch()` (local caller) has determined the match is over. Per
+   *  house rules, ALL seats tied at the highest final score are Kings —
+   *  there is no tie-breaker, so this can legitimately hold 2, 3, or 4
+   *  ids. See ScoringEngine.computeWinner(). */
+  function getWinnerIds() { return session.winnerIds.slice(); }
+  function setWinnerIds(ids) { session.winnerIds = Array.isArray(ids) ? ids.slice() : []; persist(); }
 
   function reset(mode) {
     session = freshSession(mode);   // freshSession() already clears hands + dealState + playState + biddingState
     persist();
     return session;
+  }
+
+  // ── remote match synchronization (Sprint 3.7) ──────────────────
+  // Deliberately NOT persisted to sessionStorage: a live subscription
+  // handle can't be serialized, and a fresh page load must always
+  // register a fresh onSnapshot listener anyway (never "resumed" from
+  // storage) — matching how Firestore listeners actually work. Also
+  // deliberately independent of reset()/init() above: switching or
+  // resetting the LOCAL mock session should not silently kill an
+  // unrelated, still-active remote subscription.
+  var remoteMatchSubscription = null; // { matchId, unsubscribe } | null
+  var remoteMatch = null;             // last data MatchService published, or null
+  var remoteMatchError = null;        // last error MatchService reported, or null — fail-open, never clears remoteMatch
+  var remoteMatchListeners = [];      // GameSession's OWN local pub/sub over the two fields above
+
+  function remoteMatchPayload() {
+    return { matchId: remoteMatchSubscription ? remoteMatchSubscription.matchId : null, data: remoteMatch, error: remoteMatchError };
+  }
+  // Sprint 3.7.1, Task 5 (cleanup): one shared safe-invoke helper for
+  // both the "notify everyone" path and onRemoteMatchUpdate()'s own
+  // "notify the new subscriber immediately" call below — Sprint 3.7
+  // had the same try/catch duplicated in both places.
+  function safeInvokeRemoteMatchListener(cb, payload) {
+    try { cb(payload); } catch (e) { console.error("[GameSession] an onRemoteMatchUpdate callback threw:", e); }
+  }
+  function notifyRemoteMatchListeners() {
+    var payload = remoteMatchPayload();
+    remoteMatchListeners.forEach(function (cb) { safeInvokeRemoteMatchListener(cb, payload); });
+  }
+
+  /** Begin consuming MatchService's live sync for one matchId. Idempotent
+   *  for the SAME matchId — a repeat call is a no-op, which is what
+   *  keeps "no duplicated listeners" true at this layer too (GameSession
+   *  only ever holds ONE subscription handle, so it can only ever call
+   *  one real unsubscribe; without this guard, a second call for the
+   *  same matchId would leak the first handle forever). Switching to a
+   *  DIFFERENT matchId cleanly tears down the old one first. Fail-open
+   *  if MatchService isn't loaded on this page (e.g. an offline-only
+   *  screen) — warns, never throws. */
+  function subscribeToRemoteMatch(matchId) {
+    if (!matchId) return;
+    if (remoteMatchSubscription && remoteMatchSubscription.matchId === matchId) return;
+    unsubscribeFromRemoteMatch();
+    if (!global.MatchService || typeof global.MatchService.subscribeToMatch !== "function") {
+      console.warn("[GameSession] subscribeToRemoteMatch: MatchService is not available — remote sync will not start.");
+      return;
+    }
+    var unsubscribe = global.MatchService.subscribeToMatch(matchId, function (data, err) {
+      remoteMatchError = err || null;
+      if (!err) remoteMatch = data; // fail-open: an error never clears the last known good state
+      notifyRemoteMatchListeners();
+    });
+    remoteMatchSubscription = { matchId: matchId, unsubscribe: unsubscribe };
+  }
+
+  /** Clean, explicit teardown — the only path that ever calls the
+   *  stored unsubscribe function, and it is only ever stored once at a
+   *  time, so there is nothing left to leak. Safe to call when nothing
+   *  is subscribed (no-op). */
+  function unsubscribeFromRemoteMatch() {
+    if (remoteMatchSubscription && typeof remoteMatchSubscription.unsubscribe === "function") {
+      remoteMatchSubscription.unsubscribe();
+    }
+    remoteMatchSubscription = null;
+  }
+
+  function getRemoteMatch() { return remoteMatch; }
+  function getRemoteMatchError() { return remoteMatchError; }
+  function isSubscribedToRemoteMatch() { return !!remoteMatchSubscription; }
+
+  /** Subscribe to GameSession's OWN local remote-match updates — mirrors
+   *  SessionService.subscribe()'s exact shape (fires immediately with
+   *  the current value, then again on every change; returns an
+   *  unsubscribe). A screen/engine file should use this instead of ever
+   *  reaching into MatchService itself — this is the concrete form of
+   *  "GameSession must consume MatchService updates." */
+  function onRemoteMatchUpdate(callback) {
+    if (typeof callback !== "function") return function unsubscribe() {};
+    remoteMatchListeners.push(callback);
+    safeInvokeRemoteMatchListener(callback, remoteMatchPayload());
+    return function unsubscribe() {
+      var idx = remoteMatchListeners.indexOf(callback);
+      if (idx !== -1) remoteMatchListeners.splice(idx, 1);
+    };
   }
 
   global.GameSession = {
@@ -454,6 +633,8 @@
     getRound: getRound, setRound: setRound, nextRound: nextRound,
     getTurn: getTurn, setTurn: setTurn,
     dealNewHands: dealNewHands, ensureHandsDealt: ensureHandsDealt, getHands: getHands, getHand: getHand, setHand: setHand, hasDealtHands: hasDealtHands,
+    // Player Hand Synchronization sprint.
+    setHandAuthorityMode: setHandAuthorityMode, getHandAuthorityMode: getHandAuthorityMode, setAuthoritativeHand: setAuthoritativeHand,
     getPlayState: getPlayState, isPlayStateValidForCurrentRound: isPlayStateValidForCurrentRound,
     initializePlayState: initializePlayState, updatePlayState: updatePlayState,
     recordCardPlay: recordCardPlay, recordResolvedTrick: recordResolvedTrick,
@@ -465,6 +646,10 @@
     recordEstimate: recordEstimate, completeBidding: completeBidding, clearBiddingState: clearBiddingState,
     getTeamScores: getTeamScores, getMatchScores: getMatchScores, setMatchScores: setMatchScores,
     recordRoundResult: recordRoundResult, getLastRoundResult: getLastRoundResult,
-    getWinner: getWinner, setWinner: setWinner
+    isMatchComplete: isMatchComplete,
+    getWinnerIds: getWinnerIds, setWinnerIds: setWinnerIds,
+    subscribeToRemoteMatch: subscribeToRemoteMatch, unsubscribeFromRemoteMatch: unsubscribeFromRemoteMatch,
+    getRemoteMatch: getRemoteMatch, getRemoteMatchError: getRemoteMatchError,
+    isSubscribedToRemoteMatch: isSubscribedToRemoteMatch, onRemoteMatchUpdate: onRemoteMatchUpdate
   };
 })(window);

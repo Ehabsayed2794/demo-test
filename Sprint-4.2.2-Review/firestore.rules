@@ -1,0 +1,661 @@
+rules_version = '2';
+
+// Sprint 2.6 — Firebase Player Foundation. Extended in Sprint 3.2.1 with
+// a rooms/{roomId} block (Critical Security & Schema Fix — see
+// docs/implementation/RoomFoundation.md and
+// docs/implementation/RoomSecurityFix.md). Everything else remains
+// denied by default, per docs/architecture/SecurityArchitecture.md —
+// collections not yet implemented (matches, inventory, shop,
+// leaderboards, etc.) have no rules block here on purpose, and the
+// explicit catch-all below denies them, matching the deny-all rule
+// already live on this project before Sprint 2.6
+// (see docs/architecture/ArchitectureDecisionLog.md).
+//
+// NOT YET DEPLOYED — this file is the reviewable artifact. To publish:
+// Firebase Console → Firestore Database → Rules → paste this file's
+// contents → Publish. See docs/implementation/FirebasePlayerFoundation.md
+// and docs/implementation/RoomSecurityFix.md for the exact steps and
+// what to verify afterward.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    // A brand-new profile must exactly match PlayerService's approved
+    // defaults (docs/architecture/FirestoreSchema.md) — a client cannot
+    // create itself a profile with a head start on currency, rank, or
+    // stats. This is the create-time half of the "protected fields"
+    // requirement; onlyAllowedFieldsChanged() below is the update-time half.
+    function isValidNewProfile() {
+      let data = request.resource.data;
+      return data.keys().hasOnly([
+               'displayName', 'accountType', 'email', 'avatarInitial',
+               'rank', 'rp', 'wins', 'streak', 'level',
+               'coins', 'gems', 'createdAt', 'lastSeenAt',
+               'currentRoomId', 'currentMatchId'
+             ])
+             && data.displayName is string && data.displayName.size() > 0
+             && data.accountType in ['guest', 'full']
+             && data.rank == 'Unranked'
+             && data.rp == 0
+             && data.wins == 0
+             && data.streak == 0
+             && data.level == 1
+             && data.coins == 500
+             && data.gems == 10
+             && data.currentRoomId == null
+             && data.currentMatchId == null;
+    }
+
+    // Protected fields (coins, gems, rank, rp, wins, streak, level,
+    // accountType, email, createdAt) can NEVER change via a client update
+    // — only these five may. See docs/architecture/SecurityArchitecture.md's
+    // "protected fields" section and FirebasePlayerFoundation.md's honest
+    // limitation note: this rule stops a client from EDITING those fields,
+    // it does not (and structurally cannot, without Cloud Functions) verify
+    // that a stat change reaching this collection via some OTHER path was
+    // itself computed correctly — there is no other path yet, because
+    // Sprint 2.6 implements no such path. This rule is what keeps it that
+    // way until one is deliberately added.
+    function onlyAllowedFieldsChanged() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['displayName', 'avatarInitial', 'lastSeenAt', 'currentRoomId', 'currentMatchId']);
+    }
+
+    match /players/{uid} {
+      allow get: if isOwner(uid);
+      // Explicitly denied, not just omitted: a client must never be able
+      // to query/enumerate the players collection to list other users'
+      // private profiles.
+      allow list: if false;
+      allow create: if isOwner(uid) && isValidNewProfile();
+      allow update: if isOwner(uid) && onlyAllowedFieldsChanged();
+      allow delete: if false;
+    }
+
+    // ── rooms/{roomId} ──────────────────────────────────────────────────
+    // Shape matches room-service.js's actual implementation (creator:
+    // string, players: array of strings, readyPlayers: array of strings
+    // as of Sprint 3.3) — NOT the older, speculative hostUid/seats[]
+    // draft. See docs/implementation/ReadyStateFoundation.md and
+    // docs/architecture/FirestoreSchema.md's rooms section (re-synced
+    // in Sprint 3.3 to close the drift the Architecture Audit found).
+    //
+    // Sprint 3.3 tightened this block per the Sprint 3.2.5 Architecture
+    // Audit's findings F3 (update had no field-level restriction), F6
+    // (create had no field whitelist), and F7 (create allowed
+    // players.size() >= 1 instead of exactly 1). See below for exactly
+    // what changed and why, including one further deliberate deviation
+    // from a literal audit suggestion (creator is NOT fully immutable —
+    // it must remain reassignable for leave-triggered ownership
+    // transfer; see isValidCreatorChange() below).
+
+    // "roomId" itself is the Firestore document ID, not a document
+    // field — it is structurally immutable by Firestore's own design
+    // (a document's ID cannot be changed by an update), so there is
+    // nothing to add here to protect it specifically. Recorded so this
+    // isn't mistaken for an oversight.
+
+    function isValidNewRoom() {
+      let data = request.resource.data;
+      return data.keys().hasOnly(['creator', 'players', 'readyPlayers', 'status', 'name', 'createdAt', 'updatedAt'])
+             && data.creator is string
+             && data.creator == request.auth.uid
+             && data.players is list
+             // F7 fix: exactly one member (the creator) at creation —
+             // a client can no longer fabricate extra "members" who
+             // never actually joined via joinRoom().
+             && data.players.size() == 1
+             && data.creator in data.players
+             && data.readyPlayers is list
+             && data.readyPlayers.size() == 0
+             && data.status is string
+             && data.status == 'waiting';
+    }
+
+    // A list changed by exactly the acting user adding or removing
+    // THEMSELF — never anyone else, and never more than one entry at
+    // once. Covers join (add self), leave (remove self), and setReady
+    // (add/remove self from readyPlayers) with one shared, tested rule
+    // instead of three separate ad hoc ones.
+    function isSelfOnlyChange(oldArr, newArr) {
+      let uid = request.auth.uid;
+      return (newArr.size() == oldArr.size() + 1 && newArr.hasAll(oldArr) && (uid in newArr) && !(uid in oldArr))
+             || (oldArr.size() == newArr.size() + 1 && oldArr.hasAll(newArr) && (uid in oldArr) && !(uid in newArr))
+             || (newArr.size() == oldArr.size() && newArr.hasAll(oldArr) && oldArr.hasAll(newArr));
+    }
+
+    // creator is NOT fully immutable, on purpose — deviating from a
+    // literal reading of the audit's "prevent clients from changing
+    // immutable fields such as creator" suggestion, for the same reason
+    // Sprint 3.2.1 deviated from a literal rule once before: leaveRoom()
+    // legitimately reassigns creator when the room's creator departs
+    // and others remain (see room-service.js). Fully locking creator
+    // would make that already-shipped, already-tested behavior
+    // impossible. What IS enforced: creator may only be reassigned to
+    // someone who is (still) an actual member of the room — never to a
+    // fabricated or unrelated uid. This does not fully prevent an
+    // existing member from reassigning creator to themself outside of a
+    // real leave event (rules cannot distinguish "part of a legitimate
+    // leave" from "a standalone write" without Cloud Functions) — this
+    // residual gap is recorded here rather than silently left
+    // undocumented, matching docs/implementation/ReadyStateFoundation.md.
+    function isValidCreatorChange() {
+      return request.resource.data.creator == resource.data.creator
+             || (request.resource.data.creator in request.resource.data.players);
+    }
+
+    // status may only be "waiting", "closed", or "in_game" (never an
+    // arbitrary string). May only BECOME "closed" when players[] is now
+    // empty (matching leaveRoom()'s actual, only path to closing a
+    // room). May only BECOME "in_game" FROM "waiting" (Sprint 3.4 —
+    // matches MatchService.startMatch()'s actual, only path); staying
+    // "in_game" (old and new both "in_game") is also allowed, since a
+    // future sprint's in-match room update shouldn't have to re-litigate
+    // this transition check. See isValidMatchIdChange() below for the
+    // paired matchId requirement on the actual waiting→in_game write.
+    function isValidStatusChange() {
+      let newStatus = request.resource.data.status;
+      let oldStatus = resource.data.status;
+      return newStatus in ['waiting', 'closed', 'in_game']
+             && (newStatus == 'closed' ? request.resource.data.players.size() == 0 : true)
+             && (newStatus == 'in_game' ? (oldStatus == 'waiting' || oldStatus == 'in_game') : true);
+    }
+
+    // Sprint 3.4 (Match Initialization & Game Start): matchId starts
+    // absent/null (rooms/{roomId}'s create rule never allows it to be
+    // set at creation — see isValidNewRoom() above, which still doesn't
+    // whitelist it). On the ONE write that transitions status from
+    // "waiting" to "in_game" — MatchService.startMatch()'s actual,
+    // single-transaction write — matchId MUST go from null to a string
+    // in that SAME write; a status flip to "in_game" that doesn't also
+    // set matchId (or vice versa: a matchId appearing without that
+    // status flip) is denied, so the two fields can never land in an
+    // inconsistent state one write apart. On every OTHER write, matchId
+    // must be completely unchanged — once set, it is immutable, so a
+    // room can never be silently re-pointed at a different match. This
+    // is the rules-layer half of "two players pressing Ready
+    // simultaneously cannot create two matches" — the JS-layer half is
+    // MatchService.startMatch()'s own transaction (see match-service.js
+    // and docs/implementation/MatchInitialization.md); neither layer
+    // trusts the other alone, per this project's established defense-
+    // in-depth principle.
+    //
+    // Sprint 3.4.1 (Match Start Consistency & Security Hotfix): a
+    // production review found that the Sprint 3.4 version of this
+    // function only checked the SHAPE of the matchId change (null ->
+    // string, paired with the status flip) — it never verified the
+    // caller was actually a room member, that everyone was actually
+    // ready, or that a real, correctly-bound match document was created
+    // in the SAME write. A client could otherwise set
+    // status:"in_game"/matchId:"anything" without ever creating a real
+    // match, or before everyone was really ready. The additional checks
+    // below close that: they re-verify (independently of whatever
+    // MatchService's own JS already checked — "neither layer trusts the
+    // other alone") that the acting user is an existing room member,
+    // that every room player was actually ready BEFORE this write, and
+    // — via getAfter(), which reads a sibling document's state as it
+    // will exist once this same transaction/batch commits — that the
+    // match document at the new matchId really was created in this same
+    // atomic write, really points its own roomId back at THIS room, and
+    // really carries THIS room's own players. See isValidNewMatch()
+    // below for the symmetric checks enforced from the match document's
+    // own create rule — both sides must independently agree, because
+    // Firestore evaluates each document's rules separately even within
+    // one transaction.
+    function isValidMatchIdChange() {
+      let oldData = resource.data;
+      let newData = request.resource.data;
+      let oldMatchId = ('matchId' in oldData) ? oldData.matchId : null;
+      let newMatchId = ('matchId' in newData) ? newData.matchId : null;
+      let isStartingTransition = oldData.status == 'waiting' && newData.status == 'in_game';
+      return isStartingTransition
+             ? (
+                 oldMatchId == null
+                 && newMatchId is string
+                 && request.auth.uid in oldData.players
+                 && oldData.readyPlayers.hasAll(oldData.players)
+                 && getAfter(/databases/$(database)/documents/matches/$(newMatchId)).data.roomId == roomId
+                 && getAfter(/databases/$(database)/documents/matches/$(newMatchId)).data.players == oldData.players
+               )
+             : (oldMatchId == newMatchId);
+    }
+
+    // F3 fix: field-level validation, replacing the old
+    // isExistingOrIncomingMember() (which gated WHO could write but
+    // placed no limit on WHAT they wrote). Every legitimate mutation
+    // this sprint — join, leave, setReady, and (Sprint 3.4) starting a
+    // match — is expressible as: only the allowed fields changed,
+    // players/readyPlayers changed by at most the acting user
+    // adding/removing themself, creator (if it changed) points at a
+    // real member, status (if it changed) is one of the three real
+    // values via a real transition, and matchId (if it changed) is
+    // being set for the first time alongside that same "in_game"
+    // transition. A user who is a member neither before nor after the
+    // write still fails every one of these checks and is denied, exactly
+    // as before.
+    function isValidRoomUpdate() {
+      let oldData = resource.data;
+      let newData = request.resource.data;
+      let oldReady = oldData.readyPlayers != null ? oldData.readyPlayers : [];
+      let newReady = newData.readyPlayers != null ? newData.readyPlayers : [];
+      return newData.diff(oldData).affectedKeys().hasOnly(['players', 'readyPlayers', 'status', 'creator', 'updatedAt', 'matchId'])
+             && (request.auth.uid in oldData.players || request.auth.uid in newData.players)
+             && isSelfOnlyChange(oldData.players, newData.players)
+             && isSelfOnlyChange(oldReady, newReady)
+             && isValidCreatorChange()
+             && isValidStatusChange()
+             && isValidMatchIdChange();
+    }
+
+    match /rooms/{roomId} {
+      // Optimization intentionally skipped per the brief ("global auth
+      // read is acceptable for MVP") — any signed-in user may read any
+      // room, including via a list query.
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && isValidNewRoom();
+      allow update: if request.auth != null && isValidRoomUpdate();
+      // Rooms are never deleted by design — leaveRoom() sets
+      // status:"closed" on the last departure instead (see
+      // room-service.js). No client-facing reason to allow delete.
+      allow delete: if false;
+    }
+
+    // ── matches/{matchId} ───────────────────────────────────────────────
+    // Sprint 3.4 (Match Initialization & Game Start). Shape matches
+    // match-service.js's actual, minimal shipped implementation
+    // (roomId, players: string[], status="starting", createdAt,
+    // currentRound=1, dealer, turn, gameState) — NOT the much richer
+    // speculative draft in docs/architecture/FirestoreSchema.md's
+    // matches/{matchId} section (hands/dealState/playState/biddingState/
+    // matchScores/etc.), none of which is implemented yet. See
+    // docs/implementation/MatchInitialization.md for the full
+    // shipped-vs-speculative reconciliation — the same "re-sync the
+    // schema doc to reality" treatment Sprint 3.3 already gave
+    // rooms/{roomId}.
+    //
+    // Bidding/estimation/card-play are out of scope through this sprint
+    // (see match-service.js's still-stubbed submitBid/playCard/etc.), so
+    // there is no legitimate client write path to a match document
+    // AFTER creation yet — update is denied outright below. This is not
+    // a placeholder gap; it is the actually-correct rule for the
+    // actually-shipped code, and is expected to gain real update rules
+    // in whichever future sprint activates gameplay.
+    //
+    // Sprint 3.4.1 (Match Start Consistency & Security Hotfix): the
+    // Sprint 3.4 version of this function validated only the NEW match
+    // document's own internal shape — it never checked that a real,
+    // corresponding room actually exists, that the caller actually
+    // belongs to it, that the room was actually ready, or that the room
+    // was actually being transitioned to in_game in the SAME write. A
+    // client could otherwise fabricate a match document independently
+    // of any legitimate room start. The additional checks below close
+    // that, using get() (this rule's own read of the referenced room —
+    // reflects the room's state as it existed BEFORE this transaction,
+    // which is exactly what "was the room actually waiting/ready before
+    // this write" needs) and getAfter() (reflects the room's state once
+    // this same transaction/batch commits — used to confirm the room's
+    // OWN matchId, set in that same commit, actually points back at
+    // THIS document's own id). See isValidMatchIdChange() above for the
+    // symmetric checks enforced from the room document's own update
+    // rule. Together, creating a match WITHOUT its paired, same-
+    // transaction room update (or vice versa) fails on at least one
+    // side — this is what makes the atomic-transaction requirement
+    // rules-enforced, not just a JS-layer convention.
+    function isRoomReadyForMatchStart(room) {
+      return room.players.size() > 0 && room.readyPlayers.hasAll(room.players);
+    }
+
+    // Sprint 3.8 (Gameplay Synchronization: Bidding Authority), Task 1
+    // (Seat Identity Implementation): implements the mapping
+    // docs/architecture/SeatIdentityModel.md designed (documentation
+    // only) in Sprint 3.7.1. Does NOT re-derive the exact positional
+    // assignment match-service.js's buildSeatMap() performs (rules
+    // cannot express "players[0] -> p1" without a loop construct this
+    // language doesn't have) — instead it verifies the RESULT has the
+    // required shape and integrity: only real seat names, exactly one
+    // seat per real player, every seat's uid actually IS one of this
+    // match's players, and no two seats share a uid. Combined, these
+    // four conditions force `seats` to be a genuine bijection between
+    // some subset of {p1,p2,p3,p4} (sized to match players.size()) and
+    // `players` itself — a client cannot fabricate a seat for a
+    // non-existent player, assign two people to the same seat, or leave
+    // a real player with no seat at all, even though the rule never
+    // recomputes the exact positional order match-service.js used.
+    function isValidSeatMap(seats, players) {
+      let seatKeys = seats.keys();
+      return seatKeys.hasOnly(['p1', 'p2', 'p3', 'p4'])
+             && seatKeys.size() == players.size()
+             && seatKeys.all(s, seats[s] in players)
+             && seatKeys.all(s1, seatKeys.all(s2, s1 == s2 || seats[s1] != seats[s2]));
+    }
+
+    function isValidNewMatch() {
+      let data = request.resource.data;
+      let room = get(/databases/$(database)/documents/rooms/$(data.roomId)).data;
+      return data.keys().hasOnly(['roomId', 'players', 'status', 'createdAt', 'currentRound', 'dealer', 'turn', 'gameState',
+                                   'seats', 'version', 'biddingOpen', 'bids', 'lastBidSeat', 'cardLog', 'lastCardSeat', 'cardPhase'])
+             && data.roomId is string
+             && data.players is list
+             && data.players.size() > 0
+             && request.auth.uid in data.players
+             && data.status == 'starting'
+             && data.currentRound == 1
+             && data.dealer in data.players
+             && data.turn in data.players
+             && exists(/databases/$(database)/documents/rooms/$(data.roomId))
+             && request.auth.uid in room.players
+             && room.status == 'waiting'
+             && isRoomReadyForMatchStart(room)
+             && data.players == room.players
+             && getAfter(/databases/$(database)/documents/rooms/$(data.roomId)).data.matchId == matchId
+             // Sprint 3.8, Tasks 1-3: seat identity + version + the
+             // minimal bidding-sync sub-state, all established in this
+             // SAME create write — isValidBidSubmission() below is the
+             // ONLY other write this collection permits, and it can
+             // never introduce a NEW seat, add/remove a bid slot, or
+             // touch `players`/`seats` at all, so this is the one and
+             // only place these fields are ever set.
+             && isValidSeatMap(data.seats, data.players)
+             && data.version == 1
+             && data.biddingOpen == true
+             && data.bids.keys().hasOnly(data.seats.keys())
+             && data.seats.keys().hasOnly(data.bids.keys())
+             && data.seats.keys().all(s, data.bids[s] == null)
+             && data.lastBidSeat == null
+             // Sprint 4.2 (Online Card Synchronization): the SAME
+             // create-time-only treatment `bids`/`lastBidSeat` got in
+             // Sprint 3.8 — `isValidCardSubmission()` below is the
+             // ONLY other write this collection permits for these
+             // fields, and it can never introduce them at any other
+             // time; they are established here, once, exactly like
+             // every other Sprint 3.8/4.x sub-state field.
+             && data.cardLog == []
+             && data.lastCardSeat == null
+             // Sprint 4.2.2 (Atomic Card Turn Progression & Card-Log
+             // Desync Hardening), Task 2: the ONE minimal new field
+             // this sprint's own "implement only the minimum" scope
+             // calls for — see match-service.js's buildInitialMatchDoc()
+             // comment for why no EXISTING field could safely double
+             // for this. Established here, once, at creation — exactly
+             // like every other Sprint 3.8/4.x sub-state field; the
+             // ONLY other write path that may ever change it is
+             // isValidCardSubmission() below.
+             && data.cardPhase == null;
+    }
+
+    // Sprint 3.8, Task 5 (Firestore Rules): the FIRST legitimate write
+    // path this collection has ever had after creation. Every clause
+    // below is documented individually because Task 5 explicitly asks
+    // for that — each one maps 1:1 to one of the brief's own required
+    // checks ("Authenticated. Player belongs to match. Player owns
+    // seat. Player modifies only own bid. Version increments
+    // correctly. Reject every other write.").
+    //
+    // Sprint 3.8.1, Task 2 (Bidding Validation & Rules Hardening):
+    // added the `newData.bids[seat] is int` / `>= 0` / `<= 13` clause
+    // below — GENERIC bid-value validation, mirroring
+    // isValidGenericBidValue() in match-service.js independently,
+    // "neither layer trusts the other alone." See
+    // docs/architecture/BidValidation.md for the explicit line this
+    // draws between generic and gameplay validation — nothing below
+    // encodes an Estimation/auction rule.
+    function isValidBidSubmission() {
+      let oldData = resource.data;
+      let newData = request.resource.data;
+      // `lastBidSeat` on the INCOMING write names which single seat
+      // this write claims to be for — see match-service.js's
+      // submitBid(), the only code path that ever produces this shape.
+      // Everything below re-derives independently from the OLD
+      // (pre-write) document state, never trusting this value alone —
+      // "neither layer trusts the other alone," this project's
+      // established principle since Sprint 3.4.1.
+      let seat = newData.lastBidSeat;
+      return
+             // "Authenticated."
+             request.auth != null
+             // "Player belongs to match." — re-checked independently of
+             // the seat-ownership check below, exactly like every other
+             // membership check elsewhere in this file.
+             && request.auth.uid in oldData.players
+             // Every match created since this sprint has these fields
+             // (see isValidNewMatch() above) — this guards against a
+             // pre-Sprint-3.8 document shape reaching this rule at all
+             // (none exist in this project, which has never had real
+             // users, but recorded rather than silently assumed).
+             && 'seats' in oldData && 'bids' in oldData && 'version' in oldData && 'biddingOpen' in oldData
+             // "Reject every other write." — only these five fields may
+             // ever change via this rule; `players`, `seats`, `roomId`,
+             // `dealer`, `turn`, `status`, `currentRound`, `gameState`
+             // are all structurally immutable through this path.
+             && newData.diff(oldData).affectedKeys().hasOnly(['bids', 'biddingOpen', 'version', 'lastBidSeat', 'updatedAt'])
+             // "Version increments correctly." — the Task 2 ordering
+             // guard, made REAL: not "any higher number," EXACTLY one
+             // more than what was actually there before this write.
+             // Combined with Firestore's own transaction-level
+             // optimistic concurrency (this is always written from
+             // inside a transaction — see submitBid()), this is what
+             // makes "reject stale writes / reject duplicated writes /
+             // reject out-of-order writes" a server-enforced guarantee,
+             // not just a client-side convention.
+             && newData.version == oldData.version + 1
+             // "Cannot submit after bidding closes" / "outside bidding
+             // phase" — this sprint's only bidding-phase gate.
+             && oldData.biddingOpen == true
+             // The claimed seat must be real...
+             && seat is string
+             && seat in oldData.seats
+             // "Player owns seat." — the single most important line in
+             // this function: the caller's own uid, from Firestore
+             // Auth's own request context (never a client-supplied
+             // field), must equal what THIS match's own seat map (set
+             // once, at creation, by isValidNewMatch() above, and
+             // structurally immutable since — see the affectedKeys()
+             // check above) says that seat's owner is.
+             && oldData.seats[seat] == request.auth.uid
+             // "Cannot submit twice." — the claimed seat's bid must
+             // have been genuinely empty before this write.
+             && (!(seat in oldData.bids) || oldData.bids[seat] == null)
+             // The claimed seat's bid must actually be set (not cleared,
+             // not left null) by this write.
+             && seat in newData.bids && newData.bids[seat] != null
+             // Sprint 3.8.1, Task 2 (Bidding Validation & Rules
+             // Hardening): GENERIC bid-value validation, mirroring
+             // isValidGenericBidValue() in match-service.js — NOT
+             // gameplay validation. `is int` rejects every non-numeric
+             // type (string/bool/map/list/null already excluded above)
+             // and also rejects a `float` value, which is exactly what
+             // Firestore stores NaN/Infinity/-Infinity/any non-integer
+             // as — so this one type check is what rejects
+             // non-numeric-typed values, NaN, and Infinity all at
+             // once, without CEL needing (or having) a dedicated
+             // `isNaN()`. The range check rejects negative values and
+             // anything above the maximum possible trick count. This
+             // says nothing about whether 13 is a LEGAL bid for this
+             // seat right now — see docs/architecture/BidValidation.md's
+             // "Generic vs. Gameplay Validation" section; that remains
+             // bidding-engine.js's unconsulted, untouched job.
+             && newData.bids[seat] is int
+             && newData.bids[seat] >= 0
+             && newData.bids[seat] <= 13
+             // "Player modifies only own bid." — every OTHER seat's bid
+             // must be byte-for-byte unchanged; only the claimed seat's
+             // key may appear in the bids sub-map's own diff.
+             && newData.bids.diff(oldData.bids).affectedKeys().hasOnly([seat])
+             // biddingOpen must correctly reflect whether every real
+             // seat now has a bid — a client cannot lie about whether
+             // bidding should still be open (closing it early, or
+             // holding it open forever after every seat has bid).
+             && newData.biddingOpen == !(oldData.seats.keys().all(s, s in newData.bids && newData.bids[s] != null));
+    }
+
+    // Sprint 4.2 (Online Card Synchronization: Engine Authority), Task
+    // 1's Firestore-rules half — the second real `matches/{matchId}`
+    // update rule this collection has ever had, immediately following
+    // isValidBidSubmission()'s exact pattern: authenticate, verify
+    // match membership, verify seat ownership, verify a GENERIC
+    // (never gameplay) value shape, verify the version increments by
+    // exactly 1, reject every other field change.
+    //
+    // GENERIC card-shape validation — NOT card legality. Mirrors
+    // isValidGenericCardValue() in match-service.js independently
+    // ("neither layer trusts the other alone"). Says nothing about
+    // whether this card is in the claimed seat's hand, follows suit,
+    // or is even that seat's turn to play — that remains
+    // table-engine.js's exclusive, untouched job, exactly as
+    // isValidBidSubmission() never encodes an auction rule.
+    function isValidCardShape(card) {
+      return card.keys().hasOnly(['suit', 'rank'])
+             && card.suit in ['SANS', 'SPADES', 'HEARTS', 'DIAMONDS', 'CLUBS']
+             && card.rank.keys().hasOnly(['v', 's'])
+             && card.rank.v is int
+             && card.rank.v >= 2
+             && card.rank.v <= 14;
+    }
+
+    // HONEST, DOCUMENTED LIMITATION (not hidden, per this project's
+    // established convention for CEL's real expressiveness gaps — see
+    // isValidSeatMap()'s own comment for the precedent): this function
+    // verifies the log grew by EXACTLY one entry, and that the NEW
+    // (final) entry is well-formed and correctly attributed. It does
+    // NOT independently re-verify that every EARLIER entry in
+    // `cardLog` is byte-for-byte unchanged — CEL (as used by Firestore
+    // Rules, rules_version '2') has no built-in for "compare two lists
+    // index-by-index without a range()/zip() primitive," and this
+    // project's policy (stated in every prior sprint that hit a CEL
+    // limit) is to document a real gap plainly rather than invent an
+    // unverified workaround construct. In practice this means a
+    // malicious client COULD, in principle, rewrite prior `cardLog`
+    // entries while also appending a valid new one, and this rule
+    // alone would not catch it — the same class of residual,
+    // Cloud-Function-shaped gap already recorded for
+    // `PlayerService.applyMatchResult` and `LeaderboardService.
+    // submitRankedResult` in docs/architecture/SecurityArchitecture.md.
+    // Client-side, `MatchAdapter.applyRemoteCard()`'s own version gate
+    // (Task 5) plus the REAL `table-engine.js` engine's own legality
+    // checks (Task 2 — every applied entry is re-validated by the real
+    // engine, not just replayed blindly) remain the actual, meaningful
+    // protection for THIS project's own client — this rule's job is
+    // narrower: reject an obviously malformed or misattributed
+    // submission, not cryptographically guarantee full history
+    // integrity, which is out of reach without a Cloud Function
+    // (explicitly forbidden this sprint, Spark only).
+    function isValidCardSubmission() {
+      let oldData = resource.data;
+      let newData = request.resource.data;
+      let seat = newData.lastCardSeat;
+      let oldLog = oldData.cardLog;
+      let newLog = newData.cardLog;
+      let appended = newLog[newLog.size() - 1];
+      return
+             // "Authenticated."
+             request.auth != null
+             // "Player belongs to match."
+             && request.auth.uid in oldData.players
+             // Every match created since Sprint 4.2 has these fields
+             // (see isValidNewMatch() above) — guards against a
+             // pre-Sprint-4.2 document shape reaching this rule.
+             && 'seats' in oldData && 'cardLog' in oldData && 'version' in oldData && 'turn' in oldData && 'cardPhase' in oldData
+             // Sprint 4.2.2, Task 6: "Reject every other write." — only
+             // these SIX fields may ever change via this rule (`turn`
+             // and `cardPhase` are new this sprint — see Task 2's own
+             // comment in match-service.js for why the atomic turn
+             // transition needs both).
+             && newData.diff(oldData).affectedKeys().hasOnly(['cardLog', 'lastCardSeat', 'version', 'turn', 'cardPhase', 'updatedAt'])
+             // "Version increments correctly." — identical guarantee
+             // to isValidBidSubmission()'s own, on the SAME shared
+             // `version` counter (a card submission and a bid
+             // submission can never both claim the same next version
+             // — Firestore's own transaction-level optimistic
+             // concurrency serializes any real race between them,
+             // exactly as it already does between two racing bids).
+             && newData.version == oldData.version + 1
+             // The log must have grown by EXACTLY one entry — never
+             // zero (a no-op claiming to be a real submission), never
+             // more than one (a batched multi-card write, which no
+             // legitimate client-side call ever produces — submitCard()
+             // always appends exactly one).
+             && newLog.size() == oldLog.size() + 1
+             // The claimed seat must be real...
+             && seat is string
+             && seat in oldData.seats
+             // "Player owns seat." — the same authority
+             // isValidBidSubmission() checks, re-derived from this
+             // match's own immutable seat map, never trusted from the
+             // client's claim alone.
+             && oldData.seats[seat] == request.auth.uid
+             // Sprint 4.2.2, Task 6: "caller owns the previous active
+             // turn" — the SAME turn-authority fact
+             // `MatchAdapter.assertLocalTurn()` already enforces
+             // client-side (Sprint 4.2.1), independently re-derived
+             // here from the OLD (pre-write) `turn` field, never
+             // trusted from the client's own claim alone — "neither
+             // layer trusts the other alone."
+             && oldData.turn == request.auth.uid
+             // The newly-appended entry is well-formed and correctly
+             // attributed to the SAME seat `lastCardSeat` claims.
+             && appended.keys().hasOnly(['seatId', 'card'])
+             && appended.seatId == seat
+             && isValidCardShape(appended.card)
+             // Sprint 4.2.2, Task 2/6: the NEW turn must be either a
+             // real uid THIS match's own immutable `seats` map
+             // recognizes, or `null` for the resolving boundary (the
+             // 4th card of a trick). HONEST LIMITATION, stated plainly
+             // rather than overclaimed: this rule verifies the new
+             // turn is STRUCTURALLY one of the four real seat-owning
+             // uids (or null) — it does NOT, and cannot without
+             // re-implementing table-engine.js's own follow-suit/
+             // turn-order logic in CEL, verify that THIS SPECIFIC uid
+             // is the CORRECT next seat for THIS SPECIFIC card. That
+             // remains entirely client-authoritative (see
+             // docs/architecture/SecurityArchitecture.md's "Card write
+             // authority" section) — this rule's job is narrower:
+             // reject a structurally impossible turn value, not
+             // recompute the real one.
+             && (newData.turn == null || oldData.seats.keys().exists(s, oldData.seats[s] == newData.turn))
+             // `cardPhase` must be one of table-engine.js's own two
+             // real phase values — never left stale, never an
+             // arbitrary string.
+             && newData.cardPhase in ['PLAY', 'RESOLVING'];
+    }
+
+    match /matches/{matchId} {
+      // Only a seated player may read their own match — never a global
+      // authenticated read (unlike rooms/{roomId}'s MVP-acceptable
+      // looseness), since a match document is meaningfully private
+      // (opponent identities, and eventually hands — see
+      // FirestoreSchema.md's dedicated "hands problem" note). No list —
+      // a client must already know its own matchId (via
+      // players/{uid}.currentMatchId or rooms/{roomId}.matchId), never
+      // enumerate matches.
+      allow get: if request.auth != null && request.auth.uid in resource.data.players;
+      allow list: if false;
+      allow create: if request.auth != null && isValidNewMatch();
+      // Sprint 3.8: the first real update rule this collection has ever
+      // had. Scoped to ONLY the bidding-submission shape
+      // isValidBidSubmission() validates — every other conceivable
+      // update (changing players, seats, dealer, status, currentRound,
+      // gameState, or bidding in any shape other than "exactly one
+      // owned seat's null bid becomes non-null, version+1") is denied.
+      //
+      // Sprint 4.2: OR isValidCardSubmission() — the second, and only
+      // other, legitimate update shape. Each function independently
+      // whitelists its OWN fields via affectedKeys().hasOnly([...]) —
+      // a write cannot mix a bid change AND a card change in one
+      // request and satisfy either function, so this `||` never
+      // widens what either shape alone would allow; it just adds a
+      // second, mutually exclusive shape.
+      allow update: if request.auth != null && (isValidBidSubmission() || isValidCardSubmission());
+      allow delete: if false;
+    }
+
+    // Deny-by-default for every collection outside this sprint's scope —
+    // unchanged from the rule already live on this project.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
