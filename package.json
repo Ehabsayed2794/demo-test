@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:hosting": "tsc -b && vite build --base=/estemshan/ && node scripts/build-hosting.mjs",
     "lint": "oxlint",
     "preview": "vite preview"
   },

@@ -1,5 +1,14 @@
 rules_version = '2';
 
+// ⚠️ MUST DEPLOY MANUALLY TO FIREBASE CONSOLE BEFORE GO-LIVE ⚠️
+// (Hosting Merge, Option 3, Task D — restated per §5/§6 of
+// PROJECT_STATUS_AND_MASTER_PLAN.md and the "NOT YET DEPLOYED" note
+// below, which this line does not change or supersede.) Promoting
+// design-ui/ to be the app's primary entry point does NOT publish
+// these rules by itself — Firebase Hosting and Firestore Rules are
+// deployed independently. See the "NOT YET DEPLOYED" paragraph a few
+// lines down for the exact manual publish steps.
+//
 // Sprint 2.6 — Firebase Player Foundation. Extended in Sprint 3.2.1 with
 // a rooms/{roomId} block (Critical Security & Schema Fix — see
 // docs/implementation/RoomFoundation.md and

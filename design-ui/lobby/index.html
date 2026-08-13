@@ -337,6 +337,15 @@
   .mode .cta:hover { background: rgba(44, 39, 32, 0.92); }
   .mode .cta:active { transform: scale(0.97); }
   .mode .cta .chev { font-size: 12px; color: var(--ink-dim); }
+  /* Hosting Merge (Option 3), Task D: Ranked Match / Play vs AI have no
+     built screen yet (per PROJECT_STATUS_AND_MASTER_PLAN.md's dead-link
+     finding) — disabled rather than hidden, so the card art/copy stays
+     visible but the dead click-through is removed. Same opacity/
+     cursor:not-allowed convention already established for disabled
+     buttons in match/index.html's .card-chip/button. No CSS token
+     invented; no navigation/service logic touched. */
+  .mode .cta:disabled { opacity: .45; cursor: not-allowed; pointer-events: none; }
+  .mode .cta:disabled:hover { background: rgba(26, 23, 19, 0.88); }
 
   /* Ranked — featured amber treatment */
   .mode.ranked {
@@ -496,6 +505,7 @@
     transition: color 0.13s ease, background 0.13s ease;
   }
   .navbtn:hover { color: var(--accent); background: rgba(255, 240, 210, 0.05); }
+  .navbtn:disabled { opacity: .45; cursor: not-allowed; pointer-events: none; }
 </style>
 </head>
 <body>
@@ -546,7 +556,11 @@
         <div class="content">
           <h2>Ranked Match</h2>
           <p class="sub">Climb the divisions. Earn your crown.</p>
-          <button class="cta" type="button" onclick="GameState.goTo(GameState.STATES.GAME_MODE_SELECTION,{file:'Estimation Ranked Match.html'})">Find Match <span class="chev">›</span></button>
+          <!-- Hosting Merge (Option 3), Task D: 'Estimation Ranked Match.html'
+               does not exist anywhere in this repo (PROJECT_STATUS_AND_MASTER_PLAN.md
+               §5/§6) -- disabled rather than deleted; onclick removed rather
+               than left pointing at a dead file. No GameState/navigation code changed. -->
+          <button class="cta" type="button" disabled title="Coming soon">Coming Soon <span class="chev">›</span></button>
         </div>
       </article>
 
@@ -570,7 +584,12 @@
         <div class="content">
           <h2>Play vs AI</h2>
           <p class="sub">Sharpen your strategy against the Sphinx.</p>
-          <button class="cta" type="button" onclick="GameState.goTo(GameState.STATES.GAME_MODE_SELECTION,{file:'Estimation Play vs AI.html'})">Choose Level <span class="chev">›</span></button>
+          <!-- Hosting Merge (Option 3), Task D: 'Estimation Play vs AI.html'
+               does not exist, and no AI/bot decision logic exists anywhere
+               in the engine (PROJECT_STATUS_AND_MASTER_PLAN.md §6) --
+               disabled rather than deleted, same treatment as Ranked Match
+               above. No GameState/navigation code changed. -->
+          <button class="cta" type="button" disabled title="Coming soon">Coming Soon <span class="chev">›</span></button>
         </div>
       </article>
 
@@ -617,7 +636,12 @@
     <!-- Bottom nav -->
     <nav class="bottomnav">
       <button class="navbtn" type="button" title="Shop" onclick="GameState.goTo(GameState.STATES.SHOP)">◇</button>
-      <button class="navbtn" type="button" title="Settings" onclick="GameState.goTo(GameState.STATES.SETTINGS)">⚙</button>
+      <!-- Hosting Merge (Option 3), Task D: no Settings screen exists
+           (PROJECT_STATUS_AND_MASTER_PLAN.md §6) -- disabled rather than
+           deleted, onclick removed. Shop ("◇" above) is a separate,
+           similarly-dead link the brief didn't name explicitly; left
+           untouched to keep this change scoped to exactly what was asked. -->
+      <button class="navbtn" type="button" disabled title="Coming soon">⚙</button>
     </nav>
 
   </main>
