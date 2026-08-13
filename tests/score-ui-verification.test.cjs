@@ -9,6 +9,7 @@ const http = require("http");
 const fs = require("fs");
 const path = require("path");
 const { chromium } = require("playwright");
+const { resolveChromiumExecutablePath } = require("../scripts/resolve-chromium.cjs");
 
 const ROOT = "/home/user/demo-test/design-ui";
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json" };
@@ -46,7 +47,7 @@ function startServer() {
 async function main() {
   console.log("=== Sprint 4.2: Score Breakdown Card — Verification ===\n");
   var server = await startServer();
-  var browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome" });
+  var browser = await chromium.launch({ executablePath: resolveChromiumExecutablePath() });
   var page = await browser.newPage();
 
   for (var cdnUrl in CDN_MAP) {

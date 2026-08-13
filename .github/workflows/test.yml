@@ -35,6 +35,15 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Hotfix (see Sprint-5.0-Review/CHANGELOG.md's "CI hang"
+      # postmortem, added after a real run on this runner hung for 58
+      # minutes and was cancelled): two tests launch a real Chromium via
+      # Playwright. Without this step there is no browser installed at
+      # all on a fresh runner, and scripts/resolve-chromium.cjs's
+      # fallback path only helps once a real browser actually exists.
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
       - name: Run full test suite against the real Firestore Rules Emulator
         run: npm run test:ci
         # No `continue-on-error`, no `if: always()` softening anywhere in
