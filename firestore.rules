@@ -662,33 +662,52 @@ service cloud.firestore {
              && card.rank.v <= 14;
     }
 
-    // HONEST, DOCUMENTED LIMITATION (not hidden, per this project's
-    // established convention for CEL's real expressiveness gaps — see
-    // isValidSeatMap()'s own comment for the precedent): this function
-    // verifies the log grew by EXACTLY one entry, and that the NEW
-    // (final) entry is well-formed and correctly attributed. It does
-    // NOT independently re-verify that every EARLIER entry in
-    // `cardLog` is byte-for-byte unchanged — CEL (as used by Firestore
-    // Rules, rules_version '2') has no built-in for "compare two lists
-    // index-by-index without a range()/zip() primitive," and this
-    // project's policy (stated in every prior sprint that hit a CEL
-    // limit) is to document a real gap plainly rather than invent an
-    // unverified workaround construct. In practice this means a
-    // malicious client COULD, in principle, rewrite prior `cardLog`
-    // entries while also appending a valid new one, and this rule
-    // alone would not catch it — the same class of residual,
-    // Cloud-Function-shaped gap already recorded for
-    // `PlayerService.applyMatchResult` and `LeaderboardService.
-    // submitRankedResult` in docs/architecture/SecurityArchitecture.md.
-    // Client-side, `MatchAdapter.applyRemoteCard()`'s own version gate
-    // (Task 5) plus the REAL `table-engine.js` engine's own legality
-    // checks (Task 2 — every applied entry is re-validated by the real
-    // engine, not just replayed blindly) remain the actual, meaningful
-    // protection for THIS project's own client — this rule's job is
-    // narrower: reject an obviously malformed or misattributed
-    // submission, not cryptographically guarantee full history
-    // integrity, which is out of reach without a Cloud Function
-    // (explicitly forbidden this sprint, Spark only).
+    // CORRECTION (Sprint A.1 — Card Log Prefix Immutability Fix):
+    // this function used to carry an "HONEST, DOCUMENTED LIMITATION"
+    // comment here claiming CEL "has no built-in for compare two lists
+    // index-by-index without a range()/zip() primitive," and that a
+    // malicious client COULD rewrite prior `cardLog` entries while
+    // appending a valid new one, undetected. That claim was RE-CHECKED
+    // against this project's own later work and found to be WRONG: CEL
+    // (as used by Firestore Rules, rules_version '2') DOES support list
+    // slicing (`list[start:end]`), and this exact ruleset already
+    // proves it compiles and behaves correctly against the REAL
+    // Firestore Rules Emulator — see `isValidRoundExtension()`'s own
+    // `newRounds[0:oldRounds.size()] == oldRounds` prefix-equality
+    // check above (added by the "harden round extension Firestore
+    // rule" fix, reproduced and isolated against the real emulator).
+    // This function now applies the IDENTICAL technique to `cardLog`:
+    // every entry the caller is NOT appending must be byte-for-byte
+    // equal, in the SAME order, to what was already stored — a real
+    // index-by-index prefix comparison, not a multiset-membership
+    // approximation like `.all(x, x in newLog)` would have been (which
+    // proves membership, not position, and would have missed a
+    // reordering attack). The same empty-prefix edge case
+    // `isValidRoundExtension()` hit against the real emulator
+    // ("Index out of bound error" when slicing a zero-length list)
+    // applies here too, since `cardLog` also starts as `[]` at match
+    // creation — guarded the same way, with a ternary that short-
+    // circuits the slice entirely when there is nothing to compare.
+    // This closes the gap the OLD comment (and
+    // `docs/architecture/SecurityArchitecture.md`'s "Card write
+    // authority" section) documented: a malicious seated client can no
+    // longer rewrite or reorder earlier `cardLog` entries while
+    // appending a valid new one — this rule now rejects that write
+    // outright, independent of anything the client (including
+    // `MatchAdapter.applyRemoteCard()` or `table-engine.js`) does. See
+    // `tests/sprint-a-write-paths.rules-emulator.test.cjs`'s
+    // `CARD.8`/`CARD.9`/`CARD.10` cases for the real-emulator proof, and
+    // `tests/rules-simulation.test.js`'s own updated (no longer
+    // "KNOWN VULNERABILITY") checks for the 1:1 JS mirror of the same
+    // fix. NOT touched by this fix, and still real, still documented
+    // limitations, unchanged: (1) this rule still cannot verify a card
+    // was LEGAL to play (follow-suit, turn order beyond the immediate
+    // `turn` field) — that remains `table-engine.js`'s job, never
+    // duplicated in CEL, by this project's own standing policy; (2)
+    // `isValidBiddingActionSubmission()`'s analogous `biddingLog`
+    // gap is NOT fixed by this change — it is a separate function,
+    // deliberately out of scope for this fix, and remains exactly as
+    // limited as its own comment below describes.
     function isValidCardSubmission() {
       let oldData = resource.data;
       let newData = request.resource.data;
@@ -729,6 +748,18 @@ service cloud.firestore {
              // legitimate client-side call ever produces — submitCard()
              // always appends exactly one).
              && newLog.size() == oldLog.size() + 1
+             // Sprint A.1 (Card Log Prefix Immutability Fix): every
+             // entry that already existed must be byte-for-byte
+             // unchanged AND in the same order — a genuine
+             // index-by-index prefix comparison, using the SAME
+             // `list[0:n]` slice technique `isValidRoundExtension()`
+             // above already proved against the real emulator. The
+             // `oldLog.size() == 0` ternary guard exists for the exact
+             // same reason it exists there: slicing a list to a
+             // zero-length range throws "Index out of bound error" in
+             // the real Firestore Rules Emulator, and `cardLog` starts
+             // as `[]` on every match's very first card play.
+             && (oldLog.size() == 0 ? true : newLog[0:oldLog.size()] == oldLog)
              // The claimed seat must be real...
              && seat is string
              && seat in oldData.seats

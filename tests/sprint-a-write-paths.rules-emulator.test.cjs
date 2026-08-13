@@ -185,6 +185,54 @@ async function run() {
     check("CARD.7 Invalid state transition (right seat owner, but not their turn) -> DENIED",
       await assertFails(matchRef(uidA, m + "-7").update(cardPatch("p1", 2)))
         .then(function () { return true; }).catch(function () { return false; }));
+
+    // ────────────────────────────────────────────────────────────
+    // CARD.8-11 (Sprint A.1 — Card Log Prefix Immutability Fix):
+    // real-emulator proof that isValidCardSubmission()'s new
+    // `newLog[0:oldLog.size()] == oldLog` prefix-equality check
+    // actually rejects a rewritten/reordered earlier entry, and does
+    // NOT over-reject a legitimate append (with or without prior
+    // history) — the exact attack this fix closes, proven against the
+    // REAL compiled rules, not just the JS mirror.
+    // ────────────────────────────────────────────────────────────
+    var existingLog = [
+      { seatId: "p1", card: { suit: "SPADES", rank: { v: 12, s: "Q" } }, round: 1 },
+      { seatId: "p2", card: { suit: "SPADES", rank: { v: 5, s: "5" } }, round: 1 }
+    ];
+
+    await seed(m + "-8", { turn: uidA, cardLog: existingLog });
+    check("CARD.8 Rewriting an EARLIER cardLog entry's card value while appending one valid new entry -> DENIED (was the documented gap; now closed)",
+      await assertFails(matchRef(uidA, m + "-8").update({
+        cardLog: [
+          { seatId: "p1", card: { suit: "HEARTS", rank: { v: 2, s: "2" } }, round: 1 }, // REWRITTEN
+          { seatId: "p2", card: { suit: "SPADES", rank: { v: 5, s: "5" } }, round: 1 },
+          { seatId: "p1", card: { suit: "SPADES", rank: { v: 8, s: "8" } }, round: 1 }
+        ],
+        lastCardSeat: "p1", turn: uidB, cardPhase: "PLAY", version: 2, updatedAt: 1
+      })).then(function () { return true; }).catch(function () { return false; }));
+
+    await seed(m + "-9", { turn: uidA, cardLog: existingLog });
+    check("CARD.9 Reordering two earlier entries (same multiset, different sequence) while appending one valid new entry -> DENIED",
+      await assertFails(matchRef(uidA, m + "-9").update({
+        cardLog: [
+          { seatId: "p2", card: { suit: "SPADES", rank: { v: 5, s: "5" } }, round: 1 }, // SWAPPED
+          { seatId: "p1", card: { suit: "SPADES", rank: { v: 12, s: "Q" } }, round: 1 },
+          { seatId: "p1", card: { suit: "SPADES", rank: { v: 8, s: "8" } }, round: 1 }
+        ],
+        lastCardSeat: "p1", turn: uidB, cardPhase: "PLAY", version: 2, updatedAt: 1
+      })).then(function () { return true; }).catch(function () { return false; }));
+
+    await seed(m + "-10", { turn: uidA, cardLog: existingLog });
+    check("CARD.10 Legitimate append with an UNCHANGED, non-empty prior history -> ALLOWED (regression: the fix must not over-reject)",
+      await assertSucceeds(matchRef(uidA, m + "-10").update({
+        cardLog: existingLog.concat([{ seatId: "p1", card: { suit: "SPADES", rank: { v: 8, s: "8" } }, round: 1 }]),
+        lastCardSeat: "p1", turn: uidB, cardPhase: "PLAY", version: 2, updatedAt: 1
+      })).then(function () { return true; }).catch(function () { return false; }));
+
+    await seed(m + "-11", { turn: uidA, cardLog: [] });
+    check("CARD.11 The very FIRST card play of a match (oldLog empty) -> ALLOWED (regression: the empty-prefix ternary guard must not itself throw or over-reject, mirroring isValidRoundExtension()'s own real-emulator-found edge case)",
+      await assertSucceeds(matchRef(uidA, m + "-11").update(cardPatch("p1", 2)))
+        .then(function () { return true; }).catch(function () { return false; }));
   }
 
   // ══════════════════════════════════════════════════════════════

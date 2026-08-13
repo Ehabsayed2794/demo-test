@@ -550,6 +550,14 @@ function isValidCardSubmission(oldData, newData, requestAuthUid) {
   var newLog = newData.cardLog || [];
   if (newLog.length !== oldLog.length + 1) return false;
 
+  // Sprint A.1 (Card Log Prefix Immutability Fix): every earlier entry
+  // must be byte-for-byte unchanged AND in the same order — mirrors
+  // the real firestore.rules' own `newLog[0:oldLog.size()] == oldLog`
+  // slice comparison (the SAME technique isValidRoundExtension()'s own
+  // JS mirror below already uses for `extendedRounds`).
+  var prefix = newLog.slice(0, oldLog.length);
+  if (JSON.stringify(prefix) !== JSON.stringify(oldLog)) return false;
+
   if (typeof seat !== "string") return false;
   if (!(seat in oldData.seats)) return false;
   if (oldData.seats[seat] !== requestAuthUid) return false;
@@ -1391,7 +1399,12 @@ check(
   "SIMULATED — multiple sequential cards: a second, independent append after the first (now userC's turn) is ALSO allowed, turn advancing again",
   isValidCardSubmission(
     Object.assign({}, matchAfterCreate42, {
-      cardLog: [{ seatId: "p1", card: { suit: "SPADES", rank: { v: 12, s: "Q" } } }],
+      // Sprint A.1: this entry must carry `round`, matching every real
+      // entry's actual shape (required since the Round Lifecycle
+      // sprint) — the prefix-equality check now compares this OLD
+      // entry byte-for-byte against the SAME entry in the new write
+      // below, so the fixture must be internally consistent.
+      cardLog: [{ seatId: "p1", card: { suit: "SPADES", rank: { v: 12, s: "Q" } }, round: 1 }],
       version: 2, lastCardSeat: "p1", turn: "userC", cardPhase: "PLAY"
     }),
     Object.assign({}, matchAfterCreate42, {
@@ -1630,22 +1643,20 @@ check("SIMULATED — generic card validation: a well-formed SANS-suit card is AL
 });
 
 // ============================================================
-// Sprint 4.2.1 (Pre-Write Card Authority & Desync Safety), Task 4 —
-// Card Log Integrity Assessment. `isValidCardSubmission()` verifies
-// the log grew by exactly one entry and that the NEW (final) entry is
-// well-formed and correctly attributed — it does NOT independently
-// re-verify that every EARLIER entry is byte-for-byte unchanged,
-// because CEL (Firestore Rules, rules_version '2') has no documented
-// primitive for comparing two lists index-by-index without a
-// range()/slice() construct it does not have (see
-// docs/architecture/SecurityArchitecture.md's Sprint 4.2.1 section for
-// the full assessment of why `.all(x, x in newLog)` — the closest
-// thing CEL offers — is INSUFFICIENT: it proves multiset membership,
-// not position/order, so it would not catch a REORDERING of existing
-// entries either). The tests below DEMONSTRATE this real gap directly
-// against the SAME 1:1 rules translation this file exercises for
-// every other rule — not merely asserted in a comment — precisely so
-// this limitation is proven, not hand-waved.
+// Sprint A.1 (Card Log Prefix Immutability Fix). Originally, Sprint
+// 4.2.1's Task 4 assessment found — and the tests here DEMONSTRATED,
+// not merely asserted — that `isValidCardSubmission()` could not see a
+// rewrite or reorder of an earlier `cardLog` entry, because it assumed
+// CEL had no primitive for an index-by-index prefix comparison. That
+// assumption was RE-CHECKED against this project's own later work
+// (`isValidRoundExtension()`'s real, emulator-verified
+// `newRounds[0:oldRounds.size()] == oldRounds` slice check) and found
+// to be WRONG — CEL DOES support list slicing. `isValidCardSubmission()`
+// (both the real firestore.rules and this 1:1 JS mirror) now applies
+// the identical technique to `cardLog`. The two checks below are the
+// SAME two attack shapes the old "KNOWN VULNERABILITY" tests
+// demonstrated getting through — updated to now prove they are
+// REJECTED, not merely documented as open.
 // ============================================================
 var prefixRewriteMatch = Object.assign({}, matchAfterCreate42, {
   cardLog: [
@@ -1655,22 +1666,22 @@ var prefixRewriteMatch = Object.assign({}, matchAfterCreate42, {
   version: 3, lastCardSeat: "p2", turn: "userB", cardPhase: "PLAY" // it's userB's (p1's) turn to submit the final, genuinely-new entry below
 });
 check(
-  "SIMULATED — KNOWN VULNERABILITY (Task 4, documented not hidden): rewriting an EARLIER cardLog entry's card value while still appending exactly one NEW, well-formed entry currently PASSES isValidCardSubmission() — the rule cannot see the rewrite",
+  "SIMULATED — FIXED (Sprint A.1, was KNOWN VULNERABILITY): rewriting an EARLIER cardLog entry's card value while still appending exactly one NEW, well-formed entry is now REJECTED by isValidCardSubmission()'s prefix-equality check",
   isValidCardSubmission(
     prefixRewriteMatch,
     Object.assign({}, prefixRewriteMatch, {
       cardLog: [
-        { seatId: "p1", card: { suit: "HEARTS", rank: { v: 2, s: "2" } } }, // REWRITTEN — was SPADES Q, now HEARTS 2 — the rule never checks this
+        { seatId: "p1", card: { suit: "HEARTS", rank: { v: 2, s: "2" } } }, // REWRITTEN — was SPADES Q, now HEARTS 2 — now caught by the prefix check
         { seatId: "p2", card: { suit: "SPADES", rank: { v: 5, s: "5" } } },
         { seatId: "p1", card: { suit: "SPADES", rank: { v: 8, s: "8" } }, round: 1 } // the one genuinely new, well-formed entry
       ],
       version: 4, lastCardSeat: "p1", turn: "userC", cardPhase: "PLAY"
     }),
     "userB" // owns p1 (validNewMatch38's real seat map)
-  ) === true
+  ) === false
 );
 check(
-  "SIMULATED — KNOWN VULNERABILITY (Task 4): REORDERING two earlier entries (same multiset, different sequence — which matters for turn/trick order) while appending one new entry ALSO currently passes — proving `.all(x, x in newLog)` would not have helped even if it were added, since it checks membership, not position",
+  "SIMULATED — FIXED (Sprint A.1, was KNOWN VULNERABILITY): REORDERING two earlier entries (same multiset, different sequence — which matters for turn/trick order) while appending one new entry is now REJECTED — proving the fix catches POSITION, not just membership, unlike `.all(x, x in newLog)` would have",
   isValidCardSubmission(
     prefixRewriteMatch,
     Object.assign({}, prefixRewriteMatch, {
@@ -1680,6 +1691,32 @@ check(
         { seatId: "p1", card: { suit: "SPADES", rank: { v: 8, s: "8" } }, round: 1 }
       ],
       version: 4, lastCardSeat: "p1", turn: "userC", cardPhase: "PLAY"
+    }),
+    "userB"
+  ) === false
+);
+check(
+  "SIMULATED — Sprint A.1 regression: a legitimate append with an UNCHANGED, non-empty prefix is still ALLOWED (the fix does not over-reject)",
+  isValidCardSubmission(
+    prefixRewriteMatch,
+    Object.assign({}, prefixRewriteMatch, {
+      cardLog: [
+        { seatId: "p1", card: { suit: "SPADES", rank: { v: 12, s: "Q" } } },
+        { seatId: "p2", card: { suit: "SPADES", rank: { v: 5, s: "5" } } },
+        { seatId: "p1", card: { suit: "SPADES", rank: { v: 8, s: "8" } }, round: 1 }
+      ],
+      version: 4, lastCardSeat: "p1", turn: "userC", cardPhase: "PLAY"
+    }),
+    "userB"
+  ) === true
+);
+check(
+  "SIMULATED — Sprint A.1 regression: the very FIRST card play of a match (oldLog empty) is still ALLOWED — the empty-prefix ternary guard must not itself reject a legitimate first submission",
+  isValidCardSubmission(
+    matchAfterCreate42,
+    Object.assign({}, matchAfterCreate42, {
+      cardLog: [{ seatId: "p1", card: { suit: "SPADES", rank: { v: 12, s: "Q" } }, round: 1 }],
+      version: 2, lastCardSeat: "p1", turn: "userC", cardPhase: "PLAY"
     }),
     "userB"
   ) === true
