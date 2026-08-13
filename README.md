@@ -60,7 +60,34 @@ free Spark plan.
 
 ## Tests
 
-See `tests/` for the Node test suite (`node tests/<file>.cjs`) — most run
-standalone; files named `*.rules-emulator.test.cjs` require the Firebase
-Firestore Emulator running locally (`firebase emulators:start`) and are
-skipped cleanly otherwise.
+See `tests/` for the full Node test suite. As of **Sprint 5.0 (CI/CD
+Pipeline & Real Emulator Enforcement)**, the 6 `*rules-emulator*.test.cjs`
+files are **mandatory, not optional** — they now FAIL HARD (exit 1) if the
+Firestore Rules Emulator isn't reachable, instead of silently skipping.
+A green run always means the real rules were actually exercised.
+
+```bash
+# Run everything, including the emulator tier, with automatic emulator
+# start/stop (recommended — this is what CI runs):
+npm run test:ci
+
+# Run everything WITHOUT starting an emulator yourself first — the 29
+# non-emulator files still run and pass; the 6 emulator files will FAIL
+# (not skip) with an "EMULATOR NOT REACHABLE" message telling you to
+# start one:
+npm test
+
+# Run a single file directly:
+node tests/<file>.cjs
+```
+
+To start the emulator yourself for iterative/manual runs (`npm test`
+without `:ci`): `npx firebase-tools emulators:start --only firestore,auth`
+in one terminal, then `npm test` in another.
+
+CI (`.github/workflows/test.yml`) runs `npm run test:ci` on every push to
+`claude/busy-bohr-ez5rz3` and `main` — the workflow fails if any test file
+fails, and independently fails if the literal text `SKIPPED` appears
+anywhere in the combined test output (belt-and-suspenders against a future
+test file silently reintroducing the old skip-on-no-emulator pattern). See
+`Sprint-5.0-Review/TEST_CHECKLIST.md` for the full verification record.
