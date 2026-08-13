@@ -79,6 +79,63 @@ unexplained red X.
   stale/cached data for several minutes in a row — see the chat transcript
   around this postmortem for that separate, disclosed limitation).
 
+## Round 2 — the timeout fix worked, and immediately exposed a much bigger finding
+
+Pushed the hang fix, a new run (`31700108453`) executed for real (confirmed
+by fresh, changing timestamps this time, not the stale/cached reads from
+round 1). Result: **no hang** — `Install Playwright Chromium` succeeded in
+~21s, and the test step completed (didn't hang) in ~6 minutes. But the
+job's conclusion was `failure`, with a real job log to diagnose:
+
+- **31 of 35 test files fail with `Error: Cannot find module
+  '/home/user/demo-test/design-ui/...'`** — every one of them hardcoded
+  this sandbox's own absolute filesystem path (`/home/user/demo-test/...`)
+  in a `require()` or `fs.readFileSync()` call, instead of a path derived
+  from the file's own location. On GitHub's runner the repo checks out at
+  `/home/runner/work/demo-test/demo-test/`, so every one of those calls
+  threw `MODULE_NOT_FOUND` immediately, before a single check ran.
+- The two Playwright tests (`score-ui-verification.test.cjs`,
+  `table-play-ui.test.cjs`) correctly hit the new 3-minute timeout and
+  were killed and reported as `TIMED OUT` — proving the round-1 fix does
+  what it's supposed to (no more silent hangs) — but they still didn't
+  *pass*, because they also hardcoded `/tmp/fb-cdn-cache` (this sandbox's
+  own manually-populated Firebase SDK mock cache, never committed to the
+  repo) for their CDN-mock fixtures.
+
+This is a bigger deal than the hang: it means most of this project's
+"passing" test history was only ever proven inside this exact sandbox,
+never on a portable checkout — precisely the class of risk R4 (this whole
+sprint) exists to close.
+
+**Fix (mechanical, applied identically everywhere):**
+- Every one of the 31 files now computes
+  `const __REPO_ROOT__ = path.join(__dirname, "..")` and uses it instead
+  of the hardcoded literal. Confirmed the literal was ALWAYS
+  double-quoted and never appeared in a template literal or single-quoted
+  string before doing a scripted replacement across all 31 files (so the
+  mechanical substitution couldn't silently corrupt an unrelated string).
+- **Caught and fixed my own script's bug before committing it**: for the
+  3 files that already had a `require("path")` line further down (not at
+  the top), my first pass inserted the new `__REPO_ROOT__` constant
+  *before* that line — a `const` temporal-dead-zone `ReferenceError`,
+  confirmed by actually running each file, not assumed. Moved the new
+  line to immediately after the existing `require("path")` in those 3
+  files instead.
+- The two Playwright tests' `/tmp/fb-cdn-cache` mock directory is now
+  `tests/fixtures/firebase-cdn/` (the same 3 Firebase compat SDK files,
+  vendored into the repo, ~512KB total) — the CDN-mocking strategy itself
+  was already the right call (this sandbox's proxy to
+  fonts.googleapis.com/gstatic.com is unreliable), it just needed to stop
+  depending on an uncommitted, sandbox-only cache path.
+
+**Verified**: every one of the 31 files re-run individually (grep-checked
+for `ReferenceError`/`Cannot find module`/`is not defined` in their
+output — none found); both Playwright tests re-run individually (still
+11/11 and 22/22, unchanged); full `npm run test:ci` re-run end-to-end —
+still 35/35, identical result to before any of these fixes, confirming
+none of this changed any test's actual pass/fail logic, only its
+portability.
+
 ## Why this is a legitimate finding, not an excuse
 
 The whole point of this sprint was "stop trusting untested claims about

@@ -1,3 +1,8 @@
+const path = require("path");
+// Portability fix (found via a real GitHub Actions run -- this file used
+// to hardcode this sandbox's own absolute path, so it failed with
+// MODULE_NOT_FOUND on any other machine, including CI):
+const __REPO_ROOT__ = path.join(__dirname, "..");
 // Real, executable tests for the Player Hand Synchronization sprint
 // (Architecture Gate-approved Option A):
 //   MatchService.dealRound() -> matches/{matchId}/hands/{seatId} (+
@@ -106,12 +111,12 @@ global.SessionService = {
 };
 function signInAs(uid) { CURRENT_USER = uid; }
 
-require("/home/user/demo-test/design-ui/engine/cards.js");
-require("/home/user/demo-test/design-ui/engine/deck.js");
-require("/home/user/demo-test/design-ui/engine/dealer.js");
-require("/home/user/demo-test/design-ui/match-service.js");
-require("/home/user/demo-test/design-ui/engine/session.js");
-require("/home/user/demo-test/design-ui/match-adapter.js");
+require(__REPO_ROOT__ + "/design-ui/engine/cards.js");
+require(__REPO_ROOT__ + "/design-ui/engine/deck.js");
+require(__REPO_ROOT__ + "/design-ui/engine/dealer.js");
+require(__REPO_ROOT__ + "/design-ui/match-service.js");
+require(__REPO_ROOT__ + "/design-ui/engine/session.js");
+require(__REPO_ROOT__ + "/design-ui/match-adapter.js");
 var MatchService = global.MatchService;
 var GameSession = global.GameSession;
 var MatchAdapter = global.MatchAdapter;

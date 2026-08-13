@@ -32,11 +32,21 @@ const fs = require("fs");
 const path = require("path");
 const { chromium } = require("playwright");
 const { resolveChromiumExecutablePath } = require("../scripts/resolve-chromium.cjs");
+// Portability fix (found via a real GitHub Actions run -- this file used
+// to hardcode this sandbox's own absolute path, so it failed with
+// MODULE_NOT_FOUND on any other machine, including CI):
+const __REPO_ROOT__ = path.join(__dirname, "..");
 
-const ROOT = "/home/user/demo-test/design-ui";
+const ROOT = __REPO_ROOT__ + "/design-ui";
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json" };
 const PORT = 5204;
-const CDN_CACHE = "/tmp/fb-cdn-cache";
+// Portability fix (same real-CI finding as __REPO_ROOT__ above): these
+// were mocked from a path manually cached in this sandbox
+// (/tmp/fb-cdn-cache) that doesn't exist on any other machine. Vendored
+// into the repo instead, so the CDN mock -- already the right call,
+// since this sandbox's proxy to fonts.googleapis.com/gstatic.com is
+// unreliable -- actually works everywhere, not just here.
+const CDN_CACHE = __REPO_ROOT__ + "/tests/fixtures/firebase-cdn";
 const CDN_MAP = {
   "https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js": "firebase-app-compat.js",
   "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js": "firebase-auth-compat.js",
@@ -288,7 +298,7 @@ async function main() {
   console.log("\nConsole/page errors: " + JSON.stringify(consoleErrors));
   check("22. No console/page errors throughout the whole scenario", consoleErrors.length === 0, JSON.stringify(consoleErrors));
 
-  await page.screenshot({ path: "/home/user/demo-test/qa/sprint-4.3/table-play-waiting-state.png" });
+  await page.screenshot({ path: __REPO_ROOT__ + "/qa/sprint-4.3/table-play-waiting-state.png" });
 
   // One more screenshot: back on the leader's own turn, hand interactive.
   await page.evaluate(() => {
@@ -298,7 +308,7 @@ async function main() {
     window.MatchScreenDebug.setLocalSeatId(window.TableEngine.getState().turn);
     window.MatchScreenDebug.renderTablePanel();
   });
-  await page.screenshot({ path: "/home/user/demo-test/qa/sprint-4.3/table-play-your-turn.png" });
+  await page.screenshot({ path: __REPO_ROOT__ + "/qa/sprint-4.3/table-play-your-turn.png" });
 
   await browser.close();
   server.close();

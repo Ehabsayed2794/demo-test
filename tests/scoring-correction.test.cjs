@@ -28,6 +28,10 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { execFileSync } = require("child_process");
+// Portability fix (found via a real GitHub Actions run -- this file used
+// to hardcode this sandbox's own absolute path, so it failed with
+// MODULE_NOT_FOUND on any other machine, including CI):
+const __REPO_ROOT__ = path.join(__dirname, "..");
 
 var pass = 0, fail = 0;
 function check(label, cond, note) {
@@ -36,7 +40,7 @@ function check(label, cond, note) {
 }
 
 function buildUtils() {
-  var srcDir = "/home/user/demo-test/src";
+  var srcDir = __REPO_ROOT__ + "/src";
   var tmpSrc = fs.mkdtempSync(path.join(os.tmpdir(), "scoring-correction-src-"));
   var tmpOut = fs.mkdtempSync(path.join(os.tmpdir(), "scoring-correction-out-"));
   fs.copyFileSync(path.join(srcDir, "utils.ts"), path.join(tmpSrc, "utils.ts"));

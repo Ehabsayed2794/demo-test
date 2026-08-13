@@ -1,3 +1,8 @@
+const path = require("path");
+// Portability fix (found via a real GitHub Actions run -- this file used
+// to hardcode this sandbox's own absolute path, so it failed with
+// MODULE_NOT_FOUND on any other machine, including CI):
+const __REPO_ROOT__ = path.join(__dirname, "..");
 // Player Hand Synchronization — REAL FIRESTORE RULES EMULATOR
 // verification (Final Verification & Closure sprint).
 //
@@ -33,7 +38,7 @@ async function run() {
     testEnv = await initializeTestEnvironment({
       projectId: "demo-test-hand-sync",
       firestore: {
-        rules: fs.readFileSync("/home/user/demo-test/firestore.rules", "utf8"),
+        rules: fs.readFileSync(__REPO_ROOT__ + "/firestore.rules", "utf8"),
         host: "127.0.0.1",
         port: 8080
       }

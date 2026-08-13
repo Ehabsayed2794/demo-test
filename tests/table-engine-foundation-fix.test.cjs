@@ -1,3 +1,8 @@
+const path = require("path");
+// Portability fix (found via a real GitHub Actions run -- this file used
+// to hardcode this sandbox's own absolute path, so it failed with
+// MODULE_NOT_FOUND on any other machine, including CI):
+const __REPO_ROOT__ = path.join(__dirname, "..");
 // Focused, real, executable tests for the Table Controls sprint's
 // authorized Foundation Fix: table-engine.js's ROUND_CFG must be
 // re-derived from GameSession's CURRENT round/bidding state on every
@@ -18,12 +23,12 @@
 global.window = global;
 global.window.addEventListener = function () {};
 
-require("/home/user/demo-test/design-ui/engine/cards.js");
-require("/home/user/demo-test/design-ui/engine/deck.js");
-require("/home/user/demo-test/design-ui/engine/dealer.js");
-require("/home/user/demo-test/design-ui/engine/session.js");
-require("/home/user/demo-test/design-ui/engine/bidding-engine.js");
-require("/home/user/demo-test/design-ui/engine/scoring-engine.js");
+require(__REPO_ROOT__ + "/design-ui/engine/cards.js");
+require(__REPO_ROOT__ + "/design-ui/engine/deck.js");
+require(__REPO_ROOT__ + "/design-ui/engine/dealer.js");
+require(__REPO_ROOT__ + "/design-ui/engine/session.js");
+require(__REPO_ROOT__ + "/design-ui/engine/bidding-engine.js");
+require(__REPO_ROOT__ + "/design-ui/engine/scoring-engine.js");
 // Foundation Fix's whole point: table-engine.js is required IMMEDIATELY
 // here — BEFORE any bidding has happened — deliberately mirroring the
 // real browser page's own <script> tag order (match/index.html loads
@@ -35,7 +40,7 @@ require("/home/user/demo-test/design-ui/engine/scoring-engine.js");
 // it "early" at all; the correct, intended usage (and what this
 // sprint's own UI implementation uses) is to call it exactly ONCE,
 // after bidding genuinely completes.
-require("/home/user/demo-test/design-ui/engine/table-engine.js");
+require(__REPO_ROOT__ + "/design-ui/engine/table-engine.js");
 
 var GameSession = global.GameSession;
 var BiddingEngine = global.BiddingEngine;
@@ -162,7 +167,7 @@ function driveFullRound() {
   // formula" convention this session's own Sprint 3.7.x report used.
   // ════════════════════════════════════════════════════════════════
   var fs = require("fs");
-  var src = fs.readFileSync("/home/user/demo-test/design-ui/engine/table-engine.js", "utf8");
+  var src = fs.readFileSync(__REPO_ROOT__ + "/design-ui/engine/table-engine.js", "utf8");
   var fnStart = src.indexOf("function buildRoundCfg() {");
   var fnEnd = src.indexOf("\n}\n", fnStart);
   var fnBody = src.slice(fnStart, fnEnd);

@@ -1,3 +1,8 @@
+const path = require("path");
+// Portability fix (found via a real GitHub Actions run -- this file used
+// to hardcode this sandbox's own absolute path, so it failed with
+// MODULE_NOT_FOUND on any other machine, including CI):
+const __REPO_ROOT__ = path.join(__dirname, "..");
 // Real, executable END-TO-END tests for Sprint 4.1 (Turn Authority &
 // Remote Play Validation) — the turn-synchronization half of the
 // pipeline:
@@ -128,12 +133,12 @@ function simulateDisconnect(id, code) {
 var CURRENT_USER = null;
 global.SessionService = { getCurrentUser: function () { return CURRENT_USER ? { uid: CURRENT_USER } : null; }, setCurrentMatchId: function () { return Promise.resolve(); } };
 
-require("/home/user/demo-test/design-ui/match-service.js");
-require("/home/user/demo-test/design-ui/engine/cards.js");
-require("/home/user/demo-test/design-ui/engine/deck.js");
-require("/home/user/demo-test/design-ui/engine/dealer.js");
-require("/home/user/demo-test/design-ui/engine/session.js");
-require("/home/user/demo-test/design-ui/match-adapter.js");
+require(__REPO_ROOT__ + "/design-ui/match-service.js");
+require(__REPO_ROOT__ + "/design-ui/engine/cards.js");
+require(__REPO_ROOT__ + "/design-ui/engine/deck.js");
+require(__REPO_ROOT__ + "/design-ui/engine/dealer.js");
+require(__REPO_ROOT__ + "/design-ui/engine/session.js");
+require(__REPO_ROOT__ + "/design-ui/match-adapter.js");
 
 var GameSession = global.GameSession;
 var MatchAdapter = global.MatchAdapter;
@@ -352,7 +357,7 @@ function forgeTurnUpdate(matchId, newTurnUid, versionOverride) {
   // codebase's diff history manipulates engine turn state directly.
   // ============================================================
   var fs = require("fs");
-  var serviceSource = fs.readFileSync("/home/user/demo-test/design-ui/match-service.js", "utf8");
+  var serviceSource = fs.readFileSync(__REPO_ROOT__ + "/design-ui/match-service.js", "utf8");
   // Checks actual USAGE patterns (`GameSession.` / `.setTurn(`), not a
   // bare-word match — Sprint 4.2 added a comment to this file that
   // correctly NAMES GameSession in prose while explaining this file
