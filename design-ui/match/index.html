@@ -163,6 +163,26 @@
   #roundCompletePanel .rc-score-tile .delta{color:var(--ink);font-weight:700;font-size:12px;display:block;margin-top:2px;}
   #roundCompletePanel .rc-score-tile .delta.is-positive{color:var(--accent);}
   #roundCompletePanel .rc-score-tile .total{color:var(--ink-faint);font-size:8px;}
+
+  /* Sprint 4.2 (Score Breakdown Card): renders ScoringEngine.
+     calculateRoundScore()'s ALREADY-computed per-seat breakdown
+     (breakdown[id].notes/raw/final — see scoring-engine.js) — no new
+     scoring math, purely display. Reuses #roundCompletePanel's own
+     established tokens/vocabulary (--panel-hi/--panel-line/--pill/
+     --mono/--accent, the .rc-title Marcellus treatment) — zero new
+     design tokens invented, per this sprint's explicit constraint. */
+  #scoreBreakdownCards{display:flex;flex-direction:column;gap:6px;margin-top:4px;}
+  .sb-card{background:var(--pill);border:1px solid var(--panel-line);border-radius:9px;padding:7px 9px;font-family:"Saira",sans-serif;}
+  .sb-card .sb-head{display:flex;align-items:center;justify-content:space-between;gap:6px;}
+  .sb-card .sb-name{font-family:var(--mono);font-size:10px;color:var(--ink);letter-spacing:.02em;display:flex;align-items:center;gap:4px;}
+  .sb-card .sb-badges{font-size:11px;letter-spacing:.02em;}
+  .sb-card .sb-bidvs{font-family:var(--mono);font-size:8.5px;color:var(--ink-faint);margin-top:2px;}
+  .sb-card .sb-lines{display:flex;flex-direction:column;gap:1px;margin-top:4px;}
+  .sb-card .sb-line{display:flex;justify-content:space-between;font-family:var(--mono);font-size:8.5px;color:var(--ink-dim);}
+  .sb-card .sb-line .sb-line-val{color:var(--ink);font-weight:600;}
+  .sb-card .sb-line.sb-total{border-top:1px solid var(--panel-line);margin-top:3px;padding-top:3px;font-size:9.5px;}
+  .sb-card .sb-line.sb-total .sb-line-val{color:var(--accent);font-weight:700;}
+  .sb-card .sb-flat-note{font-family:var(--mono);font-size:8.5px;color:var(--ink-faint);font-style:italic;margin-top:3px;}
   .seat{position:absolute;display:flex;flex-direction:column;align-items:center;gap:4px;width:78px;}
   .seat .avatar{width:30px;height:30px;border-radius:50%;background:var(--panel-hi);border:1px solid var(--panel-line);display:grid;place-items:center;font-family:"Marcellus",serif;font-size:13px;color:var(--accent);}
   .seat.is-turn .avatar{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent);}
@@ -2003,6 +2023,106 @@
       scoresEl.appendChild(tile);
     });
     el.appendChild(scoresEl);
+
+    el.appendChild(buildScoreBreakdownCards(result));
+  }
+
+  /** Sprint 4.2 (Score Breakdown Card): renders EXACTLY what
+   *  ScoringEngine.calculateRoundScore() already computed per seat
+   *  (result.breakdown[seatId] — raw/multiplier/final/isCaller/isWith/
+   *  isRisk/isSoleWinner/isSoleLoser/succeeded/role/notes) — no score
+   *  component is recomputed here; `notes` is the engine's OWN
+   *  itemized breakdown text, displayed verbatim as the line items, so
+   *  there is no risk of this UI drifting from the real formula. Per
+   *  this sprint's own explicit stop instruction: if a required
+   *  breakdown value were missing from that object, this function
+   *  would report an API gap rather than invent one — none was
+   *  missing; every field used below already exists on
+   *  calculateRoundScore()'s own documented output shape (see
+   *  scoring-engine.js). Role icons: Caller ⭐, With 🤝, Risk ⚡,
+   *  Sole 🏆 — badges derived from the SAME boolean flags the engine
+   *  already used to decide the bonuses themselves. */
+  function buildScoreBreakdownCards(result) {
+    var wrap = document.createElement("div");
+    wrap.id = "scoreBreakdownCards";
+    if (!result || !result.breakdown) return wrap; // honest empty state, never a fabricated card
+    ["p1", "p2", "p3", "p4"].forEach(function (seatId) {
+      var b = result.breakdown[seatId];
+      if (!b) return;
+      var card = document.createElement("div");
+      card.className = "sb-card";
+
+      var head = document.createElement("div");
+      head.className = "sb-head";
+      var nameEl = document.createElement("div");
+      nameEl.className = "sb-name";
+      nameEl.textContent = playerLabel(seatId);
+      var badges = document.createElement("span");
+      badges.className = "sb-badges";
+      var badgeText = "";
+      if (b.isCaller) badgeText += "⭐";
+      if (b.isWith) badgeText += "🤝";
+      if (b.isRisk) badgeText += "⚡";
+      if (b.isSoleWinner || b.isSoleLoser) badgeText += "🏆";
+      badges.textContent = badgeText;
+      head.appendChild(nameEl);
+      head.appendChild(badges);
+      card.appendChild(head);
+
+      var tricks = result.tricksWon && result.tricksWon[seatId] != null ? result.tricksWon[seatId] : null;
+      var est = result.estimates && result.estimates[seatId] != null ? result.estimates[seatId] : null;
+      var bidVs = document.createElement("div");
+      bidVs.className = "sb-bidvs";
+      bidVs.textContent = "Bid: " + (est != null ? est : "—") + " | Took: " + (tricks != null ? tricks : "—");
+      card.appendChild(bidVs);
+
+      // Edge cases (Task 2): Sa'ayda and flat-scored Dash Call/Normal
+      // Dash are detected from the engine's OWN notes text (never a
+      // UI-side guess) and shown with a distinct, honest caption
+      // instead of a misleading component-by-component breakdown that
+      // doesn't apply to a flat/zeroed score.
+      var firstNote = (b.notes && b.notes[0]) || "";
+      var isSaaydaSeat = firstNote.indexOf("Sa'ayda") !== -1;
+      var isDashCall = firstNote.indexOf("Dash Call") !== -1;
+      var isClassicRole = b.role != null; // calculateClassicScore() sets role only in Classic mode
+
+      if (isSaaydaSeat) {
+        var flat = document.createElement("div");
+        flat.className = "sb-flat-note";
+        flat.textContent = "Zeroed (Sa'ayda) — next round ×" + (result.nextMultiplier || 2) + " escalation";
+        card.appendChild(flat);
+      } else if (isDashCall) {
+        var flatDc = document.createElement("div");
+        flatDc.className = "sb-flat-note";
+        flatDc.textContent = "Flat Score (" + (b.final > 0 ? "+" : "") + b.final + ") — Dash Call does not use the base/bonus breakdown";
+        card.appendChild(flatDc);
+      } else {
+        var lines = document.createElement("div");
+        lines.className = "sb-lines";
+        (b.notes || []).forEach(function (note) {
+          var line = document.createElement("div");
+          line.className = "sb-line";
+          var label = document.createElement("span");
+          label.textContent = (isClassicRole ? "Classic: " : "") + note;
+          line.appendChild(label);
+          lines.appendChild(line);
+        });
+        var totalLine = document.createElement("div");
+        totalLine.className = "sb-line sb-total";
+        var totalLabel = document.createElement("span");
+        totalLabel.textContent = "Total" + (b.multiplier > 1 ? " (×" + b.multiplier + ")" : "");
+        var totalVal = document.createElement("span");
+        totalVal.className = "sb-line-val";
+        totalVal.textContent = (b.final > 0 ? "+" : "") + b.final;
+        totalLine.appendChild(totalLabel);
+        totalLine.appendChild(totalVal);
+        lines.appendChild(totalLine);
+        card.appendChild(lines);
+      }
+
+      wrap.appendChild(card);
+    });
+    return wrap;
   }
 
   function renderMatch(match) {
@@ -2234,6 +2354,10 @@
     // getLastAppliedVersion()/resetSyncState()); no production code
     // path calls these directly.
     renderBiddingControls: renderBiddingControls,
+    // Sprint 4.2 (Score Breakdown Card) — diagnostic-only, same
+    // convention as every other entry in this object.
+    renderRoundComplete: renderRoundComplete,
+    buildScoreBreakdownCards: buildScoreBreakdownCards,
     setLocalSeatId: function (seatId) { localSeatId = seatId; },
     getLocalSeatId: function () { return localSeatId; },
     // Follow-up Hardening (Quality Gate Finding #2): diagnostic-only —
