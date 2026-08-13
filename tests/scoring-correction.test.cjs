@@ -45,7 +45,18 @@ function buildUtils() {
   var tmpOut = fs.mkdtempSync(path.join(os.tmpdir(), "scoring-correction-out-"));
   fs.copyFileSync(path.join(srcDir, "utils.ts"), path.join(tmpSrc, "utils.ts"));
   fs.copyFileSync(path.join(srcDir, "types.ts"), path.join(tmpSrc, "types.ts"));
-  execFileSync("npx", ["tsc", "utils.ts", "types.ts", "--module", "commonjs", "--target", "es2019", "--outDir", tmpOut, "--skipLibCheck"], { cwd: tmpSrc, stdio: "pipe" });
+  // Portability fix (found via the same real-CI run as __REPO_ROOT__
+  // above): `npx tsc` run with cwd:tmpSrc (a bare /tmp dir with no
+  // node_modules ancestor) can't find this repo's own typescript
+  // devDependency, so npx falls through to the public registry and
+  // installs/runs a COMPLETELY UNRELATED package also named "tsc"
+  // (tsc@2.0.4, a long-deprecated stub, not the TypeScript compiler) --
+  // it happened to already be cached in this sandbox from earlier
+  // session use, silently masking the bug here. Invoking this repo's
+  // own installed typescript binary by absolute path removes the
+  // ambiguity entirely.
+  var tscBin = path.join(__REPO_ROOT__, "node_modules", ".bin", "tsc");
+  execFileSync(tscBin, ["utils.ts", "types.ts", "--module", "commonjs", "--target", "es2019", "--outDir", tmpOut, "--skipLibCheck"], { cwd: tmpSrc, stdio: "pipe" });
   return require(path.join(tmpOut, "utils.js"));
 }
 

@@ -136,6 +136,51 @@ still 35/35, identical result to before any of these fixes, confirming
 none of this changed any test's actual pass/fail logic, only its
 portability.
 
+## Round 3 — one file left, a THIRD distinct class of the same root cause
+
+Pushed the path fix, a third fresh run (`31701404817`) executed for real
+in ~90 seconds total (no hang) with a genuinely new result: **34 of 35
+files passed, including both real-Chromium Playwright tests (22/22 and
+their earlier 11/11)** — confirming rounds 1 and 2's fixes both actually
+worked end-to-end on a real, fresh GitHub runner. One file left:
+`scoring-correction.test.cjs`.
+
+Its real error, from the actual job log:
+```
+Error: Command failed: npx tsc utils.ts types.ts ...
+npm warn exec The following package was not found and will be installed: tsc@2.0.4
+npm warn deprecated tsc@2.0.4: Package no longer supported.
+```
+
+A third distinct flavor of the same underlying class of bug (environment-
+implicit resolution instead of an explicit, portable path): the test ran
+`npx tsc ...` with `cwd` set to a bare `/tmp` scratch directory (deliberately,
+to avoid this repo's own project-mode `tsconfig.json`). With no
+`node_modules` anywhere in that directory's ancestry, `npx` on GitHub's
+runner correctly fell through to the public npm registry — where `tsc` is
+the name of a real, totally unrelated, long-deprecated package (`tsc@2.0.4`,
+not the TypeScript compiler) — and ran that instead. On silently-wrong
+input, `require()`ing its output threw `MODULE_NOT_FOUND` for the never-
+produced `utils.js`.
+
+This one had a uniquely deceptive failure mode: it worked flawlessly every
+single time in this dev sandbox (confirmed: 17/17, repeatedly, across this
+whole session), almost certainly because this sandbox already had a real
+`tsc` cached/resolvable via `npx` from earlier, unrelated session activity
+— an environmental accident, not a correctness property of the test
+itself.
+
+**Fix**: invoke this repo's own `typescript` devDependency directly by its
+installed, absolute path (`path.join(__REPO_ROOT__, "node_modules", ".bin",
+"tsc")`) instead of asking `npx` to resolve `tsc` from an unrelated
+directory. Removes the ambiguity entirely — there is now exactly one `tsc`
+this test could possibly run.
+
+**Verified**: re-ran the file standalone (17/17, unchanged) and the full
+`npm run test:ci` suite end-to-end — **35/35**, matching every prior run's
+result exactly. Grepped the rest of the repo for the same `npx <bin>` +
+unrelated-`cwd` anti-pattern — no other occurrences found.
+
 ## Why this is a legitimate finding, not an excuse
 
 The whole point of this sprint was "stop trusting untested claims about
