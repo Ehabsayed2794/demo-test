@@ -1886,14 +1886,27 @@
    *  job is making that flow possible for round 2+ by advancing
    *  BiddingEngine's own round number first.
    *
-   *  HONEST LIMITATION (see this sprint's own Final Report): calling
-   *  `GameSession.nextRound()` clears the local `hands` map, and the
-   *  next `ensureHandsDealt()` call (inside `BiddingEngine.initState()`)
-   *  deals a BRAND-NEW, independently-random hand for this client. This
-   *  is the SAME pre-existing hand-synchronization gap Sprint 5 already
-   *  documented for Round 1 (hands are never written to Firestore) —
-   *  this function does not create a new gap, it only means Round 2
-   *  inherits the identical one, unchanged, unresolved. */
+   *  CLOSED (Sprint F — Hand Synchronization on Reconnect). This
+   *  comment used to document a real gap: calling `GameSession.
+   *  nextRound()` clears the local `hands` map, and the next
+   *  `ensureHandsDealt()` call (inside `BiddingEngine.initState()`)
+   *  would deal a BRAND-NEW, independently-random hand for this
+   *  client. Root cause (confirmed by direct source read, not
+   *  assumed): `startHandSync()` — this file's own real, already
+   *  fully-implemented and unit-tested (`tests/hand-sync.test.cjs`)
+   *  per-seat hand sync — was simply never called anywhere in
+   *  `design-ui/match/index.html`, so `GameSession`'s hand-authority
+   *  mode stayed at its "local" default for the entire life of every
+   *  real match, on every round, not just round transitions. Fixed by
+   *  wiring `startHandSync(matchId, localSeatId)` into that page (plus
+   *  an early `setHandAuthorityMode("firestore")` call before the
+   *  first snapshot can arrive, closing a real ordering race between
+   *  the diagnostic `ensureHandsDealt()` call in `bootstrapEngineOnce()`
+   *  and this fix). Verified against a real Firestore/Auth Emulator
+   *  and a real browser: reload, disconnect+reconnect, a round
+   *  transition while disconnected, a late join, and a rematch all
+   *  restore the exact authoritative hand — see
+   *  `tests/hand-sync-reconnect.rules-emulator.test.cjs`. */
   function applyRemoteRoundTransition(matchId, matchDoc) {
     if (!matchId) return { applied: false, reason: "MALFORMED_SNAPSHOT" };
     if (!matchDoc || typeof matchDoc !== "object" || Array.isArray(matchDoc)) {

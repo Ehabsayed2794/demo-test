@@ -2209,6 +2209,13 @@
   // map is expected to be stable once assigned, but this never assumes
   // that rather than re-deriving it).
   var localSeatId = null;
+  // Sprint F (Hand Synchronization on Reconnect): whether
+  // MatchAdapter.startHandSync() has been started yet for this page
+  // load. One-shot, mirrors engineBootstrapped's own guard pattern —
+  // see the flag's own use below for why it can't be started at this
+  // exact point (it needs localSeatId, which isn't known until the
+  // first real snapshot resolves it).
+  var handSyncStarted = false;
 
   if (!matchId) {
     statusEl.textContent = "No match to show";
@@ -2217,6 +2224,31 @@
     statusEl.textContent = "MatchService unavailable";
     console.error("[Match] MatchService not loaded.");
   } else {
+    // Sprint F (Hand Synchronization on Reconnect): flip GameSession
+    // into "firestore" hand-authority mode IMMEDIATELY — before the
+    // very first snapshot can possibly arrive. Root cause this closes:
+    // MatchAdapter.startHandSync() (which also flips this same flag)
+    // was never called anywhere on this page, so handAuthorityMode
+    // stayed at its "local" default for the ENTIRE life of every real
+    // match — meaning bootstrapEngineOnce()'s own diagnostic
+    // GameSession.ensureHandsDealt() call (below) and BiddingEngine.
+    // initState()'s internal one (called every round, including every
+    // reconnect/round-transition) both dealt a brand-new, independently-
+    // random LOCAL hand via Dealer.dealHands() every single time —
+    // never the authoritative matches/{matchId}/hands/{seatId} document
+    // this project already writes and already has a full, tested
+    // client-side consumer for (MatchAdapter.applyRemoteHand()/
+    // startHandSync(), unit-tested in tests/hand-sync.test.cjs, but
+    // never actually wired into this real page until now). Setting this
+    // flag here, synchronously, before subscribeToMatch() below is even
+    // called, closes the race entirely: by the time the first snapshot
+    // fires, ensureHandsDealt() is already a firestore-mode no-op (per
+    // its own existing, unmodified guard in session.js) instead of a
+    // local deal. The per-seat subscription itself (startHandSync()
+    // proper) still has to wait for localSeatId to resolve — see below.
+    if (window.GameSession && typeof window.GameSession.setHandAuthorityMode === "function") {
+      window.GameSession.setHandAuthorityMode("firestore");
+    }
     // Bidding Controls sprint: activates the existing, UNMODIFIED
     // MatchAdapter sync pipelines (Sprint 3.7/4.0) that translate a
     // Firestore delivery into a real BiddingEngine.emit() call —
@@ -2303,6 +2335,28 @@
           window.SessionService && typeof window.SessionService.getCurrentUser === "function") {
         var currentUser = window.SessionService.getCurrentUser();
         localSeatId = currentUser ? window.MatchAdapter.uidToSeat(data, currentUser.uid) : null;
+      }
+      // Sprint F (Hand Synchronization on Reconnect): start the real
+      // per-seat hand sync exactly once, the first delivery this
+      // client's own seat is actually known (mirrors
+      // bootstrapEngineOnce()'s one-shot guard pattern). Deliberately
+      // BEFORE bootstrapEngineOnce()'s own diagnostic
+      // GameSession.ensureHandsDealt() call below, so that call —
+      // and BiddingEngine.initState()'s internal one, every round —
+      // sees "firestore" hand-authority mode already active and never
+      // deals a local hand. Safe for a late-joining or reconnecting
+      // client too: MatchService.subscribeToMatch()/subscribeToHand()
+      // both deliver the current cached state immediately to a
+      // newly-attached listener (their own existing ref-counting
+      // contract), so this "starts late" case is still caught up by
+      // this very first call, not a future delivery.
+      if (!handSyncStarted && localSeatId && window.MatchAdapter && typeof window.MatchAdapter.startHandSync === "function") {
+        try {
+          window.MatchAdapter.startHandSync(matchId, localSeatId);
+          handSyncStarted = true;
+        } catch (e) {
+          console.error("[Match] startHandSync() threw:", e);
+        }
       }
       renderMatch(data);
       bootstrapEngineOnce(data);
@@ -2423,6 +2477,11 @@
     setTableEngineStartedForRound: function (round) { tableEngineStartedForRound = round; },
     setLocalSeatId: function (seatId) { localSeatId = seatId; },
     getLocalSeatId: function () { return localSeatId; },
+    // Sprint F (Hand Synchronization on Reconnect) — diagnostic-only,
+    // same convention as every other entry in this object. Lets a test
+    // observe directly whether the real per-seat hand sync has been
+    // started for this page load, instead of inferring it indirectly.
+    getHandSyncStarted: function () { return handSyncStarted; },
     // Follow-up Hardening (Quality Gate Finding #2): diagnostic-only —
     // lets a test observe the existing pendingBiddingSubmission guard
     // directly instead of racing a synchronous fake-transaction's own
