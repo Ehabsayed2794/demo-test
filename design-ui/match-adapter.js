@@ -1368,9 +1368,26 @@
       // table-engine.js. Every legality/ordering decision from here is
       // the real engine's, not this file's — this function only ever
       // reads the response.
+      //
+      // Sprint H (Remote Hand State fix): `trusted: true` — every entry
+      // reaching this point already round-tripped through Firestore's
+      // authoritative `cardLog`, which `firestore.rules` gates on
+      // structure and turn order only (never follow-suit legality — see
+      // isValidCardSubmission()); follow-suit legality for THIS entry
+      // was already correctly checked exactly once, by the seat that
+      // played it, against ITS OWN real hand, before the write (see
+      // match-service.js's submitCard() -> TableEngine.canPlayCard()).
+      // This client never holds that seat's private cards (Firestore
+      // hand-privacy rules, unchanged), so re-deriving that same
+      // legality decision here would require data this client
+      // legitimately cannot have — `trusted` tells the engine to skip
+      // only that redundant (and, without real opponent data, actively
+      // incorrect) re-check, while every other gate (phase, whose turn)
+      // still applies exactly as before.
       var engineResult = TableEngine.emit({
         type: "PlayCard", playerId: entry.seatId,
-        card: { suit: entry.card.suit, rank: { v: entry.card.rank.v, s: entry.card.rank.s } }
+        card: { suit: entry.card.suit, rank: { v: entry.card.rank.v, s: entry.card.rank.s } },
+        trusted: true
       });
       if (!engineResult || engineResult.rejected) {
         // Sprint 4.2.1, Task 3 — the SECOND Critical defect this

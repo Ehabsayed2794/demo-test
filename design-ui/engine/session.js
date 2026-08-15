@@ -261,7 +261,44 @@
    *  the flag's own declaration above) — a fresh load must re-declare
    *  its context every time, exactly like remoteMatchSubscription. */
   function setHandAuthorityMode(mode) {
-    handAuthorityMode = (mode === "firestore") ? "firestore" : "local";
+    var next = (mode === "firestore") ? "firestore" : "local";
+    // Sprint H (Remote Hand State / Table Engine Initialization Fix) —
+    // ROOT CAUSE FIX. table-engine.js's own DOMContentLoaded auto-init
+    // calls initState() -> ensureHandsDealt() unconditionally, on every
+    // page load, before this function has any chance to run — so
+    // whenever a real multiplayer page's own matchId/hand-authority
+    // context isn't resolvable yet at that exact moment (a cold
+    // reconnect, a direct/bookmarked URL open, or simply this client's
+    // own earlier moment on the very same page before matchId became
+    // known), ensureHandsDealt() may already have dealt and PERSISTED
+    // (via this module's own sessionStorage-backed persist(), which
+    // survives a later reload) a fully-fabricated, independently-random
+    // 13-card hand for ALL FOUR seats, believing itself to be in
+    // ordinary offline/local mode. Proven directly (not assumed) by
+    // tracing every real call site of this function and of
+    // setAuthoritativeHand(): on every one of them, a genuinely
+    // authoritative hand can ONLY ever arrive via setAuthoritativeHand()
+    // below, called strictly AFTER this function already switched the
+    // page into "firestore" mode — so anything already sitting in
+    // session.hands at the exact moment of THIS transition can only be
+    // leftover local fabrication, never real data, and is safe to
+    // discard unconditionally right here. Without this, that fabricated
+    // data would otherwise linger for every non-local seat for the rest
+    // of the page's life (setAuthoritativeHand() below only ever
+    // overwrites the ONE seat it's given), which is the confirmed root
+    // cause of TableEngine incorrectly rejecting (and, before Phase 3's
+    // separate defensive fix, crashing on) real remote card plays.
+    // Guarded to fire only on an actual local->firestore TRANSITION, so
+    // calling this a second time in the same "firestore" page life (a
+    // real, existing pattern — both match/index.html and
+    // MatchAdapter.startHandSync() call this) is a safe no-op that
+    // never re-discards real, already-synced hand data.
+    if (next === "firestore" && handAuthorityMode !== "firestore") {
+      session.hands = {};
+      session.dealState = { roundNumber: null, completed: false, dealtAt: null };
+      persist();
+    }
+    handAuthorityMode = next;
   }
   function getHandAuthorityMode() { return handAuthorityMode; }
 
