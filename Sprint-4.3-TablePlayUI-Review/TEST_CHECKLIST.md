@@ -7,8 +7,11 @@ Test file: `tests/table-play-ui.test.cjs` — real Chromium
 (no live Firestore match exists in this test; the real function's own
 contract is covered elsewhere — see below).
 
-Run: `node tests/table-play-ui.test.cjs` — **22/22 passing**, 0 console/page
-errors. Full log: `qa/sprint-4.3/test-log.txt`.
+Run: `node tests/table-play-ui.test.cjs` — **45/45 passing**, 0 console/page
+errors (originally 22/22; see `QA_CLOSURE.md` for checks 23–33, added in
+the Table Play UI Closure QA pass: 5 remote-card sync checks + 18 responsive
+checks across 800×480/854×480/1280×720). Full log: `qa/sprint-4.3/test-log.txt`
+(pre-closure baseline).
 
 | # | Check | Result |
 |---|---|---|
@@ -71,3 +74,14 @@ Ran every file in `tests/` (35 total):
 changed: `design-ui/match/index.html`. `table-engine.js`, `dealer.js`,
 `scoring-engine.js`, `bidding-engine.js`, `match-service.js`,
 `match-adapter.js`, and `firestore.rules` are byte-for-byte unchanged.
+
+## Closure QA (checks 23–33)
+
+See `QA_CLOSURE.md` for the full write-up: an explicit remote-card
+sync test (via the real `MatchAdapter.applyRemoteCard()` entry point) and
+automated responsive verification at 800×480/854×480/1280×720, plus a
+final manual visual-quality pass (UI/UX Pro Max category audit +
+Impeccable-substitute manual screenshot review — "Impeccable" is not
+present among this account's enabled skills). One genuine, pre-existing
+(not newly introduced) clipping defect was found and reported, not fixed —
+see `QA_CLOSURE.md`'s Phase 6 section.

@@ -76,3 +76,26 @@ was kept, per the brief's own "reuse existing tokens" constraint.
 - Two QA screenshots (`qa/sprint-4.3/table-play-your-turn.png`,
   `table-play-waiting-state.png`) reviewed directly for visual correctness
   (positional layout, no overlap, consistent tokens).
+
+## Closure QA pass (follow-up, same sprint)
+
+Closed the two coverage gaps identified by a later status audit — see
+`QA_CLOSURE.md` for the full write-up. Summary:
+- Added an explicit remote-card UI test driving the real
+  `MatchAdapter.applyRemoteCard()` sync entry point (5 new checks).
+- Added automated responsive verification at 800×480/854×480/1280×720
+  landscape viewports (18 new checks): no overflow, hand/trick/turn
+  indicator visibility, no overlap, and real click-to-play interaction, at
+  each viewport.
+- `tests/table-play-ui.test.cjs` now 45/45 passing (was 22/22); still only
+  this one test file changed — no engine/service/adapter/rules file
+  touched.
+- UI/UX Pro Max category audit (touch target, responsive, accessibility,
+  animation) + a manual visual review (Impeccable is not present among
+  this account's enabled skills, same finding as the original sprint)
+  performed. One genuine, PRE-EXISTING (shipped with the original `f7a4ce8`
+  commit, not introduced by this pass) defect found: the 13-card hand's
+  second wrapped row clips below `#screen`'s own bottom edge at every
+  tested viewport. Reported, not fixed — a proper fix touches shared
+  layout (`#matchGameView`/`#tablePanel` vertical budget) used by every
+  phase panel, outside this pass's UI-only/low-risk scope.
