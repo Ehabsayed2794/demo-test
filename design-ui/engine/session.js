@@ -167,7 +167,30 @@
     if (session.bid) { delete session.bid; dirty = true; }
     if (!session.hands) { session.hands = {}; dirty = true; }
     if (!session.dealState) { session.dealState = { roundNumber: null, completed: false, dealtAt: null, source: null }; dirty = true; }
-    if (session.dealState && session.dealState.source === undefined) { session.dealState.source = null; dirty = true; }
+    // Sprint H.1 (post-ship review fix): a session persisted BEFORE
+    // `dealState.source` existed (i.e. any real, in-progress "firestore"
+    // match already live at the moment this field was introduced) has
+    // `dealState.completed === true` and a real, already-synced hand in
+    // `session.hands`, but no `source` key at all. Aliasing a genuinely
+    // MISSING key to the same `null` value used for "known fabricated"
+    // would make setHandAuthorityMode("firestore")'s wipe-guard treat
+    // that real hand as fabricated on this session's very next reload —
+    // reproducing the exact bug this whole mechanism exists to prevent,
+    // just at the deploy boundary instead of an ordinary reload.
+    // Whether a MISSING source key represents real or fabricated data is
+    // genuinely ambiguous (both a legacy local deal and a legacy real
+    // deal look identical here — completed:true, no source) — but
+    // wiping real user data is the worse failure mode of the two, so an
+    // already-completed deal with real cards on the books is trusted as
+    // "firestore" rather than nulled out. An incomplete/empty deal has
+    // nothing to lose either way and is left `null` (matches a fresh
+    // session -- no different behavior than before this migration
+    // existed).
+    if (session.dealState && session.dealState.source === undefined) {
+      session.dealState.source = (session.dealState.completed && session.hands && Object.keys(session.hands).length > 0)
+        ? "firestore" : null;
+      dirty = true;
+    }
     if (!session.scoringMode) { session.scoringMode = "normal"; dirty = true; }
     if (session.round && !session.round.dashCallers) { session.round.dashCallers = []; dirty = true; }
     if (session.biddingState && !session.biddingState.dashCallers) { session.biddingState.dashCallers = []; dirty = true; }

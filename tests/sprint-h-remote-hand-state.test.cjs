@@ -384,6 +384,103 @@ function driveFullRound() {
     try { if (fs.existsSync(storagePath)) fs.unlinkSync(storagePath); } catch (e) {}
   }
 
+  // ════════════════════════════════════════════════════════════════
+  // SCENARIO 9 — Sprint H.1 code review's own follow-up finding: a
+  // session persisted by code that predates `dealState.source`
+  // entirely (i.e. any real, in-progress "firestore" match already
+  // live at the moment that field was introduced) must NOT have its
+  // real, already-completed hand wiped on its first reload after this
+  // fix ships. Reproduced by writing a raw, hand-authored legacy
+  // sessionStorage payload directly (bypassing GameSession's own API
+  // entirely, exactly as a session genuinely created by OLDER code
+  // would look on disk), then loading it via a fresh process.
+  // ════════════════════════════════════════════════════════════════
+  var storagePath2 = path.join(os.tmpdir(), "sprint-h-scenario9-" + process.pid + ".json");
+  try {
+    var legacyRealHand = ["10S", "JC", "2D"];
+    var legacySession = {
+      matchId: "m-legacy", mode: null, scoringMode: "normal",
+      players: [], room: { code: null, host: true, seats: ["p1", "p2", "p3", "p4"] },
+      dealerId: "p1",
+      round: { number: 1, maxRounds: 18, multiplier: 1, trump: "HEARTS", callerId: "p1", withPlayers: [], estimates: {}, dashCallers: [] },
+      turnId: "p1",
+      hands: { p1: legacyRealHand },
+      dealState: { roundNumber: 1, completed: true, dealtAt: 1700000000000 }, // NO `source` key at all -- this is the point
+      playState: { initialized: false }, biddingState: { initialized: false },
+      teamScores: {}, matchScores: { p1: 0, p2: 0, p3: 0, p4: 0 }, roundHistory: [], winnerIds: [], startedAt: 1700000000000
+    };
+    fs.writeFileSync(storagePath2, JSON.stringify({ estimation_game_session_v1: JSON.stringify(legacySession) }));
+
+    var runLegacyPageLife = function (script) {
+      var full = "" +
+        "global.window = global;\n" +
+        "global.window.addEventListener = function(){};\n" +
+        "var fs = require('fs');\n" +
+        "var STORAGE_FILE = " + JSON.stringify(storagePath2) + ";\n" +
+        "function readStore(){ try { return JSON.parse(fs.readFileSync(STORAGE_FILE, 'utf8')); } catch(e){ return {}; } }\n" +
+        "function writeStore(s){ fs.writeFileSync(STORAGE_FILE, JSON.stringify(s)); }\n" +
+        "global.sessionStorage = {\n" +
+        "  getItem: function(k){ var s = readStore(); return Object.prototype.hasOwnProperty.call(s, k) ? s[k] : null; },\n" +
+        "  setItem: function(k, v){ var s = readStore(); s[k] = String(v); writeStore(s); },\n" +
+        "  removeItem: function(k){ var s = readStore(); delete s[k]; writeStore(s); }\n" +
+        "};\n" +
+        "require(" + JSON.stringify(__REPO_ROOT__ + "/design-ui/engine/session.js") + ");\n" +
+        "var GS = global.GameSession;\n" +
+        script +
+        "\nprocess.stdout.write(JSON.stringify(__RESULT__));\n";
+      var out = childProcess.execFileSync(process.execPath, ["-e", full], { encoding: "utf8" });
+      return JSON.parse(out);
+    };
+
+    var legacyLife = runLegacyPageLife(
+      "var beforeHand = GS.getHand('p1');\n" +
+      "GS.setHandAuthorityMode('firestore');\n" + // the real page's own synchronous, up-front call on this legacy session's first post-deploy load
+      "var afterHand = GS.getHand('p1');\n" +
+      "var __RESULT__ = { beforeHand: beforeHand, afterHand: afterHand };\n"
+    );
+    check("Scenario 9 setup: the hand-authored legacy session (no dealState.source key) loads with its real hand intact before setHandAuthorityMode() runs",
+      JSON.stringify(legacyLife.beforeHand) === JSON.stringify(legacyRealHand), legacyLife);
+    check("Scenario 9 (THE FIX): a legacy session's real, already-completed hand survives its first post-deploy setHandAuthorityMode('firestore') call, even with no dealState.source key ever having existed",
+      JSON.stringify(legacyLife.afterHand) === JSON.stringify(legacyRealHand), legacyLife);
+
+    // Companion case: a legacy session with NO source key AND an
+    // incomplete/empty deal -- nothing real to lose, so this must
+    // still behave like a fresh session (silently fine either way,
+    // no crash on the missing key).
+    var storagePath3 = path.join(os.tmpdir(), "sprint-h-scenario9b-" + process.pid + ".json");
+    var legacyEmptySession = Object.assign({}, legacySession, {
+      hands: {}, dealState: { roundNumber: null, completed: false, dealtAt: null }
+    });
+    fs.writeFileSync(storagePath3, JSON.stringify({ estimation_game_session_v1: JSON.stringify(legacyEmptySession) }));
+    try {
+      var full3 = "" +
+        "global.window = global;\n" +
+        "global.window.addEventListener = function(){};\n" +
+        "var fs = require('fs');\n" +
+        "var STORAGE_FILE = " + JSON.stringify(storagePath3) + ";\n" +
+        "function readStore(){ try { return JSON.parse(fs.readFileSync(STORAGE_FILE, 'utf8')); } catch(e){ return {}; } }\n" +
+        "function writeStore(s){ fs.writeFileSync(STORAGE_FILE, JSON.stringify(s)); }\n" +
+        "global.sessionStorage = {\n" +
+        "  getItem: function(k){ var s = readStore(); return Object.prototype.hasOwnProperty.call(s, k) ? s[k] : null; },\n" +
+        "  setItem: function(k, v){ var s = readStore(); s[k] = String(v); writeStore(s); },\n" +
+        "  removeItem: function(k){ var s = readStore(); delete s[k]; writeStore(s); }\n" +
+        "};\n" +
+        "require(" + JSON.stringify(__REPO_ROOT__ + "/design-ui/engine/session.js") + ");\n" +
+        "var GS = global.GameSession;\n" +
+        "GS.setHandAuthorityMode('firestore');\n" +
+        "var __RESULT__ = { hand: GS.getHand('p1') };\n" +
+        "\nprocess.stdout.write(JSON.stringify(__RESULT__));\n";
+      var out3 = childProcess.execFileSync(process.execPath, ["-e", full3], { encoding: "utf8" });
+      var result3 = JSON.parse(out3);
+      check("Scenario 9 companion: a legacy session with no source key AND no real hand does not crash and stays empty (nothing to lose)",
+        Array.isArray(result3.hand) && result3.hand.length === 0, result3);
+    } finally {
+      try { if (fs.existsSync(storagePath3)) fs.unlinkSync(storagePath3); } catch (e) {}
+    }
+  } finally {
+    try { if (fs.existsSync(storagePath2)) fs.unlinkSync(storagePath2); } catch (e) {}
+  }
+
   console.log("\n=== Sprint H: Remote Hand State / Table Engine Initialization Fix ===\n");
   console.log(pass + " passed, " + fail + " failed");
   if (fail > 0) process.exit(1);
