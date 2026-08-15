@@ -280,6 +280,55 @@ async function run() {
     check("ACT.7 Invalid state transition (round tag mismatch — entry claims round 2, match is on round 1) -> DENIED",
       await assertFails(matchRef(uidA, m + "-7").update({ biddingLog: [actionEntry("p1", 2)], version: 2 }))
         .then(function () { return true; }).catch(function () { return false; }));
+
+    // ────────────────────────────────────────────────────────────
+    // ACT.8-11 (biddingLog Prefix Immutability Fix — mirrors
+    // CARD.8-11 above exactly): real-emulator proof that
+    // isValidBiddingActionSubmission()'s new
+    // `newLog[0:oldLog.size()] == oldLog` prefix-equality check
+    // actually rejects a rewritten/reordered earlier entry, and does
+    // NOT over-reject a legitimate append (with or without prior
+    // history) — the same attack class CARD.8-11 already proved
+    // closed for cardLog, now proved closed for biddingLog too.
+    // ────────────────────────────────────────────────────────────
+    var existingBiddingLog = [
+      actionEntry("p1", 1),
+      actionEntry("p2", 1)
+    ];
+
+    await seed(m + "-8", { biddingLog: existingBiddingLog });
+    check("ACT.8 Rewriting an EARLIER biddingLog entry while appending one valid new entry -> DENIED",
+      await assertFails(matchRef(uidA, m + "-8").update({
+        biddingLog: [
+          { seatId: "p1", actionType: "SubmitDashCallDecision", round: 1, declaredDashCall: false }, // REWRITTEN
+          actionEntry("p2", 1),
+          actionEntry("p1", 1)
+        ],
+        version: 2
+      })).then(function () { return true; }).catch(function () { return false; }));
+
+    await seed(m + "-9", { biddingLog: existingBiddingLog });
+    check("ACT.9 Reordering two earlier entries (same multiset, different sequence) while appending one valid new entry -> DENIED",
+      await assertFails(matchRef(uidA, m + "-9").update({
+        biddingLog: [
+          actionEntry("p2", 1), // SWAPPED
+          actionEntry("p1", 1),
+          actionEntry("p1", 1)
+        ],
+        version: 2
+      })).then(function () { return true; }).catch(function () { return false; }));
+
+    await seed(m + "-10", { biddingLog: existingBiddingLog });
+    check("ACT.10 Legitimate append with an UNCHANGED, non-empty prior history -> ALLOWED (regression: the fix must not over-reject)",
+      await assertSucceeds(matchRef(uidA, m + "-10").update({
+        biddingLog: existingBiddingLog.concat([actionEntry("p1", 1)]),
+        version: 2
+      })).then(function () { return true; }).catch(function () { return false; }));
+
+    await seed(m + "-11", { biddingLog: [] });
+    check("ACT.11 The very FIRST bidding action of a match (oldLog empty) -> ALLOWED (regression: the empty-prefix ternary guard must not itself throw or over-reject)",
+      await assertSucceeds(matchRef(uidA, m + "-11").update({ biddingLog: [actionEntry("p1", 1)], version: 2 }))
+        .then(function () { return true; }).catch(function () { return false; }));
   }
 
   // ══════════════════════════════════════════════════════════════

@@ -705,9 +705,8 @@ service cloud.firestore {
     // `turn` field) — that remains `table-engine.js`'s job, never
     // duplicated in CEL, by this project's own standing policy; (2)
     // `isValidBiddingActionSubmission()`'s analogous `biddingLog`
-    // gap is NOT fixed by this change — it is a separate function,
-    // deliberately out of scope for this fix, and remains exactly as
-    // limited as its own comment below describes.
+    // gap — open at the time this comment was originally written — has
+    // since been closed too, the same way, in its own function below.
     function isValidCardSubmission() {
       let oldData = resource.data;
       let newData = request.resource.data;
@@ -891,17 +890,19 @@ service cloud.firestore {
              && (entry.actionType != 'SubmitConfirmCall' || ('tricks' in entry && 'suit' in entry));
     }
 
-    // HONEST, DOCUMENTED LIMITATION, restated from isValidCardSubmission()'s
-    // own identical one (same CEL expressiveness gap): this function
-    // verifies the log grew by EXACTLY one entry and that the NEW
-    // entry is well-formed and correctly attributed — it does NOT
-    // independently re-verify every EARLIER entry is byte-for-byte
-    // unchanged. See isValidCardSubmission()'s own comment for the full
-    // account; the same residual gap, and the same reasoning for why
-    // client-side `MatchAdapter.applyRemoteBiddingAction()`'s own
-    // version+count gates plus the REAL `bidding-engine.js` engine's
-    // own re-validation of every replayed entry remain the actual,
-    // meaningful protection, applies identically here.
+    // CLOSED (was: HONEST, DOCUMENTED LIMITATION). This function used to
+    // only verify the log grew by EXACTLY one entry and that the NEW
+    // entry was well-formed and correctly attributed, WITHOUT
+    // independently re-verifying every EARLIER entry stayed
+    // byte-for-byte unchanged — the same prefix-rewrite gap R6 closed
+    // for `cardLog` in `isValidCardSubmission()`. This was the second,
+    // deliberately-deferred instance of that exact gap; it is now closed
+    // the same way, reusing the same guarded list-slice check (see the
+    // `oldLog.size() == 0 ? true : ...` line above). Client-side
+    // `MatchAdapter.applyRemoteBiddingAction()`'s own version+count gates
+    // and `bidding-engine.js`'s own re-validation of every replayed entry
+    // remain defense-in-depth, but are no longer the only thing standing
+    // between a seated client and a rewritten bidding history.
     //
     // SECOND HONEST LIMITATION, specific to this function, NOT shared
     // with isValidCardSubmission(): there is deliberately NO
@@ -950,6 +951,15 @@ service cloud.firestore {
              // call ever batches multiple bidding actions into one
              // write — submitBiddingAction() always appends exactly one).
              && newLog.size() == oldLog.size() + 1
+             // Every EARLIER entry must stay byte-for-byte unchanged —
+             // closes the same prefix-rewrite gap R6 closed for
+             // `cardLog` in `isValidCardSubmission()`, reusing the exact
+             // same guarded list-slice technique (itself originally from
+             // `isValidRoundExtension()`). The ternary guard avoids the
+             // real Firestore Rules Emulator's "Index out of bound
+             // error" when slicing a zero-length list on a match's very
+             // first bidding action.
+             && (oldLog.size() == 0 ? true : newLog[0:oldLog.size()] == oldLog)
              // The claimed seat must be real, and the caller must own it
              // ("Player owns seat.") — the same authority
              // isValidBidSubmission()/isValidCardSubmission() each check,

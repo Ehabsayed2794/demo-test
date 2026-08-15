@@ -504,6 +504,15 @@ function isValidBiddingActionSubmission(oldData, newData, requestAuthUid) {
   var newLog = newData.biddingLog || [];
   if (newLog.length !== oldLog.length + 1) return false;
 
+  // biddingLog Prefix Immutability Fix — mirrors isValidCardSubmission()'s
+  // own `newLog[0:oldLog.size()] == oldLog` CEL slice check exactly: every
+  // earlier entry must stay byte-for-byte unchanged and in order.
+  if (oldLog.length > 0) {
+    for (var i = 0; i < oldLog.length; i++) {
+      if (JSON.stringify(newLog[i]) !== JSON.stringify(oldLog[i])) return false;
+    }
+  }
+
   var appended = newLog[newLog.length - 1];
   if (!appended || typeof appended !== "object" || typeof appended.seatId !== "string") return false;
   if (!(appended.seatId in oldData.seats)) return false;
@@ -1782,7 +1791,7 @@ check(
 check(
   "SIMULATED — multiple sequential bidding actions: a second, independent append after the first is ALSO allowed",
   isValidBiddingActionSubmission(
-    Object.assign({}, matchAfterCreate37, { biddingLog: [{ seatId: "p1", actionType: "SubmitDashCallDecision", declaredDashCall: false }], version: 2 }),
+    Object.assign({}, matchAfterCreate37, { biddingLog: [{ seatId: "p1", actionType: "SubmitDashCallDecision", declaredDashCall: false, round: 1 }], version: 2 }),
     Object.assign({}, matchAfterCreate37, {
       biddingLog: [
         { seatId: "p1", actionType: "SubmitDashCallDecision", declaredDashCall: false, round: 1 },
@@ -1986,6 +1995,76 @@ check(
     }),
     "userB"
   ) === false
+);
+
+// ============================================================
+// biddingLog Prefix Immutability Fix — mirrors the cardLog Sprint A.1
+// checks above exactly (see that section's own header comment for the
+// full account of why the old "CEL can't do this" assumption was
+// wrong). isValidBiddingActionSubmission() now applies the identical
+// `newLog[0:oldLog.size()] == oldLog` guarded slice technique to
+// biddingLog.
+// ============================================================
+var biddingPrefixRewriteMatch = Object.assign({}, matchAfterCreate37, {
+  biddingLog: [
+    { seatId: "p1", actionType: "SubmitDashCallDecision", round: 1, declaredDashCall: true },
+    { seatId: "p2", actionType: "SubmitDashCallDecision", round: 1, declaredDashCall: false }
+  ],
+  version: 3
+});
+check(
+  "SIMULATED — biddingLog prefix immutability: rewriting an EARLIER biddingLog entry while still appending exactly one NEW, well-formed entry is REJECTED",
+  isValidBiddingActionSubmission(
+    biddingPrefixRewriteMatch,
+    Object.assign({}, biddingPrefixRewriteMatch, {
+      biddingLog: [
+        { seatId: "p1", actionType: "SubmitDashCallDecision", round: 1, declaredDashCall: false }, // REWRITTEN — was true, now false
+        { seatId: "p2", actionType: "SubmitDashCallDecision", round: 1, declaredDashCall: false },
+        { seatId: "p1", actionType: "SubmitDashCallDecision", round: 1, declaredDashCall: true }
+      ],
+      version: 4
+    }),
+    "userB" // owns p1
+  ) === false
+);
+check(
+  "SIMULATED — biddingLog prefix immutability: REORDERING two earlier entries (same multiset, different sequence) while appending one new entry is REJECTED",
+  isValidBiddingActionSubmission(
+    biddingPrefixRewriteMatch,
+    Object.assign({}, biddingPrefixRewriteMatch, {
+      biddingLog: [
+        { seatId: "p2", actionType: "SubmitDashCallDecision", round: 1, declaredDashCall: false }, // SWAPPED with the entry below
+        { seatId: "p1", actionType: "SubmitDashCallDecision", round: 1, declaredDashCall: true },
+        { seatId: "p1", actionType: "SubmitDashCallDecision", round: 1, declaredDashCall: true }
+      ],
+      version: 4
+    }),
+    "userB"
+  ) === false
+);
+check(
+  "SIMULATED — biddingLog prefix immutability regression: a legitimate append with an UNCHANGED, non-empty prefix is still ALLOWED (the fix does not over-reject)",
+  isValidBiddingActionSubmission(
+    biddingPrefixRewriteMatch,
+    Object.assign({}, biddingPrefixRewriteMatch, {
+      biddingLog: biddingPrefixRewriteMatch.biddingLog.concat([
+        { seatId: "p1", actionType: "SubmitDashCallDecision", round: 1, declaredDashCall: true }
+      ]),
+      version: 4
+    }),
+    "userB"
+  ) === true
+);
+check(
+  "SIMULATED — biddingLog prefix immutability regression: the very FIRST bidding action of a match (oldLog empty) is still ALLOWED — the empty-prefix guard must not itself reject a legitimate first submission",
+  isValidBiddingActionSubmission(
+    matchAfterCreate37,
+    Object.assign({}, matchAfterCreate37, {
+      biddingLog: [{ seatId: "p1", actionType: "SubmitDashCallDecision", round: 1, declaredDashCall: true }],
+      version: 2
+    }),
+    "userB"
+  ) === true
 );
 
 var matchReadyForRoundAdvance = Object.assign({}, matchAfterCreate423_fourSeats, {
