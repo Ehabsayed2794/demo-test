@@ -14,6 +14,13 @@ const __REPO_ROOT__ = path.join(__dirname, "..");
 //      "local" into "firestore" authority (the confirmed root cause of
 //      TableEngine ending up with a fabricated, non-authoritative hand
 //      for every non-local seat — see that function's own comment).
+//      Gated on the PERSISTED `dealState.source` marker, not the
+//      transient `handAuthorityMode` flag — a post-ship code review
+//      found the original flag-only gate wiped a real, already-synced
+//      hand on every ordinary page reload (Scenario 8 below, exercised
+//      via two genuinely separate child processes sharing a
+//      temp-file-backed sessionStorage — a real module/page reload,
+//      not an in-process simulation).
 //   2. table-engine.js's emit(): accepts intent.trusted (set only by
 //      match-adapter.js's applyRemoteCard() for real cardLog replay) to
 //      skip re-deriving follow-suit legality against a seat's own
@@ -289,6 +296,93 @@ function driveFullRound() {
   driveFullRound();
   check("Scenario 7 (no regression): a full local/offline round still plays out to completion (13 tricks) exactly as before this sprint",
     TableEngine.getState().phase === "DONE");
+
+  // ════════════════════════════════════════════════════════════════
+  // SCENARIO 8 — post-ship code review regression: a REAL, already-
+  // synced authoritative hand must survive a genuine page reload, not
+  // just repeated calls within the same page life. `handAuthorityMode`
+  // is deliberately never persisted (a fresh load always redeclares
+  // it -- see its own declaration in session.js), so it resets to
+  // "local" on every reload while sessionStorage-backed
+  // session.hands/dealState survive. The ORIGINAL version of this
+  // sprint's fix gated its wipe on the transient `handAuthorityMode`
+  // flag alone, which reproduced as a real "reload silently discards
+  // your own hand" regression.
+  //
+  // This needs a GENUINE fresh module life, not an in-process
+  // require()/require.cache trick -- this repo's root package.json is
+  // "type":"module", and Node's CJS/ESM ambiguous-syntax detection for
+  // a re-required .js path under that setting is NOT reliably
+  // repeatable within one process (confirmed directly: a second
+  // require() of the same path, after deleting it from
+  // require.cache, non-deterministically returns an empty ES module
+  // namespace object instead of re-running the CommonJS script,
+  // silently losing every global side effect). Two genuinely separate
+  // `node` child processes sharing a temp-file-backed sessionStorage
+  // is both a workaround for that AND a more faithful reproduction of
+  // an actual browser reload (a truly fresh JS environment) than any
+  // in-process simulation could be.
+  // ════════════════════════════════════════════════════════════════
+  var childProcess = require("child_process");
+  var fs = require("fs");
+  var os = require("os");
+  var storagePath = path.join(os.tmpdir(), "sprint-h-scenario8-" + process.pid + ".json");
+
+  function runPageLife(script) {
+    var full = "" +
+      "global.window = global;\n" +
+      "global.window.addEventListener = function(){};\n" +
+      "var fs = require('fs');\n" +
+      "var STORAGE_FILE = " + JSON.stringify(storagePath) + ";\n" +
+      "function readStore(){ try { return JSON.parse(fs.readFileSync(STORAGE_FILE, 'utf8')); } catch(e){ return {}; } }\n" +
+      "function writeStore(s){ fs.writeFileSync(STORAGE_FILE, JSON.stringify(s)); }\n" +
+      "global.sessionStorage = {\n" +
+      "  getItem: function(k){ var s = readStore(); return Object.prototype.hasOwnProperty.call(s, k) ? s[k] : null; },\n" +
+      "  setItem: function(k, v){ var s = readStore(); s[k] = String(v); writeStore(s); },\n" +
+      "  removeItem: function(k){ var s = readStore(); delete s[k]; writeStore(s); }\n" +
+      "};\n" +
+      "require(" + JSON.stringify(__REPO_ROOT__ + "/design-ui/engine/session.js") + ");\n" +
+      "var GS = global.GameSession;\n" +
+      script +
+      "\nprocess.stdout.write(JSON.stringify(__RESULT__));\n";
+    var out = childProcess.execFileSync(process.execPath, ["-e", full], { encoding: "utf8" });
+    return JSON.parse(out);
+  }
+
+  try {
+    if (fs.existsSync(storagePath)) fs.unlinkSync(storagePath);
+
+    // PAGE LIFE 1: reproduce the real Sprint F/H flow -- switch into
+    // firestore mode, then a real hand arrives for p1.
+    var life1 = runPageLife(
+      "var realHand = ['AS','KH','QD'];\n" +
+      "GS.setHandAuthorityMode('firestore');\n" +
+      "GS.setAuthoritativeHand('p1', realHand, 1);\n" +
+      "var __RESULT__ = { hand: GS.getHand('p1') };\n"
+    );
+    check("Scenario 8 setup: p1's real hand is set before the simulated reload (page life 1)",
+      JSON.stringify(life1.hand) === JSON.stringify(["AS", "KH", "QD"]), life1);
+
+    // PAGE LIFE 2 -- a genuinely separate process (fresh
+    // `handAuthorityMode` default, "local"), against the SAME
+    // persisted sessionStorage file: exactly what a real browser
+    // reload of the same tab produces.
+    var life2 = runPageLife(
+      "var beforeMode = GS.getHandAuthorityMode();\n" +
+      "var beforeHand = GS.getHand('p1');\n" +
+      "GS.setHandAuthorityMode('firestore');\n" + // the real page's own synchronous, up-front call, exactly as match/index.html makes it on every load
+      "var afterHand = GS.getHand('p1');\n" +
+      "var __RESULT__ = { beforeMode: beforeMode, beforeHand: beforeHand, afterHand: afterHand };\n"
+    );
+    check("Scenario 8: the reloaded process's hand-authority flag reset to 'local' (the real, unavoidable browser behavior)",
+      life2.beforeMode === "local", life2);
+    check("Scenario 8: the real hand itself DID survive the reload via sessionStorage, before setHandAuthorityMode() runs again",
+      JSON.stringify(life2.beforeHand) === JSON.stringify(["AS", "KH", "QD"]), life2);
+    check("Scenario 8 (THE FIX): p1's already-real, already-synced hand is NOT wiped by the post-reload setHandAuthorityMode('firestore') call",
+      JSON.stringify(life2.afterHand) === JSON.stringify(["AS", "KH", "QD"]), life2);
+  } finally {
+    try { if (fs.existsSync(storagePath)) fs.unlinkSync(storagePath); } catch (e) {}
+  }
 
   console.log("\n=== Sprint H: Remote Hand State / Table Engine Initialization Fix ===\n");
   console.log(pass + " passed, " + fail + " failed");
