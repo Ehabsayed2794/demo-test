@@ -954,10 +954,21 @@
       // Translate the preview's engine-space next SEAT into a
       // Firestore-space next UID via MatchAdapter — the SAME
       // translation direction `uidToSeat()` already establishes this
-      // file is allowed to use, just inverted. `null` (the resolving
-      // boundary — the 4th card of a trick) passes through untouched;
-      // it is never itself the "who's next" answer, so there is
-      // nothing to translate for it.
+      // file is allowed to use, just inverted.
+      //
+      // Sprint I.2 (Turn Authority / Trick-Boundary Fix): `preview.
+      // nextTurnSeat` is no longer ever `null` at the resolving
+      // boundary (the 4th card of a trick) — `TableEngine.previewPlay()`
+      // now returns the REAL trick winner's seat there (see that
+      // function's own comment for how, and why this closes the
+      // permanent `oldData.turn == request.auth.uid` deadlock Sprint I's
+      // forensic report identified: writing `turn: null` left NO write
+      // path that could ever set it back to a real uid). The `!= null`
+      // guard and the `null` initial value below are kept as-is —
+      // defensive, not dead code — so this function still degrades
+      // safely (writes `turn: null`, matching this schema's own
+      // pre-first-card convention) if a future engine change ever
+      // legitimately has no next-seat answer to give.
       var nextTurnUid = null;
       if (preview.nextTurnSeat != null) {
         nextTurnUid = global.MatchAdapter.seatToUid(match, preview.nextTurnSeat);

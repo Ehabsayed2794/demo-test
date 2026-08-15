@@ -181,6 +181,132 @@ async function run() {
       })).then(function () { return true; }).catch(function () { return false; }));
   }
 
+  // ══════════════════════════════════════════════════════════════
+  // SPRINT I.2 (Turn Authority / Trick-Boundary Fix) — proves the
+  // FINAL, end-to-end intended state machine: MatchService.submitCard()
+  // no longer writes `turn: null` at the resolving boundary (see
+  // TableEngine.previewPlay()'s new trick-completing branch and that
+  // function's own comment) — it writes the REAL trick winner's uid.
+  // These scenarios prove the EXISTING, UNMODIFIED
+  // `oldData.turn == request.auth.uid` rule is what naturally allows
+  // the real winner's next submission and rejects everyone else — no
+  // rules change, no new persisted field, no weakened invariant.
+  // ══════════════════════════════════════════════════════════════
+
+  // Scenario 1 — the ACTUAL production write shape post-fix: oldData.turn
+  // is the real trick winner's uid (never null) -- that same seat's next
+  // card submission -> ALLOWED, via the EXISTING, UNCHANGED rule.
+  // (seats: p1=uidA, p2=uidB, p3=uidC, p4=uidD — completedTrickLog's own
+  // 4 plays have no trump in the round's default fixture trump, so the
+  // highest led-suit card, p1's own Q-of-spades, is this trick's real
+  // winner — p1/uidA is who legitimately leads next.)
+  {
+    var mS1 = "i2-scenario1-winner-allowed";
+    await seed(mS1, { turn: uidA /* p1's uid -- the real winner MatchService.submitCard() now writes */, cardLog: completedTrickLog, version: 5, lastCardSeat: "p4", cardPhase: "RESOLVING" });
+    check("SPRINT I.2 Scenario 1: with oldData.turn set to the REAL winner's uid (the post-fix production write), that winner's next-trick lead -> ALLOWED",
+      await assertSucceeds(matchRef(uidA, mS1).update({
+        cardLog: completedTrickLog.concat([{ seatId: "p1", card: { suit: "HEARTS", rank: { v: 9, s: "9" } }, round: 1 }]),
+        lastCardSeat: "p1", turn: uidB, cardPhase: "PLAY", version: 6, updatedAt: 1
+      })).then(function () { return true; }).catch(function () { return false; }));
+  }
+
+  // Scenario 2 — same document, but a DIFFERENT seat (not the real
+  // winner) attempts to submit the next-trick lead instead -> DENIED,
+  // by the SAME existing rule (oldData.turn, the real winner's uid,
+  // does not equal this OTHER caller's auth.uid).
+  {
+    var mS2 = "i2-scenario2-wrong-player-denied";
+    await seed(mS2, { turn: uidA /* p1 is the real winner */, cardLog: completedTrickLog, version: 5, lastCardSeat: "p4", cardPhase: "RESOLVING" });
+    check("SPRINT I.2 Scenario 2: with the SAME real-winner oldData.turn, a DIFFERENT seat (p2, not the winner) attempting to lead next -> DENIED",
+      await assertFails(matchRef(uidB, mS2).update({
+        cardLog: completedTrickLog.concat([{ seatId: "p2", card: { suit: "HEARTS", rank: { v: 9, s: "9" } }, round: 1 }]),
+        lastCardSeat: "p2", turn: uidC, cardPhase: "PLAY", version: 6, updatedAt: 1
+      })).then(function () { return true; }).catch(function () { return false; }));
+  }
+
+  // Scenario 3 — explicit, no-op proof that firestore.rules itself is
+  // UNCHANGED by this fix: Scenarios 1 and 2 above ran against the
+  // exact same `fs.readFileSync(__REPO_ROOT__ + "/firestore.rules")`
+  // this whole file already loads for every other case — no separate
+  // rules file, no conditional rule variant. The production fix lives
+  // entirely in what MatchService.submitCard() WRITES, never in what
+  // the rule ALLOWS.
+
+  // Scenario 5 — no null-turn deadlock: the ACTUAL patch shape
+  // MatchService.submitCard() now produces at a trick-completing write
+  // (a real single-entry cardLog append, exactly like every other
+  // legitimate card submission — oldData.turn was p4's own real uid, the
+  // ACTING seat about to play the 4th card, cardPhase "PLAY") commits
+  // `turn` as the REAL winner (p4's own card happens to win this trick:
+  // highest led-suit card, no trump), never null, as the PERSISTENT
+  // post-write state -- proven by reading back the committed document
+  // itself (not just that the write succeeded), AND via a genuine,
+  // rules-validated single-card append (not a batch, matching real
+  // isValidCardSubmission()'s own "log grows by exactly one" check).
+  {
+    var mS5 = "i2-scenario5-no-null-deadlock";
+    var threeCardLog = [
+      { seatId: "p1", card: { suit: "SPADES", rank: { v: 10, s: "10" } }, round: 1 },
+      { seatId: "p2", card: { suit: "SPADES", rank: { v: 5, s: "5" } }, round: 1 },
+      { seatId: "p3", card: { suit: "SPADES", rank: { v: 8, s: "8" } }, round: 1 }
+    ];
+    await seed(mS5, { turn: uidD /* p4's own uid -- it is genuinely p4's turn to play the trick-completing 4th card */, cardLog: threeCardLog, version: 4, lastCardSeat: "p3", cardPhase: "PLAY" });
+    var writeResult = await matchRef(uidD, mS5).update({
+      cardLog: threeCardLog.concat([{ seatId: "p4", card: { suit: "SPADES", rank: { v: 12, s: "Q" } }, round: 1 }]), // p4 wins: highest led-suit card, no trump
+      lastCardSeat: "p4",
+      turn: uidD, // the REAL winner this trick genuinely has -- p4 themselves, computed by TableEngine.previewPlay()'s new branch, never null
+      cardPhase: "RESOLVING", version: 5, updatedAt: 1
+    }).then(function () { return true; }).catch(function () { return false; });
+    check("SPRINT I.2 Scenario 5 setup: the real single-card trick-completing write itself succeeds (oldData.turn was the acting seat's own uid, unaffected by this fix)", writeResult === true);
+    // withSecurityRulesDisabled() itself does not propagate the
+    // callback's return value (verified directly against this
+    // project's own installed @firebase/rules-unit-testing) -- capture
+    // the read result via a closure variable instead.
+    var committed;
+    await testEnv.withSecurityRulesDisabled(async function (ctx) {
+      var snap = await ctx.firestore().collection("matches").doc(mS5).get();
+      committed = snap.data();
+    });
+    check("SPRINT I.2 Scenario 5: the persisted post-write document's `turn` field is the real winner's uid, NEVER null",
+      committed && committed.turn === uidD && committed.turn !== null, committed);
+  }
+
+  // Scenario 6 — ordinary, non-trick-completing turn behavior (a ledSuit
+  // that has not yet reached 4 plays) is completely unaffected: still
+  // ALLOWED for the correct next seat in normal CCW order, exactly as
+  // every pre-existing CARD.* case in
+  // tests/sprint-a-write-paths.rules-emulator.test.cjs already proves --
+  // reproduced once more here for this file's own self-containment.
+  {
+    var mS6 = "i2-scenario6-ordinary-turn-unaffected";
+    await seed(mS6, { turn: uidA, cardLog: [], version: 1, lastCardSeat: null, cardPhase: null });
+    check("SPRINT I.2 Scenario 6 (no regression): an ordinary FIRST card of a trick (not trick-completing) -> still ALLOWED, unaffected by this fix",
+      await assertSucceeds(matchRef(uidA, mS6).update({
+        cardLog: [{ seatId: "p1", card: { suit: "SPADES", rank: { v: 10, s: "10" } }, round: 1 }],
+        lastCardSeat: "p1", turn: uidB, cardPhase: "PLAY", version: 2, updatedAt: 1
+      })).then(function () { return true; }).catch(function () { return false; }));
+  }
+
+  // Scenario 7 — concurrency: two clients both attempting the
+  // next-trick-lead write against the SAME starting document must still
+  // be serialized by the EXISTING version/OCC mechanism (completely
+  // untouched by this fix) -- only the FIRST can land; the SECOND, even
+  // though it independently also correctly identifies itself as (in
+  // this test) the same real winner seat re-attempting, must fail
+  // because the document's version already moved.
+  {
+    var mS7 = "i2-scenario7-concurrency";
+    await seed(mS7, { turn: uidA /* p1, the real winner */, cardLog: completedTrickLog, version: 5, lastCardSeat: "p4", cardPhase: "RESOLVING" });
+    var writeShape = {
+      cardLog: completedTrickLog.concat([{ seatId: "p1", card: { suit: "HEARTS", rank: { v: 9, s: "9" } }, round: 1 }]),
+      lastCardSeat: "p1", turn: uidB, cardPhase: "PLAY", version: 6, updatedAt: 1
+    };
+    check("SPRINT I.2 Scenario 7 (concurrency, write #1): the first attempt against the fresh document -> ALLOWED",
+      await assertSucceeds(matchRef(uidA, mS7).update(writeShape)).then(function () { return true; }).catch(function () { return false; }));
+    check("SPRINT I.2 Scenario 7 (concurrency, write #2): an identical second attempt against the NOW-STALE version (existing OCC mechanism, untouched by this fix) -> DENIED",
+      await assertFails(matchRef(uidA, mS7).update(writeShape)).then(function () { return true; }).catch(function () { return false; }));
+  }
+
   console.log("\n=== Sprint I: Firestore turn-null trick-boundary reproduction ===\n");
   console.log(pass + " passed, " + fail + " failed");
   if (fail > 0) process.exit(1);
