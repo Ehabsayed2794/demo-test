@@ -227,7 +227,20 @@ var QUEEN_SPADES = { suit: "SPADES", rank: { v: 12, s: "Q" } };
   check("MOCKED — Task 7 req #5: wrong-turn submission rejects NOT_YOUR_TURN with zero writes",
     wrongTurnErr && wrongTurnErr.reason === "NOT_YOUR_TURN" &&
     STORE[key("m-wrong-turn")].version === 1 && STORE[key("m-wrong-turn")].cardLog.length === 0 && STORE[key("m-wrong-turn")].turn === "userB");
-  check("MOCKED — Task 7 req #5: the engine's previewPlay() was never even called for a wrong-turn attempt", fakeEngine._calls.length === 0);
+  // Sprint J.10.9 (Bounded Server-Sourced Reconciliation) intentionally
+  // changes this: a local NOT_YOUR_TURN rejection is no longer
+  // immediately terminal — one bounded, single-flighted server-sourced
+  // reconciliation attempt now runs first (see match-service.js's
+  // refreshFromServerAndReconcile()), which calls previewPlay() again
+  // to re-check card legality against the reconciled engine before
+  // deciding whether to defer to the transaction. previewPlay() being
+  // called is therefore now EXPECTED, not a regression — what matters
+  // (asserted above) is that this still produces zero writes and the
+  // same NOT_YOUR_TURN outcome for a genuinely, non-stale wrong-turn
+  // attempt, via the transaction's own unchanged internal defense-in-
+  // depth check.
+  check("MOCKED — Task 7 req #5 (superseded by Sprint J.10.9): previewPlay() IS now called as part of the bounded reconciliation attempt, but still produces zero writes",
+    fakeEngine._calls.length > 0);
 
   // ============================================================
   // MOCKED — Task 7 req #6/#7: a STALE preview (the document changed

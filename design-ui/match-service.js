@@ -944,6 +944,96 @@
    *     transaction callback alone cannot safely re-validate it; only
    *     a fresh `previewPlay()` call against fresh engine state could,
    *     and this function deliberately does not do that automatically. */
+  // ── Sprint J.10.9 (Bounded Server-Sourced Reconciliation) ─────────
+  // Root cause (J.10.5/J.10.6/J.10.7/J.10.8, SNAPSHOT_ORDERING): the
+  // pre-transaction check below (resolveSeatAndAuthorize()) used to be
+  // a TERMINAL rejection — if this client's own listener-fed local
+  // state (matchDoc.turn read from a cached-or-default get(), and/or
+  // TableEngine's own state) lagged the true server state, submitCard()
+  // returned NOT_YOUR_TURN and NEVER reached db().runTransaction() at
+  // all, even though that transaction's own tx.get() is unconditionally
+  // server-fresh and would have correctly authorized a genuinely
+  // legitimate action.
+  //
+  // Fix (approved architecture, J.10.6, empirically validated J.10.7/
+  // J.10.8): on a local turn rejection, perform exactly ONE bounded,
+  // single-flighted, server-sourced refresh + reconciliation pass
+  // through the EXISTING applyRemoteCard()/applyRemoteTrick() functions
+  // (the same two functions startTrickSync() already alternates,
+  // proven exactly-once/idempotent/order-safe by J.10.8's real-engine
+  // tests) before retrying the local check ONCE. This is deliberately
+  // NOT a listener re-registration (J.10.5 already proved that can be
+  // inert and can leak callbacks) and deliberately does NOT reconcile
+  // from inside a Firestore transaction callback (J.10.8's debugger
+  // review: a transaction's own callback may be silently re-invoked by
+  // the SDK on write-conflict retry, and applyRemoteCard()/
+  // applyRemoteTrick() have global-singleton side effects unsafe to
+  // replay unguarded on such a retry — this reconciliation only ever
+  // runs OUTSIDE any transaction, exactly once per triggering call).
+  //
+  // J.10.8's empirical proof gate found a genuine, reproducible
+  // near-zero-delay race: a client with an ALREADY-ACTIVE listener on
+  // the same document, calling get({source:"server"}) immediately
+  // after another client's concurrent write, returned STALE data in
+  // 4 of 6 trials — closing entirely with a modest ~20ms delay. The
+  // mandatory minimum delay below (applied BEFORE the forced read AND
+  // BEFORE the retry) is the required mitigation for that exact race —
+  // not an arbitrary tuning knob.
+  var SERVER_REFRESH_MIN_DELAY_MS = 25;
+
+  function delayMs(ms) {
+    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+  }
+
+  // Per-matchId single-flight map: N concurrent triggers for the SAME
+  // match collapse into ONE actual server read + reconciliation pass,
+  // all sharing the same Promise. The map entry is deleted the moment
+  // the flight settles (success OR failure) — never permanently
+  // retained, so a LATER, independent trigger always gets a fresh
+  // attempt rather than being starved forever. Never keyed globally
+  // across matches — a stale/slow match must never block another.
+  var pendingServerRefreshByMatch = {};
+
+  /** Performs the bounded reconciliation pass described above for one
+   *  matchId, sharing an in-flight attempt across concurrent callers.
+   *  Resolves with the fresh, server-sourced matchDoc data. Never
+   *  touches any listener/subscription; never runs inside a Firestore
+   *  transaction; reuses the EXISTING applyRemoteCard()/
+   *  applyRemoteTrick() functions and their own existing version/count/
+   *  trick-number registries verbatim — no second version registry,
+   *  no new state-mutation path. */
+  function refreshFromServerAndReconcile(matchId, matchRef) {
+    if (pendingServerRefreshByMatch[matchId]) return pendingServerRefreshByMatch[matchId];
+
+    var flight = delayMs(SERVER_REFRESH_MIN_DELAY_MS)
+      .then(function () { return matchRef.get({ source: "server" }); })
+      .then(function (freshSnap) {
+        if (!freshSnap.exists) return null;
+        var freshMatch = freshSnap.data();
+        // Mirrors startTrickSync()'s own bounded, exactly-once-proven
+        // alternation (design-ui/match-adapter.js) — capped at 13
+        // iterations, the maximum possible tricks in a single round,
+        // never re-invoked here as a listener, only as a one-shot
+        // catch-up pass against this ONE freshly-read document.
+        if (global.MatchAdapter && typeof global.MatchAdapter.applyRemoteCard === "function" &&
+            typeof global.MatchAdapter.applyRemoteTrick === "function") {
+          for (var i = 0; i < 13; i++) {
+            global.MatchAdapter.applyRemoteCard(matchId, freshMatch);
+            var trickResult = global.MatchAdapter.applyRemoteTrick(matchId, freshMatch);
+            if (!trickResult || !trickResult.applied) break;
+          }
+        }
+        return freshMatch;
+      })
+      .then(function (freshMatch) {
+        return delayMs(SERVER_REFRESH_MIN_DELAY_MS).then(function () { return freshMatch; });
+      })
+      .finally(function () { delete pendingServerRefreshByMatch[matchId]; });
+
+    pendingServerRefreshByMatch[matchId] = flight;
+    return flight;
+  }
+
   function submitCard(matchId, card) {
     if (!matchId) return Promise.reject(bidError("INVALID_ARGUMENT", "submitCard: matchId is required."));
     if (!isValidGenericCardValue(card)) {
@@ -990,19 +1080,20 @@
       return seatId;
     }
 
-    return matchRef.get().then(function (snap) {
-      if (!snap.exists) throw bidError("MATCH_NOT_FOUND", "submitCard: match '" + matchId + "' was not found.");
-      var match = snap.data();
-      // Task 1: rejects here — BEFORE runTransaction() is ever called
-      // — for a wrong-turn (or seatless) caller. Zero writes attempted.
-      var seatId = resolveSeatAndAuthorize(match);
-
+    // Sprint J.10.9: the shared "we now have a seatId + a legal preview
+    // + a matchDoc to use as expectedVersion — proceed into the write"
+    // tail, factored so both the immediate-success path and the
+    // post-reconciliation path funnel through the exact same logic
+    // (never two different implementations of "how to write a card").
+    function finishWithPreview(seatId, match) {
       // Task 1/2: asks the REAL, existing TableEngine whether THIS
       // exact play would be accepted, and — if so — what turn/phase
       // follows. Never mutates anything, never calls emit(), never
       // duplicates isLegal()'s own rule. Rejects here — still BEFORE
       // runTransaction() — for an illegal card. Zero writes attempted;
-      // `cardLog` is never touched.
+      // `cardLog` is never touched. CARD LEGALITY IS NEVER BYPASSED:
+      // this is the ONE place that decision is made, on every path,
+      // including the post-reconciliation retry path below.
       var preview = global.TableEngine.previewPlay(seatId, card);
       if (!preview || !preview.legal) {
         throw bidError("ILLEGAL_CARD", "submitCard: table-engine.js rejected this card (" + (preview && preview.reason) + ") — not written.");
@@ -1084,6 +1175,100 @@
             nextTurnSeat: preview.nextTurnSeat, cardPhase: preview.nextPhase
           };
         });
+      });
+    }
+
+    return matchRef.get().then(function (snap) {
+      if (!snap.exists) throw bidError("MATCH_NOT_FOUND", "submitCard: match '" + matchId + "' was not found.");
+      var match = snap.data();
+
+      // Task 1: the ORIGINAL local pre-check — BEFORE runTransaction()
+      // is ever called. Sprint J.10.9: this check is no longer
+      // unconditionally terminal on a turn-authority failure — see
+      // below. A seat-ownership failure (PERMISSION_DENIED — this uid
+      // holds no seat in this match at all) is NOT a staleness
+      // condition and remains immediately terminal, unchanged.
+      var seatId, localAuthError = null;
+      try {
+        seatId = resolveSeatAndAuthorize(match);
+      } catch (e) {
+        localAuthError = e;
+      }
+
+      if (!localAuthError) {
+        return finishWithPreview(seatId, match);
+      }
+      if (localAuthError.reason !== "NOT_YOUR_TURN") {
+        throw localAuthError;
+      }
+
+      // Sprint J.10.9: the local pre-check reports a turn-authority
+      // conflict. Per the approved architecture, this is now ADVISORY,
+      // not terminal — attempt exactly ONE bounded, single-flighted,
+      // server-sourced reconciliation pass, then retry once.
+      return refreshFromServerAndReconcile(matchId, matchRef).then(function (freshMatch) {
+        if (!freshMatch) {
+          // The server-sourced refresh found the document gone —
+          // genuinely terminal, not a staleness condition.
+          throw bidError("MATCH_NOT_FOUND", "submitCard: match '" + matchId + "' was not found.");
+        }
+
+        // Card legality (via previewPlay(), which also encodes
+        // TableEngine's OWN deterministic turn belief — see
+        // canPlayCard()) is re-evaluated against the RECONCILED local
+        // engine and is NEVER bypassed, on any path. This is resolved
+        // via this client's OWN seat, independent of whichever seatId
+        // the original (pre-reconciliation) authorization attempt used.
+        var ownSeatId = global.MatchAdapter.uidToSeat(freshMatch, callingUid);
+        if (!ownSeatId) {
+          throw bidError("PERMISSION_DENIED", "submitCard: you do not own a seat in this match.");
+        }
+
+        var retryAuthError = null;
+        try {
+          resolveSeatAndAuthorize(freshMatch);
+        } catch (e) {
+          retryAuthError = e;
+        }
+
+        if (!retryAuthError) {
+          // Reconciliation resolved the staleness — the fresh doc's
+          // OWN turn field now agrees this seat may act. Proceed
+          // normally, using the confirmed-fresh document.
+          return finishWithPreview(ownSeatId, freshMatch);
+        }
+
+        // The Firestore-field turn check STILL disagrees even after
+        // reconciliation. Before deciding whether this is the
+        // documented "wrong-but-real-seat" edge (matchDoc.turn — a
+        // value some OTHER client's own completing write computed and
+        // persisted, see docs/architecture/SecurityArchitecture.md) or
+        // a genuine, confirmed wrong-turn attempt, consult card
+        // legality (previewPlay(), which also encodes TableEngine's
+        // OWN deterministic turn belief — see canPlayCard()) FIRST.
+        // This never bypasses legality: it is checked here, directly,
+        // before any decision about the transaction is made.
+        var reconciledPreview = global.TableEngine.previewPlay(ownSeatId, card);
+        if (!reconciledPreview || !reconciledPreview.legal) {
+          // Both independent signals (the Firestore turn field AND the
+          // freshly-reconciled local engine) agree this is not a
+          // legitimate action. Preserve the ORIGINAL, more specific
+          // error (typically NOT_YOUR_TURN) rather than relabeling a
+          // confirmed turn-authority rejection as a generic
+          // ILLEGAL_CARD — this keeps the error taxonomy this
+          // codebase's tests/UI already depend on unchanged for the
+          // ordinary (non-stale) wrong-turn case.
+          throw retryAuthError;
+        }
+
+        // The documented "wrong-but-real-seat" edge: the RECONCILED
+        // LOCAL ENGINE independently confirms this exact play is
+        // legal, but the separate Firestore `turn` field still
+        // disagrees. Let the transaction's own tx.get() +
+        // resolveSeatAndAuthorize(freshMatch) be the TRUE terminal
+        // authority (unchanged, below) — never bypassing card
+        // legality, which was just independently reconfirmed above.
+        return finishWithPreview(ownSeatId, freshMatch);
       });
     });
   }
