@@ -397,6 +397,56 @@ async function run() {
       secondAttempt && secondAttempt.message);
   }
 
+  // ══════════════════════════════════════════════════════════════
+  // Test K — Round-crossing staleness (code-review finding, CRITICAL):
+  // the fresh server doc reports a NEWER round than the local engine
+  // has converged to. applyRemoteCard()/applyRemoteTrick() correctly
+  // DEFER on any actual cardLog entry tagged for that newer round
+  // (AWAITING_ROUND_TRANSITION, see Test I), but an EMPTY cardLog (no
+  // entries yet in the new round) never triggers that per-entry
+  // check at all -- so a naive reconciliation could otherwise let
+  // previewPlay() validate a card against the WRONG (stale, previous-
+  // round) engine state while the Firestore turn field genuinely
+  // agrees for the new round. Real engine, real hands.
+  // ══════════════════════════════════════════════════════════════
+  {
+    var leaderSeat = driveRealRoundToPlay(11); // engine converges to round 11 only
+    var refK = FAKE_DB.collection("matches").doc("m-K");
+    STORE[key("m-K")] = Object.assign({
+      roomId: "r", players: Object.values(seats), status: "playing", createdAt: 1,
+      currentRound: 12, maxRounds: 18, extendedRounds: [], dealer: "userA", turn: seats[leaderSeat],
+      seats: seats, version: 1, biddingOpen: false, bids: {}, lastBidSeat: null,
+      cardLog: [], lastCardSeat: null, cardPhase: "PLAY", biddingLog: [],
+      gameState: { initialized: true, dealtRound: 12 }
+    });
+    DOC_VERSION[key("m-K")] = 0;
+    refK.get = function (options) {
+      GET_CALLS.push({ key: refK._key, options: options || null });
+      if (options && options.source === "server") {
+        // TRUE server state: round 12 has genuinely begun, and (the
+        // adversarial edge this test targets) the new round's real
+        // turn HAPPENS to be the same seat that led round 11.
+        return Promise.resolve({ exists: true, data: function () { return Object.assign({}, STORE[key("m-K")]); } });
+      }
+      // This client's own stale local view: still believes round 11
+      // is current and some OTHER seat's turn (triggering the local
+      // pre-check's NOT_YOUR_TURN, entering reconciliation).
+      return Promise.resolve({ exists: true, data: function () { return Object.assign({}, STORE[key("m-K")], { currentRound: 11, turn: otherUid(leaderSeat) }); } });
+    };
+    var origDoc = FAKE_DB.collection;
+    FAKE_DB.collection = function (name) { return { doc: function (id) { return id === "m-K" ? refK : makeMatchRef(id); } }; };
+
+    signInAs(seats[leaderSeat]);
+    var staleHand = global.TableEngine.getState().hands[leaderSeat]; // round-11 hand, NOT round 12's real hand
+    var staleLegalCard = staleHand.filter(function (c) { return global.TableEngine.canPlayCard(leaderSeat, c).legal; })[0];
+    var errK = null, resultK = null;
+    try { resultK = await MatchService.submitCard("m-K", staleLegalCard); } catch (e) { errK = e; }
+    check("K.1: round-crossing staleness -- submission is REJECTED, never authorized against a stale-round engine",
+      errK !== null && resultK === null, resultK ? JSON.stringify(resultK) : (errK && errK.message));
+    check("K.2: no stale-round card was written into the new round's cardLog", STORE[key("m-K")].cardLog.length === 0);
+    FAKE_DB.collection = origDoc;
+  }
+
   console.log("\n=== RESULTS ===\n" + pass + " passed, " + fail + " failed" + (fail ? " (FAILED)" : ""));
   process.exit(fail ? 1 : 0);
 }

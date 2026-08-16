@@ -1213,6 +1213,41 @@
           throw bidError("MATCH_NOT_FOUND", "submitCard: match '" + matchId + "' was not found.");
         }
 
+        // Sprint J.10.9 code-review finding (CRITICAL, fixed before
+        // shipping): refreshFromServerAndReconcile()'s bounded
+        // applyRemoteCard()/applyRemoteTrick() alternation deliberately
+        // mirrors ONLY startTrickSync()'s own per-trick catch-up loop —
+        // it never calls maybeAdvanceRound(), the SEPARATE mechanism
+        // that actually performs a round transition (bidding-engine
+        // re-init, a freshly dealt hand). If this client's local
+        // TableEngine was stale by a FULL ROUND (not just a trick/turn
+        // boundary), applyRemoteCard()/applyRemoteTrick() correctly
+        // DEFER (AWAITING_ROUND_TRANSITION — see
+        // tests/j109-bounded-reconciliation.test.cjs Test I) rather
+        // than converging — meaning `freshMatch` here can be genuinely
+        // fresh (the correct, new-round document) while the LOCAL
+        // engine's own hand/trick-in-progress state (including which
+        // suit currently leads the trick) still reflects the PREVIOUS
+        // round. `resolveSeatAndAuthorize()`
+        // only checks `freshMatch.turn` (a Firestore field, unaffected
+        // by this), so it could WRONGLY appear to pass even though
+        // `previewPlay()` would validate legality against the stale,
+        // wrong-round engine state — the exact "card legality bypassed"
+        // outcome this sprint's own non-negotiable rule forbids. Detect
+        // this explicitly and refuse to trust ANY reconciliation-based
+        // decision (turn OR legality) when the engine's own round
+        // hasn't actually converged to the fresh document's round —
+        // this is not a staleness this bounded, single-round-scoped
+        // reconciliation can resolve safely, so it is NOT retried
+        // further here; the ORIGINAL local rejection is preserved.
+        if (global.TableEngine && typeof global.TableEngine.getState === "function") {
+          var engineState = global.TableEngine.getState();
+          if (engineState && engineState.round != null && freshMatch.currentRound != null &&
+              engineState.round !== freshMatch.currentRound) {
+            throw localAuthError;
+          }
+        }
+
         // Card legality (via previewPlay(), which also encodes
         // TableEngine's OWN deterministic turn belief — see
         // canPlayCard()) is re-evaluated against the RECONCILED local
