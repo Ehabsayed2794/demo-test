@@ -491,11 +491,26 @@ function isValidBiddingActionSubmission(oldData, newData, requestAuthUid) {
   if (requestAuthUid == null) return false;
   if ((oldData.players || []).indexOf(requestAuthUid) === -1) return false;
   if (!("seats" in oldData) || !("biddingLog" in oldData) || !("version" in oldData) || !("currentRound" in oldData)) return false;
+  if (!("bids" in oldData) || !("biddingOpen" in oldData)) return false;
 
-  var allowedChangedKeys = ["biddingLog", "version", "updatedAt"];
-  var changedKeys = Object.keys(newData).filter(function (k) { return JSON.stringify(newData[k]) !== JSON.stringify(oldData[k]); })
+  // Sprint J.7 (Unified Bidding Completion) — 1:1 JS mirror of
+  // firestore.rules' own new touchesBids/touchesRoundStart branches. See
+  // that function's own comment for the full rationale: a
+  // SubmitConfirmCall may ALSO mirror the Caller's own confirmed trick
+  // count into their OWN `bids` slot (closing the Sprint J.4/J.5.2-
+  // confirmed gap), and, on the genuine completion edge, establish
+  // turn/cardPhase using the identical allSeatsNowHaveBids/seat-
+  // membership logic isValidBidSubmission() already uses.
+  var changedKeysRaw = Object.keys(newData).filter(function (k) { return JSON.stringify(newData[k]) !== JSON.stringify(oldData[k]); })
     .concat(Object.keys(oldData).filter(function (k) { return !(k in newData); }));
-  var onlyAllowedKeysChanged = changedKeys.every(function (k) { return allowedChangedKeys.indexOf(k) !== -1; });
+  var touchesBids = changedKeysRaw.indexOf("bids") !== -1;
+  var touchesRoundStart = changedKeysRaw.indexOf("turn") !== -1 || changedKeysRaw.indexOf("cardPhase") !== -1;
+  var allowedChangedKeys = touchesBids
+    ? (touchesRoundStart
+        ? ["biddingLog", "version", "updatedAt", "bids", "biddingOpen", "turn", "cardPhase"]
+        : ["biddingLog", "version", "updatedAt", "bids", "biddingOpen"])
+    : ["biddingLog", "version", "updatedAt"];
+  var onlyAllowedKeysChanged = changedKeysRaw.every(function (k) { return allowedChangedKeys.indexOf(k) !== -1; });
   if (!onlyAllowedKeysChanged) return false;
 
   if (newData.version !== oldData.version + 1) return false;
@@ -517,8 +532,39 @@ function isValidBiddingActionSubmission(oldData, newData, requestAuthUid) {
   if (!appended || typeof appended !== "object" || typeof appended.seatId !== "string") return false;
   if (!(appended.seatId in oldData.seats)) return false;
   if (oldData.seats[appended.seatId] !== requestAuthUid) return false;
+  if (!isValidBiddingActionEntry(appended, oldData.currentRound)) return false;
 
-  return isValidBiddingActionEntry(appended, oldData.currentRound);
+  var allSeatsNowHaveBids = Object.keys(oldData.seats).every(function (s) { return s in newData.bids && newData.bids[s] != null; });
+
+  // Sprint J.7: the ONLY way this write may touch `bids` is a genuine
+  // SubmitConfirmCall persisting the Caller's OWN confirmed estimate
+  // into their OWN (and only their own) bids slot.
+  if (touchesBids) {
+    if (appended.actionType !== "SubmitConfirmCall") return false;
+    if (!(!(appended.seatId in oldData.bids) || oldData.bids[appended.seatId] == null)) return false;
+    if (!(appended.seatId in newData.bids) || newData.bids[appended.seatId] == null) return false;
+    if (!Number.isInteger(newData.bids[appended.seatId])) return false;
+    if (newData.bids[appended.seatId] !== appended.tricks) return false;
+    var bidsChangedKeys = Object.keys(newData.bids).filter(function (k) { return JSON.stringify(newData.bids[k]) !== JSON.stringify((oldData.bids || {})[k]); });
+    if (!(bidsChangedKeys.length === 1 && bidsChangedKeys[0] === appended.seatId)) return false;
+    if (newData.biddingOpen !== !allSeatsNowHaveBids) return false;
+  }
+
+  // Sprint J.7: the SAME round-start completion guard
+  // isValidBidSubmission() already enforces, reused verbatim.
+  if (touchesRoundStart) {
+    if (!touchesBids) return false;
+    if (oldData.turn !== null) return false;
+    if (oldData.cardPhase !== null) return false;
+    if (oldData.biddingOpen !== true) return false;
+    if (newData.biddingOpen !== false) return false;
+    if (!allSeatsNowHaveBids) return false;
+    if (newData.cardPhase !== "PLAY") return false;
+    var seatUids = [oldData.seats.p1, oldData.seats.p2, oldData.seats.p3, oldData.seats.p4].filter(function (u) { return u != null; });
+    if (newData.turn == null || seatUids.indexOf(newData.turn) === -1) return false;
+  }
+
+  return true;
 }
 
 var CARD_SUITS = ["SANS", "SPADES", "HEARTS", "DIAMONDS", "CLUBS"];
@@ -686,8 +732,17 @@ function isValidBidSubmission(oldData, newData, requestAuthUid) {
     if (newData.biddingOpen !== false) return false;
     if (!allSeatsFilled) return false;
     if (newData.cardPhase !== "PLAY") return false;
+    // Sprint J.7 (Seat Membership Security Fix): explicit `newData.turn
+    // == null` rejection, mirroring the real CEL rules' own fix 1:1 —
+    // this JS mirror was already accidentally safe here (filter(u => u
+    // != null) excludes null/undefined absent-seat entries before the
+    // indexOf check), but the real firestore.rules' `.get(seat, null)`
+    // OR-chain was NOT (see that function's own Sprint J.7 comment) —
+    // asserting it explicitly here too keeps the mirror an honest,
+    // non-misleading 1:1 reflection of the hardened real rule, not just
+    // an equivalent-by-coincidence one.
     var seatUids = [oldData.seats.p1, oldData.seats.p2, oldData.seats.p3, oldData.seats.p4].filter(function (u) { return u != null; });
-    if (seatUids.indexOf(newData.turn) === -1) return false;
+    if (newData.turn == null || seatUids.indexOf(newData.turn) === -1) return false;
   }
 
   return true;
@@ -2168,6 +2223,97 @@ check(
       version: 2
     }),
     "userB"
+  ) === true
+);
+
+// ============================================================
+// Sprint J.7 (Unified Bidding Completion + Seat Membership Fix) — 1:1
+// JS mirror checks, verified first against the real Firestore Rules
+// Emulator (tests/sprint-j7-unified-completion.rules-emulator.test.cjs).
+// matchAfterCreate37: a 2-player match, seats p1=userB, p2=userC (per
+// validNewMatch38's own fixture — this project's tests deliberately
+// exercise 2-player matches, not just 4), bids all null, biddingOpen=true.
+// ============================================================
+check(
+  "SIMULATED — J.7: SubmitConfirmCall mirrors caller's own bid into bids[p1], biddingOpen stays true (p2 still missing) — ALLOWED",
+  isValidBiddingActionSubmission(
+    matchAfterCreate37,
+    Object.assign({}, matchAfterCreate37, {
+      biddingLog: [{ seatId: "p1", actionType: "SubmitConfirmCall", tricks: 4, suit: "SPADES", round: 1 }],
+      version: 2, bids: { p1: 4, p2: null }, biddingOpen: true
+    }),
+    "userB"
+  ) === true
+);
+check(
+  "SIMULATED — J.7: p1 (userB) forging a ConfirmCall claiming seatId p2 — DENIED (seat ownership)",
+  isValidBiddingActionSubmission(
+    matchAfterCreate37,
+    Object.assign({}, matchAfterCreate37, {
+      biddingLog: [{ seatId: "p2", actionType: "SubmitConfirmCall", tricks: 4, suit: "SPADES", round: 1 }],
+      version: 2, bids: { p1: null, p2: 4 }
+    }),
+    "userB"
+  ) === false
+);
+check(
+  "SIMULATED — J.7: ConfirmCall smuggling turn/cardPhase while the other seat still has no bid — DENIED (early completion)",
+  isValidBiddingActionSubmission(
+    matchAfterCreate37,
+    Object.assign({}, matchAfterCreate37, {
+      biddingLog: [{ seatId: "p1", actionType: "SubmitConfirmCall", tricks: 4, suit: "SPADES", round: 1 }],
+      version: 2, bids: { p1: 4, p2: null }, biddingOpen: false,
+      turn: "userB", cardPhase: "PLAY"
+    }),
+    "userB"
+  ) === false
+);
+check(
+  "SIMULATED — J.7: ConfirmCall write also touching the OTHER seat's bids entry — DENIED",
+  isValidBiddingActionSubmission(
+    matchAfterCreate37,
+    Object.assign({}, matchAfterCreate37, {
+      biddingLog: [{ seatId: "p1", actionType: "SubmitConfirmCall", tricks: 4, suit: "SPADES", round: 1 }],
+      version: 2, bids: { p1: 4, p2: 9 }
+    }),
+    "userB"
+  ) === false
+);
+check(
+  "SIMULATED — J.7: an ordinary SubmitDashCallDecision cannot smuggle a bids write — DENIED",
+  isValidBiddingActionSubmission(
+    matchAfterCreate37,
+    Object.assign({}, matchAfterCreate37, {
+      biddingLog: [{ seatId: "p1", actionType: "SubmitDashCallDecision", declaredDashCall: false, round: 1 }],
+      version: 2, bids: { p1: 4, p2: null }
+    }),
+    "userB"
+  ) === false
+);
+
+// J.7 seat-membership fix, exercised via isValidBidSubmission()'s own
+// completion branch for a 2-player match (absent p3/p4 must never
+// satisfy the turn-membership check via a `null` default). Overrides
+// turn/cardPhase to null explicitly — matchAfterCreate37's own turn
+// ("userB") reflects MATCH CREATION, not the post-round-advance
+// turn:null/cardPhase:null state this branch actually governs.
+var matchJ7TwoPlayer = Object.assign({}, matchAfterCreate37, {
+  bids: { p1: 4, p2: null }, turn: null, cardPhase: null
+});
+check(
+  "SIMULATED — J.7: 2-player genuine completion with turn:null — DENIED",
+  isValidBidSubmission(
+    matchJ7TwoPlayer,
+    Object.assign({}, matchJ7TwoPlayer, { bids: { p1: 4, p2: 3 }, biddingOpen: false, version: 2, lastBidSeat: "p2", turn: null, cardPhase: "PLAY" }),
+    "userC"
+  ) === false
+);
+check(
+  "SIMULATED — J.7: 2-player genuine completion with a legitimate occupied leader (p1) — ALLOWED",
+  isValidBidSubmission(
+    matchJ7TwoPlayer,
+    Object.assign({}, matchJ7TwoPlayer, { bids: { p1: 4, p2: 3 }, biddingOpen: false, version: 2, lastBidSeat: "p2", turn: "userB", cardPhase: "PLAY" }),
+    "userC"
   ) === true
 );
 

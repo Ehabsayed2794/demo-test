@@ -775,7 +775,24 @@
         // already asks MatchAdapter/TableEngine instead of answering
         // itself (see submitCard()'s own uidToSeat()/seatToUid()/
         // TableEngine.previewPlay() calls for the same pattern).
-        if (allSubmitted && global.MatchAdapter && typeof global.MatchAdapter.computeRoundStartLeaderUid === "function") {
+        // Sprint J.7 (Post-Implementation Review fix): the round-start
+        // guard in firestore.rules only ever allows this branch when
+        // `oldData.turn == null && oldData.cardPhase == null` — i.e.
+        // strictly the post-advanceToNextRound() state, never Round 1
+        // (whose `turn` is a REAL dealer uid from buildInitialMatchDoc(),
+        // never null). Before this fix, `allSubmitted` could never
+        // become true for Round 1 anyway (the Caller's bid was never
+        // persisted — see Sprint J.4/J.5.2), so this branch's own missing
+        // `match.turn == null` guard was dormant, dead code. Fixing THAT
+        // gap (this sprint) makes `allSubmitted` reachable for Round 1
+        // too, which immediately exposed this pre-existing omission: a
+        // real 4-client E2E run discovered Round 1's own completing
+        // estimate now attempts a `turn`/`cardPhase` write Rules
+        // correctly reject (since Round 1 never satisfies `oldData.turn
+        // == null`) — a real regression, not a separate issue, fixed
+        // here rather than deferred.
+        if (allSubmitted && match.turn == null && match.cardPhase == null &&
+            global.MatchAdapter && typeof global.MatchAdapter.computeRoundStartLeaderUid === "function") {
           var leaderUid = global.MatchAdapter.computeRoundStartLeaderUid(match);
           if (leaderUid) {
             patch.turn = leaderUid;
@@ -1295,6 +1312,59 @@
             version: nextVersion,
             updatedAt: serverTimestamp()
           };
+          // Sprint J.7 (Unified Bidding Completion): a SubmitConfirmCall
+          // is the ONE moment the Caller's own confirmed trick count
+          // becomes known — but until now nothing ever mirrored it into
+          // the Firestore `bids` map (bidding-engine.js's own ESTIMATES
+          // routing deliberately SKIPS the Caller, since their bid
+          // already exists in LOCAL engine state — see
+          // SubmitConfirmCall's own handler). That gap is exactly why
+          // `allSeatsNowHaveBids` (Sprint J.3) could never become true
+          // for the dominant, real-caller path — see Sprint J.4/J.5.2's
+          // forensic reports. Fixed at the SOURCE: write the SAME value
+          // already being appended to `biddingLog` into this seat's OWN
+          // `bids` slot, in the SAME transaction — reusing
+          // `submitBid()`'s existing schema (a plain int 0-13) and
+          // seat-ownership model exactly, never a second representation
+          // of "the Caller's bid." Deliberately does NOT introduce a
+          // `callerId` field (Sprint J.6 adversarial review rejected
+          // that: a durable authority field derived from THIS write path
+          // is forgeable, since isValidBiddingActionSubmission() has no
+          // subPhase/turn check by design — see that review's Attack C).
+          if (action.actionType === "SubmitConfirmCall" &&
+              (!(freshSeatId in freshMatch.bids) || freshMatch.bids[freshSeatId] == null)) {
+            var bids = Object.assign({}, freshMatch.bids);
+            bids[freshSeatId] = action.tricks;
+            patch.bids = bids;
+            var seatIds = Object.keys(freshMatch.seats || {});
+            var allSubmitted = seatIds.length > 0 && seatIds.every(function (s) { return bids[s] != null; });
+            patch.biddingOpen = !allSubmitted;
+            // Mirrors submitBid()'s own round-start completion write
+            // VERBATIM (not a second implementation) for the rare/
+            // adversarial case where THIS write happens to be the one
+            // that completes bidding — e.g. an out-of-order Estimate
+            // landing before Confirm, or a fast-round Super Call where
+            // every seat already had a bid before Confirm. See
+            // MatchService.submitBid()'s own identical block for the
+            // full rationale and its own honestly-documented limitation
+            // (structural-seat-only turn verification; a fast round's
+            // TRUE leader may not yet be resolvable from local
+            // GameSession state at this exact write instant — a
+            // pre-existing, separately-tracked gap, not introduced or
+            // fixed by this sprint).
+            // Sprint J.7 (Post-Implementation Review fix): same
+            // `match.turn == null` guard added to submitBid()'s own
+            // block above, for the identical reason — see that block's
+            // comment for the full account.
+            if (allSubmitted && freshMatch.turn == null && freshMatch.cardPhase == null &&
+                global.MatchAdapter && typeof global.MatchAdapter.computeRoundStartLeaderUid === "function") {
+              var leaderUid = global.MatchAdapter.computeRoundStartLeaderUid(freshMatch);
+              if (leaderUid) {
+                patch.turn = leaderUid;
+                patch.cardPhase = "PLAY";
+              }
+            }
+          }
           tx.update(matchRef, patch);
           return {
             matchId: matchId, seatId: freshSeatId, actionType: action.actionType,

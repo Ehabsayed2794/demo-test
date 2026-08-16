@@ -576,27 +576,41 @@ service cloud.firestore {
       // the Sprint J.1/J.2 architecture review + adversarial pass this
       // fix's own design was built and re-checked against).
       //
-      // IMPORTANT, HONEST SCOPE NOTE: this closes the DOMINANT
-      // completion path only — Estimates-phase completion via THIS
-      // function, which is how every round with a real Auction/Confirm
-      // winner ends. A direct trace of bidding-engine.js during this
-      // sprint found the DASH-phase's own "all four Dash-Called, direct
-      // to DONE" branch is unreachable in practice (MAX_DASH_CALLS = 2
-      // caps the count of DASHCALL-typed bids at 2, so `active.length
-      // === 0` — the condition that branch requires — can never be
-      // true) — so it does NOT need an equivalent fix. However, the
-      // FAST-ROUND "Super Call" case (`SubmitConfirmCall` transitioning
-      // directly to subPhase "DONE" without ever entering ESTIMATES —
-      // see bidding-engine.js's own `state.noSuitConstraint` branch)
-      // completes via `biddingLog`/`isValidBiddingActionSubmission()`
-      // instead of this function, and is DELIBERATELY NOT covered by
-      // this fix — distinguishing a true Super-Call-completing Confirm
-      // from an ordinary one in Rules would require inspecting whether
-      // every seat already has a non-Dash bid on record, a materially
-      // more complex, less-bounded check than this function's own
-      // `biddingOpen` true->false edge. Left as an explicitly documented,
-      // deferred residual gap rather than rushed — see this sprint's own
-      // Final Report for the full account.
+      // UPDATED (Sprint J.7 — Unified Bidding Completion): Sprint J.4/
+      // J.5.2's forensic reports proved the ORIGINAL premise behind
+      // `allSeatsNowHaveBids` was false — the Caller's own bid was never
+      // persisted here at all (bidding-engine.js's ESTIMATES routing
+      // skips the Caller, since their bid already exists in LOCAL engine
+      // state). Fixed at the source: `MatchService.submitBiddingAction()`
+      // now mirrors the Caller's confirmed trick count into their own
+      // `bids` slot the moment a `SubmitConfirmCall` is accepted (see
+      // that function's own Sprint J.7 comment) — so `allSeatsNowHaveBids`
+      // is now a CORRECT signal for the dominant real-caller path. The
+      // DASH-phase "all four Dash-Called" branch remains confirmed
+      // unreachable (MAX_DASH_CALLS = 2 — re-verified directly during
+      // Sprint J.5.2/J.6). The FAST-ROUND "Super Call" case was traced
+      // precisely during J.7's implementation: unlike the normal-caller
+      // path, a fast round's Super Caller's `bids` entry is ALREADY
+      // populated (from their own earlier, ordinary Final Estimate —
+      // fast rounds route EVERY seat through Estimates, nobody is
+      // pre-skipped) by the time their `SubmitConfirmCall` lands — so
+      // THIS function's own existing completion branch already fires
+      // (imperfectly — see the still-open gap below) on the 4th ordinary
+      // Estimate, and the subsequent Super-Call Confirm is correctly
+      // treated as an ordinary `biddingLog`-only append by
+      // `isValidBiddingActionSubmission()`'s new guard (it detects
+      // `bids[seat]` already non-null and skips the bids/turn/cardPhase
+      // patch entirely — see that function's own comment). HONEST,
+      // STILL-OPEN GAP (found during J.7, not fixed by it, deliberately
+      // not rushed): a fast round's TRUE first-trick leader may not be
+      // resolvable from local `GameSession` state at the exact instant a
+      // completing write's transaction runs, since no prior biddingLog
+      // event establishes it
+      // the way a normal round's Confirm does before Estimates begins —
+      // this is a PRE-EXISTING timing gap in how `computeRoundStartLeaderUid()`
+      // is invoked (present since Sprint J.3, never exercised by any E2E
+      // run reaching round 14+ until now) and is tracked as a SEPARATE,
+      // still-open issue, not a regression introduced by this sprint.
       let touchesRoundStart = ('turn' in newData.diff(oldData).affectedKeys()) || ('cardPhase' in newData.diff(oldData).affectedKeys());
       return
              // "Authenticated."
@@ -733,11 +747,35 @@ service cloud.firestore {
                   && newData.biddingOpen == false
                   && allSeatsNowHaveBids
                   && newData.cardPhase == "PLAY"
+                  // Sprint J.7 (Seat Membership Security Fix): the
+                  // PREVIOUS version of this check compared `newData.turn`
+                  // against `oldData.seats.get('pN', null)` for every
+                  // fixed seat name — but `buildSeatMap()` (match-service.js)
+                  // OMITS absent seats entirely for a 2- or 3-player match
+                  // (confirmed directly: a 2-player match's `seats` map
+                  // has ONLY 'p1'/'p2' keys; 'p3'/'p4' are not present at
+                  // all, never stored as an explicit null). `.get(key,
+                  // null)` therefore returned `null` for an absent seat,
+                  // and `newData.turn == null` could satisfy that OR-term
+                  // — recreating, via a hand-crafted write, the exact
+                  // permanent `turn == null` deadlock this entire sprint
+                  // exists to close, for the very match sizes this
+                  // codebase explicitly supports (found by Sprint J.5.1's
+                  // targeted re-review; confirmed here by tracing
+                  // buildSeatMap()'s own documented behavior). Fixed by
+                  // requiring EACH seat to actually be a key of
+                  // `oldData.seats` before comparing against it — an
+                  // absent seat can never contribute a matching term, so
+                  // `newData.turn == null` can never satisfy any of them,
+                  // for 2-, 3-, or 4-player matches alike. `newData.turn
+                  // != null` is also asserted directly, defense-in-depth,
+                  // rather than relying on the OR-chain alone.
+                  && newData.turn != null
                   && (
-                       newData.turn == oldData.seats.get('p1', null)
-                       || newData.turn == oldData.seats.get('p2', null)
-                       || newData.turn == oldData.seats.get('p3', null)
-                       || newData.turn == oldData.seats.get('p4', null)
+                       ('p1' in oldData.seats && newData.turn == oldData.seats['p1'])
+                       || ('p2' in oldData.seats && newData.turn == oldData.seats['p2'])
+                       || ('p3' in oldData.seats && newData.turn == oldData.seats['p3'])
+                       || ('p4' in oldData.seats && newData.turn == oldData.seats['p4'])
                      )
                 ));
     }
@@ -1033,6 +1071,25 @@ service cloud.firestore {
       let oldLog = oldData.biddingLog;
       let newLog = newData.biddingLog;
       let appended = newLog[newLog.size() - 1];
+      // Sprint J.7 (Unified Bidding Completion): whether THIS write also
+      // claims the Caller's own `bids` slot — the ONLY legitimate reason
+      // is a genuine SubmitConfirmCall mirroring its own confirmed trick
+      // count into Firestore (see MatchService.submitBiddingAction()'s
+      // own comment). Deliberately reuses `isValidBidSubmission()`'s
+      // EXACT `allSeatsNowHaveBids` shape rather than inventing a second
+      // completion authority (see Sprint J.6's adversarial review for
+      // why a NEW durable field, e.g. `callerId`, was rejected instead).
+      let touchesBids = ('bids' in newData.diff(oldData).affectedKeys());
+      let touchesRoundStart = ('turn' in newData.diff(oldData).affectedKeys()) || ('cardPhase' in newData.diff(oldData).affectedKeys());
+      // Sprint J.7: identical shape to isValidBidSubmission()'s own
+      // p1HasBid/.../allSeatsNowHaveBids, collapsed into one expression
+      // here (rather than 4 more `let`s) — this function is already at
+      // the compiler's own per-function variable-count ceiling.
+      let allSeatsNowHaveBids =
+        (oldData.seats.get('p1', null) == null || (('p1' in newData.bids) && newData.bids['p1'] != null))
+        && (oldData.seats.get('p2', null) == null || (('p2' in newData.bids) && newData.bids['p2'] != null))
+        && (oldData.seats.get('p3', null) == null || (('p3' in newData.bids) && newData.bids['p3'] != null))
+        && (oldData.seats.get('p4', null) == null || (('p4' in newData.bids) && newData.bids['p4'] != null));
       return
              // "Authenticated."
              request.auth != null
@@ -1041,11 +1098,23 @@ service cloud.firestore {
              // Every match created since Sprint 3.7 has this field (see
              // isValidNewMatch() above) — guards against a pre-Sprint-3.7
              // document shape reaching this rule. Round Lifecycle
-             // sprint: added 'currentRound', read below.
+             // sprint: added 'currentRound', read below. Sprint J.7:
+             // added 'bids'/'biddingOpen' — every match has always had
+             // these too (Sprint 3.8), re-checked here defensively now
+             // that this function can read/write them.
              && 'seats' in oldData && 'biddingLog' in oldData && 'version' in oldData && 'currentRound' in oldData
-             // "Reject every other write." — only these THREE fields
-             // may ever change via this rule.
-             && newData.diff(oldData).affectedKeys().hasOnly(['biddingLog', 'version', 'updatedAt'])
+             && 'bids' in oldData && 'biddingOpen' in oldData
+             // "Reject every other write." — only `biddingLog` ordinarily
+             // changes via this rule; `bids`/`biddingOpen` (and, on the
+             // genuine completion edge, `turn`/`cardPhase`) may ALSO
+             // change, but ONLY together with a qualifying
+             // SubmitConfirmCall — enforced by the guarded clauses below,
+             // never by this allowlist alone.
+             && (touchesBids
+                  ? (touchesRoundStart
+                      ? newData.diff(oldData).affectedKeys().hasOnly(['biddingLog', 'version', 'updatedAt', 'bids', 'biddingOpen', 'turn', 'cardPhase'])
+                      : newData.diff(oldData).affectedKeys().hasOnly(['biddingLog', 'version', 'updatedAt', 'bids', 'biddingOpen']))
+                  : newData.diff(oldData).affectedKeys().hasOnly(['biddingLog', 'version', 'updatedAt']))
              // "Version increments correctly." — identical guarantee to
              // isValidBidSubmission()'s/isValidCardSubmission()'s own,
              // on the SAME shared `version` counter.
@@ -1074,7 +1143,50 @@ service cloud.firestore {
              && oldData.seats[appended.seatId] == request.auth.uid
              // The newly-appended entry is well-formed, INCLUDING being
              // tagged with the current authoritative round.
-             && isValidBiddingActionEntry(appended, oldData.currentRound);
+             && isValidBiddingActionEntry(appended, oldData.currentRound)
+             // Sprint J.7: the ONLY way this write may touch `bids` is a
+             // genuine SubmitConfirmCall persisting the Caller's OWN
+             // confirmed estimate into their OWN (and only their own)
+             // bids slot — the identical seat-ownership/one-time-write/
+             // range/other-seats-untouched guarantees
+             // isValidBidSubmission() already enforces for every
+             // ordinary bid, reused verbatim rather than inventing a
+             // parallel bid-authority model for the Caller.
+             && (!touchesBids || (
+                  appended.actionType == 'SubmitConfirmCall'
+                  && (!(appended.seatId in oldData.bids) || oldData.bids[appended.seatId] == null)
+                  && appended.seatId in newData.bids && newData.bids[appended.seatId] != null
+                  && newData.bids[appended.seatId] is int
+                  && newData.bids[appended.seatId] == appended.tricks
+                  && newData.bids.diff(oldData.bids).affectedKeys().hasOnly([appended.seatId])
+                  && newData.biddingOpen == !allSeatsNowHaveBids
+                ))
+             // Sprint J.7: the SAME round-start completion guard
+             // isValidBidSubmission() already enforces, reused verbatim
+             // for the rare/adversarial case where a SubmitConfirmCall
+             // happens to be the write that completes bidding (an
+             // out-of-order Estimate landing before Confirm, or a
+             // fast-round Super Call where every real seat already had a
+             // bid before Confirm). See that function's own comment for
+             // the full rationale, the HONEST STILL-OPEN GAP this does
+             // NOT fix (fast-round leader-timing), and the seat-
+             // membership fix reused identically here.
+             && (!touchesRoundStart || (
+                  touchesBids
+                  && oldData.turn == null
+                  && oldData.cardPhase == null
+                  && oldData.biddingOpen == true
+                  && newData.biddingOpen == false
+                  && allSeatsNowHaveBids
+                  && newData.cardPhase == "PLAY"
+                  && newData.turn != null
+                  && (
+                       ('p1' in oldData.seats && newData.turn == oldData.seats['p1'])
+                       || ('p2' in oldData.seats && newData.turn == oldData.seats['p2'])
+                       || ('p3' in oldData.seats && newData.turn == oldData.seats['p3'])
+                       || ('p4' in oldData.seats && newData.turn == oldData.seats['p4'])
+                     )
+                ));
     }
 
     // Round Lifecycle sprint — the fourth, and only other, legitimate
