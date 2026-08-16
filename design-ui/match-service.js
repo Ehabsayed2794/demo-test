@@ -743,6 +743,45 @@
           lastBidSeat: seatId,
           updatedAt: serverTimestamp()
         };
+        // Sprint J.3 (Hardened Round-Start Turn Authority): this
+        // Estimates-phase write is the REAL bidding-completion edge for
+        // the dominant (someone-called) case — the ONLY thing
+        // `advanceToNextRound()` ever wrote for `turn`/`cardPhase` was
+        // `null`/`null`, with no write path back to a real value (see
+        // Sprint J/J.1/J.2's forensic report and architecture review).
+        // When THIS write is the one that makes every real seat's bid
+        // present (`allSubmitted`), it ALSO establishes the real
+        // first-trick leader — reusing the EXACT SAME formula
+        // table-engine.js's own buildRoundCfg() already uses
+        // (round callerId, else current turn, else dealer -- see
+        // MatchAdapter.computeRoundStartLeaderUid()'s own comment for
+        // the precise formula) rather than inventing a second source
+        // of truth. By the time Estimates begins, a real Confirm has
+        // always already happened
+        // (Estimates-phase entry requires a caller — see bidding-engine.js;
+        // the only way to reach subPhase DONE with no caller is the
+        // DASH-phase's own direct-to-DONE branch, which never reaches
+        // this function at all), so `round.callerId` is expected to
+        // already be set correctly and truthfully — the dealer/turn
+        // fallback exists only as the same defensive belt-and-braces
+        // buildRoundCfg() itself already applies, never assumed to be
+        // the common case here.
+        // This file stays a pure Firestore-facing service with ZERO
+        // direct GameSession/engine reference (an established layering
+        // this project enforces via tests/turn-sync.test.cjs's own
+        // "adapter isolation" check) — the actual leaderId computation
+        // is brokered through MatchAdapter.computeRoundStartLeaderUid(),
+        // exactly like every other engine-state question this file
+        // already asks MatchAdapter/TableEngine instead of answering
+        // itself (see submitCard()'s own uidToSeat()/seatToUid()/
+        // TableEngine.previewPlay() calls for the same pattern).
+        if (allSubmitted && global.MatchAdapter && typeof global.MatchAdapter.computeRoundStartLeaderUid === "function") {
+          var leaderUid = global.MatchAdapter.computeRoundStartLeaderUid(match);
+          if (leaderUid) {
+            patch.turn = leaderUid;
+            patch.cardPhase = "PLAY";
+          }
+        }
         tx.update(matchRef, patch);
         return { matchId: matchId, seatId: seatId, bid: bid, version: nextVersion, biddingOpen: !allSubmitted, allSubmitted: allSubmitted };
       });

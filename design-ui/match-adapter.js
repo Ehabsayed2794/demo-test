@@ -366,6 +366,33 @@
     return Object.prototype.hasOwnProperty.call(matchDoc.seats, seatId) ? matchDoc.seats[seatId] : null;
   }
 
+  /** Sprint J.3 (Hardened Round-Start Turn Authority): the ONE place
+   *  that reads GameSession's own bidding-outcome state to compute the
+   *  real first-trick leader for a round that is genuinely about to
+   *  complete bidding — reuses the EXACT SAME formula table-engine.js's
+   *  own buildRoundCfg() already uses (`r.callerId || GameSession.
+   *  getTurn() || GameSession.getDealer()`), never a second, divergent
+   *  source of truth. Deliberately lives HERE, not in match-service.js:
+   *  this project's own established layering keeps match-service.js as
+   *  a pure Firestore-facing service with ZERO direct GameSession
+   *  reference (enforced by tests/turn-sync.test.cjs's own "adapter
+   *  isolation" check) — any client-engine-state read match-service.js
+   *  needs must be brokered through this adapter, exactly like
+   *  `uidToSeat()`/`seatToUid()`/`assertLocalTurn()` already are for
+   *  seat/turn-authority questions. Returns `null` (never throws) if
+   *  GameSession is unavailable or no real leader seat can be
+   *  determined — the caller (submitBid()) treats a `null` result as
+   *  "do not attempt to establish turn/cardPhase on this write," the
+   *  same safe default as before this sprint. */
+  function computeRoundStartLeaderUid(matchDoc) {
+    if (!global.GameSession) return null;
+    var round = (typeof global.GameSession.getRound === "function") ? global.GameSession.getRound() : null;
+    var leaderSeat = (round && round.callerId)
+      || (typeof global.GameSession.getTurn === "function" ? global.GameSession.getTurn() : null)
+      || (typeof global.GameSession.getDealer === "function" ? global.GameSession.getDealer() : null);
+    return leaderSeat ? seatToUid(matchDoc, leaderSeat) : null;
+  }
+
   /** seat -> a MINIMAL player identity descriptor: `{ seatId, uid }`.
    *  Deliberately NOT the engine's rich mock-player shape (name,
    *  isAI, rank, coins, ... — see session.js's mockPlayers()) — that
@@ -2255,6 +2282,7 @@
   global.MatchAdapter = {
     uidToSeat: uidToSeat,
     seatToUid: seatToUid,
+    computeRoundStartLeaderUid: computeRoundStartLeaderUid,
     seatToPlayer: seatToPlayer,
     playerToSeat: playerToSeat,
     matchDocToEngineSnapshot: matchDocToEngineSnapshot,

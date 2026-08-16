@@ -639,10 +639,19 @@ function isValidBidSubmission(oldData, newData, requestAuthUid) {
   if ((oldData.players || []).indexOf(requestAuthUid) === -1) return false;
   if (!("seats" in oldData) || !("bids" in oldData) || !("version" in oldData) || !("biddingOpen" in oldData)) return false;
 
-  var allowedChangedKeys = ["bids", "biddingOpen", "version", "lastBidSeat", "updatedAt"];
-  var changedKeys = Object.keys(newData).filter(function (k) { return JSON.stringify(newData[k]) !== JSON.stringify(oldData[k]); })
+  // Sprint J.3 (Hardened Round-Start Turn Authority) — 1:1 JS mirror of
+  // firestore.rules' own new touchesRoundStart branch. See that
+  // function's own comment for the full rationale (closes the
+  // advanceToNextRound() turn:null/cardPhase:null dead end for the
+  // Estimates-completion path, without letting an ordinary/intermediate
+  // bid touch turn/cardPhase at all).
+  var changedKeysRaw = Object.keys(newData).filter(function (k) { return JSON.stringify(newData[k]) !== JSON.stringify(oldData[k]); })
     .concat(Object.keys(oldData).filter(function (k) { return !(k in newData); }));
-  var onlyAllowedKeysChanged = changedKeys.every(function (k) { return allowedChangedKeys.indexOf(k) !== -1; });
+  var touchesRoundStart = changedKeysRaw.indexOf("turn") !== -1 || changedKeysRaw.indexOf("cardPhase") !== -1;
+  var allowedChangedKeys = touchesRoundStart
+    ? ["bids", "biddingOpen", "version", "lastBidSeat", "updatedAt", "turn", "cardPhase"]
+    : ["bids", "biddingOpen", "version", "lastBidSeat", "updatedAt"];
+  var onlyAllowedKeysChanged = changedKeysRaw.every(function (k) { return allowedChangedKeys.indexOf(k) !== -1; });
   if (!onlyAllowedKeysChanged) return false;
 
   if (newData.version !== oldData.version + 1) return false;
@@ -668,6 +677,18 @@ function isValidBidSubmission(oldData, newData, requestAuthUid) {
 
   var allSeatsFilled = Object.keys(oldData.seats).every(function (s) { return s in newData.bids && newData.bids[s] != null; });
   if (newData.biddingOpen !== !allSeatsFilled) return false;
+
+  // Sprint J.3 — the round-start guard, mirrored 1:1 from firestore.rules.
+  if (touchesRoundStart) {
+    if (oldData.turn !== null) return false;
+    if (oldData.cardPhase !== null) return false;
+    if (oldData.biddingOpen !== true) return false;
+    if (newData.biddingOpen !== false) return false;
+    if (!allSeatsFilled) return false;
+    if (newData.cardPhase !== "PLAY") return false;
+    var seatUids = [oldData.seats.p1, oldData.seats.p2, oldData.seats.p3, oldData.seats.p4].filter(function (u) { return u != null; });
+    if (seatUids.indexOf(newData.turn) === -1) return false;
+  }
 
   return true;
 }
@@ -1318,6 +1339,89 @@ check(
     Object.assign({}, matchAfterCreate38, { bids: { p1: 4, p2: null }, version: 2, lastBidSeat: "p1" }),
     "userZ"
   ) === false
+);
+
+// ────────────────────────────────────────────────────────────────
+// Sprint J.3 (Hardened Round-Start Turn Authority) — a 4-seat fixture
+// sitting in the exact "post-advanceToNextRound(), mid-Estimates"
+// state this fix targets: turn/cardPhase both null (the real dead-end
+// state Sprint J's forensic report identified), 3 of 4 seats already
+// estimated, biddingOpen still true.
+// ────────────────────────────────────────────────────────────────
+var roundStartBase = Object.assign({}, matchAfterCreate38, {
+  players: ["userB", "userC", "userD", "userE"],
+  seats: { p1: "userB", p2: "userC", p3: "userD", p4: "userE" },
+  bids: { p1: 4, p2: 3, p3: 2, p4: null },
+  biddingOpen: true, version: 10, turn: null, cardPhase: null
+});
+
+check(
+  "SIMULATED — J.3 #1: an INTERMEDIATE estimate (not the last seat) that ALSO tries to claim turn/cardPhase — DENIED",
+  isValidBidSubmission(
+    Object.assign({}, roundStartBase, { bids: { p1: 4, p2: 3, p3: null, p4: null } }),
+    Object.assign({}, roundStartBase, { bids: { p1: 4, p2: 3, p3: 2, p4: null }, version: 11, lastBidSeat: "p3", turn: "userB", cardPhase: "PLAY" }),
+    "userD"
+  ) === false
+);
+check(
+  "SIMULATED — J.3 #2: the GENUINE final estimate, with a valid (structurally real) turn/cardPhase claim — ALLOWED",
+  isValidBidSubmission(
+    roundStartBase,
+    Object.assign({}, roundStartBase, { bids: { p1: 4, p2: 3, p3: 2, p4: 5 }, biddingOpen: false, version: 11, lastBidSeat: "p4", turn: "userB", cardPhase: "PLAY" }),
+    "userE"
+  ) === true
+);
+check(
+  "SIMULATED — J.3 #3: the genuine final estimate, but naming a structurally INVALID uid as turn (not a real seat owner) — DENIED",
+  isValidBidSubmission(
+    roundStartBase,
+    Object.assign({}, roundStartBase, { bids: { p1: 4, p2: 3, p3: 2, p4: 5 }, biddingOpen: false, version: 11, lastBidSeat: "p4", turn: "some-fabricated-uid", cardPhase: "PLAY" }),
+    "userE"
+  ) === false
+);
+check(
+  "SIMULATED — J.3 #3b: the genuine final estimate, naming a WRONG (but structurally real) seat's uid as turn — ALLOWED at the Rules layer (this is the documented, accepted client-authoritative limitation; correctness is enforced client-side, not by Rules — see this sprint's own adversarial review)",
+  isValidBidSubmission(
+    roundStartBase,
+    Object.assign({}, roundStartBase, { bids: { p1: 4, p2: 3, p3: 2, p4: 5 }, biddingOpen: false, version: 11, lastBidSeat: "p4", turn: "userC", cardPhase: "PLAY" }),
+    "userE"
+  ) === true
+);
+check(
+  "SIMULATED — J.3 #4: duplicate final-completion write replayed after turn is already set — DENIED (oldData.turn no longer null)",
+  isValidBidSubmission(
+    Object.assign({}, roundStartBase, { bids: { p1: 4, p2: 3, p3: 2, p4: 5 }, biddingOpen: false, version: 11, turn: "userB", cardPhase: "PLAY" }),
+    Object.assign({}, roundStartBase, { bids: { p1: 4, p2: 3, p3: 2, p4: 5 }, biddingOpen: false, version: 12, lastBidSeat: "p4", turn: "userC", cardPhase: "PLAY" }),
+    "userE"
+  ) === false
+);
+check(
+  "SIMULATED — J.3 #5: stale-version final-completion write — DENIED (existing version/OCC check, untouched)",
+  isValidBidSubmission(
+    roundStartBase,
+    Object.assign({}, roundStartBase, { bids: { p1: 4, p2: 3, p3: 2, p4: 5 }, biddingOpen: false, version: 10, lastBidSeat: "p4", turn: "userB", cardPhase: "PLAY" }),
+    "userE"
+  ) === false
+);
+check(
+  "SIMULATED — J.3 #6: genuine final estimate but with an invalid cardPhase value ('RESOLVING' instead of 'PLAY') — DENIED",
+  isValidBidSubmission(
+    roundStartBase,
+    Object.assign({}, roundStartBase, { bids: { p1: 4, p2: 3, p3: 2, p4: 5 }, biddingOpen: false, version: 11, lastBidSeat: "p4", turn: "userB", cardPhase: "RESOLVING" }),
+    "userE"
+  ) === false
+);
+check(
+  "SIMULATED — J.3 #7: mid-round turn mutation attempt (bidding already fully closed, biddingOpen already false, NOT a real completion edge) — DENIED",
+  isValidBidSubmission(
+    Object.assign({}, roundStartBase, { bids: { p1: 4, p2: 3, p3: 2, p4: 5 }, biddingOpen: false, version: 11, turn: "userB", cardPhase: "PLAY" }),
+    Object.assign({}, roundStartBase, { bids: { p1: 4, p2: 3, p3: 2, p4: 5 }, biddingOpen: false, version: 12, lastBidSeat: "p4", turn: "userD", cardPhase: "PLAY" }),
+    "userE"
+  ) === false
+);
+check(
+  "SIMULATED — J.3 #8: initial match creation state is unaffected (turn is a real dealer uid, never null, at creation) — sanity check on the fixture itself",
+  validNewMatch38.turn !== null && validNewMatch38.turn !== undefined
 );
 
 // ============================================================

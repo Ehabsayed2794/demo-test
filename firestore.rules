@@ -552,6 +552,7 @@ service cloud.firestore {
       let p2HasBid = oldData.seats.get('p2', null) == null || (('p2' in newData.bids) && newData.bids['p2'] != null);
       let p3HasBid = oldData.seats.get('p3', null) == null || (('p3' in newData.bids) && newData.bids['p3'] != null);
       let p4HasBid = oldData.seats.get('p4', null) == null || (('p4' in newData.bids) && newData.bids['p4'] != null);
+      let allSeatsNowHaveBids = p1HasBid && p2HasBid && p3HasBid && p4HasBid;
       // `lastBidSeat` on the INCOMING write names which single seat
       // this write claims to be for — see match-service.js's
       // submitBid(), the only code path that ever produces this shape.
@@ -560,6 +561,43 @@ service cloud.firestore {
       // "neither layer trusts the other alone," this project's
       // established principle since Sprint 3.4.1.
       let seat = newData.lastBidSeat;
+      // Sprint J.3 (Hardened Round-Start Turn Authority): whether THIS
+      // write is even claiming to touch turn/cardPhase at all — computed
+      // once, from the diff, so every check below can stay a flat `&&`
+      // chain instead of duplicating the whole predicate list inside two
+      // separate branches. See the ROOT CAUSE this closes:
+      // advanceToNextRound() (Round Lifecycle sprint) writes
+      // `turn: null, cardPhase: null` at every round boundary, and
+      // NOTHING ever wrote a real value back — a permanent dead end
+      // against isValidCardSubmission()'s own `oldData.turn ==
+      // request.auth.uid` check for the first card of every round after
+      // the first (see Sprint I/J's own forensic reports for the
+      // original card-play-side instance of this same class of gap, and
+      // the Sprint J.1/J.2 architecture review + adversarial pass this
+      // fix's own design was built and re-checked against).
+      //
+      // IMPORTANT, HONEST SCOPE NOTE: this closes the DOMINANT
+      // completion path only — Estimates-phase completion via THIS
+      // function, which is how every round with a real Auction/Confirm
+      // winner ends. A direct trace of bidding-engine.js during this
+      // sprint found the DASH-phase's own "all four Dash-Called, direct
+      // to DONE" branch is unreachable in practice (MAX_DASH_CALLS = 2
+      // caps the count of DASHCALL-typed bids at 2, so `active.length
+      // === 0` — the condition that branch requires — can never be
+      // true) — so it does NOT need an equivalent fix. However, the
+      // FAST-ROUND "Super Call" case (`SubmitConfirmCall` transitioning
+      // directly to subPhase "DONE" without ever entering ESTIMATES —
+      // see bidding-engine.js's own `state.noSuitConstraint` branch)
+      // completes via `biddingLog`/`isValidBiddingActionSubmission()`
+      // instead of this function, and is DELIBERATELY NOT covered by
+      // this fix — distinguishing a true Super-Call-completing Confirm
+      // from an ordinary one in Rules would require inspecting whether
+      // every seat already has a non-Dash bid on record, a materially
+      // more complex, less-bounded check than this function's own
+      // `biddingOpen` true->false edge. Left as an explicitly documented,
+      // deferred residual gap rather than rushed — see this sprint's own
+      // Final Report for the full account.
+      let touchesRoundStart = ('turn' in newData.diff(oldData).affectedKeys()) || ('cardPhase' in newData.diff(oldData).affectedKeys());
       return
              // "Authenticated."
              request.auth != null
@@ -574,10 +612,16 @@ service cloud.firestore {
              // users, but recorded rather than silently assumed).
              && 'seats' in oldData && 'bids' in oldData && 'version' in oldData && 'biddingOpen' in oldData
              // "Reject every other write." — only these five fields may
-             // ever change via this rule; `players`, `seats`, `roomId`,
-             // `dealer`, `turn`, `status`, `currentRound`, `gameState`
-             // are all structurally immutable through this path.
-             && newData.diff(oldData).affectedKeys().hasOnly(['bids', 'biddingOpen', 'version', 'lastBidSeat', 'updatedAt'])
+             // ordinarily ever change via this rule; `players`, `seats`,
+             // `roomId`, `dealer`, `status`, `currentRound`, `gameState`
+             // remain structurally immutable through this path always.
+             // `turn`/`cardPhase` may ALSO change, but ONLY together,
+             // and ONLY on the genuine round-start completion edge —
+             // enforced by the additional guarded clause below, never by
+             // this allowlist alone.
+             && (touchesRoundStart
+                  ? newData.diff(oldData).affectedKeys().hasOnly(['bids', 'biddingOpen', 'version', 'lastBidSeat', 'updatedAt', 'turn', 'cardPhase'])
+                  : newData.diff(oldData).affectedKeys().hasOnly(['bids', 'biddingOpen', 'version', 'lastBidSeat', 'updatedAt']))
              // "Version increments correctly." — the Task 2 ordering
              // guard, made REAL: not "any higher number," EXACTLY one
              // more than what was actually there before this write.
@@ -635,7 +679,67 @@ service cloud.firestore {
              // seat now has a bid — a client cannot lie about whether
              // bidding should still be open (closing it early, or
              // holding it open forever after every seat has bid).
-             && newData.biddingOpen == !(p1HasBid && p2HasBid && p3HasBid && p4HasBid);
+             && newData.biddingOpen == !allSeatsNowHaveBids
+             // Sprint J.3 — THE round-start guard. Every condition here
+             // is required TOGETHER; none alone would be sufficient
+             // (see this sprint's own adversarial review):
+             //   - touchesRoundStart's own affectedKeys branch above
+             //     already proves this write is EITHER an ordinary bid
+             //     (no turn/cardPhase at all) OR claims both together;
+             //   - oldData.turn == null && oldData.cardPhase == null
+             //     proves the document was genuinely in the post-
+             //     advanceToNextRound(), pre-completion window (the
+             //     ONLY place this pair of values is ever produced —
+             //     verified directly: buildInitialMatchDoc() and
+             //     createRematchMatch() both always set a REAL dealer/
+             //     first-player uid, never null, so this can never be
+             //     satisfied at match creation or rematch);
+             //   - oldData.biddingOpen == true && newData.biddingOpen
+             //     == false is the REAL completion edge — true for
+             //     exactly one write per round, never an intermediate
+             //     estimate (which leaves biddingOpen unchanged at
+             //     true), never a duplicate/stale replay (biddingOpen
+             //     is already false by then, so oldData.biddingOpen ==
+             //     true fails);
+             //   - allSeatsNowHaveBids is the same fact biddingOpen's
+             //     own check above already re-derives independently —
+             //     redundant with it by construction, kept explicit
+             //     here for defense-in-depth and readability rather
+             //     than relying on the other clause alone;
+             //   - newData.cardPhase == "PLAY" (exactly, no other value
+             //     — never "RESOLVING" or anything else) plus the
+             //     structural "real seat uid" check on newData.turn
+             //     mirror isValidCardSubmission()'s own equivalent
+             //     checks for its `turn`/`cardPhase` fields exactly.
+             // HONEST, DELIBERATE LIMITATION, unchanged from the
+             // existing standing model for every other turn value in
+             // this codebase: this does NOT (and, without duplicating
+             // bidding-engine.js's full state machine, cannot) verify
+             // that `newData.turn` is the CORRECT leader — only that it
+             // structurally names a real seat. Correctness is enforced
+             // client-side instead: every honest client independently
+             // recomputes the same real leaderId via table-engine.js's
+             // own buildRoundCfg() and TableEngine.emit()'s own
+             // un-bypassed `state.turn !== playerId` check (not relaxed
+             // by the `trusted` remote-replay flag) rejects a
+             // fraudulent claim the moment it's acted on — a detected,
+             // permanent per-match desync, never silent corruption or a
+             // multi-seat takeover (see this sprint's own adversarial
+             // review, Attack D, for the full traced consequence).
+             && (!touchesRoundStart || (
+                  oldData.turn == null
+                  && oldData.cardPhase == null
+                  && oldData.biddingOpen == true
+                  && newData.biddingOpen == false
+                  && allSeatsNowHaveBids
+                  && newData.cardPhase == "PLAY"
+                  && (
+                       newData.turn == oldData.seats.get('p1', null)
+                       || newData.turn == oldData.seats.get('p2', null)
+                       || newData.turn == oldData.seats.get('p3', null)
+                       || newData.turn == oldData.seats.get('p4', null)
+                     )
+                ));
     }
 
     // Sprint 4.2 (Online Card Synchronization: Engine Authority), Task
