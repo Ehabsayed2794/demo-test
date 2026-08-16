@@ -493,11 +493,27 @@ function emit(intent) {
         state.waitingFor = firstEstimator;
         pushLog("phase", "FINAL ESTIMATES");
         pushLog("", `Everyone declares a final trick count ≤ ${t} (Caller's cap). The four bids may not total exactly 13.`);
+        // Sprint J.9 (BID_TO_TURN_HANDOFF fix): `callerId` is ALREADY
+        // known here — `intent.playerId` IS the confirming Caller — but
+        // until now nothing propagated it into `GameSession.round`
+        // (only into `biddingState`, via the earlier setAuctionWinner()
+        // call, which `MatchAdapter.computeRoundStartLeaderUid()` never
+        // reads). `session.round.callerId` stayed null until
+        // `completeBidding()` ran — which only happens via this
+        // client's own replay of its OWN just-accepted bidding action,
+        // AFTER the later round-completing submitBid() transaction had
+        // already run and fallen back to a stale GameSession.getTurn()
+        // value (see Sprint J.8's forensic report for the full traced
+        // race). Passing `callerId` through here makes
+        // `GameSession.getRound().callerId` correct immediately —
+        // exactly the same value `completeBidding()` will later confirm
+        // — not a new or different one.
         GameSession.recordBidAction({
           playerId: intent.playerId, actionType: "CONFIRM_TRUMP", value: t, suit: s,
           bids: sparseBidsToDense(state.bids), activeBidders: state.activeBidders,
           auctionTop: state.auctionTop, auctionSuit: state.auctionSuit, auctionBidderId: state.auctionBidder,
-          withPlayers: state.withPlayers, phase: state.subPhase, turnId: state.waitingFor
+          withPlayers: state.withPlayers, phase: state.subPhase, turnId: state.waitingFor,
+          callerId: intent.playerId
         });
         GameSession.updateBiddingState({ declaredTrump: state.declaredTrump });
       }

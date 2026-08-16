@@ -488,7 +488,22 @@
   }
 
   /** Persist one accepted bid/dash-call/raise/with action that does NOT
-   *  eliminate the player (see recordPassAction for eliminations). */
+   *  eliminate the player (see recordPassAction for eliminations).
+   *
+   *  Sprint J.9 (BID_TO_TURN_HANDOFF fix): an OPTIONAL `result.callerId`
+   *  — passed only by SubmitConfirmCall's own handler, the one moment
+   *  the Caller is genuinely known before completion — is propagated
+   *  into `session.round` (via the SAME `setRound()` merge
+   *  `completeBidding()`/`nextRound()` already use), NOT just into
+   *  `session.biddingState` (which `updateBiddingState()` below already
+   *  did). This does NOT change WHAT value `callerId` ends up holding —
+   *  `completeBidding()` still authoritatively confirms the identical
+   *  value later — it only makes it available to
+   *  `GameSession.getRound().callerId` (what
+   *  `MatchAdapter.computeRoundStartLeaderUid()` reads) EARLIER, before
+   *  the round-completing write's own transaction needs it. See
+   *  bidding-engine.js's own SubmitConfirmCall comment for the full
+   *  race this closes. */
   function recordBidAction(result) {
     pushBiddingAction({ playerId: result.playerId, actionType: result.actionType, value: result.value, suit: result.suit });
     updateBiddingState({
@@ -496,6 +511,9 @@
       auctionTop: result.auctionTop, auctionSuit: result.auctionSuit, auctionBidderId: result.auctionBidderId,
       withPlayers: result.withPlayers, phase: result.phase, turnId: result.turnId
     });
+    if (result.callerId !== undefined) {
+      setRound({ callerId: result.callerId });
+    }
   }
 
   /** Persist a pass/elimination (Dash-decline is NOT a pass — it's
