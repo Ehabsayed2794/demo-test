@@ -793,7 +793,14 @@
         // here rather than deferred.
         if (allSubmitted && match.turn == null && match.cardPhase == null &&
             global.MatchAdapter && typeof global.MatchAdapter.computeRoundStartLeaderUid === "function") {
-          var leaderUid = global.MatchAdapter.computeRoundStartLeaderUid(match);
+          // Sprint J.11 (post-review fix): `match` is the pre-write snapshot —
+          // it does NOT yet contain this seat's own just-submitted bid (only
+          // the local `bids` copy above does, via `patch.bids`). The fast-round
+          // leader formula reads `matchDoc.bids` directly (unlike the old
+          // GameSession-based formula, which never did), so passing bare
+          // `match` here would hide exactly the completing bid — most acutely
+          // when THIS bid is the round's Super Call. Pass the merged view.
+          var leaderUid = global.MatchAdapter.computeRoundStartLeaderUid(Object.assign({}, match, { bids: bids }));
           if (leaderUid) {
             patch.turn = leaderUid;
             patch.cardPhase = "PLAY";
@@ -1578,7 +1585,13 @@
             // comment for the full account.
             if (allSubmitted && freshMatch.turn == null && freshMatch.cardPhase == null &&
                 global.MatchAdapter && typeof global.MatchAdapter.computeRoundStartLeaderUid === "function") {
-              var leaderUid = global.MatchAdapter.computeRoundStartLeaderUid(freshMatch);
+              // Sprint J.11 (post-review fix): same stale-snapshot gap as
+              // submitBid()'s identical block above — `freshMatch.bids` is
+              // missing this seat's own just-merged bid (see the local
+              // `bids` copy a few lines up, merged into `patch.bids` but
+              // never back into `freshMatch` itself). Pass the merged view
+              // so the fast-round formula sees the completing bid.
+              var leaderUid = global.MatchAdapter.computeRoundStartLeaderUid(Object.assign({}, freshMatch, { bids: bids }));
               if (leaderUid) {
                 patch.turn = leaderUid;
                 patch.cardPhase = "PLAY";
