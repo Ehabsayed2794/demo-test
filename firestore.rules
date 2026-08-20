@@ -625,6 +625,16 @@ service cloud.firestore {
              // (none exist in this project, which has never had real
              // users, but recorded rather than silently assumed).
              && 'seats' in oldData && 'bids' in oldData && 'version' in oldData && 'biddingOpen' in oldData
+             // Firestore Rules Hardening sprint: a match that has ALREADY
+             // completed (status:'complete') must never accept a bid
+             // submission — the same terminal-state guard already used
+             // identically by isValidRoundAdvance()/isValidRoundExtension().
+             // Previously this was only INCIDENTALLY blocked (biddingOpen
+             // is always false by the time a match can complete under the
+             // real production flow) rather than structurally guaranteed —
+             // this closes that gap explicitly rather than relying on an
+             // unrelated field's state.
+             && ('status' in oldData ? oldData.status != 'complete' : true)
              // "Reject every other write." — only these five fields may
              // ordinarily ever change via this rule; `players`, `seats`,
              // `roomId`, `dealer`, `status`, `currentRound`, `gameState`
@@ -869,6 +879,18 @@ service cloud.firestore {
              // field (Sprint 3.4), re-checked here defensively since
              // this rule now reads it below.
              && 'seats' in oldData && 'cardLog' in oldData && 'version' in oldData && 'turn' in oldData && 'cardPhase' in oldData && 'currentRound' in oldData
+             // Firestore Rules Hardening sprint: a match that has ALREADY
+             // completed (status:'complete') must never accept a card
+             // submission. Root cause this closes: endMatch() never
+             // resets `turn`/`cardPhase` (they carry no meaning for a
+             // finished match, so nothing writes to them), so
+             // `oldData.turn == request.auth.uid` (below) would otherwise
+             // still hold for the last trick's winning seat immediately
+             // after completion, letting that seat append one more
+             // cardLog entry to an already-`complete` document. Same
+             // terminal-state guard already used identically by
+             // isValidRoundAdvance()/isValidRoundExtension().
+             && ('status' in oldData ? oldData.status != 'complete' : true)
              // Sprint 4.2.2, Task 6: "Reject every other write." — only
              // these SIX fields may ever change via this rule (`turn`
              // and `cardPhase` are new this sprint — see Task 2's own
@@ -1222,7 +1244,7 @@ service cloud.firestore {
       return
              request.auth != null
              && request.auth.uid in oldData.players
-             && 'currentRound' in oldData && 'version' in oldData
+             && 'currentRound' in oldData && 'version' in oldData && 'maxRounds' in oldData
              // Match Completion sprint: a match that has ALREADY
              // completed (status:'complete') must never be advanced
              // again — mirrors the identical guard added to
@@ -1237,6 +1259,22 @@ service cloud.firestore {
                   ['currentRound', 'version', 'biddingOpen', 'bids', 'lastBidSeat', 'cardPhase', 'turn', 'updatedAt'])
              && newData.version == oldData.version + 1
              && newData.currentRound == oldData.currentRound + 1
+             // Firestore Rules Hardening sprint: a round may only be
+             // advanced if doing so does NOT move currentRound past the
+             // match's own CURRENT authoritative ceiling — never a
+             // hardcoded 18, always `oldData.maxRounds` (which
+             // extendMatchRounds() may have already grown past 18 for
+             // THIS match, e.g. a Super Call/Sa'ayda in the Rapid Rounds
+             // window). Mirrors isValidMatchCompletion()'s own inverse
+             // check (`newData.completedRound + 1 > oldData.maxRounds`)
+             // — that rule independently re-verifies "this really was
+             // the last round" before allowing completion; this rule now
+             // independently re-verifies "this was NOT yet the last
+             // round" before allowing an ordinary advance, closing the
+             // one-directional gap between the two (a round could
+             // previously be advanced past its match's own ceiling
+             // without ever completing it).
+             && oldData.currentRound + 1 <= oldData.maxRounds
              && newData.biddingOpen == true
              && newData.cardPhase == null
              && newData.turn == null;

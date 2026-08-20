@@ -133,6 +133,21 @@ async function run() {
       await assertFails(matchRef(uidA, m + "-7").update({
         bids: { p1: 5, p2: null, p3: null, p4: null }, lastBidSeat: "p1", biddingOpen: false, version: 2
       })).then(function () { return true; }).catch(function () { return false; }));
+
+    // ────────────────────────────────────────────────────────────
+    // BID.8 (Firestore Rules Hardening sprint): real-emulator proof
+    // that isValidBidSubmission()'s new terminal-state guard rejects a
+    // bid submission on an already-`complete` match. `biddingOpen:true`
+    // is seeded deliberately (never true in a real completed match, per
+    // this sprint's own forensic audit) so this proves the NEW status
+    // guard itself is doing the rejecting, not the pre-existing
+    // `biddingOpen` incidental protection.
+    // ────────────────────────────────────────────────────────────
+    await seed(m + "-8", { status: "complete", biddingOpen: true });
+    check("BID.8 Invalid state transition (match already complete) -> DENIED",
+      await assertFails(matchRef(uidA, m + "-8").update({
+        bids: { p1: 5, p2: null, p3: null, p4: null }, lastBidSeat: "p1", biddingOpen: true, version: 2
+      })).then(function () { return true; }).catch(function () { return false; }));
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -232,6 +247,20 @@ async function run() {
     await seed(m + "-11", { turn: uidA, cardLog: [] });
     check("CARD.11 The very FIRST card play of a match (oldLog empty) -> ALLOWED (regression: the empty-prefix ternary guard must not itself throw or over-reject, mirroring isValidRoundExtension()'s own real-emulator-found edge case)",
       await assertSucceeds(matchRef(uidA, m + "-11").update(cardPatch("p1", 2)))
+        .then(function () { return true; }).catch(function () { return false; }));
+
+    // ────────────────────────────────────────────────────────────
+    // CARD.12 (Firestore Rules Hardening sprint): real-emulator proof
+    // that isValidCardSubmission()'s new terminal-state guard rejects a
+    // card submission on an already-`complete` match. `turn` is
+    // deliberately seeded still pointing at uidA/p1 (exactly the real
+    // root cause this fix closes — endMatch() never resets `turn`, so
+    // the last trick's winning seat would otherwise still structurally
+    // satisfy `oldData.turn == request.auth.uid` after completion).
+    // ────────────────────────────────────────────────────────────
+    await seed(m + "-12", { status: "complete", turn: uidA });
+    check("CARD.12 Invalid state transition (match already complete, seat still holds stale turn) -> DENIED",
+      await assertFails(matchRef(uidA, m + "-12").update(cardPatch("p1", 2)))
         .then(function () { return true; }).catch(function () { return false; }));
   }
 
@@ -395,6 +424,26 @@ async function run() {
     await seed(m + "-9", {});
     check("ADV.9 Invalid state transition (currentRound jumps by 2, not 1) -> DENIED",
       await assertFails(matchRef(uidA, m + "-9").update(Object.assign({}, advancePatch(2), { currentRound: 3 })))
+        .then(function () { return true; }).catch(function () { return false; }));
+
+    // ────────────────────────────────────────────────────────────
+    // ADV.10-11 (Firestore Rules Hardening sprint): real-emulator proof
+    // that isValidRoundAdvance()'s new maxRounds ceiling check rejects
+    // an advance attempted on the match's own true final round (the
+    // round that SHOULD instead trigger endMatch()), while a legitimate
+    // advance safely below the ceiling remains allowed — including
+    // after a dynamic extension (Super Call/Sa'ayda) has grown
+    // maxRounds past its default 18, proving the check is never
+    // hardcoded.
+    // ────────────────────────────────────────────────────────────
+    await seed(m + "-10", { currentRound: 18, maxRounds: 18 });
+    check("ADV.10 Round ceiling (currentRound == maxRounds; should complete, not advance) -> DENIED",
+      await assertFails(matchRef(uidA, m + "-10").update(Object.assign({}, advancePatch(2), { currentRound: 19 })))
+        .then(function () { return true; }).catch(function () { return false; }));
+
+    await seed(m + "-11", { currentRound: 17, maxRounds: 19 });
+    check("ADV.11 Legitimate advance well below a DYNAMICALLY-EXTENDED ceiling (currentRound 17, maxRounds 19 after a Super Call/Sa'ayda extension) -> ALLOWED (regression: the ceiling check must not over-reject, and must never hardcode 18)",
+      await assertSucceeds(matchRef(uidA, m + "-11").update(Object.assign({}, advancePatch(2), { currentRound: 18 })))
         .then(function () { return true; }).catch(function () { return false; }));
   }
 

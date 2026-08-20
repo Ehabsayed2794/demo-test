@@ -592,6 +592,10 @@ function isValidCardSubmission(oldData, newData, requestAuthUid) {
   if (requestAuthUid == null) return false;
   if ((oldData.players || []).indexOf(requestAuthUid) === -1) return false;
   if (!("seats" in oldData) || !("cardLog" in oldData) || !("version" in oldData) || !("turn" in oldData) || !("cardPhase" in oldData) || !("currentRound" in oldData)) return false;
+  // Firestore Rules Hardening sprint: mirrors the real firestore.rules'
+  // new terminal-state guard 1:1 — an already-completed match may never
+  // accept a card submission.
+  if ("status" in oldData && oldData.status === "complete") return false;
 
   var allowedChangedKeys = ["cardLog", "lastCardSeat", "version", "turn", "cardPhase", "updatedAt"];
   var changedKeys = Object.keys(newData).filter(function (k) { return JSON.stringify(newData[k]) !== JSON.stringify(oldData[k]); })
@@ -656,7 +660,7 @@ function isValidCardSubmission(oldData, newData, requestAuthUid) {
 function isValidRoundAdvance(oldData, newData, requestAuthUid) {
   if (requestAuthUid == null) return false;
   if ((oldData.players || []).indexOf(requestAuthUid) === -1) return false;
-  if (!("currentRound" in oldData) || !("version" in oldData)) return false;
+  if (!("currentRound" in oldData) || !("version" in oldData) || !("maxRounds" in oldData)) return false;
   // Match Completion sprint: an already-completed match may never be
   // advanced again — mirrors the identical guard added to the real
   // isValidRoundAdvance() (found via real-browser QA).
@@ -670,6 +674,12 @@ function isValidRoundAdvance(oldData, newData, requestAuthUid) {
 
   if (newData.version !== oldData.version + 1) return false;
   if (newData.currentRound !== oldData.currentRound + 1) return false;
+  // Firestore Rules Hardening sprint: mirrors the real firestore.rules'
+  // new ceiling check 1:1 — a round may only be advanced if doing so
+  // does not move currentRound past this match's own current
+  // authoritative maxRounds (never hardcoded, so a Super Call/Sa'ayda
+  // extension is always respected).
+  if (oldData.currentRound + 1 > oldData.maxRounds) return false;
   if (newData.biddingOpen !== true) return false;
   if (newData.cardPhase !== null) return false;
   if (newData.turn !== null) return false;
@@ -684,6 +694,10 @@ function isValidBidSubmission(oldData, newData, requestAuthUid) {
   if (requestAuthUid == null) return false;
   if ((oldData.players || []).indexOf(requestAuthUid) === -1) return false;
   if (!("seats" in oldData) || !("bids" in oldData) || !("version" in oldData) || !("biddingOpen" in oldData)) return false;
+  // Firestore Rules Hardening sprint: mirrors the real firestore.rules'
+  // new terminal-state guard 1:1 — an already-completed match may never
+  // accept a bid submission.
+  if ("status" in oldData && oldData.status === "complete") return false;
 
   // Sprint J.3 (Hardened Round-Start Turn Authority) — 1:1 JS mirror of
   // firestore.rules' own new touchesRoundStart branch. See that
@@ -2327,7 +2341,17 @@ var matchReadyForRoundAdvance = Object.assign({}, matchAfterCreate423_fourSeats,
     }
     return log;
   })(),
-  version: 55
+  version: 55,
+  // Firestore Rules Hardening sprint: matchAfterCreate423_fourSeats's
+  // own fixture chain (matchAfterCreate42 <- validNewMatch42 <-
+  // validNewMatch38) predates the Match Completion sprint's `maxRounds`
+  // field entirely — every REAL match document has always had it since
+  // that sprint (buildInitialMatchDoc()'s own default is 18). This is
+  // the legitimate "update the fixture, don't weaken the rule" case:
+  // a genuine round-1-of-18 match, not a boundary/ceiling case (those
+  // are covered separately in tests/sprint-a-write-paths.rules-emulator.test.cjs's
+  // own ADV.10/ADV.11).
+  maxRounds: 18
 });
 check(
   "SIMULATED — round advance: a well-formed transition (currentRound+1, version+1, biddingOpen reset true, cardPhase/turn reset null) is ALLOWED for ANY seated player, not just a designated host",
