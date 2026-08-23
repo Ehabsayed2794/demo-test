@@ -1,31 +1,54 @@
 import type { PlayerRole, RoundPlayerData, ScoringMode } from './types';
 
 // --- NORMAL MODE SCORING ---
-// success: 10 + bid
-// fail: -(|bid - won|)
-// Caller bonus: +10 on success
-// Wizz bonus: +10 on success (stacks with Caller)
-// Risk bonus: +10 on success
-// WizzRisk: Wizz + Risk bonuses (both +10)
-// SuperCall: +20 on success (caller bid 8), -20 on fail — treated as CALLER with bid 8
-// DashCall/RegDash: bid=0 success is 10, fail=0 miss counts
+// Official Scoring System (Standard Players):
+// success: 10 + bid (+10 Caller/Wizz/Risk bonuses if applicable)
+// failure: -|bid - won| (-10 Caller/Wizz/Risk penalties if applicable)
+// Sole Winner: +10 bonus on success
+// Sole Loser: score × 2, capped at -22
+// Super Call: uses Standard formula (no special ±20 bonus in Official mode)
+// Pre-Bidding Dash Call (DASH_CALL): Under (<13) ±33, Over (>13) ±25, never receives Risk
+// Normal Dash (REG_DASH): success +10, failure -(10 + tricks), can receive Risk
 
 function calcNormalScore(
   role: PlayerRole,
   bid: number,
   won: number,
+  totalBids: number,
   isSoleWinner: boolean,
   isSoleLoser: boolean,
 ): number {
   const success = won === bid;
-
+  
   let score: number;
 
   if (role === 'SUPER_CALL') {
-    score = success ? 20 : -20;
-  } else if (role === 'DASH_CALL' || role === 'REG_DASH') {
-    score = success ? 10 : -(Math.abs(bid - won));
+    // Official Super Call uses Standard Player formula with Caller bonus
+    const miss = Math.abs(bid - won);
+    if (success) {
+      const base = 10 + bid;
+      score = base + 10; // Caller bonus
+    } else {
+      score = -(miss + 10); // Caller penalty
+    }
+  } else if (role === 'DASH_CALL') {
+    // Pre-Bidding Dash Call: NEVER receives Risk
+    // Under (totalBids < 13): ±33
+    // Over (totalBids > 13): ±25
+    // totalBids === 13 is invalid rules state
+    const dashValue = totalBids < 13 ? 33 : 25;
+    score = success ? dashValue : -dashValue;
+  } else if (role === 'REG_DASH') {
+    // Normal Dash during Estimation: standard formula WITH Risk
+    // success: +10 (+ Risk bonus if applicable)
+    // failure: -(10 + tricks) (- Risk penalty if applicable)
+    if (success) {
+      score = 10;
+    } else {
+      score = -(10 + won);
+    }
   } else {
+    // Standard players: NORMAL, CALLER, WIZZ, RISK, WIZZ_RISK
     const miss = Math.abs(bid - won);
     if (success) {
       const base = 10 + bid;
@@ -47,29 +70,6 @@ function calcNormalScore(
 
   return score;
 }
-
-// --- CLASSIC MODE SCORING ---
-// Based on reverse-engineered formula verified against 18 rounds of real game data.
-//
-// SUCCESS (won === bid):
-//   Normal:         bid + 13
-//   Caller/Wizz:    bid + 13 + 10
-//   Risk:           bid + 13 + 10
-//   WizzRisk:       bid + 13 + 10 + 10 = bid + 33
-//   SuperCall:      +42 (fixed)
-//   DashCall Under: +33 (fixed)   [totalBids < 13]
-//   DashCall Over:  +23 (fixed)   [totalBids > 13]
-//   RegDash Under:  +23 (fixed)
-//   RegDash Over:   +13 (fixed)
-//   + Sole Winner:  +10 bonus
-//
-// FAILURE (won !== bid):
-//   Normal:         -|won - bid|
-//   Caller/Wizz:    -(|won - bid| + callerPenalty)
-//     where callerPenalty = 10 normally, 20 when totalBids <= 11 (under by 2+)
-//   Risk:           -(|won - bid| + 10)
-//   WizzRisk:       -(|won - bid| + 20)
-//   SuperCall:      -20 (fixed)
 //   DashCall Under: -20 (fixed)
 //   DashCall Over:  -10 (fixed)
 //   RegDash Under:  -10 (fixed)
@@ -171,6 +171,7 @@ export function calculateRoundScores(
         p.role,
         p.bid,
         p.won,
+        totalBids,
         isSoleWinner(p),
         isSoleLoser(p),
       );
