@@ -1,0 +1,107 @@
+=== Sprint 4.3: Table Play Card Selection UI — Verification ===
+
+Setup: {
+  "turn": "p4",
+  "phase": "PLAY",
+  "handLen": 13,
+  "panelVisible": true,
+  "tableTurnText": "Your turn",
+  "handButtonCount": 13,
+  "handButtonTexts": [
+    "K ♠",
+    "9 ♠",
+    "5 ♠",
+    "Q ♥",
+    "9 ♥",
+    "8 ♥",
+    "7 ♥",
+    "5 ♥",
+    "A ♦",
+    "J ♦",
+    "8 ♦",
+    "5 ♣",
+    "3 ♣"
+  ],
+  "handCardTexts": [
+    "KS",
+    "9S",
+    "5S",
+    "QH",
+    "9H",
+    "8H",
+    "7H",
+    "5H",
+    "AD",
+    "JD",
+    "8D",
+    "5C",
+    "3C"
+  ]
+}
+PASS  1. Real TableEngine reaches PLAY phase with a real turn seat
+PASS  2. #tablePanel is visible
+PASS  3. Turn indicator shows 'Your turn' when localSeatId === state.turn
+PASS  4. #handPanel renders exactly the real 13-card GameSession hand as interactive buttons
+PASS  5. Every hand button's disabled state matches TableEngine.canPlayCard() exactly (no UI-side legality drift)
+Click result: {
+  "calls": [
+    {
+      "matchId": null,
+      "card": {
+        "id": "SPADES-13-2",
+        "suit": "SPADES",
+        "rank": {
+          "v": 13,
+          "s": "K"
+        },
+        "displayName": "K ♠",
+        "value": 13,
+        "owner": "p4",
+        "played": false
+      }
+    }
+  ],
+  "clickedText": "K ♠",
+  "allDisabledAfterClick": true,
+  "pendingFlag": true,
+  "pendingChipHasClass": true
+}
+PASS  6. Clicking a legal card calls MatchService.submitCard(matchId, card) exactly once
+PASS  7. The call passes a FULL card object with real suit/rank fields (not a bare cardId string)
+PASS  8. The whole hand is disabled immediately after submission (pending state)
+PASS  9. isCardSubmissionPending() reports true while the write is in flight
+PASS  10. The submitted chip carries the .is-pending visual class
+PASS  11. A second submission attempt while pending increments the duplicate-attempt guard counter
+PASS  12. After the write resolves, pending clears and the hand re-enables
+Trick result: {
+  "seatId": "p4",
+  "firstRender": {
+    "rejected": false,
+    "hasPositionalClass": true,
+    "hasEnteringClass": true,
+    "chipText": "K ♠"
+  },
+  "secondRender": {
+    "hasEnteringClass": false
+  },
+  "newTurn": "p1",
+  "localSeatId": "p4",
+  "turnIndicatorText": "Waiting on You",
+  "allFourSlotsPositional": true
+}
+PASS  13. TableEngine.emit(PlayCard) was accepted (not rejected)
+PASS  14. The played card renders in its OWN seat's positional trick slot
+PASS  15. All four trick slots use the positional layout (mirrors #matchSeats' compass anchors)
+PASS  16. The newly-played card gets the entry-animation class on its first render
+PASS  17. A later re-render of the same unchanged trick does NOT replay the entry animation
+PASS  18. Turn advances to the next seat after a real play (engine-driven, not UI-guessed)
+PASS  19. When it's no longer the local seat's turn, the turn indicator shows a 'Waiting on ...' message
+PASS  20. Hand remains visible (read-only, non-button chips) while waiting on another seat
+PASS  21. An explicit 'Waiting on ...' message is shown
+
+Console/page errors: []
+PASS  22. No console/page errors throughout the whole scenario
+
+=== RESULTS ===
+
+22 passed, 0 failed

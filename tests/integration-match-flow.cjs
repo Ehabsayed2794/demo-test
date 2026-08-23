@@ -1,3 +1,8 @@
+const path = require("path");
+// Portability fix (found via a real GitHub Actions run -- this file used
+// to hardcode this sandbox's own absolute path, so it failed with
+// MODULE_NOT_FOUND on any other machine, including CI):
+const __REPO_ROOT__ = path.join(__dirname, "..");
 // SPRINT-3.6: End-to-End Match Flow Verification (Room -> Ready ->
 // Match -> Deal).
 //
@@ -136,11 +141,11 @@ global.SessionService = {
 };
 function signInAs(uid) { currentUid = uid; }
 
-require("/home/user/demo-test/design-ui/engine/cards.js");
-require("/home/user/demo-test/design-ui/engine/deck.js");
-require("/home/user/demo-test/design-ui/engine/dealer.js");
-require("/home/user/demo-test/design-ui/room-service.js");
-require("/home/user/demo-test/design-ui/match-service.js");
+require(__REPO_ROOT__ + "/design-ui/engine/cards.js");
+require(__REPO_ROOT__ + "/design-ui/engine/deck.js");
+require(__REPO_ROOT__ + "/design-ui/engine/dealer.js");
+require(__REPO_ROOT__ + "/design-ui/room-service.js");
+require(__REPO_ROOT__ + "/design-ui/match-service.js");
 var RoomService = global.RoomService;
 var MatchService = global.MatchService;
 

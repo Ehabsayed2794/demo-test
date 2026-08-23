@@ -1,3 +1,8 @@
+const path = require("path");
+// Portability fix (found via a real GitHub Actions run -- this file used
+// to hardcode this sandbox's own absolute path, so it failed with
+// MODULE_NOT_FOUND on any other machine, including CI):
+const __REPO_ROOT__ = path.join(__dirname, "..");
 // Real, executable tests for design-ui/engine/deck.js (Sprint 3.5 — Deck
 // Implementation & Engine Integration) and the resulting
 // design-ui/engine/dealer.js integration. Loads the ACTUAL, unmodified
@@ -7,9 +12,9 @@
 // engine is now executable.
 global.window = global;
 
-require("/home/user/demo-test/design-ui/engine/cards.js");
-require("/home/user/demo-test/design-ui/engine/deck.js");
-require("/home/user/demo-test/design-ui/engine/dealer.js");
+require(__REPO_ROOT__ + "/design-ui/engine/cards.js");
+require(__REPO_ROOT__ + "/design-ui/engine/deck.js");
+require(__REPO_ROOT__ + "/design-ui/engine/dealer.js");
 
 var Cards = global.Cards;
 var Deck = global.Deck;

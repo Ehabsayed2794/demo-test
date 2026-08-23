@@ -1,3 +1,8 @@
+const path = require("path");
+// Portability fix (found via a real GitHub Actions run -- this file used
+// to hardcode this sandbox's own absolute path, so it failed with
+// MODULE_NOT_FOUND on any other machine, including CI):
+const __REPO_ROOT__ = path.join(__dirname, "..");
 // SPRINT A — Real Firestore Rules Emulator closure for P1-1 (Multiplayer
 // Integration Audit). Proves the 6 remaining matches/{matchId} update
 // write paths against the REAL compiled firestore.rules, following the
@@ -32,17 +37,27 @@ async function run() {
     testEnv = await initializeTestEnvironment({
       projectId: "demo-test-sprint-a",
       firestore: {
-        rules: fs.readFileSync("/home/user/demo-test/firestore.rules", "utf8"),
+        rules: fs.readFileSync(__REPO_ROOT__ + "/firestore.rules", "utf8"),
         host: "127.0.0.1",
         port: 8080
       }
     });
   } catch (e) {
-    console.log("EMULATOR NOT REACHABLE — " + e.message);
-    console.log("\n=== RESULTS ===\n");
-    console.log("0 passed, 0 failed (SKIPPED — no emulator connection)");
-    process.exitCode = 2;
-    return;
+    // Sprint 5.0 (CI/CD Pipeline & Real Emulator Enforcement): a green
+    // run with the emulator down would prove nothing about the real
+    // rules -- FAIL HARD (exit 1), never a silent SKIPPED exit-2. Start
+    // the emulator with `firebase emulators:start --only firestore,auth`
+    // (or run `npm run test:ci`, which does this automatically) before
+    // running this file directly.
+    console.error("EMULATOR NOT REACHABLE — " + e.message);
+    console.error(
+      "\nFATAL: the Firestore Rules Emulator must be running on " +
+      "127.0.0.1:8080 for this test to run. This is a HARD FAILURE, " +
+      "not a skip -- see this catch block's own comment."
+    );
+    console.error("\n=== RESULTS ===\n");
+    console.error("0 passed, 0 failed (FAILED — emulator unreachable)");
+    process.exit(1);
   }
 
   var uidA = "uidA", uidB = "uidB", uidC = "uidC", uidD = "uidD", uidZ = "uidZ";
@@ -118,6 +133,21 @@ async function run() {
       await assertFails(matchRef(uidA, m + "-7").update({
         bids: { p1: 5, p2: null, p3: null, p4: null }, lastBidSeat: "p1", biddingOpen: false, version: 2
       })).then(function () { return true; }).catch(function () { return false; }));
+
+    // ────────────────────────────────────────────────────────────
+    // BID.8 (Firestore Rules Hardening sprint): real-emulator proof
+    // that isValidBidSubmission()'s new terminal-state guard rejects a
+    // bid submission on an already-`complete` match. `biddingOpen:true`
+    // is seeded deliberately (never true in a real completed match, per
+    // this sprint's own forensic audit) so this proves the NEW status
+    // guard itself is doing the rejecting, not the pre-existing
+    // `biddingOpen` incidental protection.
+    // ────────────────────────────────────────────────────────────
+    await seed(m + "-8", { status: "complete", biddingOpen: true });
+    check("BID.8 Invalid state transition (match already complete) -> DENIED",
+      await assertFails(matchRef(uidA, m + "-8").update({
+        bids: { p1: 5, p2: null, p3: null, p4: null }, lastBidSeat: "p1", biddingOpen: true, version: 2
+      })).then(function () { return true; }).catch(function () { return false; }));
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -170,6 +200,68 @@ async function run() {
     check("CARD.7 Invalid state transition (right seat owner, but not their turn) -> DENIED",
       await assertFails(matchRef(uidA, m + "-7").update(cardPatch("p1", 2)))
         .then(function () { return true; }).catch(function () { return false; }));
+
+    // ────────────────────────────────────────────────────────────
+    // CARD.8-11 (Sprint A.1 — Card Log Prefix Immutability Fix):
+    // real-emulator proof that isValidCardSubmission()'s new
+    // `newLog[0:oldLog.size()] == oldLog` prefix-equality check
+    // actually rejects a rewritten/reordered earlier entry, and does
+    // NOT over-reject a legitimate append (with or without prior
+    // history) — the exact attack this fix closes, proven against the
+    // REAL compiled rules, not just the JS mirror.
+    // ────────────────────────────────────────────────────────────
+    var existingLog = [
+      { seatId: "p1", card: { suit: "SPADES", rank: { v: 12, s: "Q" } }, round: 1 },
+      { seatId: "p2", card: { suit: "SPADES", rank: { v: 5, s: "5" } }, round: 1 }
+    ];
+
+    await seed(m + "-8", { turn: uidA, cardLog: existingLog });
+    check("CARD.8 Rewriting an EARLIER cardLog entry's card value while appending one valid new entry -> DENIED (was the documented gap; now closed)",
+      await assertFails(matchRef(uidA, m + "-8").update({
+        cardLog: [
+          { seatId: "p1", card: { suit: "HEARTS", rank: { v: 2, s: "2" } }, round: 1 }, // REWRITTEN
+          { seatId: "p2", card: { suit: "SPADES", rank: { v: 5, s: "5" } }, round: 1 },
+          { seatId: "p1", card: { suit: "SPADES", rank: { v: 8, s: "8" } }, round: 1 }
+        ],
+        lastCardSeat: "p1", turn: uidB, cardPhase: "PLAY", version: 2, updatedAt: 1
+      })).then(function () { return true; }).catch(function () { return false; }));
+
+    await seed(m + "-9", { turn: uidA, cardLog: existingLog });
+    check("CARD.9 Reordering two earlier entries (same multiset, different sequence) while appending one valid new entry -> DENIED",
+      await assertFails(matchRef(uidA, m + "-9").update({
+        cardLog: [
+          { seatId: "p2", card: { suit: "SPADES", rank: { v: 5, s: "5" } }, round: 1 }, // SWAPPED
+          { seatId: "p1", card: { suit: "SPADES", rank: { v: 12, s: "Q" } }, round: 1 },
+          { seatId: "p1", card: { suit: "SPADES", rank: { v: 8, s: "8" } }, round: 1 }
+        ],
+        lastCardSeat: "p1", turn: uidB, cardPhase: "PLAY", version: 2, updatedAt: 1
+      })).then(function () { return true; }).catch(function () { return false; }));
+
+    await seed(m + "-10", { turn: uidA, cardLog: existingLog });
+    check("CARD.10 Legitimate append with an UNCHANGED, non-empty prior history -> ALLOWED (regression: the fix must not over-reject)",
+      await assertSucceeds(matchRef(uidA, m + "-10").update({
+        cardLog: existingLog.concat([{ seatId: "p1", card: { suit: "SPADES", rank: { v: 8, s: "8" } }, round: 1 }]),
+        lastCardSeat: "p1", turn: uidB, cardPhase: "PLAY", version: 2, updatedAt: 1
+      })).then(function () { return true; }).catch(function () { return false; }));
+
+    await seed(m + "-11", { turn: uidA, cardLog: [] });
+    check("CARD.11 The very FIRST card play of a match (oldLog empty) -> ALLOWED (regression: the empty-prefix ternary guard must not itself throw or over-reject, mirroring isValidRoundExtension()'s own real-emulator-found edge case)",
+      await assertSucceeds(matchRef(uidA, m + "-11").update(cardPatch("p1", 2)))
+        .then(function () { return true; }).catch(function () { return false; }));
+
+    // ────────────────────────────────────────────────────────────
+    // CARD.12 (Firestore Rules Hardening sprint): real-emulator proof
+    // that isValidCardSubmission()'s new terminal-state guard rejects a
+    // card submission on an already-`complete` match. `turn` is
+    // deliberately seeded still pointing at uidA/p1 (exactly the real
+    // root cause this fix closes — endMatch() never resets `turn`, so
+    // the last trick's winning seat would otherwise still structurally
+    // satisfy `oldData.turn == request.auth.uid` after completion).
+    // ────────────────────────────────────────────────────────────
+    await seed(m + "-12", { status: "complete", turn: uidA });
+    check("CARD.12 Invalid state transition (match already complete, seat still holds stale turn) -> DENIED",
+      await assertFails(matchRef(uidA, m + "-12").update(cardPatch("p1", 2)))
+        .then(function () { return true; }).catch(function () { return false; }));
   }
 
   // ══════════════════════════════════════════════════════════════
@@ -216,6 +308,55 @@ async function run() {
     await seed(m + "-7", {});
     check("ACT.7 Invalid state transition (round tag mismatch — entry claims round 2, match is on round 1) -> DENIED",
       await assertFails(matchRef(uidA, m + "-7").update({ biddingLog: [actionEntry("p1", 2)], version: 2 }))
+        .then(function () { return true; }).catch(function () { return false; }));
+
+    // ────────────────────────────────────────────────────────────
+    // ACT.8-11 (biddingLog Prefix Immutability Fix — mirrors
+    // CARD.8-11 above exactly): real-emulator proof that
+    // isValidBiddingActionSubmission()'s new
+    // `newLog[0:oldLog.size()] == oldLog` prefix-equality check
+    // actually rejects a rewritten/reordered earlier entry, and does
+    // NOT over-reject a legitimate append (with or without prior
+    // history) — the same attack class CARD.8-11 already proved
+    // closed for cardLog, now proved closed for biddingLog too.
+    // ────────────────────────────────────────────────────────────
+    var existingBiddingLog = [
+      actionEntry("p1", 1),
+      actionEntry("p2", 1)
+    ];
+
+    await seed(m + "-8", { biddingLog: existingBiddingLog });
+    check("ACT.8 Rewriting an EARLIER biddingLog entry while appending one valid new entry -> DENIED",
+      await assertFails(matchRef(uidA, m + "-8").update({
+        biddingLog: [
+          { seatId: "p1", actionType: "SubmitDashCallDecision", round: 1, declaredDashCall: false }, // REWRITTEN
+          actionEntry("p2", 1),
+          actionEntry("p1", 1)
+        ],
+        version: 2
+      })).then(function () { return true; }).catch(function () { return false; }));
+
+    await seed(m + "-9", { biddingLog: existingBiddingLog });
+    check("ACT.9 Reordering two earlier entries (same multiset, different sequence) while appending one valid new entry -> DENIED",
+      await assertFails(matchRef(uidA, m + "-9").update({
+        biddingLog: [
+          actionEntry("p2", 1), // SWAPPED
+          actionEntry("p1", 1),
+          actionEntry("p1", 1)
+        ],
+        version: 2
+      })).then(function () { return true; }).catch(function () { return false; }));
+
+    await seed(m + "-10", { biddingLog: existingBiddingLog });
+    check("ACT.10 Legitimate append with an UNCHANGED, non-empty prior history -> ALLOWED (regression: the fix must not over-reject)",
+      await assertSucceeds(matchRef(uidA, m + "-10").update({
+        biddingLog: existingBiddingLog.concat([actionEntry("p1", 1)]),
+        version: 2
+      })).then(function () { return true; }).catch(function () { return false; }));
+
+    await seed(m + "-11", { biddingLog: [] });
+    check("ACT.11 The very FIRST bidding action of a match (oldLog empty) -> ALLOWED (regression: the empty-prefix ternary guard must not itself throw or over-reject)",
+      await assertSucceeds(matchRef(uidA, m + "-11").update({ biddingLog: [actionEntry("p1", 1)], version: 2 }))
         .then(function () { return true; }).catch(function () { return false; }));
   }
 
@@ -283,6 +424,26 @@ async function run() {
     await seed(m + "-9", {});
     check("ADV.9 Invalid state transition (currentRound jumps by 2, not 1) -> DENIED",
       await assertFails(matchRef(uidA, m + "-9").update(Object.assign({}, advancePatch(2), { currentRound: 3 })))
+        .then(function () { return true; }).catch(function () { return false; }));
+
+    // ────────────────────────────────────────────────────────────
+    // ADV.10-11 (Firestore Rules Hardening sprint): real-emulator proof
+    // that isValidRoundAdvance()'s new maxRounds ceiling check rejects
+    // an advance attempted on the match's own true final round (the
+    // round that SHOULD instead trigger endMatch()), while a legitimate
+    // advance safely below the ceiling remains allowed — including
+    // after a dynamic extension (Super Call/Sa'ayda) has grown
+    // maxRounds past its default 18, proving the check is never
+    // hardcoded.
+    // ────────────────────────────────────────────────────────────
+    await seed(m + "-10", { currentRound: 18, maxRounds: 18 });
+    check("ADV.10 Round ceiling (currentRound == maxRounds; should complete, not advance) -> DENIED",
+      await assertFails(matchRef(uidA, m + "-10").update(Object.assign({}, advancePatch(2), { currentRound: 19 })))
+        .then(function () { return true; }).catch(function () { return false; }));
+
+    await seed(m + "-11", { currentRound: 17, maxRounds: 19 });
+    check("ADV.11 Legitimate advance well below a DYNAMICALLY-EXTENDED ceiling (currentRound 17, maxRounds 19 after a Super Call/Sa'ayda extension) -> ALLOWED (regression: the ceiling check must not over-reject, and must never hardcode 18)",
+      await assertSucceeds(matchRef(uidA, m + "-11").update(Object.assign({}, advancePatch(2), { currentRound: 18 })))
         .then(function () { return true; }).catch(function () { return false; }));
   }
 

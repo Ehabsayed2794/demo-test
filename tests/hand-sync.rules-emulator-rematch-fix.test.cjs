@@ -1,3 +1,8 @@
+const path = require("path");
+// Portability fix (found via a real GitHub Actions run -- this file used
+// to hardcode this sandbox's own absolute path, so it failed with
+// MODULE_NOT_FOUND on any other machine, including CI):
+const __REPO_ROOT__ = path.join(__dirname, "..");
 // Firestore Rules Bug-Fix sprint — dedicated regression test for the
 // isValidNewRematchMatch() defect found during the Player Hand
 // Synchronization real-emulator verification.
@@ -31,17 +36,27 @@ async function run() {
     testEnv = await initializeTestEnvironment({
       projectId: "demo-test-rematch-fix",
       firestore: {
-        rules: fs.readFileSync("/home/user/demo-test/firestore.rules", "utf8"),
+        rules: fs.readFileSync(__REPO_ROOT__ + "/firestore.rules", "utf8"),
         host: "127.0.0.1",
         port: 8080
       }
     });
   } catch (e) {
-    console.log("EMULATOR NOT REACHABLE — " + e.message);
-    console.log("\n=== RESULTS ===\n");
-    console.log("0 passed, 0 failed (SKIPPED — no emulator connection)");
-    process.exitCode = 2;
-    return;
+    // Sprint 5.0 (CI/CD Pipeline & Real Emulator Enforcement): a green
+    // run with the emulator down would prove nothing about the real
+    // rules -- FAIL HARD (exit 1), never a silent SKIPPED exit-2. Start
+    // the emulator with `firebase emulators:start --only firestore,auth`
+    // (or run `npm run test:ci`, which does this automatically) before
+    // running this file directly.
+    console.error("EMULATOR NOT REACHABLE — " + e.message);
+    console.error(
+      "\nFATAL: the Firestore Rules Emulator must be running on " +
+      "127.0.0.1:8080 for this test to run. This is a HARD FAILURE, " +
+      "not a skip -- see this catch block's own comment."
+    );
+    console.error("\n=== RESULTS ===\n");
+    console.error("0 passed, 0 failed (FAILED — emulator unreachable)");
+    process.exit(1);
   }
   // Sprint E hygiene fix (see hand-sync.rules-emulator.test.cjs for the
   // full explanation): start every run from a guaranteed-empty

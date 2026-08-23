@@ -1,3 +1,8 @@
+const path = require("path");
+// Portability fix (found via a real GitHub Actions run -- this file used
+// to hardcode this sandbox's own absolute path, so it failed with
+// MODULE_NOT_FOUND on any other machine, including CI):
+const __REPO_ROOT__ = path.join(__dirname, "..");
 // Real, executable tests for Sprint 3.9 (Engine Adapter Layer) —
 // design-ui/match-adapter.js's seat-resolution helpers, pure state
 // translation, and bootstrapGameSession().
@@ -18,11 +23,11 @@
 // in this file — this adapter has nothing to do with firestore.rules.
 global.window = global;
 
-require("/home/user/demo-test/design-ui/engine/cards.js");
-require("/home/user/demo-test/design-ui/engine/deck.js");
-require("/home/user/demo-test/design-ui/engine/dealer.js");
-require("/home/user/demo-test/design-ui/engine/session.js");
-require("/home/user/demo-test/design-ui/match-adapter.js");
+require(__REPO_ROOT__ + "/design-ui/engine/cards.js");
+require(__REPO_ROOT__ + "/design-ui/engine/deck.js");
+require(__REPO_ROOT__ + "/design-ui/engine/dealer.js");
+require(__REPO_ROOT__ + "/design-ui/engine/session.js");
+require(__REPO_ROOT__ + "/design-ui/match-adapter.js");
 
 var GameSession = global.GameSession;
 var MatchAdapter = global.MatchAdapter;
@@ -171,7 +176,7 @@ function fullMatchDoc(overrides) {
   // never hard-imports either side it bridges.
   // ============================================================
   var fs = require("fs");
-  var adapterSource = fs.readFileSync("/home/user/demo-test/design-ui/match-adapter.js", "utf8");
+  var adapterSource = fs.readFileSync(__REPO_ROOT__ + "/design-ui/match-adapter.js", "utf8");
   check("MOCKED — isolation: match-adapter.js contains no require()/import of match-service.js or session.js — it only references global.GameSession lazily, inside function bodies, exactly like every other soft cross-file reference in this codebase",
     !/require\(.*match-service\.js/.test(adapterSource) && !/require\(.*session\.js/.test(adapterSource) && !/require\(.*engine\//.test(adapterSource));
 
@@ -646,7 +651,7 @@ function fullMatchDoc(overrides) {
   // legality decision from raw card/suit data itself.
   // ============================================================
   var fsCheck = require("fs");
-  var adapterSourceForRules = fsCheck.readFileSync("/home/user/demo-test/design-ui/match-adapter.js", "utf8");
+  var adapterSourceForRules = fsCheck.readFileSync(__REPO_ROOT__ + "/design-ui/match-adapter.js", "utf8");
   check("MOCKED — Task 5 req #10: match-adapter.js contains no follow-suit (`ledSuit`) logic of its own anywhere in the file",
     !/ledSuit/.test(adapterSourceForRules));
   check("MOCKED — Task 5 req #10: match-adapter.js's only calls into TableEngine are emit()/getState() — it never accesses `.hands` to compute legality itself",
@@ -715,7 +720,7 @@ function fullMatchDoc(overrides) {
   // Task 1 (Architecture Verification) requirement, re-verified directly
   // here (not just asserted in docs): table-engine.js's real, exported
   // API already provides everything this function needs.
-  var TableEngineRealExports = require("fs").readFileSync("/home/user/demo-test/design-ui/engine/table-engine.js", "utf8");
+  var TableEngineRealExports = require("fs").readFileSync(__REPO_ROOT__ + "/design-ui/engine/table-engine.js", "utf8");
   check("MOCKED — Task 1: table-engine.js already exports getState()/resolveTrick() (Sprint 3.6) — no new engine export was required for trick sync",
     /getState:\s*function/.test(TableEngineRealExports) && /resolveTrick:\s*resolveTrick/.test(TableEngineRealExports));
 
@@ -837,7 +842,7 @@ function fullMatchDoc(overrides) {
   check("MOCKED — ENGINE_REJECTED / desync reporting: applyRemoteTrick() never calls resolveTrick() when the engine hasn't reached the trick-complete boundary — it never masks or re-derives applyRemoteCard()'s own desync detection",
     true /* structural: covered by the NOT_RESOLVING assertion above and by this function's own source, which contains no ENGINE_REJECTED branch of its own — see the structural check below */);
 
-  var adapterSourceForTrick = require("fs").readFileSync("/home/user/demo-test/design-ui/match-adapter.js", "utf8");
+  var adapterSourceForTrick = require("fs").readFileSync(__REPO_ROOT__ + "/design-ui/match-adapter.js", "utf8");
   check("MOCKED — no duplicated gameplay rule: match-adapter.js contains no follow-suit/trump-comparison logic of its own anywhere (`ledSuit`, `cardValue(`, `SUITS[`) — applyRemoteTrick()'s only engine call is resolveTrick()",
     !/ledSuit/.test(adapterSourceForTrick) && !/cardValue\(/.test(adapterSourceForTrick) && !/SUITS\[/.test(adapterSourceForTrick));
   check("MOCKED — no duplicated gameplay rule: applyRemoteTrick() calls TableEngine.resolveTrick() and nothing else into any engine file",

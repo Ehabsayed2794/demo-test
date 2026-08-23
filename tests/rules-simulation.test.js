@@ -491,11 +491,26 @@ function isValidBiddingActionSubmission(oldData, newData, requestAuthUid) {
   if (requestAuthUid == null) return false;
   if ((oldData.players || []).indexOf(requestAuthUid) === -1) return false;
   if (!("seats" in oldData) || !("biddingLog" in oldData) || !("version" in oldData) || !("currentRound" in oldData)) return false;
+  if (!("bids" in oldData) || !("biddingOpen" in oldData)) return false;
 
-  var allowedChangedKeys = ["biddingLog", "version", "updatedAt"];
-  var changedKeys = Object.keys(newData).filter(function (k) { return JSON.stringify(newData[k]) !== JSON.stringify(oldData[k]); })
+  // Sprint J.7 (Unified Bidding Completion) — 1:1 JS mirror of
+  // firestore.rules' own new touchesBids/touchesRoundStart branches. See
+  // that function's own comment for the full rationale: a
+  // SubmitConfirmCall may ALSO mirror the Caller's own confirmed trick
+  // count into their OWN `bids` slot (closing the Sprint J.4/J.5.2-
+  // confirmed gap), and, on the genuine completion edge, establish
+  // turn/cardPhase using the identical allSeatsNowHaveBids/seat-
+  // membership logic isValidBidSubmission() already uses.
+  var changedKeysRaw = Object.keys(newData).filter(function (k) { return JSON.stringify(newData[k]) !== JSON.stringify(oldData[k]); })
     .concat(Object.keys(oldData).filter(function (k) { return !(k in newData); }));
-  var onlyAllowedKeysChanged = changedKeys.every(function (k) { return allowedChangedKeys.indexOf(k) !== -1; });
+  var touchesBids = changedKeysRaw.indexOf("bids") !== -1;
+  var touchesRoundStart = changedKeysRaw.indexOf("turn") !== -1 || changedKeysRaw.indexOf("cardPhase") !== -1;
+  var allowedChangedKeys = touchesBids
+    ? (touchesRoundStart
+        ? ["biddingLog", "version", "updatedAt", "bids", "biddingOpen", "turn", "cardPhase"]
+        : ["biddingLog", "version", "updatedAt", "bids", "biddingOpen"])
+    : ["biddingLog", "version", "updatedAt"];
+  var onlyAllowedKeysChanged = changedKeysRaw.every(function (k) { return allowedChangedKeys.indexOf(k) !== -1; });
   if (!onlyAllowedKeysChanged) return false;
 
   if (newData.version !== oldData.version + 1) return false;
@@ -504,12 +519,52 @@ function isValidBiddingActionSubmission(oldData, newData, requestAuthUid) {
   var newLog = newData.biddingLog || [];
   if (newLog.length !== oldLog.length + 1) return false;
 
+  // biddingLog Prefix Immutability Fix — mirrors isValidCardSubmission()'s
+  // own `newLog[0:oldLog.size()] == oldLog` CEL slice check exactly: every
+  // earlier entry must stay byte-for-byte unchanged and in order.
+  if (oldLog.length > 0) {
+    for (var i = 0; i < oldLog.length; i++) {
+      if (JSON.stringify(newLog[i]) !== JSON.stringify(oldLog[i])) return false;
+    }
+  }
+
   var appended = newLog[newLog.length - 1];
   if (!appended || typeof appended !== "object" || typeof appended.seatId !== "string") return false;
   if (!(appended.seatId in oldData.seats)) return false;
   if (oldData.seats[appended.seatId] !== requestAuthUid) return false;
+  if (!isValidBiddingActionEntry(appended, oldData.currentRound)) return false;
 
-  return isValidBiddingActionEntry(appended, oldData.currentRound);
+  var allSeatsNowHaveBids = Object.keys(oldData.seats).every(function (s) { return s in newData.bids && newData.bids[s] != null; });
+
+  // Sprint J.7: the ONLY way this write may touch `bids` is a genuine
+  // SubmitConfirmCall persisting the Caller's OWN confirmed estimate
+  // into their OWN (and only their own) bids slot.
+  if (touchesBids) {
+    if (appended.actionType !== "SubmitConfirmCall") return false;
+    if (!(!(appended.seatId in oldData.bids) || oldData.bids[appended.seatId] == null)) return false;
+    if (!(appended.seatId in newData.bids) || newData.bids[appended.seatId] == null) return false;
+    if (!Number.isInteger(newData.bids[appended.seatId])) return false;
+    if (newData.bids[appended.seatId] !== appended.tricks) return false;
+    var bidsChangedKeys = Object.keys(newData.bids).filter(function (k) { return JSON.stringify(newData.bids[k]) !== JSON.stringify((oldData.bids || {})[k]); });
+    if (!(bidsChangedKeys.length === 1 && bidsChangedKeys[0] === appended.seatId)) return false;
+    if (newData.biddingOpen !== !allSeatsNowHaveBids) return false;
+  }
+
+  // Sprint J.7: the SAME round-start completion guard
+  // isValidBidSubmission() already enforces, reused verbatim.
+  if (touchesRoundStart) {
+    if (!touchesBids) return false;
+    if (oldData.turn !== null) return false;
+    if (oldData.cardPhase !== null) return false;
+    if (oldData.biddingOpen !== true) return false;
+    if (newData.biddingOpen !== false) return false;
+    if (!allSeatsNowHaveBids) return false;
+    if (newData.cardPhase !== "PLAY") return false;
+    var seatUids = [oldData.seats.p1, oldData.seats.p2, oldData.seats.p3, oldData.seats.p4].filter(function (u) { return u != null; });
+    if (newData.turn == null || seatUids.indexOf(newData.turn) === -1) return false;
+  }
+
+  return true;
 }
 
 var CARD_SUITS = ["SANS", "SPADES", "HEARTS", "DIAMONDS", "CLUBS"];
@@ -537,6 +592,10 @@ function isValidCardSubmission(oldData, newData, requestAuthUid) {
   if (requestAuthUid == null) return false;
   if ((oldData.players || []).indexOf(requestAuthUid) === -1) return false;
   if (!("seats" in oldData) || !("cardLog" in oldData) || !("version" in oldData) || !("turn" in oldData) || !("cardPhase" in oldData) || !("currentRound" in oldData)) return false;
+  // Firestore Rules Hardening sprint: mirrors the real firestore.rules'
+  // new terminal-state guard 1:1 — an already-completed match may never
+  // accept a card submission.
+  if ("status" in oldData && oldData.status === "complete") return false;
 
   var allowedChangedKeys = ["cardLog", "lastCardSeat", "version", "turn", "cardPhase", "updatedAt"];
   var changedKeys = Object.keys(newData).filter(function (k) { return JSON.stringify(newData[k]) !== JSON.stringify(oldData[k]); })
@@ -549,6 +608,14 @@ function isValidCardSubmission(oldData, newData, requestAuthUid) {
   var oldLog = oldData.cardLog || [];
   var newLog = newData.cardLog || [];
   if (newLog.length !== oldLog.length + 1) return false;
+
+  // Sprint A.1 (Card Log Prefix Immutability Fix): every earlier entry
+  // must be byte-for-byte unchanged AND in the same order — mirrors
+  // the real firestore.rules' own `newLog[0:oldLog.size()] == oldLog`
+  // slice comparison (the SAME technique isValidRoundExtension()'s own
+  // JS mirror below already uses for `extendedRounds`).
+  var prefix = newLog.slice(0, oldLog.length);
+  if (JSON.stringify(prefix) !== JSON.stringify(oldLog)) return false;
 
   if (typeof seat !== "string") return false;
   if (!(seat in oldData.seats)) return false;
@@ -593,7 +660,7 @@ function isValidCardSubmission(oldData, newData, requestAuthUid) {
 function isValidRoundAdvance(oldData, newData, requestAuthUid) {
   if (requestAuthUid == null) return false;
   if ((oldData.players || []).indexOf(requestAuthUid) === -1) return false;
-  if (!("currentRound" in oldData) || !("version" in oldData)) return false;
+  if (!("currentRound" in oldData) || !("version" in oldData) || !("maxRounds" in oldData)) return false;
   // Match Completion sprint: an already-completed match may never be
   // advanced again — mirrors the identical guard added to the real
   // isValidRoundAdvance() (found via real-browser QA).
@@ -607,6 +674,12 @@ function isValidRoundAdvance(oldData, newData, requestAuthUid) {
 
   if (newData.version !== oldData.version + 1) return false;
   if (newData.currentRound !== oldData.currentRound + 1) return false;
+  // Firestore Rules Hardening sprint: mirrors the real firestore.rules'
+  // new ceiling check 1:1 — a round may only be advanced if doing so
+  // does not move currentRound past this match's own current
+  // authoritative maxRounds (never hardcoded, so a Super Call/Sa'ayda
+  // extension is always respected).
+  if (oldData.currentRound + 1 > oldData.maxRounds) return false;
   if (newData.biddingOpen !== true) return false;
   if (newData.cardPhase !== null) return false;
   if (newData.turn !== null) return false;
@@ -621,11 +694,24 @@ function isValidBidSubmission(oldData, newData, requestAuthUid) {
   if (requestAuthUid == null) return false;
   if ((oldData.players || []).indexOf(requestAuthUid) === -1) return false;
   if (!("seats" in oldData) || !("bids" in oldData) || !("version" in oldData) || !("biddingOpen" in oldData)) return false;
+  // Firestore Rules Hardening sprint: mirrors the real firestore.rules'
+  // new terminal-state guard 1:1 — an already-completed match may never
+  // accept a bid submission.
+  if ("status" in oldData && oldData.status === "complete") return false;
 
-  var allowedChangedKeys = ["bids", "biddingOpen", "version", "lastBidSeat", "updatedAt"];
-  var changedKeys = Object.keys(newData).filter(function (k) { return JSON.stringify(newData[k]) !== JSON.stringify(oldData[k]); })
+  // Sprint J.3 (Hardened Round-Start Turn Authority) — 1:1 JS mirror of
+  // firestore.rules' own new touchesRoundStart branch. See that
+  // function's own comment for the full rationale (closes the
+  // advanceToNextRound() turn:null/cardPhase:null dead end for the
+  // Estimates-completion path, without letting an ordinary/intermediate
+  // bid touch turn/cardPhase at all).
+  var changedKeysRaw = Object.keys(newData).filter(function (k) { return JSON.stringify(newData[k]) !== JSON.stringify(oldData[k]); })
     .concat(Object.keys(oldData).filter(function (k) { return !(k in newData); }));
-  var onlyAllowedKeysChanged = changedKeys.every(function (k) { return allowedChangedKeys.indexOf(k) !== -1; });
+  var touchesRoundStart = changedKeysRaw.indexOf("turn") !== -1 || changedKeysRaw.indexOf("cardPhase") !== -1;
+  var allowedChangedKeys = touchesRoundStart
+    ? ["bids", "biddingOpen", "version", "lastBidSeat", "updatedAt", "turn", "cardPhase"]
+    : ["bids", "biddingOpen", "version", "lastBidSeat", "updatedAt"];
+  var onlyAllowedKeysChanged = changedKeysRaw.every(function (k) { return allowedChangedKeys.indexOf(k) !== -1; });
   if (!onlyAllowedKeysChanged) return false;
 
   if (newData.version !== oldData.version + 1) return false;
@@ -651,6 +737,27 @@ function isValidBidSubmission(oldData, newData, requestAuthUid) {
 
   var allSeatsFilled = Object.keys(oldData.seats).every(function (s) { return s in newData.bids && newData.bids[s] != null; });
   if (newData.biddingOpen !== !allSeatsFilled) return false;
+
+  // Sprint J.3 — the round-start guard, mirrored 1:1 from firestore.rules.
+  if (touchesRoundStart) {
+    if (oldData.turn !== null) return false;
+    if (oldData.cardPhase !== null) return false;
+    if (oldData.biddingOpen !== true) return false;
+    if (newData.biddingOpen !== false) return false;
+    if (!allSeatsFilled) return false;
+    if (newData.cardPhase !== "PLAY") return false;
+    // Sprint J.7 (Seat Membership Security Fix): explicit `newData.turn
+    // == null` rejection, mirroring the real CEL rules' own fix 1:1 —
+    // this JS mirror was already accidentally safe here (filter(u => u
+    // != null) excludes null/undefined absent-seat entries before the
+    // indexOf check), but the real firestore.rules' `.get(seat, null)`
+    // OR-chain was NOT (see that function's own Sprint J.7 comment) —
+    // asserting it explicitly here too keeps the mirror an honest,
+    // non-misleading 1:1 reflection of the hardened real rule, not just
+    // an equivalent-by-coincidence one.
+    var seatUids = [oldData.seats.p1, oldData.seats.p2, oldData.seats.p3, oldData.seats.p4].filter(function (u) { return u != null; });
+    if (newData.turn == null || seatUids.indexOf(newData.turn) === -1) return false;
+  }
 
   return true;
 }
@@ -1303,6 +1410,89 @@ check(
   ) === false
 );
 
+// ────────────────────────────────────────────────────────────────
+// Sprint J.3 (Hardened Round-Start Turn Authority) — a 4-seat fixture
+// sitting in the exact "post-advanceToNextRound(), mid-Estimates"
+// state this fix targets: turn/cardPhase both null (the real dead-end
+// state Sprint J's forensic report identified), 3 of 4 seats already
+// estimated, biddingOpen still true.
+// ────────────────────────────────────────────────────────────────
+var roundStartBase = Object.assign({}, matchAfterCreate38, {
+  players: ["userB", "userC", "userD", "userE"],
+  seats: { p1: "userB", p2: "userC", p3: "userD", p4: "userE" },
+  bids: { p1: 4, p2: 3, p3: 2, p4: null },
+  biddingOpen: true, version: 10, turn: null, cardPhase: null
+});
+
+check(
+  "SIMULATED — J.3 #1: an INTERMEDIATE estimate (not the last seat) that ALSO tries to claim turn/cardPhase — DENIED",
+  isValidBidSubmission(
+    Object.assign({}, roundStartBase, { bids: { p1: 4, p2: 3, p3: null, p4: null } }),
+    Object.assign({}, roundStartBase, { bids: { p1: 4, p2: 3, p3: 2, p4: null }, version: 11, lastBidSeat: "p3", turn: "userB", cardPhase: "PLAY" }),
+    "userD"
+  ) === false
+);
+check(
+  "SIMULATED — J.3 #2: the GENUINE final estimate, with a valid (structurally real) turn/cardPhase claim — ALLOWED",
+  isValidBidSubmission(
+    roundStartBase,
+    Object.assign({}, roundStartBase, { bids: { p1: 4, p2: 3, p3: 2, p4: 5 }, biddingOpen: false, version: 11, lastBidSeat: "p4", turn: "userB", cardPhase: "PLAY" }),
+    "userE"
+  ) === true
+);
+check(
+  "SIMULATED — J.3 #3: the genuine final estimate, but naming a structurally INVALID uid as turn (not a real seat owner) — DENIED",
+  isValidBidSubmission(
+    roundStartBase,
+    Object.assign({}, roundStartBase, { bids: { p1: 4, p2: 3, p3: 2, p4: 5 }, biddingOpen: false, version: 11, lastBidSeat: "p4", turn: "some-fabricated-uid", cardPhase: "PLAY" }),
+    "userE"
+  ) === false
+);
+check(
+  "SIMULATED — J.3 #3b: the genuine final estimate, naming a WRONG (but structurally real) seat's uid as turn — ALLOWED at the Rules layer (this is the documented, accepted client-authoritative limitation; correctness is enforced client-side, not by Rules — see this sprint's own adversarial review)",
+  isValidBidSubmission(
+    roundStartBase,
+    Object.assign({}, roundStartBase, { bids: { p1: 4, p2: 3, p3: 2, p4: 5 }, biddingOpen: false, version: 11, lastBidSeat: "p4", turn: "userC", cardPhase: "PLAY" }),
+    "userE"
+  ) === true
+);
+check(
+  "SIMULATED — J.3 #4: duplicate final-completion write replayed after turn is already set — DENIED (oldData.turn no longer null)",
+  isValidBidSubmission(
+    Object.assign({}, roundStartBase, { bids: { p1: 4, p2: 3, p3: 2, p4: 5 }, biddingOpen: false, version: 11, turn: "userB", cardPhase: "PLAY" }),
+    Object.assign({}, roundStartBase, { bids: { p1: 4, p2: 3, p3: 2, p4: 5 }, biddingOpen: false, version: 12, lastBidSeat: "p4", turn: "userC", cardPhase: "PLAY" }),
+    "userE"
+  ) === false
+);
+check(
+  "SIMULATED — J.3 #5: stale-version final-completion write — DENIED (existing version/OCC check, untouched)",
+  isValidBidSubmission(
+    roundStartBase,
+    Object.assign({}, roundStartBase, { bids: { p1: 4, p2: 3, p3: 2, p4: 5 }, biddingOpen: false, version: 10, lastBidSeat: "p4", turn: "userB", cardPhase: "PLAY" }),
+    "userE"
+  ) === false
+);
+check(
+  "SIMULATED — J.3 #6: genuine final estimate but with an invalid cardPhase value ('RESOLVING' instead of 'PLAY') — DENIED",
+  isValidBidSubmission(
+    roundStartBase,
+    Object.assign({}, roundStartBase, { bids: { p1: 4, p2: 3, p3: 2, p4: 5 }, biddingOpen: false, version: 11, lastBidSeat: "p4", turn: "userB", cardPhase: "RESOLVING" }),
+    "userE"
+  ) === false
+);
+check(
+  "SIMULATED — J.3 #7: mid-round turn mutation attempt (bidding already fully closed, biddingOpen already false, NOT a real completion edge) — DENIED",
+  isValidBidSubmission(
+    Object.assign({}, roundStartBase, { bids: { p1: 4, p2: 3, p3: 2, p4: 5 }, biddingOpen: false, version: 11, turn: "userB", cardPhase: "PLAY" }),
+    Object.assign({}, roundStartBase, { bids: { p1: 4, p2: 3, p3: 2, p4: 5 }, biddingOpen: false, version: 12, lastBidSeat: "p4", turn: "userD", cardPhase: "PLAY" }),
+    "userE"
+  ) === false
+);
+check(
+  "SIMULATED — J.3 #8: initial match creation state is unaffected (turn is a real dealer uid, never null, at creation) — sanity check on the fixture itself",
+  validNewMatch38.turn !== null && validNewMatch38.turn !== undefined
+);
+
 // ============================================================
 // Sprint 3.8.1 (Bidding Validation & Rules Hardening) — ALL SIMULATED.
 // Generic bid-VALUE validation via isValidBidSubmission()'s new
@@ -1391,7 +1581,12 @@ check(
   "SIMULATED — multiple sequential cards: a second, independent append after the first (now userC's turn) is ALSO allowed, turn advancing again",
   isValidCardSubmission(
     Object.assign({}, matchAfterCreate42, {
-      cardLog: [{ seatId: "p1", card: { suit: "SPADES", rank: { v: 12, s: "Q" } } }],
+      // Sprint A.1: this entry must carry `round`, matching every real
+      // entry's actual shape (required since the Round Lifecycle
+      // sprint) — the prefix-equality check now compares this OLD
+      // entry byte-for-byte against the SAME entry in the new write
+      // below, so the fixture must be internally consistent.
+      cardLog: [{ seatId: "p1", card: { suit: "SPADES", rank: { v: 12, s: "Q" } }, round: 1 }],
       version: 2, lastCardSeat: "p1", turn: "userC", cardPhase: "PLAY"
     }),
     Object.assign({}, matchAfterCreate42, {
@@ -1630,22 +1825,20 @@ check("SIMULATED — generic card validation: a well-formed SANS-suit card is AL
 });
 
 // ============================================================
-// Sprint 4.2.1 (Pre-Write Card Authority & Desync Safety), Task 4 —
-// Card Log Integrity Assessment. `isValidCardSubmission()` verifies
-// the log grew by exactly one entry and that the NEW (final) entry is
-// well-formed and correctly attributed — it does NOT independently
-// re-verify that every EARLIER entry is byte-for-byte unchanged,
-// because CEL (Firestore Rules, rules_version '2') has no documented
-// primitive for comparing two lists index-by-index without a
-// range()/slice() construct it does not have (see
-// docs/architecture/SecurityArchitecture.md's Sprint 4.2.1 section for
-// the full assessment of why `.all(x, x in newLog)` — the closest
-// thing CEL offers — is INSUFFICIENT: it proves multiset membership,
-// not position/order, so it would not catch a REORDERING of existing
-// entries either). The tests below DEMONSTRATE this real gap directly
-// against the SAME 1:1 rules translation this file exercises for
-// every other rule — not merely asserted in a comment — precisely so
-// this limitation is proven, not hand-waved.
+// Sprint A.1 (Card Log Prefix Immutability Fix). Originally, Sprint
+// 4.2.1's Task 4 assessment found — and the tests here DEMONSTRATED,
+// not merely asserted — that `isValidCardSubmission()` could not see a
+// rewrite or reorder of an earlier `cardLog` entry, because it assumed
+// CEL had no primitive for an index-by-index prefix comparison. That
+// assumption was RE-CHECKED against this project's own later work
+// (`isValidRoundExtension()`'s real, emulator-verified
+// `newRounds[0:oldRounds.size()] == oldRounds` slice check) and found
+// to be WRONG — CEL DOES support list slicing. `isValidCardSubmission()`
+// (both the real firestore.rules and this 1:1 JS mirror) now applies
+// the identical technique to `cardLog`. The two checks below are the
+// SAME two attack shapes the old "KNOWN VULNERABILITY" tests
+// demonstrated getting through — updated to now prove they are
+// REJECTED, not merely documented as open.
 // ============================================================
 var prefixRewriteMatch = Object.assign({}, matchAfterCreate42, {
   cardLog: [
@@ -1655,22 +1848,22 @@ var prefixRewriteMatch = Object.assign({}, matchAfterCreate42, {
   version: 3, lastCardSeat: "p2", turn: "userB", cardPhase: "PLAY" // it's userB's (p1's) turn to submit the final, genuinely-new entry below
 });
 check(
-  "SIMULATED — KNOWN VULNERABILITY (Task 4, documented not hidden): rewriting an EARLIER cardLog entry's card value while still appending exactly one NEW, well-formed entry currently PASSES isValidCardSubmission() — the rule cannot see the rewrite",
+  "SIMULATED — FIXED (Sprint A.1, was KNOWN VULNERABILITY): rewriting an EARLIER cardLog entry's card value while still appending exactly one NEW, well-formed entry is now REJECTED by isValidCardSubmission()'s prefix-equality check",
   isValidCardSubmission(
     prefixRewriteMatch,
     Object.assign({}, prefixRewriteMatch, {
       cardLog: [
-        { seatId: "p1", card: { suit: "HEARTS", rank: { v: 2, s: "2" } } }, // REWRITTEN — was SPADES Q, now HEARTS 2 — the rule never checks this
+        { seatId: "p1", card: { suit: "HEARTS", rank: { v: 2, s: "2" } } }, // REWRITTEN — was SPADES Q, now HEARTS 2 — now caught by the prefix check
         { seatId: "p2", card: { suit: "SPADES", rank: { v: 5, s: "5" } } },
         { seatId: "p1", card: { suit: "SPADES", rank: { v: 8, s: "8" } }, round: 1 } // the one genuinely new, well-formed entry
       ],
       version: 4, lastCardSeat: "p1", turn: "userC", cardPhase: "PLAY"
     }),
     "userB" // owns p1 (validNewMatch38's real seat map)
-  ) === true
+  ) === false
 );
 check(
-  "SIMULATED — KNOWN VULNERABILITY (Task 4): REORDERING two earlier entries (same multiset, different sequence — which matters for turn/trick order) while appending one new entry ALSO currently passes — proving `.all(x, x in newLog)` would not have helped even if it were added, since it checks membership, not position",
+  "SIMULATED — FIXED (Sprint A.1, was KNOWN VULNERABILITY): REORDERING two earlier entries (same multiset, different sequence — which matters for turn/trick order) while appending one new entry is now REJECTED — proving the fix catches POSITION, not just membership, unlike `.all(x, x in newLog)` would have",
   isValidCardSubmission(
     prefixRewriteMatch,
     Object.assign({}, prefixRewriteMatch, {
@@ -1680,6 +1873,32 @@ check(
         { seatId: "p1", card: { suit: "SPADES", rank: { v: 8, s: "8" } }, round: 1 }
       ],
       version: 4, lastCardSeat: "p1", turn: "userC", cardPhase: "PLAY"
+    }),
+    "userB"
+  ) === false
+);
+check(
+  "SIMULATED — Sprint A.1 regression: a legitimate append with an UNCHANGED, non-empty prefix is still ALLOWED (the fix does not over-reject)",
+  isValidCardSubmission(
+    prefixRewriteMatch,
+    Object.assign({}, prefixRewriteMatch, {
+      cardLog: [
+        { seatId: "p1", card: { suit: "SPADES", rank: { v: 12, s: "Q" } } },
+        { seatId: "p2", card: { suit: "SPADES", rank: { v: 5, s: "5" } } },
+        { seatId: "p1", card: { suit: "SPADES", rank: { v: 8, s: "8" } }, round: 1 }
+      ],
+      version: 4, lastCardSeat: "p1", turn: "userC", cardPhase: "PLAY"
+    }),
+    "userB"
+  ) === true
+);
+check(
+  "SIMULATED — Sprint A.1 regression: the very FIRST card play of a match (oldLog empty) is still ALLOWED — the empty-prefix ternary guard must not itself reject a legitimate first submission",
+  isValidCardSubmission(
+    matchAfterCreate42,
+    Object.assign({}, matchAfterCreate42, {
+      cardLog: [{ seatId: "p1", card: { suit: "SPADES", rank: { v: 12, s: "Q" } }, round: 1 }],
+      version: 2, lastCardSeat: "p1", turn: "userC", cardPhase: "PLAY"
     }),
     "userB"
   ) === true
@@ -1745,7 +1964,7 @@ check(
 check(
   "SIMULATED — multiple sequential bidding actions: a second, independent append after the first is ALSO allowed",
   isValidBiddingActionSubmission(
-    Object.assign({}, matchAfterCreate37, { biddingLog: [{ seatId: "p1", actionType: "SubmitDashCallDecision", declaredDashCall: false }], version: 2 }),
+    Object.assign({}, matchAfterCreate37, { biddingLog: [{ seatId: "p1", actionType: "SubmitDashCallDecision", declaredDashCall: false, round: 1 }], version: 2 }),
     Object.assign({}, matchAfterCreate37, {
       biddingLog: [
         { seatId: "p1", actionType: "SubmitDashCallDecision", declaredDashCall: false, round: 1 },
@@ -1951,6 +2170,167 @@ check(
   ) === false
 );
 
+// ============================================================
+// biddingLog Prefix Immutability Fix — mirrors the cardLog Sprint A.1
+// checks above exactly (see that section's own header comment for the
+// full account of why the old "CEL can't do this" assumption was
+// wrong). isValidBiddingActionSubmission() now applies the identical
+// `newLog[0:oldLog.size()] == oldLog` guarded slice technique to
+// biddingLog.
+// ============================================================
+var biddingPrefixRewriteMatch = Object.assign({}, matchAfterCreate37, {
+  biddingLog: [
+    { seatId: "p1", actionType: "SubmitDashCallDecision", round: 1, declaredDashCall: true },
+    { seatId: "p2", actionType: "SubmitDashCallDecision", round: 1, declaredDashCall: false }
+  ],
+  version: 3
+});
+check(
+  "SIMULATED — biddingLog prefix immutability: rewriting an EARLIER biddingLog entry while still appending exactly one NEW, well-formed entry is REJECTED",
+  isValidBiddingActionSubmission(
+    biddingPrefixRewriteMatch,
+    Object.assign({}, biddingPrefixRewriteMatch, {
+      biddingLog: [
+        { seatId: "p1", actionType: "SubmitDashCallDecision", round: 1, declaredDashCall: false }, // REWRITTEN — was true, now false
+        { seatId: "p2", actionType: "SubmitDashCallDecision", round: 1, declaredDashCall: false },
+        { seatId: "p1", actionType: "SubmitDashCallDecision", round: 1, declaredDashCall: true }
+      ],
+      version: 4
+    }),
+    "userB" // owns p1
+  ) === false
+);
+check(
+  "SIMULATED — biddingLog prefix immutability: REORDERING two earlier entries (same multiset, different sequence) while appending one new entry is REJECTED",
+  isValidBiddingActionSubmission(
+    biddingPrefixRewriteMatch,
+    Object.assign({}, biddingPrefixRewriteMatch, {
+      biddingLog: [
+        { seatId: "p2", actionType: "SubmitDashCallDecision", round: 1, declaredDashCall: false }, // SWAPPED with the entry below
+        { seatId: "p1", actionType: "SubmitDashCallDecision", round: 1, declaredDashCall: true },
+        { seatId: "p1", actionType: "SubmitDashCallDecision", round: 1, declaredDashCall: true }
+      ],
+      version: 4
+    }),
+    "userB"
+  ) === false
+);
+check(
+  "SIMULATED — biddingLog prefix immutability regression: a legitimate append with an UNCHANGED, non-empty prefix is still ALLOWED (the fix does not over-reject)",
+  isValidBiddingActionSubmission(
+    biddingPrefixRewriteMatch,
+    Object.assign({}, biddingPrefixRewriteMatch, {
+      biddingLog: biddingPrefixRewriteMatch.biddingLog.concat([
+        { seatId: "p1", actionType: "SubmitDashCallDecision", round: 1, declaredDashCall: true }
+      ]),
+      version: 4
+    }),
+    "userB"
+  ) === true
+);
+check(
+  "SIMULATED — biddingLog prefix immutability regression: the very FIRST bidding action of a match (oldLog empty) is still ALLOWED — the empty-prefix guard must not itself reject a legitimate first submission",
+  isValidBiddingActionSubmission(
+    matchAfterCreate37,
+    Object.assign({}, matchAfterCreate37, {
+      biddingLog: [{ seatId: "p1", actionType: "SubmitDashCallDecision", round: 1, declaredDashCall: true }],
+      version: 2
+    }),
+    "userB"
+  ) === true
+);
+
+// ============================================================
+// Sprint J.7 (Unified Bidding Completion + Seat Membership Fix) — 1:1
+// JS mirror checks, verified first against the real Firestore Rules
+// Emulator (tests/sprint-j7-unified-completion.rules-emulator.test.cjs).
+// matchAfterCreate37: a 2-player match, seats p1=userB, p2=userC (per
+// validNewMatch38's own fixture — this project's tests deliberately
+// exercise 2-player matches, not just 4), bids all null, biddingOpen=true.
+// ============================================================
+check(
+  "SIMULATED — J.7: SubmitConfirmCall mirrors caller's own bid into bids[p1], biddingOpen stays true (p2 still missing) — ALLOWED",
+  isValidBiddingActionSubmission(
+    matchAfterCreate37,
+    Object.assign({}, matchAfterCreate37, {
+      biddingLog: [{ seatId: "p1", actionType: "SubmitConfirmCall", tricks: 4, suit: "SPADES", round: 1 }],
+      version: 2, bids: { p1: 4, p2: null }, biddingOpen: true
+    }),
+    "userB"
+  ) === true
+);
+check(
+  "SIMULATED — J.7: p1 (userB) forging a ConfirmCall claiming seatId p2 — DENIED (seat ownership)",
+  isValidBiddingActionSubmission(
+    matchAfterCreate37,
+    Object.assign({}, matchAfterCreate37, {
+      biddingLog: [{ seatId: "p2", actionType: "SubmitConfirmCall", tricks: 4, suit: "SPADES", round: 1 }],
+      version: 2, bids: { p1: null, p2: 4 }
+    }),
+    "userB"
+  ) === false
+);
+check(
+  "SIMULATED — J.7: ConfirmCall smuggling turn/cardPhase while the other seat still has no bid — DENIED (early completion)",
+  isValidBiddingActionSubmission(
+    matchAfterCreate37,
+    Object.assign({}, matchAfterCreate37, {
+      biddingLog: [{ seatId: "p1", actionType: "SubmitConfirmCall", tricks: 4, suit: "SPADES", round: 1 }],
+      version: 2, bids: { p1: 4, p2: null }, biddingOpen: false,
+      turn: "userB", cardPhase: "PLAY"
+    }),
+    "userB"
+  ) === false
+);
+check(
+  "SIMULATED — J.7: ConfirmCall write also touching the OTHER seat's bids entry — DENIED",
+  isValidBiddingActionSubmission(
+    matchAfterCreate37,
+    Object.assign({}, matchAfterCreate37, {
+      biddingLog: [{ seatId: "p1", actionType: "SubmitConfirmCall", tricks: 4, suit: "SPADES", round: 1 }],
+      version: 2, bids: { p1: 4, p2: 9 }
+    }),
+    "userB"
+  ) === false
+);
+check(
+  "SIMULATED — J.7: an ordinary SubmitDashCallDecision cannot smuggle a bids write — DENIED",
+  isValidBiddingActionSubmission(
+    matchAfterCreate37,
+    Object.assign({}, matchAfterCreate37, {
+      biddingLog: [{ seatId: "p1", actionType: "SubmitDashCallDecision", declaredDashCall: false, round: 1 }],
+      version: 2, bids: { p1: 4, p2: null }
+    }),
+    "userB"
+  ) === false
+);
+
+// J.7 seat-membership fix, exercised via isValidBidSubmission()'s own
+// completion branch for a 2-player match (absent p3/p4 must never
+// satisfy the turn-membership check via a `null` default). Overrides
+// turn/cardPhase to null explicitly — matchAfterCreate37's own turn
+// ("userB") reflects MATCH CREATION, not the post-round-advance
+// turn:null/cardPhase:null state this branch actually governs.
+var matchJ7TwoPlayer = Object.assign({}, matchAfterCreate37, {
+  bids: { p1: 4, p2: null }, turn: null, cardPhase: null
+});
+check(
+  "SIMULATED — J.7: 2-player genuine completion with turn:null — DENIED",
+  isValidBidSubmission(
+    matchJ7TwoPlayer,
+    Object.assign({}, matchJ7TwoPlayer, { bids: { p1: 4, p2: 3 }, biddingOpen: false, version: 2, lastBidSeat: "p2", turn: null, cardPhase: "PLAY" }),
+    "userC"
+  ) === false
+);
+check(
+  "SIMULATED — J.7: 2-player genuine completion with a legitimate occupied leader (p1) — ALLOWED",
+  isValidBidSubmission(
+    matchJ7TwoPlayer,
+    Object.assign({}, matchJ7TwoPlayer, { bids: { p1: 4, p2: 3 }, biddingOpen: false, version: 2, lastBidSeat: "p2", turn: "userB", cardPhase: "PLAY" }),
+    "userC"
+  ) === true
+);
+
 var matchReadyForRoundAdvance = Object.assign({}, matchAfterCreate423_fourSeats, {
   cardLog: (function () {
     var log = [];
@@ -1961,7 +2341,17 @@ var matchReadyForRoundAdvance = Object.assign({}, matchAfterCreate423_fourSeats,
     }
     return log;
   })(),
-  version: 55
+  version: 55,
+  // Firestore Rules Hardening sprint: matchAfterCreate423_fourSeats's
+  // own fixture chain (matchAfterCreate42 <- validNewMatch42 <-
+  // validNewMatch38) predates the Match Completion sprint's `maxRounds`
+  // field entirely — every REAL match document has always had it since
+  // that sprint (buildInitialMatchDoc()'s own default is 18). This is
+  // the legitimate "update the fixture, don't weaken the rule" case:
+  // a genuine round-1-of-18 match, not a boundary/ceiling case (those
+  // are covered separately in tests/sprint-a-write-paths.rules-emulator.test.cjs's
+  // own ADV.10/ADV.11).
+  maxRounds: 18
 });
 check(
   "SIMULATED — round advance: a well-formed transition (currentRound+1, version+1, biddingOpen reset true, cardPhase/turn reset null) is ALLOWED for ANY seated player, not just a designated host",

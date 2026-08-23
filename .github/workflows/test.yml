@@ -1,0 +1,54 @@
+name: Test (Real Emulator Enforced)
+
+# Sprint 5.0 — CI/CD Pipeline & Real Emulator Enforcement (R4).
+#
+# Implementation note on Task B's literal step list (start emulator ->
+# run tests -> fail on failure/skip): rather than choreograph
+# `firebase emulators:start` in the background, sleep for readiness,
+# run `npm test`, then manually tear the emulator down (fragile -- a
+# crashed test step would leave the emulator process orphaned), this
+# workflow runs `npm run test:ci`, which wraps the identical intent
+# using Firebase's own `emulators:exec` (starts the emulators, runs the
+# given command, waits for it, tears the emulators down in a `finally`
+# either way, and propagates the command's real exit code as its own).
+# Same steps, more robust teardown. See scripts/run-tests.mjs for the
+# runner `test:ci` invokes.
+on:
+  push:
+    branches:
+      - claude/busy-bohr-ez5rz3
+      - main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Hotfix (see Sprint-5.0-Review/CHANGELOG.md's "CI hang"
+      # postmortem, added after a real run on this runner hung for 58
+      # minutes and was cancelled): two tests launch a real Chromium via
+      # Playwright. Without this step there is no browser installed at
+      # all on a fresh runner, and scripts/resolve-chromium.cjs's
+      # fallback path only helps once a real browser actually exists.
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run full test suite against the real Firestore Rules Emulator
+        run: npm run test:ci
+        # No `continue-on-error`, no `if: always()` softening anywhere in
+        # this job -- a non-zero exit from `test:ci` (any individual test
+        # file failing, OR the defense-in-depth "SKIPPED" text scan in
+        # scripts/run-tests.mjs catching a silent skip) fails this step,
+        # which fails the job, which turns the whole workflow red. Per
+        # this sprint's own "Zero Tolerance for Silent Skips" requirement.

@@ -366,6 +366,162 @@
     return Object.prototype.hasOwnProperty.call(matchDoc.seats, seatId) ? matchDoc.seats[seatId] : null;
   }
 
+  // ── Sprint J.11 (Fast-Round Leader Authority) ─────────────────────
+  // Root cause (established across J.8/J.10/J.10.5/J.11's own adversarial
+  // review): for Round 14+ ("fast rounds" — bidding skips Dash/Auction
+  // straight to Estimates), the ONLY function computing the round-start
+  // leader (below, `computeRoundStartLeaderUid()`) read exclusively from
+  // `global.GameSession` — local, listener-driven state. At the exact
+  // synchronous instant the 4th Final Estimate's own `submitBid()`
+  // transaction runs (the write that actually completes fast-round
+  // bidding, for BOTH the Super Call and no-Super-Call cases — see
+  // bidding-engine.js's `SubmitFinalEstimate` handler), NO client has
+  // yet run its own local reducer for this round's completion (that
+  // only happens later, via `applyRemoteBid()`'s echo of the write that
+  // hasn't landed yet) — so `GameSession.getRound().callerId` is
+  // structurally guaranteed to be stale/null, forcing the
+  // `getTurn()||getDealer()` fallback, which is itself a leftover value
+  // from a PREVIOUS round or the match's own creation-time dealer.
+  //
+  // Fix (J.11 approved architecture): for fast rounds only, derive the
+  // leader ENTIRELY from the durable, already-fresh transaction document
+  // — `matchDoc.dealer`, `matchDoc.currentRound`, `matchDoc.bids`,
+  // `matchDoc.seats` — reproducing the EXACT SAME formula
+  // bidding-engine.js's `SubmitFinalEstimate` handler already implements
+  // (never a second, divergent game rule). Zero `GameSession` reference;
+  // zero side effects; safe to call any number of times, including
+  // inside a Firestore transaction the SDK may silently retry.
+  //
+  // Seat ordering is deliberately built from `sortedSeatKeys(matchDoc.
+  // seats)` — the SAME seat-count-aware utility this file already uses
+  // for `uidToSeat()`/`seatToUid()` — NOT `GameSession.getPlayers()`/
+  // `TURN_ORDER` (which session.js's own `mockPlayers()` populates with
+  // exactly 4 entries regardless of real seat count, and whose dealer
+  // rotation cycles a FIXED 4-slot `CANONICAL_ORDER` irrelevant to a
+  // real 2/3-player Firestore match's actual occupied seats). This is a
+  // deliberate correctness choice, not an oversight: for the 4-player
+  // case this file's own E2E harness actually exercises,
+  // `sortedSeatKeys()` over a full 4-seat map returns exactly
+  // `["p1","p2","p3","p4"]` — identical to the existing system's
+  // behavior, zero regression risk — while for 2/3-player matches it is
+  // the only choice that can ever produce a real, occupied seat as
+  // leader at all (a fixed 4-slot rotation could otherwise land on a
+  // seat that doesn't exist in `matchDoc.seats`).
+  /** Pure, deterministic fast-round leader derivation. Takes ONLY
+   *  `matchDoc` — no GameSession, no TableEngine, no local/UI/singleton
+   *  state, no side effects. Returns the leader's SEAT id (not a uid —
+   *  callers translate via `seatToUid()`, matching this file's own
+   *  established seat/uid separation), or `null` if `matchDoc` lacks
+   *  enough structure to compute one (caller treats this exactly like
+   *  `computeRoundStartLeaderUid()`'s existing `null` contract). */
+  function computeRoundStartLeaderFromPersistedState(matchDoc) {
+    if (!matchDoc || !matchDoc.seats || typeof matchDoc.currentRound !== "number") return null;
+    var seatOrder = sortedSeatKeys(matchDoc.seats);
+    if (seatOrder.length === 0) return null;
+
+    function nextSeatCCW(seat) {
+      var i = seatOrder.indexOf(seat);
+      if (i === -1) return seatOrder[0];
+      return seatOrder[(i + 1) % seatOrder.length];
+    }
+
+    // The round's dealer: matchDoc.dealer is a UID, static since match
+    // (or rematch) creation — translate to a seat, then rotate CCW
+    // exactly (currentRound - 1) times, mirroring session.js's own
+    // "rotateDealer() called unconditionally exactly once per
+    // nextRound()" invariant (verified: the only two writers of
+    // `dealer` are match/rematch creation; the only writer of
+    // `currentRound` after creation is `advanceToNextRound()`,
+    // incrementing by exactly 1 every time — no skip, no bulk jump).
+    var creationDealerSeat = uidToSeat(matchDoc, matchDoc.dealer);
+    if (creationDealerSeat == null) return null;
+    var dealerSeat = creationDealerSeat;
+    var rotations = matchDoc.currentRound - 1;
+    for (var r = 0; r < rotations; r++) { dealerSeat = nextSeatCCW(dealerSeat); }
+
+    // biddingOrder: CCW walk starting at the round's dealer, over the
+    // SAME active-seat list — exactly mirroring bidding-engine.js's
+    // `firstBidder = dealer` + `nextCCW()` walk (lines 594-595).
+    var biddingOrder = [];
+    { var seat = dealerSeat; for (var k = 0; k < seatOrder.length; k++) { biddingOrder.push(seat); seat = nextSeatCCW(seat); } }
+    function orderIndex(s) { return biddingOrder.indexOf(s); }
+
+    var bids = matchDoc.bids || {};
+    // Super Call: any seat's final estimate >= 8. Ties broken by
+    // (amount desc, then earliest in biddingOrder) — IDENTICAL formula
+    // to the no-Super-Call branch below; this is ONE calculation, not
+    // two competing algorithms, matching bidding-engine.js's own
+    // structure (both branches share the exact same tie-break shape).
+    var superCandidates = seatOrder
+      .filter(function (s) { return typeof bids[s] === "number" && bids[s] >= 8; })
+      .sort(function (a, b) { return (bids[b] - bids[a]) || (orderIndex(a) - orderIndex(b)); });
+    if (superCandidates.length > 0) return superCandidates[0];
+
+    // No Super Call: highest bid wins; ties broken the same way.
+    var highestAmount = seatOrder.reduce(function (max, s) {
+      return typeof bids[s] === "number" ? Math.max(max, bids[s]) : max;
+    }, -1);
+    var highestCandidates = seatOrder
+      .filter(function (s) { return typeof bids[s] === "number" && bids[s] === highestAmount; })
+      .sort(function (a, b) { return orderIndex(a) - orderIndex(b); });
+    // Documented dealer fallback (mirrors bidding-engine.js line 647:
+    // `leaderId: fastCallerId != null ? fastCallerId : state.firstBidder`)
+    // — the pathological "no valid bids at all" edge, never expected in
+    // real play but kept for parity with the real engine's own contract.
+    return highestCandidates[0] || dealerSeat;
+  }
+
+  /** true for round >= 14 — the SAME threshold bidding-engine.js's own
+   *  `isFastRound()` uses (round.js is not require()-able from here;
+   *  this is a one-line, unconditional numeric constant, not a second
+   *  game-rule implementation). */
+  function isFastRoundNumber(roundNumber) {
+    return typeof roundNumber === "number" && roundNumber >= 14;
+  }
+
+  /** Sprint J.3 (Hardened Round-Start Turn Authority): the ONE place
+   *  that reads GameSession's own bidding-outcome state to compute the
+   *  real first-trick leader for a round that is genuinely about to
+   *  complete bidding — reuses the EXACT SAME formula table-engine.js's
+   *  own buildRoundCfg() already uses (`r.callerId || GameSession.
+   *  getTurn() || GameSession.getDealer()`), never a second, divergent
+   *  source of truth. Deliberately lives HERE, not in match-service.js:
+   *  this project's own established layering keeps match-service.js as
+   *  a pure Firestore-facing service with ZERO direct GameSession
+   *  reference (enforced by tests/turn-sync.test.cjs's own "adapter
+   *  isolation" check) — any client-engine-state read match-service.js
+   *  needs must be brokered through this adapter, exactly like
+   *  `uidToSeat()`/`seatToUid()`/`assertLocalTurn()` already are for
+   *  seat/turn-authority questions. Returns `null` (never throws) if
+   *  GameSession is unavailable or no real leader seat can be
+   *  determined — the caller (submitBid()) treats a `null` result as
+   *  "do not attempt to establish turn/cardPhase on this write," the
+   *  same safe default as before this sprint.
+   *
+   *  Sprint J.11: for a FAST round (currentRound >= 14), this function
+   *  now DISPATCHES to `computeRoundStartLeaderFromPersistedState()`
+   *  instead — a pure function of `matchDoc` alone, with zero
+   *  GameSession dependency. Normal rounds (1-13) are completely
+   *  UNCHANGED: they keep using the existing GameSession-based formula
+   *  below, which J.9 already proved reliable (round.callerId is
+   *  propagated early enough, at Confirm time, for the Normal Caller
+   *  path — a materially different timing situation from fast rounds,
+   *  see J.9's own report). This is one dispatcher choosing between two
+   *  clearly-scoped branches for two different bidding lifecycles, not
+   *  two competing sources of truth for the SAME round type. */
+  function computeRoundStartLeaderUid(matchDoc) {
+    if (isFastRoundNumber(matchDoc && matchDoc.currentRound)) {
+      var fastLeaderSeat = computeRoundStartLeaderFromPersistedState(matchDoc);
+      return fastLeaderSeat ? seatToUid(matchDoc, fastLeaderSeat) : null;
+    }
+    if (!global.GameSession) return null;
+    var round = (typeof global.GameSession.getRound === "function") ? global.GameSession.getRound() : null;
+    var leaderSeat = (round && round.callerId)
+      || (typeof global.GameSession.getTurn === "function" ? global.GameSession.getTurn() : null)
+      || (typeof global.GameSession.getDealer === "function" ? global.GameSession.getDealer() : null);
+    return leaderSeat ? seatToUid(matchDoc, leaderSeat) : null;
+  }
+
   /** seat -> a MINIMAL player identity descriptor: `{ seatId, uid }`.
    *  Deliberately NOT the engine's rich mock-player shape (name,
    *  isAI, rank, coins, ... — see session.js's mockPlayers()) — that
@@ -1368,9 +1524,26 @@
       // table-engine.js. Every legality/ordering decision from here is
       // the real engine's, not this file's — this function only ever
       // reads the response.
+      //
+      // Sprint H (Remote Hand State fix): `trusted: true` — every entry
+      // reaching this point already round-tripped through Firestore's
+      // authoritative `cardLog`, which `firestore.rules` gates on
+      // structure and turn order only (never follow-suit legality — see
+      // isValidCardSubmission()); follow-suit legality for THIS entry
+      // was already correctly checked exactly once, by the seat that
+      // played it, against ITS OWN real hand, before the write (see
+      // match-service.js's submitCard() -> TableEngine.canPlayCard()).
+      // This client never holds that seat's private cards (Firestore
+      // hand-privacy rules, unchanged), so re-deriving that same
+      // legality decision here would require data this client
+      // legitimately cannot have — `trusted` tells the engine to skip
+      // only that redundant (and, without real opponent data, actively
+      // incorrect) re-check, while every other gate (phase, whose turn)
+      // still applies exactly as before.
       var engineResult = TableEngine.emit({
         type: "PlayCard", playerId: entry.seatId,
-        card: { suit: entry.card.suit, rank: { v: entry.card.rank.v, s: entry.card.rank.s } }
+        card: { suit: entry.card.suit, rank: { v: entry.card.rank.v, s: entry.card.rank.s } },
+        trusted: true
       });
       if (!engineResult || engineResult.rejected) {
         // Sprint 4.2.1, Task 3 — the SECOND Critical defect this
@@ -1886,14 +2059,27 @@
    *  job is making that flow possible for round 2+ by advancing
    *  BiddingEngine's own round number first.
    *
-   *  HONEST LIMITATION (see this sprint's own Final Report): calling
-   *  `GameSession.nextRound()` clears the local `hands` map, and the
-   *  next `ensureHandsDealt()` call (inside `BiddingEngine.initState()`)
-   *  deals a BRAND-NEW, independently-random hand for this client. This
-   *  is the SAME pre-existing hand-synchronization gap Sprint 5 already
-   *  documented for Round 1 (hands are never written to Firestore) —
-   *  this function does not create a new gap, it only means Round 2
-   *  inherits the identical one, unchanged, unresolved. */
+   *  CLOSED (Sprint F — Hand Synchronization on Reconnect). This
+   *  comment used to document a real gap: calling `GameSession.
+   *  nextRound()` clears the local `hands` map, and the next
+   *  `ensureHandsDealt()` call (inside `BiddingEngine.initState()`)
+   *  would deal a BRAND-NEW, independently-random hand for this
+   *  client. Root cause (confirmed by direct source read, not
+   *  assumed): `startHandSync()` — this file's own real, already
+   *  fully-implemented and unit-tested (`tests/hand-sync.test.cjs`)
+   *  per-seat hand sync — was simply never called anywhere in
+   *  `design-ui/match/index.html`, so `GameSession`'s hand-authority
+   *  mode stayed at its "local" default for the entire life of every
+   *  real match, on every round, not just round transitions. Fixed by
+   *  wiring `startHandSync(matchId, localSeatId)` into that page (plus
+   *  an early `setHandAuthorityMode("firestore")` call before the
+   *  first snapshot can arrive, closing a real ordering race between
+   *  the diagnostic `ensureHandsDealt()` call in `bootstrapEngineOnce()`
+   *  and this fix). Verified against a real Firestore/Auth Emulator
+   *  and a real browser: reload, disconnect+reconnect, a round
+   *  transition while disconnected, a late join, and a rematch all
+   *  restore the exact authoritative hand — see
+   *  `tests/hand-sync-reconnect.rules-emulator.test.cjs`. */
   function applyRemoteRoundTransition(matchId, matchDoc) {
     if (!matchId) return { applied: false, reason: "MALFORMED_SNAPSHOT" };
     if (!matchDoc || typeof matchDoc !== "object" || Array.isArray(matchDoc)) {
@@ -2225,6 +2411,8 @@
   global.MatchAdapter = {
     uidToSeat: uidToSeat,
     seatToUid: seatToUid,
+    computeRoundStartLeaderUid: computeRoundStartLeaderUid,
+    computeRoundStartLeaderFromPersistedState: computeRoundStartLeaderFromPersistedState,
     seatToPlayer: seatToPlayer,
     playerToSeat: playerToSeat,
     matchDocToEngineSnapshot: matchDocToEngineSnapshot,

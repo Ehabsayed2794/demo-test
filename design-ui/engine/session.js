@@ -104,7 +104,15 @@
       },
       turnId: null,
       hands: {},              // per-seat dealt cards — owned by the Card Engine (dealer.js), stored here
-      dealState: { roundNumber: null, completed: false, dealtAt: null }, // deal metadata for the round `hands` belongs to
+      // deal metadata for the round `hands` belongs to. `source` (added
+      // Sprint H) records WHERE these hands came from -- "local"
+      // (Dealer.dealHands(), an in-browser random deal) or "firestore"
+      // (setAuthoritativeHand(), a real server-committed hand) -- and,
+      // unlike handAuthorityMode below, IS persisted, because it must
+      // survive a reload: see setHandAuthorityMode()'s own comment for
+      // why the transient runtime flag alone isn't enough to tell real
+      // hand data from fabricated leftovers across a page reload.
+      dealState: { roundNumber: null, completed: false, dealtAt: null, source: null },
       playState: freshPlayState(),  // persisted trick-taking progress for the current round — see GameSession.md
       biddingState: freshBiddingState(), // persisted auction progress for the current round — see BiddingState.md
       teamScores: {},          // reserved: partnership variants, unused in solo-vs-3 mode
@@ -158,7 +166,31 @@
     if (!session.biddingState) { session.biddingState = freshBiddingState(); dirty = true; }
     if (session.bid) { delete session.bid; dirty = true; }
     if (!session.hands) { session.hands = {}; dirty = true; }
-    if (!session.dealState) { session.dealState = { roundNumber: null, completed: false, dealtAt: null }; dirty = true; }
+    if (!session.dealState) { session.dealState = { roundNumber: null, completed: false, dealtAt: null, source: null }; dirty = true; }
+    // Sprint H.1 (post-ship review fix): a session persisted BEFORE
+    // `dealState.source` existed (i.e. any real, in-progress "firestore"
+    // match already live at the moment this field was introduced) has
+    // `dealState.completed === true` and a real, already-synced hand in
+    // `session.hands`, but no `source` key at all. Aliasing a genuinely
+    // MISSING key to the same `null` value used for "known fabricated"
+    // would make setHandAuthorityMode("firestore")'s wipe-guard treat
+    // that real hand as fabricated on this session's very next reload —
+    // reproducing the exact bug this whole mechanism exists to prevent,
+    // just at the deploy boundary instead of an ordinary reload.
+    // Whether a MISSING source key represents real or fabricated data is
+    // genuinely ambiguous (both a legacy local deal and a legacy real
+    // deal look identical here — completed:true, no source) — but
+    // wiping real user data is the worse failure mode of the two, so an
+    // already-completed deal with real cards on the books is trusted as
+    // "firestore" rather than nulled out. An incomplete/empty deal has
+    // nothing to lose either way and is left `null` (matches a fresh
+    // session -- no different behavior than before this migration
+    // existed).
+    if (session.dealState && session.dealState.source === undefined) {
+      session.dealState.source = (session.dealState.completed && session.hands && Object.keys(session.hands).length > 0)
+        ? "firestore" : null;
+      dirty = true;
+    }
     if (!session.scoringMode) { session.scoringMode = "normal"; dirty = true; }
     if (session.round && !session.round.dashCallers) { session.round.dashCallers = []; dirty = true; }
     if (session.biddingState && !session.biddingState.dashCallers) { session.biddingState.dashCallers = []; dirty = true; }
@@ -223,7 +255,7 @@
     rotateDealer();
     // invalidate the previous round's deal — the next Bidding Phase must deal exactly once, fresh
     session.hands = {};
-    session.dealState = { roundNumber: null, completed: false, dealtAt: null };
+    session.dealState = { roundNumber: null, completed: false, dealtAt: null, source: null };
     session.playState = freshPlayState();
     session.biddingState = freshBiddingState();
     persist();
@@ -240,7 +272,7 @@
    *  ensureHandsDealt()) so every screen renders the same hands. */
   function dealNewHands() {
     session.hands = Dealer.dealHands();
-    session.dealState = { roundNumber: session.round.number, completed: true, dealtAt: Date.now() };
+    session.dealState = { roundNumber: session.round.number, completed: true, dealtAt: Date.now(), source: "local" };
     persist();
     return session.hands;
   }
@@ -261,7 +293,52 @@
    *  the flag's own declaration above) — a fresh load must re-declare
    *  its context every time, exactly like remoteMatchSubscription. */
   function setHandAuthorityMode(mode) {
-    handAuthorityMode = (mode === "firestore") ? "firestore" : "local";
+    var next = (mode === "firestore") ? "firestore" : "local";
+    // Sprint H (Remote Hand State / Table Engine Initialization Fix) —
+    // ROOT CAUSE FIX. table-engine.js's own DOMContentLoaded auto-init
+    // calls initState() -> ensureHandsDealt() unconditionally, on every
+    // page load, before this function has any chance to run — so
+    // whenever a real multiplayer page's own matchId/hand-authority
+    // context isn't resolvable yet at that exact moment (a cold
+    // reconnect, a direct/bookmarked URL open, or simply this client's
+    // own earlier moment on the very same page before matchId became
+    // known), ensureHandsDealt() may already have dealt and PERSISTED
+    // (via this module's own sessionStorage-backed persist(), which
+    // survives a later reload) a fully-fabricated, independently-random
+    // 13-card hand for ALL FOUR seats, believing itself to be in
+    // ordinary offline/local mode. If left in place, that fabricated
+    // data would otherwise linger for every non-local seat for the rest
+    // of the page's life (setAuthoritativeHand() below only ever
+    // overwrites the ONE seat it's given), which is the confirmed root
+    // cause of TableEngine incorrectly rejecting (and, before Phase 3's
+    // separate defensive fix, crashing on) real remote card plays.
+    //
+    // FIXED (post-ship code review): the first version of this fix
+    // gated the wipe on `handAuthorityMode !== "firestore"` — the
+    // in-memory runtime flag. That is WRONG across a reload: this flag
+    // is deliberately never persisted (see its own declaration above —
+    // "a fresh load must always redeclare its own context"), so it
+    // resets to "local" on every page load, while `session.hands`/
+    // `dealState` DO persist via sessionStorage. A player reloading
+    // mid-match with an already-synced, real authoritative hand would
+    // hit `next === "firestore" && handAuthorityMode !== "firestore"`
+    // (true on every reload, since the flag just reset) and this
+    // function would wipe that real hand — reproduced directly with a
+    // persistent-sessionStorage harness during review. The correct
+    // signal for "is what's already in session.hands real or
+    // fabricated" is `dealState.source`, which IS persisted and is
+    // set by whichever function actually put the current hands there
+    // (dealNewHands() stamps "local"; setAuthoritativeHand() stamps
+    // "firestore" — see both below) — so it survives a reload exactly
+    // as long as the hands themselves do, and correctly tells this
+    // function whether the pre-existing data was ever confirmed
+    // authoritative, regardless of what this transient flag says.
+    if (next === "firestore" && !(session.dealState && session.dealState.source === "firestore")) {
+      session.hands = {};
+      session.dealState = { roundNumber: null, completed: false, dealtAt: null, source: null };
+      persist();
+    }
+    handAuthorityMode = next;
   }
   function getHandAuthorityMode() { return handAuthorityMode; }
 
@@ -276,7 +353,7 @@
    *  never accepts) any other seat's cards. */
   function setAuthoritativeHand(seatId, cards, round) {
     session.hands = Object.assign({}, session.hands, { [seatId]: cards });
-    session.dealState = { roundNumber: round, completed: true, dealtAt: Date.now() };
+    session.dealState = { roundNumber: round, completed: true, dealtAt: Date.now(), source: "firestore" };
     persist();
     return session.hands;
   }
@@ -411,7 +488,22 @@
   }
 
   /** Persist one accepted bid/dash-call/raise/with action that does NOT
-   *  eliminate the player (see recordPassAction for eliminations). */
+   *  eliminate the player (see recordPassAction for eliminations).
+   *
+   *  Sprint J.9 (BID_TO_TURN_HANDOFF fix): an OPTIONAL `result.callerId`
+   *  — passed only by SubmitConfirmCall's own handler, the one moment
+   *  the Caller is genuinely known before completion — is propagated
+   *  into `session.round` (via the SAME `setRound()` merge
+   *  `completeBidding()`/`nextRound()` already use), NOT just into
+   *  `session.biddingState` (which `updateBiddingState()` below already
+   *  did). This does NOT change WHAT value `callerId` ends up holding —
+   *  `completeBidding()` still authoritatively confirms the identical
+   *  value later — it only makes it available to
+   *  `GameSession.getRound().callerId` (what
+   *  `MatchAdapter.computeRoundStartLeaderUid()` reads) EARLIER, before
+   *  the round-completing write's own transaction needs it. See
+   *  bidding-engine.js's own SubmitConfirmCall comment for the full
+   *  race this closes. */
   function recordBidAction(result) {
     pushBiddingAction({ playerId: result.playerId, actionType: result.actionType, value: result.value, suit: result.suit });
     updateBiddingState({
@@ -419,6 +511,9 @@
       auctionTop: result.auctionTop, auctionSuit: result.auctionSuit, auctionBidderId: result.auctionBidderId,
       withPlayers: result.withPlayers, phase: result.phase, turnId: result.turnId
     });
+    if (result.callerId !== undefined) {
+      setRound({ callerId: result.callerId });
+    }
   }
 
   /** Persist a pass/elimination (Dash-decline is NOT a pass — it's

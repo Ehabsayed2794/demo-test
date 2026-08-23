@@ -9,5 +9,19 @@
     "auth": {
       "port": 9099
     }
+  },
+  "hosting": {
+    "public": "hosting-dist",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "/",
+        "destination": "/login/index.html"
+      }
+    ]
   }
 }

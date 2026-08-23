@@ -155,8 +155,17 @@ function initState() {
 function pushLog(kind, text) { state.logs.push({ kind, text }); }
 
 // ── card legality (follow suit) ──
+// Sprint H (Remote Hand State fix): `state.hands[id]` is no longer
+// guaranteed to be populated for every seat under real multiplayer
+// hand-authority — a real multiplayer client only ever holds ITS OWN
+// authoritative hand (session.js's setHandAuthorityMode()/
+// setAuthoritativeHand()); it never fabricates or receives another
+// seat's private cards. `|| []` here is a defensive fallback, not a
+// behavior change for the local seat (whose hand is always populated
+// by the time this is consulted for a real play attempt) — it just
+// stops an absent/not-yet-known remote hand from throwing here.
 function legalCards(id) {
-  const hand = state.hands[id];
+  const hand = state.hands[id] || [];
   if (!state.ledSuit) return hand.slice();             // leader may play anything
   const inSuit = hand.filter(c => c.suit === state.ledSuit);
   return inSuit.length ? inSuit : hand.slice();        // must follow if able, else anything
@@ -183,14 +192,48 @@ function currentWinnerId() {
 // ════════════════════════════════════════════════════════════════════
 //  REDUCER
 // ════════════════════════════════════════════════════════════════════
+// Sprint H (Remote Hand State / Table Engine Initialization Fix):
+// `intent.trusted` — set ONLY by match-adapter.js's applyRemoteCard()
+// when replaying an entry from Firestore's authoritative `cardLog`.
+// Rationale this closes: `firestore.rules` never validates follow-suit
+// legality for `cardLog` (only structural shape + turn order — see
+// isValidCardSubmission()); the ONLY place that ever validates
+// follow-suit legality for a real play is the ACTING seat's own client,
+// against ITS OWN real hand, before the write even happens
+// (match-service.js's submitCard() -> TableEngine.canPlayCard()). Once
+// an entry is accepted into `cardLog`, every OTHER client applying it
+// has no legitimate way to re-derive that same legality check locally —
+// doing so would require that seat's private hand, which this client
+// correctly never has (Firestore hand-privacy rules, unchanged by this
+// fix). Re-deriving it anyway against `state.hands[playerId]` is not
+// just redundant, it's actively wrong whenever that array isn't the
+// real hand — which, prior to this sprint's root-cause fix in
+// session.js's setHandAuthorityMode(), could be a stale, fabricated
+// local deal. `trusted` skips ONLY the isLegal() gate; every other
+// check (phase, whose turn, and the exact same void-tracking/hand-
+// mutation/turn-advance/logging the LOCAL path already ran through) is
+// untouched — a trusted apply is exactly as strict about phase/turn
+// as an ordinary one, just not about re-deriving a legality decision
+// that was already correctly made once, by the only client able to
+// make it.
 function emit(intent) {
   if (state.phase !== "PLAY") return { rejected: true };
   if (intent.type !== "PlayCard") return { rejected: true };
-  const { playerId, card } = intent;
+  const { playerId, card, trusted } = intent;
   if (state.turn !== playerId) return { rejected: true };
-  if (!isLegal(playerId, card)) {
-    pushLog("reject", `${nameOf(playerId)} can't play ${card.rank.s}${SUITS[card.suit].sym} — must follow ${SUITS[state.ledSuit].name}.`);
-    return { rejected: true, reason: `Follow ${SUITS[state.ledSuit].name}` };
+  if (!trusted && !isLegal(playerId, card)) {
+    // Sprint H, Phase 3 (Defensive Emit Fix — independent of the
+    // trusted-apply change above): `state.ledSuit` is legitimately
+    // `null` for a trick's first card, so `SUITS[state.ledSuit]` must
+    // never be dereferenced unguarded here. This is a defensive fix
+    // only — it does not, by itself, change WHETHER a play is
+    // considered legal, only how a rejection is reported once one
+    // occurs.
+    const ledSuitName = state.ledSuit ? SUITS[state.ledSuit].name : null;
+    pushLog("reject", ledSuitName
+      ? `${nameOf(playerId)} can't play ${card.rank.s}${SUITS[card.suit].sym} — must follow ${ledSuitName}.`
+      : `${nameOf(playerId)} can't play ${card.rank.s}${SUITS[card.suit].sym}.`);
+    return { rejected: true, reason: ledSuitName ? `Follow ${ledSuitName}` : "Illegal play" };
   }
 
   // reveal a void: player had the chance to follow but couldn't (played off-suit)
@@ -199,8 +242,17 @@ function emit(intent) {
     pushLog("", `${nameOf(playerId)} shows void in ${SUITS[state.ledSuit].name}.`);
   }
 
-  // remove from hand, record play
-  state.hands[playerId] = state.hands[playerId].filter(c => !(c.suit === card.suit && c.rank.v === card.rank.v));
+  // remove from hand, record play. `|| []` + a match-or-fallback removal:
+  // a real multiplayer client's own hand always contains the exact card
+  // (ordinary path); a REMOTE seat's hand may legitimately be empty/
+  // unknown here (this client never holds another seat's private
+  // cards) — in that case there is nothing meaningful to "remove by
+  // identity," so this is a no-op on an already-empty array rather than
+  // a crash, and per-seat hand size for remote seats is simply not
+  // tracked client-side (nothing in this codebase renders it — see
+  // Sprint H's own investigation).
+  const priorHand = state.hands[playerId] || [];
+  state.hands[playerId] = priorHand.filter(c => !(c.suit === card.suit && c.rank.v === card.rank.v));
   card.played = true;
   if (state.plays.length === 0) state.ledSuit = card.suit;
   state.plays.push({ playerId, card });
@@ -399,11 +451,32 @@ function canPlayCard(playerId, card) {
 // from `design-ui/match-service.js`'s `submitCard()` BEFORE a
 // Firestore write even starts (Sprint 4.2.2's Task 2) — the answer it
 // gives is exactly what `emit()` would decide, read in advance, never
-// duplicated or reimplemented independently. Winner/trick-resolution
-// logic (what happens once `nextPhase` is `"RESOLVING"`) is
-// deliberately NOT computed here — this function answers "is this
-// legal, and what turn/phase does accepting it lead to," nothing about
-// who wins the completed trick, per this sprint's own stop list. */
+// duplicated or reimplemented independently.
+//
+// Sprint I.2 (Turn Authority / Trick-Boundary Fix): when this play
+// WOULD complete the trick (the 4th play), `nextTurnSeat` is now the
+// REAL trick winner — computed by reusing `trickWinner()`/`cardValue()`
+// verbatim against the hypothetical post-play `plays` array
+// (`state.plays` concatenated with this pending, not-yet-applied play)
+// — never a second, independent winner algorithm. This is PURE: it
+// builds a local array and calls the exact same comparison function
+// `resolveTrick()` itself calls, without ever mutating `state.plays`,
+// `state.turn`, `state.phase`, or removing anything from a hand, and
+// without advancing the trick. Root cause this closes (see Sprint I's
+// own forensic report): the OLD `nextTurnSeat: null` answer here is
+// exactly what `MatchService.submitCard()` wrote into
+// `matches/{matchId}.turn`, and nothing in this codebase's write path
+// ever wrote a real uid back into `turn` afterward — a permanent
+// dead end against `firestore.rules`' `oldData.turn ==
+// request.auth.uid` check, since `null` can never equal any real uid.
+// Returning the real winner here instead means `submitCard()` now
+// writes the ACTUAL next leader, and the EXISTING, UNMODIFIED
+// Firestore rule allows that leader's own next submission naturally —
+// no rules change, no new persisted field, no new trust boundary: this
+// value is exactly as client-computed/client-trusted as the ordinary
+// `nextCCW(playerId)` answer already was for every non-trick-completing
+// play, per this project's own long-documented "gameplay turn order
+// remains client-authoritative in this Spark MVP" limitation.
 function previewPlay(playerId, card) {
   var validation = canPlayCard(playerId, card);
   if (!validation.legal) return { legal: false, reason: validation.reason };
@@ -411,7 +484,13 @@ function previewPlay(playerId, card) {
   if (nextPlayCount < 4) {
     return { legal: true, nextTurnSeat: nextCCW(playerId), nextPhase: "PLAY" };
   }
-  return { legal: true, nextTurnSeat: null, nextPhase: "RESOLVING" };
+  // Trick-completing play: compute the real winner from a HYPOTHETICAL
+  // plays array (state.plays is never mutated here) — the identical
+  // computation resolveTrick() performs once this play has actually
+  // been applied via emit().
+  var hypotheticalPlays = state.plays.concat([{ playerId: playerId, card: card }]);
+  var winnerId = trickWinner(hypotheticalPlays);
+  return { legal: true, nextTurnSeat: winnerId, nextPhase: "RESOLVING" };
 }
 
 window.TableEngine = {

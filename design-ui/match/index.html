@@ -133,9 +133,35 @@
   #tablePanel{width:100%;display:flex;flex-direction:column;gap:8px;font-family:"Saira",sans-serif;}
   #tablePanel .table-turn{font-family:var(--mono);font-size:9.5px;color:var(--ink-dim);text-align:center;}
   #tablePanel .table-turn .who{color:var(--accent);font-weight:600;}
-  #trickPanel{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;}
-  #trickPanel .trick-slot{display:flex;flex-direction:column;align-items:center;gap:3px;min-width:44px;}
+  /* Sprint 4.3 (Table Play Card Selection UI): trick cards are laid out
+     positionally, echoing #matchSeats' own seat-p1..p4 bottom/right/
+     top/left anchors just above this panel — the played card appears
+     in the same compass direction as the seat that played it, not a
+     generic row. Same tokens as everything else here (no new colors);
+     the only new rule is layout + a transform/opacity-only entry
+     animation (never width/height, per motion best practice), gated by
+     prefers-reduced-motion below. */
+  #trickPanel{position:relative;width:100%;height:112px;}
+  #trickPanel .trick-slot{position:absolute;display:flex;flex-direction:column;align-items:center;gap:3px;min-width:44px;}
   #trickPanel .trick-slot .trick-seat{font-family:var(--mono);font-size:8px;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.05em;}
+  #trickPanel .trick-slot-p1{left:50%;bottom:0;transform:translateX(-50%);}
+  #trickPanel .trick-slot-p2{right:12%;top:50%;transform:translateY(-50%);}
+  #trickPanel .trick-slot-p3{left:50%;top:0;transform:translateX(-50%);}
+  #trickPanel .trick-slot-p4{left:12%;top:50%;transform:translateY(-50%);}
+  #trickPanel .trick-slot-p1.is-entering .card-chip{animation:cardLandFromBottom .22s ease-out;}
+  #trickPanel .trick-slot-p2.is-entering .card-chip{animation:cardLandFromRight .22s ease-out;}
+  #trickPanel .trick-slot-p3.is-entering .card-chip{animation:cardLandFromTop .22s ease-out;}
+  #trickPanel .trick-slot-p4.is-entering .card-chip{animation:cardLandFromLeft .22s ease-out;}
+  @keyframes cardLandFromBottom{from{opacity:0;transform:translateY(14px) scale(.85);}to{opacity:1;transform:translateY(0) scale(1);}}
+  @keyframes cardLandFromTop{from{opacity:0;transform:translateY(-14px) scale(.85);}to{opacity:1;transform:translateY(0) scale(1);}}
+  @keyframes cardLandFromRight{from{opacity:0;transform:translateX(14px) scale(.85);}to{opacity:1;transform:translateX(0) scale(1);}}
+  @keyframes cardLandFromLeft{from{opacity:0;transform:translateX(-14px) scale(.85);}to{opacity:1;transform:translateX(0) scale(1);}}
+  @media (prefers-reduced-motion:reduce){
+    #trickPanel .trick-slot-p1.is-entering .card-chip,
+    #trickPanel .trick-slot-p2.is-entering .card-chip,
+    #trickPanel .trick-slot-p3.is-entering .card-chip,
+    #trickPanel .trick-slot-p4.is-entering .card-chip{animation:none;}
+  }
   #handPanel{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;}
   .card-chip{background:var(--panel-hi);border:1px solid var(--panel-line);border-radius:8px;padding:5px 8px;font-family:var(--mono);font-size:11px;font-weight:700;color:var(--ink);min-width:28px;text-align:center;}
   .card-chip.is-red{color:#e0836a;}
@@ -163,6 +189,26 @@
   #roundCompletePanel .rc-score-tile .delta{color:var(--ink);font-weight:700;font-size:12px;display:block;margin-top:2px;}
   #roundCompletePanel .rc-score-tile .delta.is-positive{color:var(--accent);}
   #roundCompletePanel .rc-score-tile .total{color:var(--ink-faint);font-size:8px;}
+
+  /* Sprint 4.2 (Score Breakdown Card): renders ScoringEngine.
+     calculateRoundScore()'s ALREADY-computed per-seat breakdown
+     (breakdown[id].notes/raw/final — see scoring-engine.js) — no new
+     scoring math, purely display. Reuses #roundCompletePanel's own
+     established tokens/vocabulary (--panel-hi/--panel-line/--pill/
+     --mono/--accent, the .rc-title Marcellus treatment) — zero new
+     design tokens invented, per this sprint's explicit constraint. */
+  #scoreBreakdownCards{display:flex;flex-direction:column;gap:6px;margin-top:4px;}
+  .sb-card{background:var(--pill);border:1px solid var(--panel-line);border-radius:9px;padding:7px 9px;font-family:"Saira",sans-serif;}
+  .sb-card .sb-head{display:flex;align-items:center;justify-content:space-between;gap:6px;}
+  .sb-card .sb-name{font-family:var(--mono);font-size:10px;color:var(--ink);letter-spacing:.02em;display:flex;align-items:center;gap:4px;}
+  .sb-card .sb-badges{font-size:11px;letter-spacing:.02em;}
+  .sb-card .sb-bidvs{font-family:var(--mono);font-size:8.5px;color:var(--ink-faint);margin-top:2px;}
+  .sb-card .sb-lines{display:flex;flex-direction:column;gap:1px;margin-top:4px;}
+  .sb-card .sb-line{display:flex;justify-content:space-between;font-family:var(--mono);font-size:8.5px;color:var(--ink-dim);}
+  .sb-card .sb-line .sb-line-val{color:var(--ink);font-weight:600;}
+  .sb-card .sb-line.sb-total{border-top:1px solid var(--panel-line);margin-top:3px;padding-top:3px;font-size:9.5px;}
+  .sb-card .sb-line.sb-total .sb-line-val{color:var(--accent);font-weight:700;}
+  .sb-card .sb-flat-note{font-family:var(--mono);font-size:8.5px;color:var(--ink-faint);font-style:italic;margin-top:3px;}
   .seat{position:absolute;display:flex;flex-direction:column;align-items:center;gap:4px;width:78px;}
   .seat .avatar{width:30px;height:30px;border-radius:50%;background:var(--panel-hi);border:1px solid var(--panel-line);display:grid;place-items:center;font-family:"Marcellus",serif;font-size:13px;color:var(--accent);}
   .seat.is-turn .avatar{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in oklch, var(--accent) 25%, transparent);}
@@ -1606,6 +1652,19 @@
   // purely presentational (drives the "selected/pending" chip style);
   // never consulted for legality.
   var pendingCardKey = null;
+  // Same diagnostic-only counter convention as Bidding Controls' own
+  // blockedDuplicateSubmissionAttempts — lets a test observe the
+  // duplicate-tap guard directly instead of racing submission timing.
+  var blockedDuplicateCardAttempts = 0;
+  // Sprint 4.3 (Table Play Card Selection UI): which seats already had
+  // a visible trick card as of the LAST renderTrick() call — purely
+  // presentational bookkeeping so the entry animation plays exactly
+  // once per card, not on every re-render (renderTablePanel() runs on
+  // every synced state change, e.g. a spectator's own tick). Reset to
+  // [] naturally whenever a trick resolves and state.plays clears, so
+  // the next trick's first cards animate again without any explicit
+  // trick-number tracking.
+  var previousTrickSeats = [];
   function cardKey(card) { return card.suit + "-" + card.rank.v; }
 
   /** Called from the main subscribeToMatch snapshot callback, every
@@ -1715,7 +1774,7 @@
    *  never trusts a previously-computed "this looked legal" flag
    *  alone, exactly like submitBiddingIntent()'s own re-check. */
   function submitCardPlay(card) {
-    if (pendingCardSubmission) return; // duplicate-tap guard
+    if (pendingCardSubmission) { blockedDuplicateCardAttempts++; return; } // duplicate-tap guard
     if (!localSeatId) { window.UI && window.UI.toast("You don't have a seat in this match."); return; }
     if (!window.TableEngine || typeof window.TableEngine.canPlayCard !== "function") {
       window.UI && window.UI.toast("Table engine unavailable.");
@@ -1859,18 +1918,25 @@
     if (!el) return;
     el.innerHTML = "";
     var seatOrder = ["p1", "p2", "p3", "p4"];
+    var currentTrickSeats = [];
     seatOrder.forEach(function (seatId) {
+      var play = (state.plays || []).filter(function (p) { return p.playerId === seatId; })[0];
+      // Sprint 4.3: positional slot (mirrors #matchSeats' own
+      // seat-p1..p4 compass anchors) + a one-shot entry animation for
+      // a card that is newly present since the last render — never
+      // replayed for a card that was already showing.
+      var isNewlyPlayed = !!play && previousTrickSeats.indexOf(seatId) === -1;
       var slot = document.createElement("div");
-      slot.className = "trick-slot";
+      slot.className = "trick-slot trick-slot-" + seatId + (isNewlyPlayed ? " is-entering" : "");
       var label = document.createElement("div");
       label.className = "trick-seat";
       label.textContent = playerLabel(seatId);
       slot.appendChild(label);
-      var play = (state.plays || []).filter(function (p) { return p.playerId === seatId; })[0];
       var chip = document.createElement("div");
       if (play) {
         chip.className = cardChipClass(play.card);
         chip.textContent = cardChipText(play.card);
+        currentTrickSeats.push(seatId);
       } else {
         chip.className = "card-chip is-empty";
         chip.textContent = "—";
@@ -1878,6 +1944,7 @@
       slot.appendChild(chip);
       el.appendChild(slot);
     });
+    previousTrickSeats = currentTrickSeats;
   }
 
   /** The interactive hand. Renders NOTHING (an honest empty message)
@@ -2003,6 +2070,106 @@
       scoresEl.appendChild(tile);
     });
     el.appendChild(scoresEl);
+
+    el.appendChild(buildScoreBreakdownCards(result));
+  }
+
+  /** Sprint 4.2 (Score Breakdown Card): renders EXACTLY what
+   *  ScoringEngine.calculateRoundScore() already computed per seat
+   *  (result.breakdown[seatId] — raw/multiplier/final/isCaller/isWith/
+   *  isRisk/isSoleWinner/isSoleLoser/succeeded/role/notes) — no score
+   *  component is recomputed here; `notes` is the engine's OWN
+   *  itemized breakdown text, displayed verbatim as the line items, so
+   *  there is no risk of this UI drifting from the real formula. Per
+   *  this sprint's own explicit stop instruction: if a required
+   *  breakdown value were missing from that object, this function
+   *  would report an API gap rather than invent one — none was
+   *  missing; every field used below already exists on
+   *  calculateRoundScore()'s own documented output shape (see
+   *  scoring-engine.js). Role icons: Caller ⭐, With 🤝, Risk ⚡,
+   *  Sole 🏆 — badges derived from the SAME boolean flags the engine
+   *  already used to decide the bonuses themselves. */
+  function buildScoreBreakdownCards(result) {
+    var wrap = document.createElement("div");
+    wrap.id = "scoreBreakdownCards";
+    if (!result || !result.breakdown) return wrap; // honest empty state, never a fabricated card
+    ["p1", "p2", "p3", "p4"].forEach(function (seatId) {
+      var b = result.breakdown[seatId];
+      if (!b) return;
+      var card = document.createElement("div");
+      card.className = "sb-card";
+
+      var head = document.createElement("div");
+      head.className = "sb-head";
+      var nameEl = document.createElement("div");
+      nameEl.className = "sb-name";
+      nameEl.textContent = playerLabel(seatId);
+      var badges = document.createElement("span");
+      badges.className = "sb-badges";
+      var badgeText = "";
+      if (b.isCaller) badgeText += "⭐";
+      if (b.isWith) badgeText += "🤝";
+      if (b.isRisk) badgeText += "⚡";
+      if (b.isSoleWinner || b.isSoleLoser) badgeText += "🏆";
+      badges.textContent = badgeText;
+      head.appendChild(nameEl);
+      head.appendChild(badges);
+      card.appendChild(head);
+
+      var tricks = result.tricksWon && result.tricksWon[seatId] != null ? result.tricksWon[seatId] : null;
+      var est = result.estimates && result.estimates[seatId] != null ? result.estimates[seatId] : null;
+      var bidVs = document.createElement("div");
+      bidVs.className = "sb-bidvs";
+      bidVs.textContent = "Bid: " + (est != null ? est : "—") + " | Took: " + (tricks != null ? tricks : "—");
+      card.appendChild(bidVs);
+
+      // Edge cases (Task 2): Sa'ayda and flat-scored Dash Call/Normal
+      // Dash are detected from the engine's OWN notes text (never a
+      // UI-side guess) and shown with a distinct, honest caption
+      // instead of a misleading component-by-component breakdown that
+      // doesn't apply to a flat/zeroed score.
+      var firstNote = (b.notes && b.notes[0]) || "";
+      var isSaaydaSeat = firstNote.indexOf("Sa'ayda") !== -1;
+      var isDashCall = firstNote.indexOf("Dash Call") !== -1;
+      var isClassicRole = b.role != null; // calculateClassicScore() sets role only in Classic mode
+
+      if (isSaaydaSeat) {
+        var flat = document.createElement("div");
+        flat.className = "sb-flat-note";
+        flat.textContent = "Zeroed (Sa'ayda) — next round ×" + (result.nextMultiplier || 2) + " escalation";
+        card.appendChild(flat);
+      } else if (isDashCall) {
+        var flatDc = document.createElement("div");
+        flatDc.className = "sb-flat-note";
+        flatDc.textContent = "Flat Score (" + (b.final > 0 ? "+" : "") + b.final + ") — Dash Call does not use the base/bonus breakdown";
+        card.appendChild(flatDc);
+      } else {
+        var lines = document.createElement("div");
+        lines.className = "sb-lines";
+        (b.notes || []).forEach(function (note) {
+          var line = document.createElement("div");
+          line.className = "sb-line";
+          var label = document.createElement("span");
+          label.textContent = (isClassicRole ? "Classic: " : "") + note;
+          line.appendChild(label);
+          lines.appendChild(line);
+        });
+        var totalLine = document.createElement("div");
+        totalLine.className = "sb-line sb-total";
+        var totalLabel = document.createElement("span");
+        totalLabel.textContent = "Total" + (b.multiplier > 1 ? " (×" + b.multiplier + ")" : "");
+        var totalVal = document.createElement("span");
+        totalVal.className = "sb-line-val";
+        totalVal.textContent = (b.final > 0 ? "+" : "") + b.final;
+        totalLine.appendChild(totalLabel);
+        totalLine.appendChild(totalVal);
+        lines.appendChild(totalLine);
+        card.appendChild(lines);
+      }
+
+      wrap.appendChild(card);
+    });
+    return wrap;
   }
 
   function renderMatch(match) {
@@ -2042,6 +2209,13 @@
   // map is expected to be stable once assigned, but this never assumes
   // that rather than re-deriving it).
   var localSeatId = null;
+  // Sprint F (Hand Synchronization on Reconnect): whether
+  // MatchAdapter.startHandSync() has been started yet for this page
+  // load. One-shot, mirrors engineBootstrapped's own guard pattern —
+  // see the flag's own use below for why it can't be started at this
+  // exact point (it needs localSeatId, which isn't known until the
+  // first real snapshot resolves it).
+  var handSyncStarted = false;
 
   if (!matchId) {
     statusEl.textContent = "No match to show";
@@ -2050,6 +2224,31 @@
     statusEl.textContent = "MatchService unavailable";
     console.error("[Match] MatchService not loaded.");
   } else {
+    // Sprint F (Hand Synchronization on Reconnect): flip GameSession
+    // into "firestore" hand-authority mode IMMEDIATELY — before the
+    // very first snapshot can possibly arrive. Root cause this closes:
+    // MatchAdapter.startHandSync() (which also flips this same flag)
+    // was never called anywhere on this page, so handAuthorityMode
+    // stayed at its "local" default for the ENTIRE life of every real
+    // match — meaning bootstrapEngineOnce()'s own diagnostic
+    // GameSession.ensureHandsDealt() call (below) and BiddingEngine.
+    // initState()'s internal one (called every round, including every
+    // reconnect/round-transition) both dealt a brand-new, independently-
+    // random LOCAL hand via Dealer.dealHands() every single time —
+    // never the authoritative matches/{matchId}/hands/{seatId} document
+    // this project already writes and already has a full, tested
+    // client-side consumer for (MatchAdapter.applyRemoteHand()/
+    // startHandSync(), unit-tested in tests/hand-sync.test.cjs, but
+    // never actually wired into this real page until now). Setting this
+    // flag here, synchronously, before subscribeToMatch() below is even
+    // called, closes the race entirely: by the time the first snapshot
+    // fires, ensureHandsDealt() is already a firestore-mode no-op (per
+    // its own existing, unmodified guard in session.js) instead of a
+    // local deal. The per-seat subscription itself (startHandSync()
+    // proper) still has to wait for localSeatId to resolve — see below.
+    if (window.GameSession && typeof window.GameSession.setHandAuthorityMode === "function") {
+      window.GameSession.setHandAuthorityMode("firestore");
+    }
     // Bidding Controls sprint: activates the existing, UNMODIFIED
     // MatchAdapter sync pipelines (Sprint 3.7/4.0) that translate a
     // Firestore delivery into a real BiddingEngine.emit() call —
@@ -2136,6 +2335,28 @@
           window.SessionService && typeof window.SessionService.getCurrentUser === "function") {
         var currentUser = window.SessionService.getCurrentUser();
         localSeatId = currentUser ? window.MatchAdapter.uidToSeat(data, currentUser.uid) : null;
+      }
+      // Sprint F (Hand Synchronization on Reconnect): start the real
+      // per-seat hand sync exactly once, the first delivery this
+      // client's own seat is actually known (mirrors
+      // bootstrapEngineOnce()'s one-shot guard pattern). Deliberately
+      // BEFORE bootstrapEngineOnce()'s own diagnostic
+      // GameSession.ensureHandsDealt() call below, so that call —
+      // and BiddingEngine.initState()'s internal one, every round —
+      // sees "firestore" hand-authority mode already active and never
+      // deals a local hand. Safe for a late-joining or reconnecting
+      // client too: MatchService.subscribeToMatch()/subscribeToHand()
+      // both deliver the current cached state immediately to a
+      // newly-attached listener (their own existing ref-counting
+      // contract), so this "starts late" case is still caught up by
+      // this very first call, not a future delivery.
+      if (!handSyncStarted && localSeatId && window.MatchAdapter && typeof window.MatchAdapter.startHandSync === "function") {
+        try {
+          window.MatchAdapter.startHandSync(matchId, localSeatId);
+          handSyncStarted = true;
+        } catch (e) {
+          console.error("[Match] startHandSync() threw:", e);
+        }
       }
       renderMatch(data);
       bootstrapEngineOnce(data);
@@ -2234,8 +2455,33 @@
     // getLastAppliedVersion()/resetSyncState()); no production code
     // path calls these directly.
     renderBiddingControls: renderBiddingControls,
+    // Sprint 4.2 (Score Breakdown Card) — diagnostic-only, same
+    // convention as every other entry in this object.
+    renderRoundComplete: renderRoundComplete,
+    buildScoreBreakdownCards: buildScoreBreakdownCards,
+    // Sprint 4.3 (Table Play Card Selection UI) — diagnostic-only,
+    // same convention as every other entry in this object.
+    renderTablePanel: renderTablePanel,
+    submitCardPlay: submitCardPlay,
+    isCardSubmissionPending: function () { return pendingCardSubmission; },
+    getBlockedDuplicateCardAttempts: function () { return blockedDuplicateCardAttempts; },
+    // Diagnostic-only setter for the same one-shot round gate
+    // maybeEnterPlayPhase() sets from a real bidding-DONE delivery —
+    // lets a test enter the Play phase against a real TableEngine.
+    // initState() call without needing a full live bidding round-trip
+    // first (initState()/buildRoundCfg() already fall back to a
+    // plausible mock round on their own when there's no real bidding
+    // result yet — this setter only flips the SAME gate
+    // maybeEnterPlayPhase() would have flipped once that real result
+    // existed; it introduces no new state or behavior of its own).
+    setTableEngineStartedForRound: function (round) { tableEngineStartedForRound = round; },
     setLocalSeatId: function (seatId) { localSeatId = seatId; },
     getLocalSeatId: function () { return localSeatId; },
+    // Sprint F (Hand Synchronization on Reconnect) — diagnostic-only,
+    // same convention as every other entry in this object. Lets a test
+    // observe directly whether the real per-seat hand sync has been
+    // started for this page load, instead of inferring it indirectly.
+    getHandSyncStarted: function () { return handSyncStarted; },
     // Follow-up Hardening (Quality Gate Finding #2): diagnostic-only —
     // lets a test observe the existing pendingBiddingSubmission guard
     // directly instead of racing a synchronous fake-transaction's own

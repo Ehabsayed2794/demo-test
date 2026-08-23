@@ -1,3 +1,8 @@
+const path = require("path");
+// Portability fix (found via a real GitHub Actions run -- this file used
+// to hardcode this sandbox's own absolute path, so it failed with
+// MODULE_NOT_FOUND on any other machine, including CI):
+const __REPO_ROOT__ = path.join(__dirname, "..");
 // Real, executable END-TO-END tests for Sprint 4.3 (Trick Resolution
 // Synchronization) — the FULL pipeline:
 //   4 x submitCard() -> Firestore -> MatchService listener -> Engine
@@ -144,14 +149,14 @@ var CURRENT_USER = null;
 global.SessionService = { getCurrentUser: function () { return CURRENT_USER ? { uid: CURRENT_USER } : null; }, setCurrentMatchId: function () { return Promise.resolve(); } };
 function signInAs(uid) { CURRENT_USER = uid; }
 
-require("/home/user/demo-test/design-ui/match-service.js");
-require("/home/user/demo-test/design-ui/engine/cards.js");
-require("/home/user/demo-test/design-ui/engine/deck.js");
-require("/home/user/demo-test/design-ui/engine/dealer.js");
-require("/home/user/demo-test/design-ui/engine/session.js");
-require("/home/user/demo-test/design-ui/engine/bidding-engine.js");
-require("/home/user/demo-test/design-ui/engine/scoring-engine.js");
-require("/home/user/demo-test/design-ui/match-adapter.js");
+require(__REPO_ROOT__ + "/design-ui/match-service.js");
+require(__REPO_ROOT__ + "/design-ui/engine/cards.js");
+require(__REPO_ROOT__ + "/design-ui/engine/deck.js");
+require(__REPO_ROOT__ + "/design-ui/engine/dealer.js");
+require(__REPO_ROOT__ + "/design-ui/engine/session.js");
+require(__REPO_ROOT__ + "/design-ui/engine/bidding-engine.js");
+require(__REPO_ROOT__ + "/design-ui/engine/scoring-engine.js");
+require(__REPO_ROOT__ + "/design-ui/match-adapter.js");
 // table-engine.js required LATER, after bidding completes — see this
 // file's own header comment.
 
@@ -196,7 +201,7 @@ function driveBiddingToCommittedRound() {
 }
 
 driveBiddingToCommittedRound();
-require("/home/user/demo-test/design-ui/engine/table-engine.js");
+require(__REPO_ROOT__ + "/design-ui/engine/table-engine.js");
 var TableEngine = global.TableEngine;
 TableEngine.initState();
 
@@ -495,7 +500,7 @@ function independentlyComputeWinner(plays, trump) {
   // MOCKED — Task 1 (Architecture Verification), re-verified directly:
   // no new export was added to table-engine.js for this sprint.
   // ============================================================
-  var tableEngineSource = require("fs").readFileSync("/home/user/demo-test/design-ui/engine/table-engine.js", "utf8");
+  var tableEngineSource = require("fs").readFileSync(__REPO_ROOT__ + "/design-ui/engine/table-engine.js", "utf8");
   var tableEngineExportsMatch = tableEngineSource.match(/window\.TableEngine = \{[\s\S]*?\};/);
   check("MOCKED — Task 1: table-engine.js's own export object is UNCHANGED by this sprint — still exactly initState/emit/resolveTrick/getState/canPlayCard/previewPlay",
     !!tableEngineExportsMatch && /initState:\s*initState/.test(tableEngineExportsMatch[0]) &&
@@ -507,10 +512,10 @@ function independentlyComputeWinner(plays, trump) {
   // MOCKED — Task 4/5 (no MatchService/firestore.rules change was
   // required): re-verified directly here, not just asserted in docs.
   // ============================================================
-  var matchServiceSource = require("fs").readFileSync("/home/user/demo-test/design-ui/match-service.js", "utf8");
+  var matchServiceSource = require("fs").readFileSync(__REPO_ROOT__ + "/design-ui/match-service.js", "utf8");
   check("MOCKED — Task 4: MatchService.submitCard()'s own transaction patch is UNCHANGED by this sprint — still exactly {cardLog, lastCardSeat, turn, cardPhase, version, updatedAt}, no new trick-related field",
     /cardLog: cardLog,\s*\n\s*lastCardSeat: freshSeatId,\s*\n\s*turn: nextTurnUid,\s*\n\s*cardPhase: preview\.nextPhase,\s*\n\s*version: nextVersion,\s*\n\s*updatedAt: serverTimestamp\(\)/.test(matchServiceSource));
-  var rulesSource = require("fs").readFileSync("/home/user/demo-test/firestore.rules", "utf8");
+  var rulesSource = require("fs").readFileSync(__REPO_ROOT__ + "/firestore.rules", "utf8");
   check("MOCKED — Task 5: firestore.rules' isValidCardSubmission() affectedKeys allowlist is UNCHANGED by this sprint — still exactly ['cardLog', 'lastCardSeat', 'version', 'turn', 'cardPhase', 'updatedAt'], no new trick-related field permitted",
     /affectedKeys\(\)\.hasOnly\(\['cardLog', 'lastCardSeat', 'version', 'turn', 'cardPhase', 'updatedAt'\]\)/.test(rulesSource));
 

@@ -6,8 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:hosting": "tsc -b && vite build --base=/estemshan/ && node scripts/build-hosting.mjs",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node scripts/run-tests.mjs",
+    "test:ci": "firebase emulators:exec --project demo-test-ci --only firestore,auth \"node scripts/run-tests.mjs\""
   },
   "dependencies": {
     "react": "^19.2.7",
@@ -18,7 +21,9 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
+    "@firebase/rules-unit-testing": "^5.0.1",
     "autoprefixer": "^10.5.4",
+    "firebase-tools": "^13.35.1",
     "oxlint": "^1.71.0",
     "playwright": "^1.62.0",
     "postcss": "^8.5.23",

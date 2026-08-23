@@ -1,3 +1,8 @@
+const path = require("path");
+// Portability fix (found via a real GitHub Actions run -- this file used
+// to hardcode this sandbox's own absolute path, so it failed with
+// MODULE_NOT_FOUND on any other machine, including CI):
+const __REPO_ROOT__ = path.join(__dirname, "..");
 // Real, executable tests for design-ui/room-service.js — create/join/leave
 // (Sprint 3.2) plus setReady (Sprint 3.3) — against an in-memory Firestore
 // stub that faithfully mimics Firestore's optimistic-concurrency
@@ -66,7 +71,7 @@ global.SessionService = {
   refresh: function () { refreshCalls++; return Promise.resolve(); }
 };
 
-require("/home/user/demo-test/design-ui/room-service.js");
+require(__REPO_ROOT__ + "/design-ui/room-service.js");
 var RoomService = global.RoomService;
 
 var pass = 0, fail = 0;

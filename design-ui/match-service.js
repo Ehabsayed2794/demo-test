@@ -743,6 +743,69 @@
           lastBidSeat: seatId,
           updatedAt: serverTimestamp()
         };
+        // Sprint J.3 (Hardened Round-Start Turn Authority): this
+        // Estimates-phase write is the REAL bidding-completion edge for
+        // the dominant (someone-called) case — the ONLY thing
+        // `advanceToNextRound()` ever wrote for `turn`/`cardPhase` was
+        // `null`/`null`, with no write path back to a real value (see
+        // Sprint J/J.1/J.2's forensic report and architecture review).
+        // When THIS write is the one that makes every real seat's bid
+        // present (`allSubmitted`), it ALSO establishes the real
+        // first-trick leader — reusing the EXACT SAME formula
+        // table-engine.js's own buildRoundCfg() already uses
+        // (round callerId, else current turn, else dealer -- see
+        // MatchAdapter.computeRoundStartLeaderUid()'s own comment for
+        // the precise formula) rather than inventing a second source
+        // of truth. By the time Estimates begins, a real Confirm has
+        // always already happened
+        // (Estimates-phase entry requires a caller — see bidding-engine.js;
+        // the only way to reach subPhase DONE with no caller is the
+        // DASH-phase's own direct-to-DONE branch, which never reaches
+        // this function at all), so `round.callerId` is expected to
+        // already be set correctly and truthfully — the dealer/turn
+        // fallback exists only as the same defensive belt-and-braces
+        // buildRoundCfg() itself already applies, never assumed to be
+        // the common case here.
+        // This file stays a pure Firestore-facing service with ZERO
+        // direct GameSession/engine reference (an established layering
+        // this project enforces via tests/turn-sync.test.cjs's own
+        // "adapter isolation" check) — the actual leaderId computation
+        // is brokered through MatchAdapter.computeRoundStartLeaderUid(),
+        // exactly like every other engine-state question this file
+        // already asks MatchAdapter/TableEngine instead of answering
+        // itself (see submitCard()'s own uidToSeat()/seatToUid()/
+        // TableEngine.previewPlay() calls for the same pattern).
+        // Sprint J.7 (Post-Implementation Review fix): the round-start
+        // guard in firestore.rules only ever allows this branch when
+        // `oldData.turn == null && oldData.cardPhase == null` — i.e.
+        // strictly the post-advanceToNextRound() state, never Round 1
+        // (whose `turn` is a REAL dealer uid from buildInitialMatchDoc(),
+        // never null). Before this fix, `allSubmitted` could never
+        // become true for Round 1 anyway (the Caller's bid was never
+        // persisted — see Sprint J.4/J.5.2), so this branch's own missing
+        // `match.turn == null` guard was dormant, dead code. Fixing THAT
+        // gap (this sprint) makes `allSubmitted` reachable for Round 1
+        // too, which immediately exposed this pre-existing omission: a
+        // real 4-client E2E run discovered Round 1's own completing
+        // estimate now attempts a `turn`/`cardPhase` write Rules
+        // correctly reject (since Round 1 never satisfies `oldData.turn
+        // == null`) — a real regression, not a separate issue, fixed
+        // here rather than deferred.
+        if (allSubmitted && match.turn == null && match.cardPhase == null &&
+            global.MatchAdapter && typeof global.MatchAdapter.computeRoundStartLeaderUid === "function") {
+          // Sprint J.11 (post-review fix): `match` is the pre-write snapshot —
+          // it does NOT yet contain this seat's own just-submitted bid (only
+          // the local `bids` copy above does, via `patch.bids`). The fast-round
+          // leader formula reads `matchDoc.bids` directly (unlike the old
+          // GameSession-based formula, which never did), so passing bare
+          // `match` here would hide exactly the completing bid — most acutely
+          // when THIS bid is the round's Super Call. Pass the merged view.
+          var leaderUid = global.MatchAdapter.computeRoundStartLeaderUid(Object.assign({}, match, { bids: bids }));
+          if (leaderUid) {
+            patch.turn = leaderUid;
+            patch.cardPhase = "PLAY";
+          }
+        }
         tx.update(matchRef, patch);
         return { matchId: matchId, seatId: seatId, bid: bid, version: nextVersion, biddingOpen: !allSubmitted, allSubmitted: allSubmitted };
       });
@@ -888,6 +951,96 @@
    *     transaction callback alone cannot safely re-validate it; only
    *     a fresh `previewPlay()` call against fresh engine state could,
    *     and this function deliberately does not do that automatically. */
+  // ── Sprint J.10.9 (Bounded Server-Sourced Reconciliation) ─────────
+  // Root cause (J.10.5/J.10.6/J.10.7/J.10.8, SNAPSHOT_ORDERING): the
+  // pre-transaction check below (resolveSeatAndAuthorize()) used to be
+  // a TERMINAL rejection — if this client's own listener-fed local
+  // state (matchDoc.turn read from a cached-or-default get(), and/or
+  // TableEngine's own state) lagged the true server state, submitCard()
+  // returned NOT_YOUR_TURN and NEVER reached db().runTransaction() at
+  // all, even though that transaction's own tx.get() is unconditionally
+  // server-fresh and would have correctly authorized a genuinely
+  // legitimate action.
+  //
+  // Fix (approved architecture, J.10.6, empirically validated J.10.7/
+  // J.10.8): on a local turn rejection, perform exactly ONE bounded,
+  // single-flighted, server-sourced refresh + reconciliation pass
+  // through the EXISTING applyRemoteCard()/applyRemoteTrick() functions
+  // (the same two functions startTrickSync() already alternates,
+  // proven exactly-once/idempotent/order-safe by J.10.8's real-engine
+  // tests) before retrying the local check ONCE. This is deliberately
+  // NOT a listener re-registration (J.10.5 already proved that can be
+  // inert and can leak callbacks) and deliberately does NOT reconcile
+  // from inside a Firestore transaction callback (J.10.8's debugger
+  // review: a transaction's own callback may be silently re-invoked by
+  // the SDK on write-conflict retry, and applyRemoteCard()/
+  // applyRemoteTrick() have global-singleton side effects unsafe to
+  // replay unguarded on such a retry — this reconciliation only ever
+  // runs OUTSIDE any transaction, exactly once per triggering call).
+  //
+  // J.10.8's empirical proof gate found a genuine, reproducible
+  // near-zero-delay race: a client with an ALREADY-ACTIVE listener on
+  // the same document, calling get({source:"server"}) immediately
+  // after another client's concurrent write, returned STALE data in
+  // 4 of 6 trials — closing entirely with a modest ~20ms delay. The
+  // mandatory minimum delay below (applied BEFORE the forced read AND
+  // BEFORE the retry) is the required mitigation for that exact race —
+  // not an arbitrary tuning knob.
+  var SERVER_REFRESH_MIN_DELAY_MS = 25;
+
+  function delayMs(ms) {
+    return new Promise(function (resolve) { setTimeout(resolve, ms); });
+  }
+
+  // Per-matchId single-flight map: N concurrent triggers for the SAME
+  // match collapse into ONE actual server read + reconciliation pass,
+  // all sharing the same Promise. The map entry is deleted the moment
+  // the flight settles (success OR failure) — never permanently
+  // retained, so a LATER, independent trigger always gets a fresh
+  // attempt rather than being starved forever. Never keyed globally
+  // across matches — a stale/slow match must never block another.
+  var pendingServerRefreshByMatch = {};
+
+  /** Performs the bounded reconciliation pass described above for one
+   *  matchId, sharing an in-flight attempt across concurrent callers.
+   *  Resolves with the fresh, server-sourced matchDoc data. Never
+   *  touches any listener/subscription; never runs inside a Firestore
+   *  transaction; reuses the EXISTING applyRemoteCard()/
+   *  applyRemoteTrick() functions and their own existing version/count/
+   *  trick-number registries verbatim — no second version registry,
+   *  no new state-mutation path. */
+  function refreshFromServerAndReconcile(matchId, matchRef) {
+    if (pendingServerRefreshByMatch[matchId]) return pendingServerRefreshByMatch[matchId];
+
+    var flight = delayMs(SERVER_REFRESH_MIN_DELAY_MS)
+      .then(function () { return matchRef.get({ source: "server" }); })
+      .then(function (freshSnap) {
+        if (!freshSnap.exists) return null;
+        var freshMatch = freshSnap.data();
+        // Mirrors startTrickSync()'s own bounded, exactly-once-proven
+        // alternation (design-ui/match-adapter.js) — capped at 13
+        // iterations, the maximum possible tricks in a single round,
+        // never re-invoked here as a listener, only as a one-shot
+        // catch-up pass against this ONE freshly-read document.
+        if (global.MatchAdapter && typeof global.MatchAdapter.applyRemoteCard === "function" &&
+            typeof global.MatchAdapter.applyRemoteTrick === "function") {
+          for (var i = 0; i < 13; i++) {
+            global.MatchAdapter.applyRemoteCard(matchId, freshMatch);
+            var trickResult = global.MatchAdapter.applyRemoteTrick(matchId, freshMatch);
+            if (!trickResult || !trickResult.applied) break;
+          }
+        }
+        return freshMatch;
+      })
+      .then(function (freshMatch) {
+        return delayMs(SERVER_REFRESH_MIN_DELAY_MS).then(function () { return freshMatch; });
+      })
+      .finally(function () { delete pendingServerRefreshByMatch[matchId]; });
+
+    pendingServerRefreshByMatch[matchId] = flight;
+    return flight;
+  }
+
   function submitCard(matchId, card) {
     if (!matchId) return Promise.reject(bidError("INVALID_ARGUMENT", "submitCard: matchId is required."));
     if (!isValidGenericCardValue(card)) {
@@ -934,19 +1087,20 @@
       return seatId;
     }
 
-    return matchRef.get().then(function (snap) {
-      if (!snap.exists) throw bidError("MATCH_NOT_FOUND", "submitCard: match '" + matchId + "' was not found.");
-      var match = snap.data();
-      // Task 1: rejects here — BEFORE runTransaction() is ever called
-      // — for a wrong-turn (or seatless) caller. Zero writes attempted.
-      var seatId = resolveSeatAndAuthorize(match);
-
+    // Sprint J.10.9: the shared "we now have a seatId + a legal preview
+    // + a matchDoc to use as expectedVersion — proceed into the write"
+    // tail, factored so both the immediate-success path and the
+    // post-reconciliation path funnel through the exact same logic
+    // (never two different implementations of "how to write a card").
+    function finishWithPreview(seatId, match) {
       // Task 1/2: asks the REAL, existing TableEngine whether THIS
       // exact play would be accepted, and — if so — what turn/phase
       // follows. Never mutates anything, never calls emit(), never
       // duplicates isLegal()'s own rule. Rejects here — still BEFORE
       // runTransaction() — for an illegal card. Zero writes attempted;
-      // `cardLog` is never touched.
+      // `cardLog` is never touched. CARD LEGALITY IS NEVER BYPASSED:
+      // this is the ONE place that decision is made, on every path,
+      // including the post-reconciliation retry path below.
       var preview = global.TableEngine.previewPlay(seatId, card);
       if (!preview || !preview.legal) {
         throw bidError("ILLEGAL_CARD", "submitCard: table-engine.js rejected this card (" + (preview && preview.reason) + ") — not written.");
@@ -954,10 +1108,21 @@
       // Translate the preview's engine-space next SEAT into a
       // Firestore-space next UID via MatchAdapter — the SAME
       // translation direction `uidToSeat()` already establishes this
-      // file is allowed to use, just inverted. `null` (the resolving
-      // boundary — the 4th card of a trick) passes through untouched;
-      // it is never itself the "who's next" answer, so there is
-      // nothing to translate for it.
+      // file is allowed to use, just inverted.
+      //
+      // Sprint I.2 (Turn Authority / Trick-Boundary Fix): `preview.
+      // nextTurnSeat` is no longer ever `null` at the resolving
+      // boundary (the 4th card of a trick) — `TableEngine.previewPlay()`
+      // now returns the REAL trick winner's seat there (see that
+      // function's own comment for how, and why this closes the
+      // permanent `oldData.turn == request.auth.uid` deadlock Sprint I's
+      // forensic report identified: writing `turn: null` left NO write
+      // path that could ever set it back to a real uid). The `!= null`
+      // guard and the `null` initial value below are kept as-is —
+      // defensive, not dead code — so this function still degrades
+      // safely (writes `turn: null`, matching this schema's own
+      // pre-first-card convention) if a future engine change ever
+      // legitimately has no next-seat answer to give.
       var nextTurnUid = null;
       if (preview.nextTurnSeat != null) {
         nextTurnUid = global.MatchAdapter.seatToUid(match, preview.nextTurnSeat);
@@ -1017,6 +1182,135 @@
             nextTurnSeat: preview.nextTurnSeat, cardPhase: preview.nextPhase
           };
         });
+      });
+    }
+
+    return matchRef.get().then(function (snap) {
+      if (!snap.exists) throw bidError("MATCH_NOT_FOUND", "submitCard: match '" + matchId + "' was not found.");
+      var match = snap.data();
+
+      // Task 1: the ORIGINAL local pre-check — BEFORE runTransaction()
+      // is ever called. Sprint J.10.9: this check is no longer
+      // unconditionally terminal on a turn-authority failure — see
+      // below. A seat-ownership failure (PERMISSION_DENIED — this uid
+      // holds no seat in this match at all) is NOT a staleness
+      // condition and remains immediately terminal, unchanged.
+      var seatId, localAuthError = null;
+      try {
+        seatId = resolveSeatAndAuthorize(match);
+      } catch (e) {
+        localAuthError = e;
+      }
+
+      if (!localAuthError) {
+        return finishWithPreview(seatId, match);
+      }
+      if (localAuthError.reason !== "NOT_YOUR_TURN") {
+        throw localAuthError;
+      }
+
+      // Sprint J.10.9: the local pre-check reports a turn-authority
+      // conflict. Per the approved architecture, this is now ADVISORY,
+      // not terminal — attempt exactly ONE bounded, single-flighted,
+      // server-sourced reconciliation pass, then retry once.
+      return refreshFromServerAndReconcile(matchId, matchRef).then(function (freshMatch) {
+        if (!freshMatch) {
+          // The server-sourced refresh found the document gone —
+          // genuinely terminal, not a staleness condition.
+          throw bidError("MATCH_NOT_FOUND", "submitCard: match '" + matchId + "' was not found.");
+        }
+
+        // Sprint J.10.9 code-review finding (CRITICAL, fixed before
+        // shipping): refreshFromServerAndReconcile()'s bounded
+        // applyRemoteCard()/applyRemoteTrick() alternation deliberately
+        // mirrors ONLY startTrickSync()'s own per-trick catch-up loop —
+        // it never calls maybeAdvanceRound(), the SEPARATE mechanism
+        // that actually performs a round transition (bidding-engine
+        // re-init, a freshly dealt hand). If this client's local
+        // TableEngine was stale by a FULL ROUND (not just a trick/turn
+        // boundary), applyRemoteCard()/applyRemoteTrick() correctly
+        // DEFER (AWAITING_ROUND_TRANSITION — see
+        // tests/j109-bounded-reconciliation.test.cjs Test I) rather
+        // than converging — meaning `freshMatch` here can be genuinely
+        // fresh (the correct, new-round document) while the LOCAL
+        // engine's own hand/trick-in-progress state (including which
+        // suit currently leads the trick) still reflects the PREVIOUS
+        // round. `resolveSeatAndAuthorize()`
+        // only checks `freshMatch.turn` (a Firestore field, unaffected
+        // by this), so it could WRONGLY appear to pass even though
+        // `previewPlay()` would validate legality against the stale,
+        // wrong-round engine state — the exact "card legality bypassed"
+        // outcome this sprint's own non-negotiable rule forbids. Detect
+        // this explicitly and refuse to trust ANY reconciliation-based
+        // decision (turn OR legality) when the engine's own round
+        // hasn't actually converged to the fresh document's round —
+        // this is not a staleness this bounded, single-round-scoped
+        // reconciliation can resolve safely, so it is NOT retried
+        // further here; the ORIGINAL local rejection is preserved.
+        if (global.TableEngine && typeof global.TableEngine.getState === "function") {
+          var engineState = global.TableEngine.getState();
+          if (engineState && engineState.round != null && freshMatch.currentRound != null &&
+              engineState.round !== freshMatch.currentRound) {
+            throw localAuthError;
+          }
+        }
+
+        // Card legality (via previewPlay(), which also encodes
+        // TableEngine's OWN deterministic turn belief — see
+        // canPlayCard()) is re-evaluated against the RECONCILED local
+        // engine and is NEVER bypassed, on any path. This is resolved
+        // via this client's OWN seat, independent of whichever seatId
+        // the original (pre-reconciliation) authorization attempt used.
+        var ownSeatId = global.MatchAdapter.uidToSeat(freshMatch, callingUid);
+        if (!ownSeatId) {
+          throw bidError("PERMISSION_DENIED", "submitCard: you do not own a seat in this match.");
+        }
+
+        var retryAuthError = null;
+        try {
+          resolveSeatAndAuthorize(freshMatch);
+        } catch (e) {
+          retryAuthError = e;
+        }
+
+        if (!retryAuthError) {
+          // Reconciliation resolved the staleness — the fresh doc's
+          // OWN turn field now agrees this seat may act. Proceed
+          // normally, using the confirmed-fresh document.
+          return finishWithPreview(ownSeatId, freshMatch);
+        }
+
+        // The Firestore-field turn check STILL disagrees even after
+        // reconciliation. Before deciding whether this is the
+        // documented "wrong-but-real-seat" edge (matchDoc.turn — a
+        // value some OTHER client's own completing write computed and
+        // persisted, see docs/architecture/SecurityArchitecture.md) or
+        // a genuine, confirmed wrong-turn attempt, consult card
+        // legality (previewPlay(), which also encodes TableEngine's
+        // OWN deterministic turn belief — see canPlayCard()) FIRST.
+        // This never bypasses legality: it is checked here, directly,
+        // before any decision about the transaction is made.
+        var reconciledPreview = global.TableEngine.previewPlay(ownSeatId, card);
+        if (!reconciledPreview || !reconciledPreview.legal) {
+          // Both independent signals (the Firestore turn field AND the
+          // freshly-reconciled local engine) agree this is not a
+          // legitimate action. Preserve the ORIGINAL, more specific
+          // error (typically NOT_YOUR_TURN) rather than relabeling a
+          // confirmed turn-authority rejection as a generic
+          // ILLEGAL_CARD — this keeps the error taxonomy this
+          // codebase's tests/UI already depend on unchanged for the
+          // ordinary (non-stale) wrong-turn case.
+          throw retryAuthError;
+        }
+
+        // The documented "wrong-but-real-seat" edge: the RECONCILED
+        // LOCAL ENGINE independently confirms this exact play is
+        // legal, but the separate Firestore `turn` field still
+        // disagrees. Let the transaction's own tx.get() +
+        // resolveSeatAndAuthorize(freshMatch) be the TRUE terminal
+        // authority (unchanged, below) — never bypassing card
+        // legality, which was just independently reconfirmed above.
+        return finishWithPreview(ownSeatId, freshMatch);
       });
     });
   }
@@ -1245,6 +1539,65 @@
             version: nextVersion,
             updatedAt: serverTimestamp()
           };
+          // Sprint J.7 (Unified Bidding Completion): a SubmitConfirmCall
+          // is the ONE moment the Caller's own confirmed trick count
+          // becomes known — but until now nothing ever mirrored it into
+          // the Firestore `bids` map (bidding-engine.js's own ESTIMATES
+          // routing deliberately SKIPS the Caller, since their bid
+          // already exists in LOCAL engine state — see
+          // SubmitConfirmCall's own handler). That gap is exactly why
+          // `allSeatsNowHaveBids` (Sprint J.3) could never become true
+          // for the dominant, real-caller path — see Sprint J.4/J.5.2's
+          // forensic reports. Fixed at the SOURCE: write the SAME value
+          // already being appended to `biddingLog` into this seat's OWN
+          // `bids` slot, in the SAME transaction — reusing
+          // `submitBid()`'s existing schema (a plain int 0-13) and
+          // seat-ownership model exactly, never a second representation
+          // of "the Caller's bid." Deliberately does NOT introduce a
+          // `callerId` field (Sprint J.6 adversarial review rejected
+          // that: a durable authority field derived from THIS write path
+          // is forgeable, since isValidBiddingActionSubmission() has no
+          // subPhase/turn check by design — see that review's Attack C).
+          if (action.actionType === "SubmitConfirmCall" &&
+              (!(freshSeatId in freshMatch.bids) || freshMatch.bids[freshSeatId] == null)) {
+            var bids = Object.assign({}, freshMatch.bids);
+            bids[freshSeatId] = action.tricks;
+            patch.bids = bids;
+            var seatIds = Object.keys(freshMatch.seats || {});
+            var allSubmitted = seatIds.length > 0 && seatIds.every(function (s) { return bids[s] != null; });
+            patch.biddingOpen = !allSubmitted;
+            // Mirrors submitBid()'s own round-start completion write
+            // VERBATIM (not a second implementation) for the rare/
+            // adversarial case where THIS write happens to be the one
+            // that completes bidding — e.g. an out-of-order Estimate
+            // landing before Confirm, or a fast-round Super Call where
+            // every seat already had a bid before Confirm. See
+            // MatchService.submitBid()'s own identical block for the
+            // full rationale and its own honestly-documented limitation
+            // (structural-seat-only turn verification; a fast round's
+            // TRUE leader may not yet be resolvable from local
+            // GameSession state at this exact write instant — a
+            // pre-existing, separately-tracked gap, not introduced or
+            // fixed by this sprint).
+            // Sprint J.7 (Post-Implementation Review fix): same
+            // `match.turn == null` guard added to submitBid()'s own
+            // block above, for the identical reason — see that block's
+            // comment for the full account.
+            if (allSubmitted && freshMatch.turn == null && freshMatch.cardPhase == null &&
+                global.MatchAdapter && typeof global.MatchAdapter.computeRoundStartLeaderUid === "function") {
+              // Sprint J.11 (post-review fix): same stale-snapshot gap as
+              // submitBid()'s identical block above — `freshMatch.bids` is
+              // missing this seat's own just-merged bid (see the local
+              // `bids` copy a few lines up, merged into `patch.bids` but
+              // never back into `freshMatch` itself). Pass the merged view
+              // so the fast-round formula sees the completing bid.
+              var leaderUid = global.MatchAdapter.computeRoundStartLeaderUid(Object.assign({}, freshMatch, { bids: bids }));
+              if (leaderUid) {
+                patch.turn = leaderUid;
+                patch.cardPhase = "PLAY";
+              }
+            }
+          }
           tx.update(matchRef, patch);
           return {
             matchId: matchId, seatId: freshSeatId, actionType: action.actionType,
