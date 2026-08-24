@@ -51,3 +51,15 @@ Design only — a running record of the specific calls made in this design sprin
 **Decision:** `MatchService`'s deal step runs client-side (whichever client happens to deal) rather than being blocked on server-side dealing.
 **Why:** Server-authoritative dealing requires Cloud Functions (a trusted party who deals must not be a participant who could peek). Blocking all of multiplayer on this one capability would delay Play-with-Friends (low cheating incentive between friends) for a risk that mainly matters for Ranked.
 **Revisit when:** Ranked Match leaves soft-launch — same trigger as ADL-001, tracked together in `MigrationPlan.md`.
+
+### ADL-009 — `design-ui/` is the primary production product
+
+**Decision:** `design-ui/` is the primary production product and target production codebase for the Estimation multiplayer game. `src/` is legacy/transitional score-tracker code and is not the target architecture for multiplayer functionality. Future multiplayer, gameplay, UI, lifecycle, persistence, synchronization, and deployment work must target `design-ui/`.
+
+**Why:** `design-ui/` contains the existing multiplayer rules engines, `GameSession`, room/match services, Firebase integration, Firestore security model, synchronization adapters, lifecycle transitions, and focused regression coverage. `src/` is a separate manual score tracker with a separate state and scoring model; migrating the multiplayer system into it would duplicate or discard the existing multiplayer architecture and create a second rules/state implementation. The product decision is therefore based on accumulated engineering investment and product scope, not on the current root build entry point.
+
+**Consequences:** The current root Vite build is transitional and must be changed in a dedicated integration task so the released artifact builds and ships `design-ui/`. The `design-ui/` render/navigation layer, Firebase dependency packaging, environment configuration, synchronization wiring, lifecycle UX, real emulator/browser validation, and deployment verification remain unfinished. `src/` must not receive new multiplayer functionality; it may receive only explicitly scoped legacy maintenance, compatibility, migration, or deprecation work. It must not be deleted or reset as part of unrelated gameplay work.
+
+**Migration/deprecation strategy:** First make `design-ui/` the selected build/deployment artifact and provide a clean-checkout smoke test. Then identify any supported users of the score tracker and record whether it remains as a legacy route, is archived, or is deprecated. Remove `src/` only in a later, separately approved cleanup task after no supported workflow depends on it.
+
+**Revisit when:** Only through an explicit product-direction decision. Implementation convenience, root build inertia, or a new UI framework must not silently reverse this decision.

@@ -6,16 +6,17 @@ Audit date: 2026-08-12 · Method: direct repository inspection (file reads, test
 
 ## 1. Executive Summary
 
-This repository contains **two disconnected products**, not one game:
+> **Authoritative product-direction decision PD-001 (24 August 2026):** `design-ui/` is the primary production product and target production codebase for the Estimation multiplayer game. `src/` is legacy/transitional score-tracker code. P0-01 is resolved; future multiplayer, gameplay, UI, lifecycle, persistence, and deployment work targets `design-ui/`. The selected product is not yet the shipped artifact, so the remaining blocker is build/deployment integration, not product direction.
 
-1. **The shipped app** (`src/`, built by `npm run build`, the only thing `index.html`/`vite.config.ts` actually wires up): **Estemshan**, a manual pen-and-paper score-tracking tool. Setup screen → round-entry form → running scoreboard → game-over screen. No backend, no auth, no multiplayer, no lobby. This is what a user gets today if they build and open this project.
-2. **A much larger, unshipped prototype** (`design-ui/`): a real-time multiplayer Firestore-backed card game with a genuine rules engine, real Firebase Auth, a heavily-engineered synchronization/security layer, and four static HTML screens (Login, Lobby, Match, Profile). It is **not referenced by the build**, has **no npm dependency on Firebase**, and can only be opened by loading its HTML files directly in a browser.
 
-Nearly all of the ~29 sprint reports, ~23 architecture/implementation docs, and ~1,500 passing tests in this repo describe work on product #2 — the one that isn't shipped. Product #1 — the one that is shipped — has almost no documentation, no automated tests, and (per the engine audit) contains its own separately-maintained scoring formula that **diverges from the project's own rules document** in ways that produce wrong scores today, for real users of the tool that actually ships.
+The repository contains one selected production direction and one transitional legacy surface:
 
-Within product #2, the engineering on synchronization, security rules, and round-lifecycle correctness is genuinely disciplined and mostly rules-compliant. But roughly half of the screens a player would need to reach (Shop, Settings, Ranked Match, Play vs AI, Room, Final Standings) **do not exist** — the one working screen (Lobby) contains dead links to files that were never built. AI/bot opponents are advertised in the UI copy but have zero implementation anywhere. ~90%+ of "passing tests" are self-labeled MOCKED/SIMULATED (verified directly, not assumed) rather than real-infrastructure verification, and there is no CI/CD at all — every test must be run manually.
+1. **Primary production product — `design-ui/`:** a real-time multiplayer Firestore-backed Estimation game with a genuine rules engine, Firebase Auth, room/match services, synchronization/security layers, and extensive focused tests. It is not yet the root-built/deployed artifact, and its user-facing gameplay screens remain incomplete.
+2. **Legacy/transitional score tracker — `src/`:** a narrow React/Vite manual score-tracking tool. It remains in the repository for explicitly scoped maintenance, compatibility, or deprecation work, but it is not the target architecture for multiplayer gameplay and must not receive new multiplayer functionality.
 
-**The honest bottom line:** this project has done a large amount of careful, well-documented backend engineering on a game that isn't wired to anything a user can play end-to-end, while the tool that IS shipped has an unverified, incorrect scoring bug and no test coverage. Both halves need real work before either constitutes a releasable product.
+The product-direction decision is resolved. The remaining engineering problem is to make `design-ui/` buildable, deployable, user-reachable, and production-validated without creating a second multiplayer implementation in `src/`. The existing `design-ui/` investment is substantial, but it still has missing render/navigation layers, known fast-round and trust-boundary work, no confirmed live Rules deployment, and no complete release-grade multi-client evidence.
+
+The honest bottom line is therefore: the project has a selected multiplayer product with meaningful engine/backend foundations, but the selected product is not yet the shipped artifact and is not yet production-ready. `src/` scoring divergence is retained as legacy maintenance risk, not as a reason to redirect the multiplayer architecture.
 
 ---
 
@@ -23,13 +24,13 @@ Within product #2, the engineering on synchronization, security rules, and round
 
 **There is no single "current sprint."** The dotted-version sprint discipline (2.6→4.3) that governed `design-ui/`'s early build-out broke down after Sprint 4.3: all later work (Bidding Controls, Table Controls, Trick Resolution/Round Completion, Round Lifecycle, Match Completion, Rematch Vote, Player Hand Synchronization, and the recent Firestore rules hardening sprints "D"/"E") was done as named, un-numbered sprints, several of which were **never individually committed to git** and were reconstructed after a container crash wiped the uncommitted working tree (`docs/reviews/Working_Tree_Recovery_Report.md`).
 
-Based on evidence, not on what any prior report claims: **the project is currently at the end of a "Multiplayer Core Loop Hardening" phase for the `design-ui/` prototype** (hand-dealing security, just committed as `77369bf`), with the two most urgent open items being (a) the newly-discovered fast-round scoring bug and (b) the fact that this entire prototype is not connected to the app that actually ships. Any claim that the project is "ready for Sprint N+1 of feature work" is not supported by the evidence — the correct next phase is **Stabilization**, not new features.
+Based on the current repository evidence, the project is at the end of a **Multiplayer Core Loop Hardening** phase for the selected `design-ui/` product (hand-dealing security is present in the recent history). The product-direction question is resolved. The urgent next phase is **Primary-Product Integration and Stabilization**: connect `design-ui/` to the build/deployment pipeline, close the known fast-round and lifecycle gaps, establish reproducible validation, and complete the user-facing core loop. `src/` remains transitional and is not a destination for multiplayer feature work.
 
 ---
 
 ## 3. What We Have Completed (evidence-backed)
 
-- **Shipped Estemshan score tracker** (`src/`): setup, round entry, scoreboard, game-over, Classic-mode scoring formula. Builds and runs.
+- **Legacy Estemshan score tracker** (`src/`): setup, round entry, scoreboard, game-over, and a separate Classic-mode scoring utility. Retained for transition/maintenance; not the multiplayer production target.
 - **Firebase Authentication** (`design-ui/login/`): real `createUserWithEmailAndPassword`, `signInWithEmailAndPassword`, `signInWithPopup` (Google), `signInAnonymously`, forgot-password flow, friendly error mapping. Genuinely wired, not mock.
 - **Room lifecycle** (`design-ui/room-service.js`): transactional create/join/leave/setReady, capped at 4 players, idempotent.
 - **Match start / lifecycle transitions** (`design-ui/match-service.js`): atomic room↔match binding, idempotent round advance, match completion, rematch vote + rematch match creation — all transactional with server-side cross-checks in `firestore.rules`.
@@ -37,7 +38,7 @@ Based on evidence, not on what any prior report claims: **the project is current
 - **Bidding & card-play sync**: transactional writes, seat-ownership + version-increment enforced server-side, pre-write local legality checks.
 - **Trick resolution sync**: correctly designed as deterministic replay (no new write path needed) rather than a trusted broadcast.
 - **Hand dealing (Sprint E, just committed)**: atomic 4-hand deal transaction now succeeds against the real Firestore Rules Emulator; write authority correctly separated from read privacy; verified with 14/14 new emulator checks plus full regression (1,513/1,513 Node tests).
-- **Core rules engine** (`design-ui/engine/*.js`): deck/dealer/bidding/table/scoring engines implement the large majority of `Estimation_Rules_v2_SingleSourceOfTruth.docx` correctly — auction rules, Confirmation Phase, Call Cap, 13-Rule/Risk, Sa'ayda ladder, Dash Call flat scoring, Normal Dash Caller/With bonus (previously-fixed bug, re-verified present) — confirmed by direct code reading against the doc, not by trusting prior reports.
+- **Core rules engine** (`design-ui/engine/*.js`): deck/dealer/bidding/table/scoring engines implement the large majority of the updated authoritative rules document correctly — auction rules, Confirmation Phase, Call Cap, 13-Rule/Risk, Sa'ayda ladder, Dash Call flat scoring, Normal Dash Caller/With bonus, and the clarified live With behavior — confirmed by direct code reading and focused regression tests.
 - **Extensive engine-level automated tests**: ~700+ tests across deck/bidding/table/scoring genuinely exercise real, unmodified engine source files (not mocks) and independently re-derive expected results rather than trusting engine output.
 
 ---
@@ -55,9 +56,9 @@ Based on evidence, not on what any prior report claims: **the project is current
 
 ## 5. What Is Broken
 
-- **`src/utils.ts` scoring formula (used by the SHIPPED app) diverges from the rules doc**: its Normal-mode Super Call bonus (fixed ±20, which the doc doesn't specify for Normal mode at all) and its Dash Call formula (plain hit/miss instead of the doc's flat ±33/±25) are both wrong relative to the single source of truth — and this file has **zero test coverage**. This is a live bug in the one thing that actually ships.
+- **Legacy `src/utils.ts` scoring formula diverges from the authoritative rules**: its Normal-mode Super Call and Dash Call/Normal Dash paths do not fully match the canonical formulas. This is a legacy maintenance defect and must not be allowed to become a second multiplayer scoring implementation. If `src/` is retained for users during transition, it needs an explicitly scoped compatibility/deprecation decision and independent tests.
 - **Fast-round Caller/With assignment**: for any fast round (14-18) where no bid reaches 8 (i.e., no Super Call), the engine sets `callerId: null, withPlayers: []` unconditionally — meaning the Caller/With ±10 scoring bonus can never fire for the majority of fast rounds, contradicting the rules doc's explicit "first to bid the highest number is Caller" rule, which applies to every fast round, not just Super Calls.
-- **Dead navigation links in the one working prototype screen**: Lobby's "Ranked Match," "Play vs AI," and Settings (gear icon) buttons all navigate to HTML files that don't exist anywhere in the repo or git history.
+- **Incomplete primary-product user flow**: the selected `design-ui/` product has dead navigation links and missing gameplay screens, including ranked/AI/settings/room/table/standings surfaces.
 - **`cardLog` prefix-integrity gap**: a seated client can rewrite/reorder earlier card-log entries in a way that, as of the trick-resolution sprint, can actually change a computed trick winner — a demonstrated, not merely theoretical, exploit, documented as "not suitable for ranked/competitive play."
 - **`firestore.rules` is explicitly marked "NOT YET DEPLOYED"** in its own file header — everything the multiplayer audit describes is the *reviewable* ruleset, with no evidence it has ever been published to the live Firebase project.
 
@@ -124,7 +125,7 @@ Canonical source: `Estimation_Rules_v2_SingleSourceOfTruth.docx` (found only in 
 - **Client-trusted game state**: deliberate, documented, and consistent — bid/card *value* legality, `cardLog` prefix integrity, `endMatch()` score correctness, and (now) hand-dealing content fairness are all explicitly accepted as client-authoritative under a Spark (free) Firebase plan constraint. This is coherent as a stated MVP trade-off, but it is a **security model with a genuine, demonstrated cheat surface** in at least the `cardLog` case.
 - **Firestore rules deployment status is unknown/unverified** — the rules file itself says "NOT YET DEPLOYED."
 - **Dead code / prototype-as-production risk**: `presence-service.js`, `shop-service.js`, `getAIPlayers()` are all stub/dead scaffolding sitting in the same directories as production-quality code, with no clear marker distinguishing "real" from "placeholder" modules at a glance.
-- **The single largest architectural risk**: the entire `design-ui/` investment (services, engine, rules, ~30 docs) has zero integration path into the actually-shipped `src/` build. Continuing to invest in `design-ui/` without resolving this is building a second product, not finishing the first.
+- **The single largest architectural risk is now integration execution**: `design-ui/` is the selected product but is not yet the artifact produced by the root build/deployment pipeline. Continuing feature work without a concrete integration slice, environment packaging, and smoke test would leave the selected product unreachable to users.
 
 ---
 
@@ -171,7 +172,7 @@ Production-quality: room lifecycle, match lifecycle transitions, real-time sync,
 
 | Feature | Status | Completion | Evidence | Blocker | Priority |
 |---|---|---|---|---|---|
-| Shipped score tracker | DONE w/ bug | 80% | `src/App.tsx` | Scoring bug (§5) | P0 |
+| Legacy score tracker | TRANSITIONAL / UNDER-TESTED | 80% | `src/App.tsx` | Legacy scoring divergence; no multiplayer scope | P2 |
 | Firebase Auth | DONE | 90% | `design-ui/login/` | Not connected to shipped app | P1 |
 | Room lifecycle | DONE | 85% | `room-service.js` | No live subscribe | P2 |
 | Match lifecycle | DONE | 85% | `match-service.js` | Rules undeployed | P1 |
@@ -186,7 +187,7 @@ Production-quality: room lifecycle, match lifecycle transitions, real-time sync,
 | Presence/reconnect (opponent-left) | MISSING | 0% | stub file | Not started | P1 |
 | CI/CD | MISSING | 0% | none found | Not started | P1 |
 | Analytics/Monetization | MISSING | 0% | none found | Not started | P4 |
-| App↔prototype integration | MISSING | 0% | two disconnected codebases | Architectural decision needed | **P0** |
+| `design-ui` production integration | NOT IMPLEMENTED | 0% | `package.json`, root Vite wiring, `design-ui/` screens | Build/deployment packaging and end-to-end smoke path | **P0** |
 
 ---
 
@@ -211,43 +212,43 @@ Production-quality: room lifecycle, match lifecycle transitions, real-time sync,
 ## 15. Dependency Map
 
 ```
-R1 (Architecture decision: integrate or re-scope)
- ├─→ everything about design-ui/ becoming "the product"
- └─→ if re-scoped: most design-ui/ work becomes reference material, not roadmap
-
-R2/R3 (Engine bug fixes)  ─────────────→ independent of R1, do regardless
-R5 (Rules deployment verification) ───→ blocks any real-user multiplayer testing
-R4 (CI + real verification)        ───→ should happen before any further feature work,
-                                        else every future sprint repeats the same
-                                        MOCKED-only pattern
-R6 (cardLog integrity) ─────┐
-R7 (Presence)          ─────┼──→ both required before "ranked"/competitive framing is honest
-R9 (Hand content)       ─────┘
-R8 (Dead links / missing screens) ───→ cosmetic/functional, parallelizable with anything
+P0-01 (product direction) ─────────────→ RESOLVED by PD-001; all future product work targets design-ui/
+P0-02 (canonical rules artifact) ──────→ rule matrix and every game change
+P0-03 (design-ui fast-round roles) ─────→ scoring, lifecycle, extension, and UI state
+P1-01 (build/test/CI) ──────────────────→ every subsequent release claim
+P1-02 (Rules Emulator/deployment) ─────→ real multiplayer testing and release
+P1-03 (state/invariant contract) ───────→ cross-engine and reconnect work
+P1-04 (trust-boundary decision) ────────→ ranked/public claims and schema hardening
+P1-05 (presence/rejoin) ─────────────────→ non-deadlocking multiplayer
+P1-06 (lifecycle integration) ──────────→ UI wiring and release completion
+P2-01 (design-ui build packaging) ──────→ selected artifact can ship
+P2-02 (design-ui gameplay UI) ──────────→ human-playable core loop
+P2-03 (design-ui sync wiring) ──────────→ real multiplayer screen
+P3 (AI/meta) ───────────────────────────→ only after core release gate
 ```
 
-**Critical path**: R1 (decide product direction) → R2/R3 (fix known scoring bugs, cheap and urgent regardless of R1's outcome) → R5 (confirm/deploy rules) → R4 (real CI) → R6/R7/R9 (trust-boundary hardening) → UI completion → economy/AI/meta systems.
+**Critical path**: P0-02 → P0-03/P0-04 → P1-01/P1-03 → P1-02/P1-04 → P1-06 → P2-01 → P2-02/P2-03 → P1-05 and trust hardening → release QA.
 
-**Parallelizable now, regardless of R1's outcome**: R2, R3 (bug fixes), R10 (dedup), R11 (docs).
+**Parallelizable now**: canonical rules artifact, build/test/CI bootstrap, fast-round investigation, state-contract documentation, and Rules Emulator setup can proceed in parallel. Legacy `src/` maintenance is separately scoped and must not block `design-ui/`.
 
-**Should NOT proceed yet**: any new meta-game feature (Shop, Missions, Battle Pass, AI) until R1 is resolved — building more on top of a product that may not ship is the single biggest waste-of-effort risk in this repo today.
+**Should NOT proceed yet**: Shop, Missions, Battle Pass, monetization, or a broad AI feature. They remain gated on a playable, validated `design-ui/` core and the selected product’s release gate.
 
 ---
 
 ## 16. Critical Path
 
-R1 → R2/R3 → R5 → R4 → (R6, R7, R9 in parallel) → UI completion for whichever product direction R1 selects → Economy/AI/Meta (only if in scope) → Release QA.
+P0-02/P0-03/P0-04 → P1-01/P1-03 → P1-02/P1-04 → P1-06 → P2-01 (`design-ui` build/deployment) → P2-02/P2-03 (UI and sync) → P1-05/trust hardening → release QA. P0-01 is resolved and is no longer on the critical path.
 
 ---
 
 ## 17. New Master Roadmap
 
-**PHASE 0 — Stabilization & Decision (this must happen before anything else)**
-- Objective: Resolve the two-codebases problem; fix the two confirmed scoring bugs.
-- Tasks: Product-direction decision (R1); fix `src/utils.ts` scoring formula + add tests (R2); fix fast-round Caller/With (R3) + add regression tests for both this and the recently-fixed With mechanics (Auction Alignment, Jump-In) which currently have zero coverage.
-- Acceptance criteria: one clear answer to "what ships"; both engines pass rules-compliance tests against the doc.
-- Effort: **M** (bug fixes are small; the product decision is a stakeholder call, not an engineering task).
-- DoD: fixes merged with tests; decision documented.
+**PHASE 0 — Authority & Stabilization (P0)**
+- Objective: Operationalize the authoritative rules and stabilize the selected `design-ui/` product.
+- Tasks: commit the rules artifact and matrix; fix fast-round Caller/With behavior; keep legacy `src/` scoring maintenance explicitly separate; preserve the completed With, DASH, auction-invariant, and retry regressions.
+- Acceptance criteria: PD-001 is recorded; all future multiplayer tasks name `design-ui/`; known P0 engine defects have failing-before-fix regressions; the canonical rule matrix is committed.
+- Effort: **S–M**.
+- DoD: authority and product direction are documented; `design-ui/` engine fixes are merged with tests; no new multiplayer code is added to `src/`.
 
 **PHASE 1 — Rules/Engine Hardening**
 - Objective: Close remaining engine gaps (Golden Super Call reset, SUITS/RANKS dedup, Risk-player formula dedup); commit the rules docx into the repo as the actual source of truth.
@@ -260,15 +261,15 @@ R1 → R2/R3 → R5 → R4 → (R6, R7, R9 in parallel) → UI completion for wh
 - DoD: every PR gets a real pass/fail signal, not just a MOCKED one.
 
 **PHASE 3 — Core Gameplay UI Completion**
-- Objective: Build the actual Game Table visuals and Bidding controls (currently placeholder/minimal) for whichever product Phase 0 selected.
+- Objective: Build the actual `design-ui/` Game Table visuals and Bidding controls for the selected production product.
 - Effort: **L**.
 
 **PHASE 4 — Multiplayer Trust Hardening**
-- Objective: Close or explicitly re-accept `cardLog` integrity, presence/abandonment, hand-content-fairness gaps.
+- Objective: Close or explicitly re-accept `design-ui/` cardLog integrity, presence/abandonment, hand-content-fairness, turn-authority, and score-trust gaps.
 - Effort: **L** (presence is straightforward; cardLog restructuring and any move toward trusted dealing are bigger).
 
 **PHASE 5 — AI**
-- Objective: Build actual bot decision logic for bid/card play, or remove "Play vs AI" from UI copy until it exists.
+- Objective: Build actual `design-ui/` bot decision logic for bid/card play, or remove/gate "Play vs AI" until it exists.
 - Effort: **L**.
 
 **PHASE 6 — Meta Game (Shop/Economy/Missions/Battle Pass)**
@@ -276,7 +277,7 @@ R1 → R2/R3 → R5 → R4 → (R6, R7, R9 in parallel) → UI completion for wh
 - Effort: **XL**.
 
 **PHASE 7 — Social**
-- Objective: Room UI, friends, join-by-code screen (currently a `prompt()`).
+- Objective: Complete the `design-ui/` room/friends/join-by-code experience and remove placeholder `prompt()` flows.
 - Effort: **M**.
 
 **PHASE 8 — Analytics/Monetization**
@@ -321,7 +322,7 @@ Assumptions: one full-time-equivalent engineer, "hours" are rough order-of-magni
 - Realistic: 12-16 weeks
 - Conservative: 20-26 weeks (accounting for the project's own demonstrated pattern of discovering new gaps mid-sprint)
 
-Full scope (through Phase 10) is materially larger and not responsibly estimable without first resolving the Phase 0 product decision.
+Full scope (through Phase 10) remains materially larger, but it is now estimable as a `design-ui` production-integration program; the remaining uncertainty is implementation and infrastructure scope rather than product direction.
 
 ---
 
@@ -342,11 +343,11 @@ Full scope (through Phase 10) is materially larger and not responsibly estimable
 | Production/Deployment/Analytics | 5% | 5/100 | 0.25 |
 | **Total** | 100% | | **≈44%** |
 
-**This 44% describes the `design-ui/` prototype's own internal completeness against its own ambitions.** It does NOT account for the fact that this prototype isn't connected to anything shippable. Grading the actual product-as-it-would-ship today (the Estemshan score tracker, since that's the only thing `npm run build` produces) yields a much lower number — the shipped artifact doesn't have multiplayer, engine sophistication, or most of what's counted above at all.
+**This 44% describes the selected `design-ui/` product's internal completeness against its current ambitions.** It still does not mean that the selected product is shipped: the root build currently produces the transitional `src/` tracker, while `design-ui/` needs explicit build/deployment packaging and a complete user-facing core loop.
 
-**Reconciled overall completion estimate: ~20-25%** of "a released Estimation multiplayer game," once the integration gap is honestly priced in.
+**Reconciled overall completion estimate: ~35–40%** of a released Estimation multiplayer game after resolving product direction, with the remaining gap concentrated in build integration, UI completion, real infrastructure verification, trust hardening, presence, and release QA.
 
-**Production readiness: ~15%.** Why lower than completeness: no CI, unverified/possibly-undeployed security rules, no presence/abandonment handling, a demonstrated cheat exploit, zero monetization/analytics, two confirmed live scoring bugs, and the fundamental fact that the most-engineered half of the codebase has no path to a user's hands today.
+**Production readiness: ~20–25%.** The score remains low because build/lint are not reproducible in the current workspace, Rules deployment is unverified, presence is incomplete, card-log/turn/hand/score trust gaps remain, the live gameplay UI is incomplete, and no complete release-grade multi-client run is logged. The score is higher than the prior assessment only because the product-direction ambiguity is now resolved; it is not a claim that the product is ready.
 
 ---
 
@@ -361,43 +362,43 @@ A feature is **not** done because the UI exists, the function compiles, or one h
 
 ---
 
-## 22. Immediate Next Actions
+## 22. Immediate Next Actions After PD-001
 
 ### NEXT 5 ACTIONS
 
-1. **Fix the two confirmed live scoring bugs** — `src/utils.ts`'s Normal-mode Dash/Super-Call formulas (shipped, wrong today) and `bidding-engine.js`'s fast-round Caller/With assignment (affects most fast rounds) — with regression tests for each.
-2. **Make an explicit product-direction decision**: integrate `design-ui/` into the shipped app, or formally re-scope the project's ambitions to match what's actually shippable. Document it in a top-level README. Every other roadmap item depends on this.
-3. **Verify (or deploy) `firestore.rules` against a real Firebase project** — it is currently marked "NOT YET DEPLOYED" and nothing in the repo confirms otherwise.
-4. **Stand up CI that runs the real-emulator test tier**, not just the mocked/simulated tier — so future "all tests pass" claims mean what they say.
-5. **Write regression tests for the recently-fixed With mechanics (Auction Alignment, Estimation Jump-In)** and the fast-round tie-break — all three currently have zero automated coverage despite being real, previously-buggy code paths.
+1. **Commit the updated authoritative rules artifact and matrix** and update all active planning references to PD-001.
+2. **Fix the confirmed fast-round Caller/With defect in `design-ui/`** with failing-before-fix and cross-engine regression coverage.
+3. **Make `design-ui/` the actual build/deployment target**: define entry points, asset/Firebase configuration, packaging, and a clean-checkout smoke test; leave `src/` intact as transitional code.
+4. **Stand up CI and real Rules Emulator validation** so the selected product’s build, contracts, security rules, and browser smoke checks are reproducible.
+5. **Complete the `design-ui/` core loop**: Bidding/Table render layer, sync registration, final-trick scoring, round transition, match completion, rematch, and recovery behavior.
 
 ---
 
 ## FINAL EXECUTIVE QUESTIONS
 
 **WHERE ARE WE?**
-Mid-build on a multiplayer card game prototype (`design-ui/`) that has real engineering quality in its sync/security layer, but is disconnected from the app that actually ships (`src/`, a simple score tracker). No canonical roadmap exists; sprint discipline broke down after Sprint 4.3 and a data-loss incident forced a messy reconstruction.
+Mid-build on the selected `design-ui/` multiplayer product. Product direction is resolved; the remaining gap is turning this existing engine/service investment into the artifact that the build and deployment pipeline ships, then completing the user-facing core loop and release validation.
 
 **WHAT HAVE WE ACTUALLY BUILT?**
-A working score-tracking tool (with a scoring bug); a mostly rules-compliant card-game engine (with one new, real bug); a well-engineered but not-fully-verified Firebase multiplayer backend; four static prototype screens, half of which link to features that don't exist; zero AI, zero economy/shop, zero CI.
+A transitional manual score tracker under `src/`; a mostly rules-compliant `design-ui/` card-game engine with focused regression coverage; a substantial but not fully verified Firebase multiplayer backend; incomplete/placeholder gameplay screens; zero complete AI, economy, presence/abandonment flow, or reproducible CI release pipeline.
 
 **WHAT IS THE TRUE COMPLETION %?**
-~44% against the prototype's own internal scope; **~20-25%** against an actual released multiplayer game, once the disconnect between the two codebases is priced in.
+~44% against the selected `design-ui/` product's current internal scope; **~35-40%** against an actual released multiplayer game, with the remaining gap concentrated in build/deployment integration, UI completion, infrastructure verification, trust hardening, presence, and release QA.
 
 **WHAT IS THE TRUE PRODUCTION READINESS %?**
-**~15%.** No CI, unverified rules deployment, no presence handling, a demonstrated cheat exploit, two live scoring bugs, zero monetization/analytics.
+**~20–25%.** The selected product still lacks reproducible build/lint/CI, verified Rules deployment, complete presence handling, trust hardening, a complete user-facing core loop, and release-grade multi-client evidence. The score is higher than the prior assessment only because product direction is now resolved; it is not a readiness claim.
 
 **WHAT IS THE BIGGEST CURRENT RISK?**
-That continued investment goes into `design-ui/` — a genuinely well-built prototype — without ever resolving that it has no path to the app that ships. Every sprint that adds a new `design-ui/` feature without addressing this makes the eventual reconciliation more expensive.
+That `design-ui/` is now correctly selected but remains disconnected from the build/deployment artifact. Every additional feature should therefore include an integration path, a selected-product test, and a release-surface check rather than accumulating more unreachable prototype functionality.
 
 **WHAT IS BLOCKING US?**
-No formal decision has been made about which codebase is "the product." That decision blocks meaningful roadmap prioritization for everything else.
+The product decision is no longer blocking us. The P0 blockers are build/deployment integration for `design-ui/`, canonical rules artifact hygiene, fast-round role correctness, reproducible validation, and the remaining UI/trust/lifecycle work.
 
 **WHAT SHOULD WE DO NEXT?**
-Fix the two confirmed bugs (cheap, urgent, uncontroversial), then force the product-direction decision before authorizing any further feature sprints.
+Commit the authoritative rules and PD-001 decision, fix the fast-round role defect in `design-ui/`, make `design-ui/` buildable and deployable, and then complete the core multiplayer loop with real emulator/browser evidence.
 
 **HOW MUCH WORK IS LEFT?**
-For a genuinely playable, honestly-secured core multiplayer game (Phases 0-4 only): realistically 12-16 weeks for one engineer. For the full meta-game vision (economy, AI, social, monetization): materially larger and not responsibly estimable until the product decision is made.
+For a genuinely playable, honestly-secured `design-ui/` core multiplayer game (through the current core phases): realistically 12–16 weeks for one engineer, subject to the build/deployment and trust-boundary decisions. The full meta-game vision (economy, AI, social, monetization) remains materially larger, but can now be estimated as a separate post-core program.
 
 **WHAT IS THE MOST EFFICIENT PATH TO RELEASE?**
-Fix the bugs → decide the product → verify what's actually deployed/tested for real (not simulated) → complete the core loop UI for whichever codebase is "the product" → only then invest in AI/economy/social. Building meta-game features on top of an unresolved architecture split, as several past sprints did, is the single most avoidable source of wasted effort in this project's history.
+Preserve the selected `design-ui/` architecture → commit and test the authoritative rules → fix fast-round roles → make the selected artifact build/deploy reproducibly → verify Rules Emulator and multi-client behavior → complete Bidding/Table UI and lifecycle wiring → harden trust/presence/recovery → release QA. Keep `src/` limited to explicit transition/deprecation work and defer AI/economy/social until the core multiplayer product passes its release gate.
