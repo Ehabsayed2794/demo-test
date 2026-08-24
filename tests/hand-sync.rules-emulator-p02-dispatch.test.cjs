@@ -133,13 +133,13 @@ async function run() {
   await seed("m-adv-ok", { currentRound: 1 });
   check("7. legitimate round advance -> ALLOW",
     await allowed(testEnv.authenticatedContext(uidA).firestore().collection("matches").doc("m-adv-ok").update({
-      currentRound: 2, version: 2, biddingOpen: true, bids: { p1: null, p2: null, p3: null, p4: null },
+      currentRound: 2, dealer: uidB, version: 2, biddingOpen: true, bids: { p1: null, p2: null, p3: null, p4: null },
       lastBidSeat: null, cardPhase: null, turn: null
     })));
   await seed("m-adv-unauth", { currentRound: 1 });
   check("8. unauthorized round advance (uid not a player) -> DENY",
     await denied(testEnv.authenticatedContext(uidZ).firestore().collection("matches").doc("m-adv-unauth").update({
-      currentRound: 2, version: 2, biddingOpen: true, bids: { p1: null, p2: null, p3: null, p4: null },
+      currentRound: 2, dealer: uidB, version: 2, biddingOpen: true, bids: { p1: null, p2: null, p3: null, p4: null },
       lastBidSeat: null, cardPhase: null, turn: null
     })));
 

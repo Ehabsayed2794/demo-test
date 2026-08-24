@@ -226,7 +226,7 @@ async function run() {
   // ══════════════════════════════════════════════════════════════
   function advancePatch(v) {
     return {
-      currentRound: 2, version: v, biddingOpen: true,
+      currentRound: 2, dealer: uidB, version: v, biddingOpen: true,
       bids: { p1: null, p2: null, p3: null, p4: null }, lastBidSeat: null,
       cardPhase: null, turn: null, updatedAt: 1
     };

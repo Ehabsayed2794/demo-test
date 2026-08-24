@@ -346,19 +346,15 @@ service cloud.firestore {
     // Sprint 3.8 (Gameplay Synchronization: Bidding Authority), Task 1
     // (Seat Identity Implementation): implements the mapping
     // docs/architecture/SeatIdentityModel.md designed (documentation
-    // only) in Sprint 3.7.1. Does NOT re-derive the exact positional
-    // assignment match-service.js's buildSeatMap() performs (rules
-    // cannot express "players[0] -> p1" without a loop construct this
-    // language doesn't have) — instead it verifies the RESULT has the
-    // required shape and integrity: only real seat names, exactly one
+    // only) in Sprint 3.7.1. The service's buildSeatMap() assigns
+    // players[0] -> p1, players[1] -> p2, and so on; the Rules language
+    // cannot express that assignment with a loop, so this validator
+    // enforces the same contiguous-prefix shape explicitly. It also
+    // verifies the RESULT's integrity: only real seat names, exactly one
     // seat per real player, every seat's uid actually IS one of this
-    // match's players, and no two seats share a uid. Combined, these
-    // four conditions force `seats` to be a genuine bijection between
-    // some subset of {p1,p2,p3,p4} (sized to match players.size()) and
-    // `players` itself — a client cannot fabricate a seat for a
-    // non-existent player, assign two people to the same seat, or leave
-    // a real player with no seat at all, even though the rule never
-    // recomputes the exact positional order match-service.js used.
+    // match's players, and no two seats share a uid. A sparse seat map is
+    // rejected at creation rather than accepted into a state that the
+    // F6 successor function cannot advance consistently.
     // Sprint 4.2.3 (Firestore Rules Compile-Safe Card Turn Hotfix): a
     // direct review found this function's ORIGINAL body used
     // `seatKeys.all(...)` (including a nested `all()` inside `all()`)
@@ -387,6 +383,20 @@ service cloud.firestore {
       let p4 = seats.get('p4', null);
       return seatKeys.hasOnly(['p1', 'p2', 'p3', 'p4'])
              && seatKeys.size() == players.size()
+             // MatchService.buildSeatMap() emits only the contiguous
+             // p1..pN prefix. Require that exact shape for every player
+             // count the repository legitimately permits; this closes
+             // sparse maps such as {p2: uidA, p4: uidB}, whose active-seat
+             // successor is not representable by expectedNextDealer().
+             && (players.size() == 1
+                 ? (p1 != null && p2 == null && p3 == null && p4 == null)
+                 : players.size() == 2
+                   ? (p1 != null && p2 != null && p3 == null && p4 == null)
+                   : players.size() == 3
+                     ? (p1 != null && p2 != null && p3 != null && p4 == null)
+                     : players.size() == 4
+                       ? (p1 != null && p2 != null && p3 != null && p4 != null)
+                       : false)
              // Every seat that exists must own a real player in this match.
              && (p1 == null || p1 in players)
              && (p2 == null || p2 in players)
@@ -558,6 +568,10 @@ service cloud.firestore {
              // the seat-ownership check below, exactly like every other
              // membership check elsewhere in this file.
              && request.auth.uid in oldData.players
+             // Terminal matches are immutable. This guard is repeated in
+             // every overlapping parent-match validator because allow
+             // conditions are ORed, not restrictive overrides.
+             && ('status' in oldData ? oldData.status != 'complete' : true)
              // Every match created since this sprint has these fields
              // (see isValidNewMatch() above) — this guards against a
              // pre-Sprint-3.8 document shape reaching this rule at all
@@ -692,6 +706,10 @@ service cloud.firestore {
              request.auth != null
              // "Player belongs to match."
              && request.auth.uid in oldData.players
+             // Terminal matches are immutable. This is deliberately local
+             // to this overlapping validator rather than a separate
+             // restrictive allow, because allow statements are ORed.
+             && ('status' in oldData ? oldData.status != 'complete' : true)
              // Every match created since Sprint 4.2 has these fields
              // (see isValidNewMatch() above) — guards against a
              // pre-Sprint-4.2 document shape reaching this rule.
@@ -753,21 +771,22 @@ service cloud.firestore {
              && appended.seatId == seat
              && appended.round == oldData.currentRound
              && isValidCardShape(appended.card)
-             // Sprint 4.2.2, Task 2/6: the NEW turn must be either a
-             // real uid THIS match's own immutable `seats` map
-             // recognizes, or `null` for the resolving boundary (the
-             // 4th card of a trick). HONEST LIMITATION, stated plainly
-             // rather than overclaimed: this rule verifies the new
-             // turn is STRUCTURALLY one of the four real seat-owning
-             // uids (or null) — it does NOT, and cannot without
+             // Sprint 4.2.2, Task 2/6: the NEW turn must be a real uid
+             // THIS match's own immutable `seats` map recognizes. The
+             // fourth card now persists the resolved trick winner as
+             // that next owner atomically with the card append, so
+             // `null` is no longer a valid card-write transition.
+             // HONEST LIMITATION, stated plainly rather than overclaimed:
+             // this rule verifies the new turn is STRUCTURALLY one of the
+             // real seat-owning uids — it does NOT, and cannot without
              // re-implementing table-engine.js's own follow-suit/
              // turn-order logic in CEL, verify that THIS SPECIFIC uid
              // is the CORRECT next seat for THIS SPECIFIC card. That
              // remains entirely client-authoritative (see
              // docs/architecture/SecurityArchitecture.md's "Card write
              // authority" section) — this rule's job is narrower:
-             // reject a structurally impossible turn value, not
-             // recompute the real one.
+             // reject a structurally impossible or ownerless turn value,
+             // not recompute the real winner.
              // Sprint 4.2.3 (Firestore Rules Compile-Safe Card Turn
              // Hotfix), Task 1: the ORIGINAL line here —
              // `oldData.seats.keys().exists(s, oldData.seats[s] ==
@@ -780,9 +799,9 @@ service cloud.firestore {
              // compile-safe `Map.get(key, default)` lookups against the
              // 4 fixed, canonical seat keys — no iteration, no lambda,
              // no undocumented macro.
+             && newData.turn != null
              && (
-                  newData.turn == null
-                  || newData.turn == oldData.seats.get('p1', null)
+                  newData.turn == oldData.seats.get('p1', null)
                   || newData.turn == oldData.seats.get('p2', null)
                   || newData.turn == oldData.seats.get('p3', null)
                   || newData.turn == oldData.seats.get('p4', null)
@@ -893,6 +912,9 @@ service cloud.firestore {
              request.auth != null
              // "Player belongs to match."
              && request.auth.uid in oldData.players
+             // Terminal matches are immutable across the bidding-action
+             // overlap as well.
+             && ('status' in oldData ? oldData.status != 'complete' : true)
              // Every match created since Sprint 3.7 has this field (see
              // isValidNewMatch() above) — guards against a pre-Sprint-3.7
              // document shape reaching this rule. Round Lifecycle
@@ -950,6 +972,26 @@ service cloud.firestore {
     // rejecting a STRUCTURALLY malformed advance (wrong round math,
     // wrong version math, touching a field this write should never
     // touch), not verifying gameplay legality.
+    // The repository's immutable seat map is positional: p1 -> p2 -> p3
+    // -> p4 -> p1, skipping seats that are not present in supported
+    // under-four-player matches. This explicit fixed-key form is the
+    // compile-safe equivalent of MatchService.nextDealerUid().
+    function expectedNextDealer(oldData) {
+      let p1 = oldData.seats.get('p1', null);
+      let p2 = oldData.seats.get('p2', null);
+      let p3 = oldData.seats.get('p3', null);
+      let p4 = oldData.seats.get('p4', null);
+      return oldData.dealer == p1
+        ? (p2 != null ? p2 : (p3 != null ? p3 : (p4 != null ? p4 : p1)))
+        : oldData.dealer == p2
+          ? (p3 != null ? p3 : (p4 != null ? p4 : p1))
+          : oldData.dealer == p3
+            ? (p4 != null ? p4 : p1)
+            : oldData.dealer == p4
+              ? p1
+              : null;
+    }
+
     function isValidRoundAdvance() {
       let oldData = resource.data;
       let newData = request.resource.data;
@@ -968,14 +1010,49 @@ service cloud.firestore {
              // pre-Sprint-3.4 document shape, though none exist today.
              && ('status' in oldData ? oldData.status != 'complete' : true)
              && newData.diff(oldData).affectedKeys().hasOnly(
-                  ['currentRound', 'version', 'biddingOpen', 'bids', 'lastBidSeat', 'cardPhase', 'turn', 'updatedAt'])
+                  ['currentRound', 'dealer', 'version', 'biddingOpen', 'bids', 'lastBidSeat', 'cardPhase', 'turn', 'updatedAt'])
              && newData.version == oldData.version + 1
              && newData.currentRound == oldData.currentRound + 1
+             // Dealer rotates to the exact next active seat in the
+             // immutable positional seat map, including wraparound and
+             // supported under-four-player shapes.
+             && newData.dealer == expectedNextDealer(oldData)
+             && newData.dealer in oldData.players
              && newData.biddingOpen == true
-             && newData.cardPhase == null
+                          && newData.cardPhase == null
              && newData.turn == null;
     }
 
+    // Round-start turn publication: after a completed round is advanced,
+    // Firestore deliberately carries turn:null while the next round's
+    // bidding runs. Once the real local bidding engine has reached DONE,
+    // a seated client may publish the engine-selected opening leader so
+    // the first card submission can satisfy the existing card-turn gate.
+    // This remains structural only: the rule verifies that the published
+    // uid is a real seat owner and that the transition is exactly the
+    // null-turn -> PLAY shape; it does not reimplement bidding-engine.js.
+    function isValidOpeningTurnPublication() {
+      let oldData = resource.data;
+      let newData = request.resource.data;
+      return
+             request.auth != null
+             && request.auth.uid in oldData.players
+             && 'seats' in oldData && 'version' in oldData
+             && 'turn' in oldData && 'cardPhase' in oldData
+             && ('status' in oldData ? oldData.status != 'complete' : true)
+             && oldData.turn == null
+             && oldData.cardPhase == null
+             && newData.diff(oldData).affectedKeys().hasOnly(['turn', 'cardPhase', 'version', 'updatedAt'])
+             && newData.version == oldData.version + 1
+             && newData.cardPhase == 'PLAY'
+             && newData.turn != null
+             && (
+                  newData.turn == oldData.seats.get('p1', null)
+                  || newData.turn == oldData.seats.get('p2', null)
+                  || newData.turn == oldData.seats.get('p3', null)
+                  || newData.turn == oldData.seats.get('p4', null)
+                );
+    }
     // Match Completion sprint: structural validation for
     // `MatchService.extendMatchRounds()` — the ONLY legitimate way
     // `maxRounds` is ever allowed to change. Same "structural only"
@@ -997,7 +1074,10 @@ service cloud.firestore {
       let newData = request.resource.data;
       let oldRounds = oldData.extendedRounds;
       let newRounds = newData.extendedRounds;
-      let appendedRound = newRounds[newRounds.size() - 1];
+      let listsAreValid = oldRounds is list && newRounds is list;
+      let appendedRound = listsAreValid && newRounds.size() > 0
+        ? newRounds[newRounds.size() - 1]
+        : null;
       return
              request.auth != null
              && request.auth.uid in oldData.players
@@ -1008,6 +1088,7 @@ service cloud.firestore {
              && ('status' in oldData ? oldData.status != 'complete' : true)
              && newData.diff(oldData).affectedKeys().hasOnly(['maxRounds', 'extendedRounds', 'version', 'updatedAt'])
              && newData.version == oldData.version + 1
+             && listsAreValid
              && newData.maxRounds == oldData.maxRounds + 1
              // Append-only, exactly one new entry, never a round already
              // recorded (the idempotency guard MatchService's own
@@ -1039,6 +1120,47 @@ service cloud.firestore {
     // `MatchService.endMatch()` — the ONLY legitimate way `status` may
     // ever move to `'complete'`. See this rule's own "SECURITY POINT"
     // below for exactly what this function can and cannot verify.
+    function isValidFinalScoreMap(scores, seats) {
+      return scores is map
+             && scores.keys().toSet() == seats.keys().toSet()
+             // MatchService/scoring-engine persist integer cumulative
+             // scores. `is int` intentionally rejects fractional floats
+             // and NaN while preserving negative and arbitrarily large
+             // integer values; no magnitude bound is imposed.
+             && (seats.get('p1', null) == null || scores.get('p1', null) is int)
+             && (seats.get('p2', null) == null || scores.get('p2', null) is int)
+             && (seats.get('p3', null) == null || scores.get('p3', null) is int)
+             && (seats.get('p4', null) == null || scores.get('p4', null) is int);
+    }
+
+    function maxScorePair(left, right) {
+      return left == null ? right : (right == null ? left : (left > right ? left : right));
+    }
+
+    // Exact winner tie-set check over the fixed supported seat keys. This
+    // deliberately uses no max/sort/filter/map or invented numeric bounds.
+    function isExactWinnerTieSet(scores, winnerIds, seats) {
+      let validScores = isValidFinalScoreMap(scores, seats);
+      let s1 = validScores && seats.get('p1', null) != null ? scores.get('p1', null) : null;
+      let s2 = validScores && seats.get('p2', null) != null ? scores.get('p2', null) : null;
+      let s3 = validScores && seats.get('p3', null) != null ? scores.get('p3', null) : null;
+      let s4 = validScores && seats.get('p4', null) != null ? scores.get('p4', null) : null;
+      let highest = validScores ? maxScorePair(maxScorePair(s1, s2), maxScorePair(s3, s4)) : null;
+      let winnerCount = validScores ? (s1 == highest ? 1 : 0) + (s2 == highest ? 1 : 0) + (s3 == highest ? 1 : 0) + (s4 == highest ? 1 : 0) : 0;
+             return validScores
+             && winnerIds is list
+             // A valid terminal score map must yield at least one
+             // highest-score seat; this also makes the invariant explicit
+             // rather than relying only on equality side effects.
+             && winnerCount > 0
+             && winnerIds.size() == winnerCount
+             && winnerIds.toSet().size() == winnerIds.size()
+             && (s1 == null ? !('p1' in winnerIds) : (s1 == highest ? 'p1' in winnerIds : !('p1' in winnerIds)))
+             && (s2 == null ? !('p2' in winnerIds) : (s2 == highest ? 'p2' in winnerIds : !('p2' in winnerIds)))
+             && (s3 == null ? !('p3' in winnerIds) : (s3 == highest ? 'p3' in winnerIds : !('p3' in winnerIds)))
+             && (s4 == null ? !('p4' in winnerIds) : (s4 == highest ? 'p4' in winnerIds : !('p4' in winnerIds)));
+    }
+
     function isValidMatchCompletion() {
       let oldData = resource.data;
       let newData = request.resource.data;
@@ -1063,30 +1185,10 @@ service cloud.firestore {
              && newData.completedRound is int
              && newData.completedRound == oldData.currentRound
              && newData.completedRound + 1 > oldData.maxRounds
-             // `winnerIds` must be a non-empty subset of this match's
-             // real seats — a client cannot crown a seat that doesn't
-             // exist, and cannot submit an empty winner list for a
-             // completed match (rules §"Determining the King": there is
-             // always at least one).
-             && newData.winnerIds is list
-             && newData.winnerIds.size() > 0
-             && newData.winnerIds.toSet().difference(oldData.seats.keys().toSet()).size() == 0
-             // `finalScores` must cover EXACTLY this match's seats, no
-             // more, no fewer — every value a real number. This is as
-             // far as a security rule CAN verify without recomputing the
-             // entire scoring pipeline (SECURITY POINT, restated from
-             // this sprint's own brief): these rules structurally trust
-             // that `finalScores` is well-shaped, and separately trust
-             // MatchService.endMatch()'s OWN, already-run
-             // winnerIdsMatchFinalScores() self-consistency check (every
-             // seat tied at the MAX of `finalScores` is exactly
-             // `winnerIds`, no more, no fewer) — but NEITHER layer can
-             // verify `finalScores` itself is the game's TRUE outcome
-             // without reimplementing bidding-engine.js/scoring-engine.js
-             // here, which no rule in this file has ever done. This is a
-             // real, documented, accepted limitation, not an oversight.
-             && newData.finalScores is map
-             && newData.finalScores.keys().toSet() == oldData.seats.keys().toSet();
+             // Winner IDs must be exactly the non-empty highest-score tie
+             // set over this match's fixed seat map. This checks
+             // consistency only; it does not claim to recompute gameplay.
+             && isExactWinnerTieSet(newData.finalScores, newData.winnerIds, oldData.seats);
     }
 
     match /matches/{matchId} {
@@ -1393,6 +1495,7 @@ service cloud.firestore {
           ('maxRounds' in affected) ? isValidRoundExtension() :
           ('currentRound' in affected) ? isValidRoundAdvance() :
           ('cardLog' in affected) ? isValidCardSubmission() :
+          ('turn' in affected) ? isValidOpeningTurnPublication() :
           ('biddingLog' in affected) ? isValidBiddingActionSubmission() :
           ('bids' in affected) ? isValidBidSubmission() :
           false;
@@ -1698,6 +1801,7 @@ service cloud.firestore {
           let data = request.resource.data;
           return request.auth != null
                  && request.auth.uid in parent.players
+                 && ('status' in parent ? parent.status != 'complete' : true)
                  && seatId in ['p1', 'p2', 'p3', 'p4']
                  && parent.seats.get(seatId, null) != null
                  && isValidHandShape(data)
@@ -1720,6 +1824,7 @@ service cloud.firestore {
           let newData = request.resource.data;
           return request.auth != null
                  && request.auth.uid in parent.players
+                 && ('status' in parent ? parent.status != 'complete' : true)
                  && seatId in ['p1', 'p2', 'p3', 'p4']
                  && parent.seats.get(seatId, null) != null
                  && isValidHandShape(newData)
