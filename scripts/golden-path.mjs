@@ -335,6 +335,10 @@ async function driveRoundCardPlay(pages, matchId, roundNumber, maxIterations) {
     if (res.noLegalCard) return { ok: false, reason: "NO_LEGAL_CARD", log, seat: turn };
     if (res.error) {
       findings.push({ label: `card-write-${roundNumber}-${iter}`, note: res });
+      // A rejected public write is a first-class blocker. Do not retry the
+      // same actor/card until a generic stall timeout hides the original
+      // cause; the task requires stopping at the first observed failure.
+      return { ok: false, reason: "CARD_WRITE_REJECTED", log, seat: turn, error: res };
     }
 
     const afterStates = await Promise.all(pages.map((p) => p.evaluate(() => window.TableEngine ? window.TableEngine.getState() : null).catch(() => null)));
