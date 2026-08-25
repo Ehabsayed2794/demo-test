@@ -935,6 +935,43 @@
     }
 
     /**
+     * Sprint J/K: the frozen Rules deliberately separates a fresh-round
+     * opening-turn publication (`turn:null/cardPhase:null` -> a real owner /
+     * `PLAY`) from ordinary card submission. The Match page's local engine
+     * already knows the opening actor, so the first real card caller can
+     * publish that actor's UID through the existing service boundary before
+     * submitting its card. This is a structural bridge only; it does not
+     * decide bidding or card legality, and the Rules remain the authority.
+     */
+    function publishOpeningTurnIfNeeded(match, seatId) {
+      if (match.turn != null || match.cardPhase != null) return Promise.resolve(match);
+      return db().runTransaction(function (tx) {
+        return tx.get(matchRef).then(function (freshSnap) {
+          if (!freshSnap.exists) throw bidError("MATCH_NOT_FOUND", "submitCard: match '" + matchId + "' was not found.");
+          var freshMatch = freshSnap.data();
+          if (freshMatch.turn != null || freshMatch.cardPhase != null) return freshMatch;
+          var openingUid = global.MatchAdapter.seatToUid(freshMatch, seatId);
+          if (!openingUid) {
+            throw bidError("UNKNOWN_OPENING_SEAT", "submitCard: the engine opening seat ('" + seatId + "') is not a real seat in this match.");
+          }
+          var patch = {
+            turn: openingUid,
+            cardPhase: "PLAY",
+            version: freshMatch.version + 1,
+            updatedAt: serverTimestamp()
+          };
+          // P1-08 round-start contract: this separate atomic publication is
+          // required before the first next-round card because the frozen
+          // Rules reject a card write whose OLD turn is null. The caller is
+          // the engine-selected local opening actor; no gameplay algorithm
+          // is duplicated here, and the Spark trust boundary is unchanged.
+          tx.update(matchRef, patch);
+          return Object.assign({}, freshMatch, patch);
+        });
+      });
+    }
+
+    /**
      * Sprint J.1 (P0-05 resolving-boundary contract): the fourth card
      * reaches `RESOLVING`, but the frozen Rules contract requires the
      * persisted `turn` to remain a real seat owner. The winner is derived
@@ -1043,9 +1080,11 @@
           throw bidError("UNKNOWN_NEXT_SEAT", "submitCard: table-engine.js's next seat ('" + preview.nextTurnSeat + "') is not a real seat in this match.");
         }
       }
-      var expectedVersion = match.version;
+      return publishOpeningTurnIfNeeded(match, seatId).then(function (openedMatch) {
+        match = openedMatch;
+        var expectedVersion = match.version;
 
-      return db().runTransaction(function (tx) {
+        return db().runTransaction(function (tx) {
         return tx.get(matchRef).then(function (freshSnap) {
           if (!freshSnap.exists) throw bidError("MATCH_NOT_FOUND", "submitCard: match '" + matchId + "' was not found.");
           var freshMatch = freshSnap.data();
@@ -1097,6 +1136,7 @@
             nextTurnSeat: preview.nextTurnSeat, cardPhase: preview.nextPhase
           };
         });
+      });
       });
     });
   }
@@ -1388,6 +1428,31 @@
    *    immutable, exactly as established since Sprint 4.2.1) — Round 1's
    *    entries remain in the log forever, simply superseded by Round 2's
    *    higher `round` tag going forward. */
+  /** P1-08 round-advance contract: dealer ownership is part of the
+   *  authoritative round boundary. Rotate through the immutable positional
+   *  seat map, skipping seats that are absent in supported under-four-player
+   *  matches, exactly as the frozen Rules expectedNextDealer() predicate
+   *  does. This is structural UID/seat translation only; no gameplay rule is
+   *  reimplemented here. */
+  function nextDealerUid(freshMatch) {
+    var seats = freshMatch && freshMatch.seats;
+    var currentDealer = freshMatch && freshMatch.dealer;
+    if (!seats || !currentDealer) return null;
+    var currentIndex = -1;
+    for (var i = 0; i < SEAT_IDS.length; i++) {
+      if (seats[SEAT_IDS[i]] === currentDealer) {
+        currentIndex = i;
+        break;
+      }
+    }
+    if (currentIndex < 0) return null;
+    for (var offset = 1; offset <= SEAT_IDS.length; offset++) {
+      var candidate = seats[SEAT_IDS[(currentIndex + offset) % SEAT_IDS.length]];
+      if (candidate) return candidate;
+    }
+    return null;
+  }
+
   function advanceToNextRound(matchId, completedRound) {
     if (!matchId) return Promise.reject(bidError("INVALID_ARGUMENT", "advanceToNextRound: matchId is required."));
     if (typeof completedRound !== "number" || !Number.isFinite(completedRound) || !Number.isInteger(completedRound) || completedRound < 1) {
@@ -1446,6 +1511,12 @@
         var nextVersion = match.version + 1;
         var patch = {
           currentRound: completedRound + 1,
+          // P1-08 round-advance contract: the authoritative dealer rotates
+          // atomically with the new round. The frozen Rules require this
+          // exact next active seat, including wraparound/under-four-player
+          // shapes; omitting it makes an otherwise complete round advance
+          // fail the Rules validator.
+          dealer: nextDealerUid(match),
           version: nextVersion,
           biddingOpen: true,
           bids: resetBids,

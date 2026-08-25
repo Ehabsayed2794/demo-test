@@ -236,6 +236,7 @@ function runRemainingChecks() {
       var doc = STORE[key("match-adv-2")];
       check("D. advanceToNextRound(): resolves {advanced:true} once 52 round-tagged cards exist", result.advanced === true);
       check("D. advanceToNextRound(): currentRound advances from 1 to 2", doc.currentRound === 2);
+      check("D. advanceToNextRound(): dealer rotates from p1 owner u1 to p2 owner u2", doc.dealer === "u2");
       check("D. advanceToNextRound(): version increments by exactly 1", doc.version === 2);
       check("D. advanceToNextRound(): biddingOpen reset to true", doc.biddingOpen === true);
       check("D. advanceToNextRound(): bids reset to all-null", doc.bids.p1 === null && doc.bids.p2 === null && doc.bids.p3 === null && doc.bids.p4 === null);

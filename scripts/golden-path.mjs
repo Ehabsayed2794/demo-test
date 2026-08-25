@@ -164,16 +164,17 @@ async function attemptOneBiddingAction(page, matchId, seatId) {
     if (subPhase === "DASH") {
       candidates.push({ type: "SubmitDashCallDecision", playerId: args.seatId, declaredDashCall: false });
     } else if (subPhase === "AUCTION") {
-      if ((state.auctionTop || 0) > 0) {
-        candidates.push({ type: "SubmitAuctionBid", playerId: args.seatId, isPass: true });
-      } else {
-        for (var t = 4; t <= 13; t++) {
-          for (var s = 0; s < suits.length; s++) {
-            candidates.push({ type: "SubmitAuctionBid", playerId: args.seatId, isPass: false, tricks: t, suit: suits[s] });
-          }
+      // After the opening auction bid, a bidder may still have to raise
+      // before passing becomes legal. Enumerate the full engine candidate
+      // space above the live auction top, then try pass; canSubmit() remains
+      // the sole legality oracle.
+      var auctionStart = Math.max(4, (state.auctionTop || 0) + 1);
+      for (var t = auctionStart; t <= 13; t++) {
+        for (var s = 0; s < suits.length; s++) {
+          candidates.push({ type: "SubmitAuctionBid", playerId: args.seatId, isPass: false, tricks: t, suit: suits[s] });
         }
-        candidates.push({ type: "SubmitAuctionBid", playerId: args.seatId, isPass: true });
       }
+      candidates.push({ type: "SubmitAuctionBid", playerId: args.seatId, isPass: true });
     } else if (subPhase === "CONFIRM") {
       var startT = state.auctionTop || 4;
       for (var t2 = startT; t2 <= 13; t2++) {
