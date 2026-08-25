@@ -1,0 +1,54 @@
+name: deploy-production
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - integration/sprint-m1
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-hosting:
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout is necessarily the first executable step so the guard can
+      # inspect the exact committed firestore.rules blob. The SHA guard is the
+      # first validation step and runs before setup, build, auth, or deploy.
+      - name: Checkout repository for Rules guard
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Guard deployed Firestore Rules SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected='a7cfba9833c324581047e16d498bae7e8a9ed4b54250723cd5a30f45209f001f'
+          actual="$(sha256sum firestore.rules | awk '{print $1}')"
+          echo "firestore.rules SHA256=$actual"
+          test "$actual" = "$expected" || {
+            echo "Rules SHA mismatch: expected $expected, got $actual" >&2
+            exit 1
+          }
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Hosting artifact
+        run: npm run build:hosting
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+
+      - name: Deploy Firebase Hosting
+        run: npx firebase-tools deploy --only hosting --project made---estimation-card-game --non-interactive
