@@ -130,7 +130,8 @@ async function signUp(page, label, email, password) {
   await page.locator("#createEmail").fill(email);
   await page.locator("#createPassword").fill(password);
   await page.locator("#createForm button[type=submit]").click();
-  await page.waitForURL(/\/lobby\/index\.html$/, { timeout: 15000 });
+  const lobbyNavigation = await waitFor(page, () => location.pathname.endsWith("/lobby/index.html"), 15000);
+  if (!lobbyNavigation) throw new Error("Lobby navigation did not complete");
   const ready = await waitFor(page, () => !!(window.SessionService && window.SessionService.getCurrentUser && window.SessionService.getCurrentUser()), 10000);
   check(`${label} reaches Lobby after real email/password signup`, !!ready, { url: page.url() });
   // Current Lobby markup omits the existing match-service.js script even
