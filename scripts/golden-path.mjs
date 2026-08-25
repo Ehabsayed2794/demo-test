@@ -302,7 +302,14 @@ async function driveRoundCardPlay(pages, matchId, roundNumber, maxIterations) {
     const states = await Promise.all(pages.map((p) => p.evaluate(() => window.TableEngine ? window.TableEngine.getState() : null).catch(() => null)));
     if (states.some((s) => !s)) { await sleep(200); continue; }
     const ref = states[0];
-    if (ref.phase === "DONE") { await sleep(200); continue; }
+    if (ref.phase === "DONE") {
+      // Round completion is a local engine fact; wait for the authoritative
+      // Firestore round/status transition in the caller, but do not spin
+      // forever inside card play once all 52 cards are present.
+      const doneCardCount = Array.isArray(matchDoc.cardLog) ? matchDoc.cardLog.filter((entry) => entry && entry.round === roundNumber).length : 0;
+      if (doneCardCount >= 52) return { ok: true, completed: matchDoc.status === "complete", log };
+      await sleep(200); continue;
+    }
     const turn = ref.turn;
     if (!turn) { await sleep(150); continue; }
     const idx = SEATS.indexOf(turn);
@@ -407,6 +414,12 @@ async function main() {
     page.on("pageerror", (err) => {
       logEvent("PAGE_ERROR", { seat: pageSeat, message: err.message });
       console.log("[" + pageSeat + " pageerror] " + err.message);
+    });
+    page.on("console", (msg) => {
+      if (msg.type() === "error" || msg.type() === "warning") {
+        logEvent("BROWSER_CONSOLE", { seat: pageSeat, type: msg.type(), message: msg.text() });
+        console.log("[" + pageSeat + " console/" + msg.type() + "] " + msg.text());
+      }
     });
     if (SMOKE_BACKEND !== "production") await installEmulatorRedirect(page);
     contexts.push(ctx); pages.push(page);
