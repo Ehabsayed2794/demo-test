@@ -283,6 +283,34 @@ var QUEEN_SPADES = { suit: "SPADES", rank: { v: 12, s: "Q" } };
     STORE[key("m-atomic-shape")].turn === "userB" && STORE[key("m-atomic-shape")].cardPhase === "PLAY" && STORE[key("m-atomic-shape")].version === 2);
 
   // ============================================================
+  // MOCKED — fresh-round opening-turn publication: the frozen Rules
+  // require a null/null -> real-owner/PLAY bridge before the first
+  // card after round advance. The local engine's opening actor is
+  // allowed to publish that bridge, then submit the card normally.
+  // ============================================================
+  fakeEngine = installFakeTableEngine();
+  seedMatch("m-opening-bridge", { turn: null, cardPhase: null });
+  GameSession.setTurn("p1");
+  signInAs("userA");
+  var openingResult = await MatchService.submitCard("m-opening-bridge", QUEEN_SPADES);
+  check("MOCKED — fresh-round opening bridge: the local opening actor publishes PLAY, then its first card advances the turn",
+    openingResult.seatId === "p1" && STORE[key("m-opening-bridge")].cardLog.length === 1 &&
+    STORE[key("m-opening-bridge")].turn === "userB" && STORE[key("m-opening-bridge")].cardPhase === "PLAY" &&
+    STORE[key("m-opening-bridge")].version === 3);
+
+  fakeEngine = installFakeTableEngine();
+  seedMatch("m-opening-bridge-wrong-actor", { turn: null, cardPhase: null });
+  GameSession.setTurn("p1");
+  signInAs("userB");
+  var openingWrongErr = null;
+  try { await MatchService.submitCard("m-opening-bridge-wrong-actor", QUEEN_SPADES); } catch (e) { openingWrongErr = e; }
+  check("MOCKED — fresh-round opening bridge: a non-opening actor is rejected before any bridge/card write",
+    openingWrongErr && openingWrongErr.reason === "NOT_YOUR_TURN" &&
+    STORE[key("m-opening-bridge-wrong-actor")].version === 1 &&
+    STORE[key("m-opening-bridge-wrong-actor")].cardLog.length === 0 &&
+    STORE[key("m-opening-bridge-wrong-actor")].turn === null);
+
+  // ============================================================
   // MOCKED — an unknown next-seat name from the engine is rejected
   // defensively (should never happen against a real, correctly-seated
   // match, but this function never trusts an engine answer blindly).
