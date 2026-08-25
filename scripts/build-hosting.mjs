@@ -16,7 +16,7 @@
  *   hosting-dist/estemshan/  <- the built Estemshan score tracker
  *     index.html  assets/…
  */
-import { existsSync, rmSync, mkdirSync, cpSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync, mkdirSync, cpSync, writeFileSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -45,6 +45,21 @@ mkdirSync(OUT, { recursive: true });
 
 console.log("[build-hosting] Copying design-ui/ -> hosting-dist/ (root)");
 cpSync(DESIGN_UI, OUT, { recursive: true });
+
+// W4 Arabic slice: load the additive dictionary after the existing Login and
+// Lobby scripts in the generated artifact only. No protected design-ui HTML
+// source file is edited; Firebase and Capacitor both consume this assembled
+// copy. The module uses a single DOMContentLoaded/text-node pass.
+for (const screen of ["login", "lobby"]) {
+  const screenPath = path.join(OUT, screen, "index.html");
+  if (!existsSync(screenPath)) fail(`required ${screen}/index.html is missing`);
+  const html = readFileSync(screenPath, "utf8");
+  const loader = '<script src="../shared-i18n.js"></script>\n';
+  const updated = html.includes('src="../shared-i18n.js"')
+    ? html
+    : html.replace("</body>", loader + "</body>");
+  writeFileSync(screenPath, updated);
+}
 
 console.log("[build-hosting] Copying dist/ -> hosting-dist/estemshan/");
 mkdirSync(OUT_ESTEMSHAN, { recursive: true });

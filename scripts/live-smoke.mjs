@@ -32,6 +32,8 @@ const FIRESTORE_PORT = 8080;
 const AUTH_HOST = "127.0.0.1";
 const AUTH_PORT = 9099;
 const BASE_URL = process.env.BASE_URL || `http://${HTTP_HOST}:${HTTP_PORT}`;
+const SMOKE_LANG = process.env.SMOKE_LANG || "";
+const LOGIN_SUFFIX = SMOKE_LANG ? `?lang=${encodeURIComponent(SMOKE_LANG)}` : "";
 const EVIDENCE_DIR = process.env.EVIDENCE_DIR || "/tmp/m2pre-live-smoke";
 const STORAGE_KEY = "estimation_game_state_v1";
 const CDN_DIR = path.join(ROOT, "tests", "fixtures", "firebase-cdn");
@@ -119,7 +121,7 @@ async function acceptDialogs(page, promptValue, action) {
   try { return await action(dialogs); } finally { page.off("dialog", handler); }
 }
 async function signUp(page, label, email, password) {
-  await page.goto(`${BASE_URL}/login/index.html`, { waitUntil: "load" });
+  await page.goto(`${BASE_URL}/login/index.html${LOGIN_SUFFIX}`, { waitUntil: "load" });
   const loaded = await waitFor(page, () => typeof window.Auth === "object" && !!document.querySelector("#createForm"), 12000);
   check(`${label} login loaded with Firebase Auth`, !!loaded, { url: page.url() });
   await page.locator("#displayName").fill(`M2 ${label}`);
@@ -227,7 +229,7 @@ async function firstLegalIntent(page, matchId) {
 }
 async function main() {
   fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
-  logEvent("START", { baseUrl: BASE_URL, projectId: PROJECT_ID, evidenceDir: EVIDENCE_DIR });
+  logEvent("START", { baseUrl: BASE_URL, projectId: PROJECT_ID, language: SMOKE_LANG || "en", evidenceDir: EVIDENCE_DIR });
   const testEnv = await initializeTestEnvironment({
     projectId: PROJECT_ID,
     firestore: { rules: fs.readFileSync(RULES_PATH, "utf8"), host: FIRESTORE_HOST, port: FIRESTORE_PORT }
