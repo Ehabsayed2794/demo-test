@@ -134,18 +134,8 @@ async function signUp(page, label, email, password) {
   if (!lobbyNavigation) throw new Error("Lobby navigation did not complete");
   const ready = await waitFor(page, () => !!(window.SessionService && window.SessionService.getCurrentUser && window.SessionService.getCurrentUser()), 10000);
   check(`${label} reaches Lobby after real email/password signup`, !!ready, { url: page.url() });
-  // Current Lobby markup omits the existing match-service.js script even
-  // though room-service.js calls global.MatchService when all players ready.
-  // Index files are protected in M2-PRE, so the rehearsal injects only the
-  // already-committed service and records this as a production integration
-  // gap; Thursday's live run must confirm whether the deployed artifact has
-  // been corrected by an owner-approved change.
-  const matchServiceMissing = await page.evaluate(() => !window.MatchService);
-  if (matchServiceMissing) {
-    logEvent("PRODUCTION_GAP", { client: label, gap: "lobby/index.html does not load match-service.js", workaround: "Playwright-only injection of the existing unmodified design-ui/match-service.js" });
-    await page.addScriptTag({ path: path.join(ROOT, "design-ui", "match-service.js") });
-  }
-  check(`${label} has MatchService available for the real ready-to-start path`, !!(await page.evaluate(() => !!window.MatchService)), { injected: matchServiceMissing });
+  const nativeMatchService = await waitFor(page, () => !!window.MatchService, 5000);
+  check(`${label} has MatchService loaded natively for the real ready-to-start path`, !!nativeMatchService, { injected: false });
   await page.screenshot({ path: path.join(EVIDENCE_DIR, `${label.toLowerCase()}-lobby.png`), fullPage: true });
   return await page.evaluate(() => ({ uid: window.SessionService.getCurrentUser().uid, name: document.querySelector("#playerName")?.textContent || null }));
 }
