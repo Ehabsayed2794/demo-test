@@ -244,6 +244,15 @@
     if (!allReady) {
       return Promise.resolve({ allReady: false, started: false, matchId: null, error: null });
     }
+    // Firestore rules allow only the room creator to create the match. Other
+    // ready clients wait for the creator's transaction to publish room.matchId
+    // and must not generate a predictable permission-denied write/retry loop.
+    var currentUser = global.SessionService && typeof global.SessionService.getCurrentUser === "function"
+      ? global.SessionService.getCurrentUser()
+      : null;
+    if (currentUser && currentUser.uid !== room.creator) {
+      return Promise.resolve({ allReady: true, started: !!room.matchId, matchId: room.matchId || null, error: null });
+    }
     if (!global.MatchService || typeof global.MatchService.startMatch !== "function") {
       var unavailableErr = new Error("MatchService is not available — match was not started.");
       console.warn("[RoomService] All players ready, but MatchService is not available — match was not started.");

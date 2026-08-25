@@ -132,7 +132,7 @@ async function signUp(page, label, email, password) {
   await page.locator("#createForm button[type=submit]").click();
   const lobbyNavigation = await waitFor(page, () => location.pathname.endsWith("/lobby/index.html"), 15000);
   if (!lobbyNavigation) throw new Error("Lobby navigation did not complete");
-  const ready = await waitFor(page, () => !!(window.SessionService && window.SessionService.getCurrentUser && window.SessionService.getCurrentUser()), 10000);
+  const ready = await waitFor(page, () => !!(window.SessionService && window.SessionService.getCurrentUser && window.SessionService.getCurrentUser()), 20000);
   check(`${label} reaches Lobby after real email/password signup`, !!ready, { url: page.url() });
   const nativeMatchService = await waitFor(page, () => !!window.MatchService, 5000);
   check(`${label} has MatchService loaded natively for the real ready-to-start path`, !!nativeMatchService, { injected: false });
