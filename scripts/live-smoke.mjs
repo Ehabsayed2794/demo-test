@@ -31,6 +31,7 @@ const FIRESTORE_HOST = "127.0.0.1";
 const FIRESTORE_PORT = 8080;
 const AUTH_HOST = "127.0.0.1";
 const AUTH_PORT = 9099;
+const SMOKE_BACKEND = process.env.SMOKE_BACKEND || "emulator";
 const BASE_URL = process.env.BASE_URL || `http://${HTTP_HOST}:${HTTP_PORT}`;
 const SMOKE_LANG = process.env.SMOKE_LANG || "";
 const LOGIN_SUFFIX = SMOKE_LANG ? `?lang=${encodeURIComponent(SMOKE_LANG)}` : "";
@@ -90,6 +91,7 @@ function startStaticServer() {
   });
 }
 async function installEmulatorRedirect(page) {
+  if (SMOKE_BACKEND !== "emulator") return;
   await page.addInitScript(({ firestoreHost, firestorePort, authHost, authPort }) => {
     window.__ESTEMSHAN_EMULATOR__ = { firestoreHost, firestorePort, authHost, authPort };
   }, { firestoreHost: FIRESTORE_HOST, firestorePort: FIRESTORE_PORT, authHost: AUTH_HOST, authPort: AUTH_PORT });
@@ -229,14 +231,20 @@ async function firstLegalIntent(page, matchId) {
 }
 async function main() {
   fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
-  logEvent("START", { baseUrl: BASE_URL, projectId: PROJECT_ID, language: SMOKE_LANG || "en", evidenceDir: EVIDENCE_DIR });
-  const testEnv = await initializeTestEnvironment({
-    projectId: PROJECT_ID,
-    firestore: { rules: fs.readFileSync(RULES_PATH, "utf8"), host: FIRESTORE_HOST, port: FIRESTORE_PORT }
-  });
-  await testEnv.clearFirestore();
-  await testEnv.cleanup();
-  const server = await startStaticServer();
+  logEvent("START", { backend: SMOKE_BACKEND, baseUrl: BASE_URL, projectId: PROJECT_ID, language: SMOKE_LANG || "en", evidenceDir: EVIDENCE_DIR });
+  if (SMOKE_BACKEND === "production" && !process.env.BASE_URL) {
+    throw new Error("BASE_URL is required when SMOKE_BACKEND=production");
+  }
+  let server = null;
+  if (SMOKE_BACKEND === "emulator") {
+    const testEnv = await initializeTestEnvironment({
+      projectId: PROJECT_ID,
+      firestore: { rules: fs.readFileSync(RULES_PATH, "utf8"), host: FIRESTORE_HOST, port: FIRESTORE_PORT }
+    });
+    await testEnv.clearFirestore();
+    await testEnv.cleanup();
+    server = await startStaticServer();
+  }
   const browser = await chromium.launch({ executablePath: resolveChromiumExecutablePath() });
   const contexts = [];
   try {
@@ -317,7 +325,7 @@ async function main() {
     fs.writeFileSync(path.join(EVIDENCE_DIR, "findings.json"), JSON.stringify(findings, null, 2) + "\n");
     for (const context of contexts) await context.close().catch(() => {});
     await browser.close().catch(() => {});
-    await new Promise((resolve) => server.close(resolve));
+    if (server) await new Promise((resolve) => server.close(resolve));
   }
   logEvent("SUMMARY", { passed, failed, evidenceDir: EVIDENCE_DIR });
   process.exitCode = failed ? 1 : 0;
