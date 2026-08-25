@@ -1,3 +1,4 @@
+var REPO_ROOT = require("path").join(__dirname, "..");
 // Real, executable END-TO-END tests for Sprint 4.1 (Turn Authority &
 // Remote Play Validation) — the turn-synchronization half of the
 // pipeline:
@@ -128,12 +129,12 @@ function simulateDisconnect(id, code) {
 var CURRENT_USER = null;
 global.SessionService = { getCurrentUser: function () { return CURRENT_USER ? { uid: CURRENT_USER } : null; }, setCurrentMatchId: function () { return Promise.resolve(); } };
 
-require("/home/user/demo-test/design-ui/match-service.js");
-require("/home/user/demo-test/design-ui/engine/cards.js");
-require("/home/user/demo-test/design-ui/engine/deck.js");
-require("/home/user/demo-test/design-ui/engine/dealer.js");
-require("/home/user/demo-test/design-ui/engine/session.js");
-require("/home/user/demo-test/design-ui/match-adapter.js");
+require(REPO_ROOT + "/design-ui/match-service.js");
+require(REPO_ROOT + "/design-ui/engine/cards.js");
+require(REPO_ROOT + "/design-ui/engine/deck.js");
+require(REPO_ROOT + "/design-ui/engine/dealer.js");
+require(REPO_ROOT + "/design-ui/engine/session.js");
+require(REPO_ROOT + "/design-ui/match-adapter.js");
 
 var GameSession = global.GameSession;
 var MatchAdapter = global.MatchAdapter;
@@ -352,14 +353,13 @@ function forgeTurnUpdate(matchId, newTurnUid, versionOverride) {
   // codebase's diff history manipulates engine turn state directly.
   // ============================================================
   var fs = require("fs");
-  var serviceSource = fs.readFileSync("/home/user/demo-test/design-ui/match-service.js", "utf8");
-  // Checks actual USAGE patterns (`GameSession.` / `.setTurn(`), not a
-  // bare-word match — Sprint 4.2 added a comment to this file that
-  // correctly NAMES GameSession in prose while explaining this file
-  // still never calls it; a bare /GameSession/ regex would false-
-  // positive on that documentation sentence itself.
-  check("MOCKED — adapter isolation: design-ui/match-service.js has zero CODE reference to GameSession/setTurn/any engine file, unchanged",
-    !/GameSession\./.test(serviceSource) && !/\.setTurn\(/.test(serviceSource));
+  var serviceSource = fs.readFileSync(REPO_ROOT + "/design-ui/match-service.js", "utf8");
+  // Checks actual USAGE patterns rather than a bare-word match. J1
+  // authorizes MatchService to read the existing TableEngine resolver for
+  // winner computation and restore its temporary snapshot, but it must
+  // still never call a direct turn setter or engine emit.
+  check("MOCKED — J1 boundary: match-service.js may use existing resolveTrick() and restore its snapshot, but has no direct turn setter or engine emit",
+    /TableEngine\.resolveTrick\(\)/.test(serviceSource) && !/\.setTurn\(/.test(serviceSource) && !/TableEngine\.emit/.test(serviceSource));
 
   // ============================================================
   // MOCKED — Regression sanity: Sprint 4.0's bid-sync API is untouched

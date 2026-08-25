@@ -1,3 +1,4 @@
+var REPO_ROOT = require("path").join(__dirname, "..");
 // Real, executable tests for design-ui/match-service.js — startMatch /
 // loadMatch / subscribeToMatch (Sprint 3.4, hardened in Sprint 3.4.1) —
 // plus a cross-service integration section proving RoomService.setReady
@@ -159,11 +160,11 @@ global.SessionService = {
   }
 };
 
-require("/home/user/demo-test/design-ui/match-service.js");
+require(REPO_ROOT + "/design-ui/match-service.js");
 var MatchService = global.MatchService;
 global.MatchService = MatchService; // so room-service.js's maybeStartMatch can see it
 
-require("/home/user/demo-test/design-ui/room-service.js");
+require(REPO_ROOT + "/design-ui/room-service.js");
 var RoomService = global.RoomService;
 
 var pass = 0, fail = 0;

@@ -1,3 +1,4 @@
+var REPO_ROOT = require("path").join(__dirname, "..");
 // Sprint 3.6.1 (Normal Dash Scoring Hotfix) — fix-verification test.
 //
 // This file REPLACES tests/match-flow-normal-dash-scoring-bug.test.cjs
@@ -16,12 +17,12 @@
 global.window = global;
 global.window.addEventListener = function () {};
 
-require("/home/user/demo-test/design-ui/engine/cards.js");
-require("/home/user/demo-test/design-ui/engine/deck.js");
-require("/home/user/demo-test/design-ui/engine/dealer.js");
-require("/home/user/demo-test/design-ui/engine/session.js");
-require("/home/user/demo-test/design-ui/engine/bidding-engine.js");
-require("/home/user/demo-test/design-ui/engine/scoring-engine.js");
+require(REPO_ROOT + "/design-ui/engine/cards.js");
+require(REPO_ROOT + "/design-ui/engine/deck.js");
+require(REPO_ROOT + "/design-ui/engine/dealer.js");
+require(REPO_ROOT + "/design-ui/engine/session.js");
+require(REPO_ROOT + "/design-ui/engine/bidding-engine.js");
+require(REPO_ROOT + "/design-ui/engine/scoring-engine.js");
 
 var GameSession = global.GameSession;
 var BiddingEngine = global.BiddingEngine;
@@ -103,7 +104,7 @@ function mulberry32(seed) {
     Object.keys(committedEstimates).length === 4 && committedEstimates[affectedPlayerId] === 0);
 
   // ============ Play the round out ============
-  require("/home/user/demo-test/design-ui/engine/table-engine.js");
+  require(REPO_ROOT + "/design-ui/engine/table-engine.js");
   var TableEngine = global.TableEngine;
   TableEngine.initState();
   var t0 = TableEngine.getState();

@@ -1,3 +1,4 @@
+var REPO_ROOT = require("path").join(__dirname, "..");
 // SPRINT A — Real Firestore Rules Emulator closure for P1-1 (Multiplayer
 // Integration Audit). Proves the 6 remaining matches/{matchId} update
 // write paths against the REAL compiled firestore.rules, following the
@@ -32,7 +33,7 @@ async function run() {
     testEnv = await initializeTestEnvironment({
       projectId: "demo-test-sprint-a",
       firestore: {
-        rules: fs.readFileSync("/home/user/demo-test/firestore.rules", "utf8"),
+        rules: fs.readFileSync(REPO_ROOT + "/firestore.rules", "utf8"),
         host: "127.0.0.1",
         port: 8080
       }

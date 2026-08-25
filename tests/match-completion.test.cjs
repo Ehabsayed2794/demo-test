@@ -1,3 +1,4 @@
+var REPO_ROOT = require("path").join(__dirname, "..");
 // Real, executable tests for the Match Completion sprint:
 //   Round N (52 cards resolved) -> ScoringEngine.computeRoundExtension()
 //   -> [MatchService.extendMatchRounds()] -> GameSession.isMatchComplete()
@@ -86,14 +87,14 @@ var CURRENT_USER = null;
 global.SessionService = { getCurrentUser: function () { return CURRENT_USER ? { uid: CURRENT_USER } : null; }, setCurrentMatchId: function () { return Promise.resolve(); } };
 function signInAs(uid) { CURRENT_USER = uid; }
 
-require("/home/user/demo-test/design-ui/match-service.js");
-require("/home/user/demo-test/design-ui/engine/cards.js");
-require("/home/user/demo-test/design-ui/engine/deck.js");
-require("/home/user/demo-test/design-ui/engine/dealer.js");
-require("/home/user/demo-test/design-ui/engine/session.js");
-require("/home/user/demo-test/design-ui/engine/bidding-engine.js");
-require("/home/user/demo-test/design-ui/engine/scoring-engine.js");
-require("/home/user/demo-test/design-ui/match-adapter.js");
+require(REPO_ROOT + "/design-ui/match-service.js");
+require(REPO_ROOT + "/design-ui/engine/cards.js");
+require(REPO_ROOT + "/design-ui/engine/deck.js");
+require(REPO_ROOT + "/design-ui/engine/dealer.js");
+require(REPO_ROOT + "/design-ui/engine/session.js");
+require(REPO_ROOT + "/design-ui/engine/bidding-engine.js");
+require(REPO_ROOT + "/design-ui/engine/scoring-engine.js");
+require(REPO_ROOT + "/design-ui/match-adapter.js");
 
 var MatchService = global.MatchService;
 var GameSession = global.GameSession;

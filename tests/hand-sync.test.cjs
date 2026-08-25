@@ -1,3 +1,4 @@
+var REPO_ROOT = require("path").join(__dirname, "..");
 // Real, executable tests for the Player Hand Synchronization sprint
 // (Architecture Gate-approved Option A):
 //   MatchService.dealRound() -> matches/{matchId}/hands/{seatId} (+
@@ -106,12 +107,12 @@ global.SessionService = {
 };
 function signInAs(uid) { CURRENT_USER = uid; }
 
-require("/home/user/demo-test/design-ui/engine/cards.js");
-require("/home/user/demo-test/design-ui/engine/deck.js");
-require("/home/user/demo-test/design-ui/engine/dealer.js");
-require("/home/user/demo-test/design-ui/match-service.js");
-require("/home/user/demo-test/design-ui/engine/session.js");
-require("/home/user/demo-test/design-ui/match-adapter.js");
+require(REPO_ROOT + "/design-ui/engine/cards.js");
+require(REPO_ROOT + "/design-ui/engine/deck.js");
+require(REPO_ROOT + "/design-ui/engine/dealer.js");
+require(REPO_ROOT + "/design-ui/match-service.js");
+require(REPO_ROOT + "/design-ui/engine/session.js");
+require(REPO_ROOT + "/design-ui/match-adapter.js");
 var MatchService = global.MatchService;
 var GameSession = global.GameSession;
 var MatchAdapter = global.MatchAdapter;

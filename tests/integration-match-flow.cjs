@@ -1,3 +1,4 @@
+var REPO_ROOT = require("path").join(__dirname, "..");
 // SPRINT-3.6: End-to-End Match Flow Verification (Room -> Ready ->
 // Match -> Deal).
 //
@@ -136,11 +137,11 @@ global.SessionService = {
 };
 function signInAs(uid) { currentUid = uid; }
 
-require("/home/user/demo-test/design-ui/engine/cards.js");
-require("/home/user/demo-test/design-ui/engine/deck.js");
-require("/home/user/demo-test/design-ui/engine/dealer.js");
-require("/home/user/demo-test/design-ui/room-service.js");
-require("/home/user/demo-test/design-ui/match-service.js");
+require(REPO_ROOT + "/design-ui/engine/cards.js");
+require(REPO_ROOT + "/design-ui/engine/deck.js");
+require(REPO_ROOT + "/design-ui/engine/dealer.js");
+require(REPO_ROOT + "/design-ui/room-service.js");
+require(REPO_ROOT + "/design-ui/match-service.js");
 var RoomService = global.RoomService;
 var MatchService = global.MatchService;
 
@@ -166,17 +167,19 @@ async function run() {
   check("2. Client B joins the room", STORE["rooms/" + roomId].players.indexOf("clientB") !== -1);
   check("2a. Room now has exactly 2 players", STORE["rooms/" + roomId].players.length === 2);
 
-  // 3. Both clients set "Ready".
-  signInAs("clientA");
-  var afterA = await RoomService.setReady(roomId, "clientA", true);
-  check("3a. Client A ready — match not yet started (B not ready)", !afterA.matchStart.started);
+  // 3. Both clients set "Ready". The creator must cross the final
+  //    all-ready boundary because RoomService's production contract
+  //    permits only the room creator to call startMatch().
   signInAs("clientB");
   var afterB = await RoomService.setReady(roomId, "clientB", true);
+  check("3a. Client B ready — match not yet started (creator not ready)", !afterB.matchStart.started);
+  signInAs("clientA");
+  var afterA = await RoomService.setReady(roomId, "clientA", true);
 
   // 4. MatchService triggers startMatch (RoomService.setReady's own
   //    all-ready trigger, the SAME real production trigger path — not
   //    called directly here, matching the real app's own flow).
-  check("4. Last ready-up automatically triggers MatchService.startMatch", afterB.matchStart.started === true);
+  check("4. Last ready-up automatically triggers MatchService.startMatch", afterA.matchStart.started === true);
   check("4a. Room status changes to 'in_game'", STORE["rooms/" + roomId].status === "in_game");
   var matchId = STORE["rooms/" + roomId].matchId;
   check("4b. Room has a real matchId, and the match document exists", !!matchId && !!STORE["matches/" + matchId]);

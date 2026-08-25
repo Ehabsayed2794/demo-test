@@ -934,6 +934,80 @@
       return seatId;
     }
 
+    /**
+     * Sprint J.1 (P0-05 resolving-boundary contract): the fourth card
+     * reaches `RESOLVING`, but the frozen Rules contract requires the
+     * persisted `turn` to remain a real seat owner. The winner is derived
+     * from the FRESH transaction cardLog and the already-loaded round
+     * state by calling the EXISTING TableEngine.resolveTrick() function;
+     * no winner algorithm is duplicated here and no TableEngine export is
+     * added. The engine and GameSession state are restored immediately
+     * after the readback, so this service-side preview does not become a
+     * second local trick resolution. This remains a client-side
+     * computation under the existing Spark trust boundary: Firestore Rules
+     * enforce the atomic write shape and prior-turn ownership, not the
+     * correctness of the client-computed winner. */
+    function resolveFourthCardWinnerUid(match, cardLog) {
+      if (!global.TableEngine || typeof global.TableEngine.getState !== "function" ||
+          typeof global.TableEngine.resolveTrick !== "function") {
+        throw bidError("TRICK_WINNER_UNAVAILABLE", "submitCard: TableEngine.resolveTrick() is unavailable at the resolving boundary.");
+      }
+      var engineState = global.TableEngine.getState();
+      var lastFour = cardLog.slice(Math.max(0, cardLog.length - 4));
+      if (!engineState || lastFour.length !== 4 || !engineState.trump) {
+        throw bidError("TRICK_WINNER_UNAVAILABLE", "submitCard: the resolving trick has no complete four-card engine context.");
+      }
+      var savedSessionPlayState = (global.GameSession && typeof global.GameSession.getPlayState === "function")
+        ? global.GameSession.getPlayState() : null;
+      var saved = {
+        plays: engineState.plays,
+        ledSuit: engineState.ledSuit,
+        phase: engineState.phase,
+        turn: engineState.turn,
+        trickNo: engineState.trickNo,
+        leaderId: engineState.leaderId,
+        tricksWon: engineState.tricksWon,
+        lastTrick: engineState.lastTrick
+      };
+      var plays = lastFour.map(function (entry) {
+        return {
+          playerId: entry.seatId,
+          card: { suit: entry.card.suit, rank: { v: entry.card.rank.v, s: entry.card.rank.s } }
+        };
+      });
+      var winnerSeat = null;
+      try {
+        engineState.plays = plays;
+        engineState.ledSuit = engineState.ledSuit || plays[0].card.suit;
+        engineState.phase = "RESOLVING";
+        engineState.turn = null;
+        // Keep the resolver on its ordinary non-terminal branch. The
+        // winner calculation is identical, while a service-side preview
+        // cannot prematurely score the 13th trick in GameSession.
+        engineState.trickNo = Math.min(Number(engineState.trickNo) || 1, 12);
+        engineState.tricksWon = Object.assign({}, engineState.tricksWon || {});
+        global.TableEngine.resolveTrick();
+        winnerSeat = engineState.lastTrick && engineState.lastTrick.winnerId;
+      } finally {
+        engineState.plays = saved.plays;
+        engineState.ledSuit = saved.ledSuit;
+        engineState.phase = saved.phase;
+        engineState.turn = saved.turn;
+        engineState.trickNo = saved.trickNo;
+        engineState.leaderId = saved.leaderId;
+        engineState.tricksWon = saved.tricksWon;
+        engineState.lastTrick = saved.lastTrick;
+        if (savedSessionPlayState && global.GameSession && typeof global.GameSession.updatePlayState === "function") {
+          global.GameSession.updatePlayState(savedSessionPlayState);
+        }
+      }
+      var winnerUid = winnerSeat ? global.MatchAdapter.seatToUid(match, winnerSeat) : null;
+      if (!winnerUid) {
+        throw bidError("TRICK_WINNER_UNAVAILABLE", "submitCard: TableEngine.resolveTrick() did not return a real winner seat.");
+      }
+      return winnerUid;
+    }
+
     return matchRef.get().then(function (snap) {
       if (!snap.exists) throw bidError("MATCH_NOT_FOUND", "submitCard: match '" + matchId + "' was not found.");
       var match = snap.data();
@@ -954,10 +1028,10 @@
       // Translate the preview's engine-space next SEAT into a
       // Firestore-space next UID via MatchAdapter — the SAME
       // translation direction `uidToSeat()` already establishes this
-      // file is allowed to use, just inverted. `null` (the resolving
-      // boundary — the 4th card of a trick) passes through untouched;
-      // it is never itself the "who's next" answer, so there is
-      // nothing to translate for it.
+      // file is allowed to use, just inverted. On non-4th cards this is
+      // the immediately following seat. At the 4th-card boundary,
+      // resolveFourthCardWinnerUid() below replaces previewPlay()'s
+      // historical null with the real winner.
       var nextTurnUid = null;
       if (preview.nextTurnSeat != null) {
         nextTurnUid = global.MatchAdapter.seatToUid(match, preview.nextTurnSeat);
@@ -1002,6 +1076,12 @@
           // to. Read from the FRESH in-transaction document's own
           // `currentRound`, never the caller's local round number.
           cardLog.push({ seatId: freshSeatId, card: { suit: card.suit, rank: { v: card.rank.v, s: card.rank.s } }, round: freshMatch.currentRound });
+          // J.1: use the FRESH four-card log and current engine round
+          // context before writing. The winner UID is persisted atomically
+          // with this card append and the RESOLVING phase marker.
+          if (preview.nextPhase === "RESOLVING") {
+            nextTurnUid = resolveFourthCardWinnerUid(freshMatch, cardLog);
+          }
           var nextVersion = expectedVersion + 1;
           var patch = {
             cardLog: cardLog,

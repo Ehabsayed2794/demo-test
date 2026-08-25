@@ -1,3 +1,4 @@
+var REPO_ROOT = require("path").join(__dirname, "..");
 // Sprint E — Hand Write Authority Security Redesign (MVP DECISION):
 // REAL Firestore Rules Emulator verification of the zero-cost,
 // rules-only deal-authority architecture.
@@ -42,7 +43,7 @@ async function run() {
     testEnv = await initializeTestEnvironment({
       projectId: "demo-test-mvp-deal-authority",
       firestore: {
-        rules: fs.readFileSync("/home/user/demo-test/firestore.rules", "utf8"),
+        rules: fs.readFileSync(REPO_ROOT + "/firestore.rules", "utf8"),
         host: "127.0.0.1",
         port: 8080
       }

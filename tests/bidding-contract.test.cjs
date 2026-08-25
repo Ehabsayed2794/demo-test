@@ -1,3 +1,4 @@
+var REPO_ROOT = require("path").join(__dirname, "..");
 // Focused test for Sprint 3.6.1 (Bidding Engine Contract): the NEW
 // BiddingEngine.canSubmit(intent) legality API only. Does not
 // re-test emit()'s own gameplay outcomes beyond what's needed to
@@ -18,11 +19,11 @@
 global.window = global;
 global.window.addEventListener = function () {};
 
-require("/home/user/demo-test/design-ui/engine/cards.js");
-require("/home/user/demo-test/design-ui/engine/deck.js");
-require("/home/user/demo-test/design-ui/engine/dealer.js");
-require("/home/user/demo-test/design-ui/engine/session.js");
-require("/home/user/demo-test/design-ui/engine/bidding-engine.js");
+require(REPO_ROOT + "/design-ui/engine/cards.js");
+require(REPO_ROOT + "/design-ui/engine/deck.js");
+require(REPO_ROOT + "/design-ui/engine/dealer.js");
+require(REPO_ROOT + "/design-ui/engine/session.js");
+require(REPO_ROOT + "/design-ui/engine/bidding-engine.js");
 
 var GameSession = global.GameSession;
 var BiddingEngine = global.BiddingEngine;
@@ -459,7 +460,7 @@ function nextCCW(id) { return TURN_ORDER[(TURN_ORDER.indexOf(id) + 1) % TURN_ORD
   // uses the file's own window.BiddingEngine export block as the
   // reliable end-of-function anchor instead). ──
   var fs = require("fs");
-  var sourceText = fs.readFileSync("/home/user/demo-test/design-ui/engine/bidding-engine.js", "utf8");
+  var sourceText = fs.readFileSync(REPO_ROOT + "/design-ui/engine/bidding-engine.js", "utf8");
   var startMarker = "function canSubmit(intent) {";
   var startIdx = sourceText.indexOf(startMarker);
   check("STRUCTURAL: canSubmit()'s source is present and findable", startIdx !== -1);

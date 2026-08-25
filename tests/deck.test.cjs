@@ -1,3 +1,4 @@
+var REPO_ROOT = require("path").join(__dirname, "..");
 // Real, executable tests for design-ui/engine/deck.js (Sprint 3.5 — Deck
 // Implementation & Engine Integration) and the resulting
 // design-ui/engine/dealer.js integration. Loads the ACTUAL, unmodified
@@ -7,9 +8,9 @@
 // engine is now executable.
 global.window = global;
 
-require("/home/user/demo-test/design-ui/engine/cards.js");
-require("/home/user/demo-test/design-ui/engine/deck.js");
-require("/home/user/demo-test/design-ui/engine/dealer.js");
+require(REPO_ROOT + "/design-ui/engine/cards.js");
+require(REPO_ROOT + "/design-ui/engine/deck.js");
+require(REPO_ROOT + "/design-ui/engine/dealer.js");
 
 var Cards = global.Cards;
 var Deck = global.Deck;

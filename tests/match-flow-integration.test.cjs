@@ -1,3 +1,4 @@
+var REPO_ROOT = require("path").join(__dirname, "..");
 // Real, executable integration test for Sprint 3.6 (Match Flow
 // Integration) — the complete gameplay pipeline for ONE round:
 //   Deck -> Dealer -> GameSession -> Bidding -> Card Play -> Trick
@@ -35,12 +36,12 @@
 global.window = global;
 global.window.addEventListener = function () {}; // no-op: no real DOM/browser exists in this test process
 
-require("/home/user/demo-test/design-ui/engine/cards.js");
-require("/home/user/demo-test/design-ui/engine/deck.js");
-require("/home/user/demo-test/design-ui/engine/dealer.js");
-require("/home/user/demo-test/design-ui/engine/session.js");
-require("/home/user/demo-test/design-ui/engine/bidding-engine.js");
-require("/home/user/demo-test/design-ui/engine/scoring-engine.js");
+require(REPO_ROOT + "/design-ui/engine/cards.js");
+require(REPO_ROOT + "/design-ui/engine/deck.js");
+require(REPO_ROOT + "/design-ui/engine/dealer.js");
+require(REPO_ROOT + "/design-ui/engine/session.js");
+require(REPO_ROOT + "/design-ui/engine/bidding-engine.js");
+require(REPO_ROOT + "/design-ui/engine/scoring-engine.js");
 // table-engine.js is required LATER, after bidding completes — its
 // top-level ROUND_CFG is computed at require()-time from GameSession's
 // bidding result, so requiring it before bidding finishes would freeze
@@ -166,7 +167,7 @@ function legalCardsFor(state, id) {
     Object.keys(biddingResultRound.estimates).length === 4 && biddingResultRound.estimates[nextCCW(auctionOpener)] === 0);
 
   // ============ Card Play + Trick Resolution phase ============
-  require("/home/user/demo-test/design-ui/engine/table-engine.js");
+  require(REPO_ROOT + "/design-ui/engine/table-engine.js");
   var TableEngine = global.TableEngine;
   TableEngine.initState();
   var t = TableEngine.getState();

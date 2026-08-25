@@ -1,3 +1,4 @@
+var REPO_ROOT = require("path").join(__dirname, "..");
 // Real, executable tests for MatchService.subscribeToMatch()'s
 // synchronization behavior (Sprint 3.7: Real-Time Match Synchronization;
 // Sprint 3.7.1: Synchronization Hardening & Identity Foundation) and
@@ -114,7 +115,7 @@ function simulateDisconnect(id, code) {
   cbs.forEach(function (cb) { cb(err); });
 }
 
-require("/home/user/demo-test/design-ui/match-service.js");
+require(REPO_ROOT + "/design-ui/match-service.js");
 var MatchService = global.MatchService;
 
 var pass = 0, fail = 0;
@@ -344,7 +345,7 @@ function wait(ms) { return new Promise(function (resolve) { setTimeout(resolve, 
   // GameSession consumption (requirement #3: "GameSession must consume
   // MatchService updates")
   // ============================================================
-  require("/home/user/demo-test/design-ui/engine/session.js");
+  require(REPO_ROOT + "/design-ui/engine/session.js");
   var GameSession = global.GameSession;
 
   setDoc("gm1", { roomId: "rg1", players: ["u1", "u2"], status: "starting", turn: "u1" });

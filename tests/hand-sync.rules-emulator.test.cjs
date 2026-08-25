@@ -1,3 +1,4 @@
+var REPO_ROOT = require("path").join(__dirname, "..");
 // Player Hand Synchronization — REAL FIRESTORE RULES EMULATOR
 // verification (Final Verification & Closure sprint).
 //
@@ -33,7 +34,7 @@ async function run() {
     testEnv = await initializeTestEnvironment({
       projectId: "demo-test-hand-sync",
       firestore: {
-        rules: fs.readFileSync("/home/user/demo-test/firestore.rules", "utf8"),
+        rules: fs.readFileSync(REPO_ROOT + "/firestore.rules", "utf8"),
         host: "127.0.0.1",
         port: 8080
       }

@@ -1,3 +1,4 @@
+var REPO_ROOT = require("path").join(__dirname, "..");
 // Firestore Rules Bug-Fix sprint — dedicated regression test for the
 // isValidNewRematchMatch() defect found during the Player Hand
 // Synchronization real-emulator verification.
@@ -31,7 +32,7 @@ async function run() {
     testEnv = await initializeTestEnvironment({
       projectId: "demo-test-rematch-fix",
       firestore: {
-        rules: fs.readFileSync("/home/user/demo-test/firestore.rules", "utf8"),
+        rules: fs.readFileSync(REPO_ROOT + "/firestore.rules", "utf8"),
         host: "127.0.0.1",
         port: 8080
       }

@@ -1,3 +1,4 @@
+var REPO_ROOT = require("path").join(__dirname, "..");
 // Real, executable tests for the Post-Match Rematch Vote sprint —
 // MatchService.createRematchVote() / submitRematchVote() /
 // resolveRematchVoteTimeout() / createRematchMatch() against a
@@ -112,7 +113,7 @@ global.SessionService = {
 };
 function signInAs(uid) { CURRENT_USER = uid; }
 
-require("/home/user/demo-test/design-ui/match-service.js");
+require(REPO_ROOT + "/design-ui/match-service.js");
 var MatchService = global.MatchService;
 
 var pass = 0, fail = 0;

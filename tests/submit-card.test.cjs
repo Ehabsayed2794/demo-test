@@ -1,3 +1,4 @@
+var REPO_ROOT = require("path").join(__dirname, "..");
 // Real, executable tests for Sprint 4.2 (Online Card Synchronization:
 // Engine Authority), Task 1 — MatchService.submitCard(matchId, card) —
 // HARDENED in Sprint 4.2.1 (turn authority + pre-write engine
@@ -105,12 +106,12 @@ global.SessionService = {
 };
 function signInAs(uid) { CURRENT_USER = uid; }
 
-require("/home/user/demo-test/design-ui/match-service.js");
-require("/home/user/demo-test/design-ui/engine/cards.js");
-require("/home/user/demo-test/design-ui/engine/deck.js");
-require("/home/user/demo-test/design-ui/engine/dealer.js");
-require("/home/user/demo-test/design-ui/engine/session.js");
-require("/home/user/demo-test/design-ui/match-adapter.js"); // needed: submitCard() calls MatchAdapter.uidToSeat()/seatToUid()/assertLocalTurn()
+require(REPO_ROOT + "/design-ui/match-service.js");
+require(REPO_ROOT + "/design-ui/engine/cards.js");
+require(REPO_ROOT + "/design-ui/engine/deck.js");
+require(REPO_ROOT + "/design-ui/engine/dealer.js");
+require(REPO_ROOT + "/design-ui/engine/session.js");
+require(REPO_ROOT + "/design-ui/match-adapter.js"); // needed: submitCard() calls MatchAdapter.uidToSeat()/seatToUid()/assertLocalTurn()
 var MatchService = global.MatchService;
 
 var pass = 0, fail = 0;
@@ -131,10 +132,19 @@ function installFakeTableEngine(opts) {
   var calls = [];
   var playCount = 0;
   var seatOrder = opts.seatOrder || ["p1", "p2", "p3", "p4"];
+  var engineState = {
+    trump: "SPADES", plays: [], ledSuit: null, phase: "PLAY", turn: "p1", trickNo: 1,
+    leaderId: "p1", tricksWon: { p1: 0, p2: 0, p3: 0, p4: 0 }, lastTrick: null
+  };
   var engine = {
     _calls: calls,
     _legal: true,
     _reason: "ILLEGAL_CARD",
+    getState: function () { return engineState; },
+    resolveTrick: function () {
+      var winner = engineState.plays.slice().sort(function (a, b) { return b.card.rank.v - a.card.rank.v; })[0];
+      engineState.lastTrick = { winnerId: winner && winner.playerId };
+    },
     previewPlay: function (playerId, card) {
       calls.push({ playerId: playerId, card: card });
       if (!engine._legal) return { legal: false, reason: engine._reason };
@@ -203,9 +213,9 @@ var QUEEN_SPADES = { suit: "SPADES", rank: { v: 12, s: "Q" } };
 
   signInAs("userD");
   var r4 = await MatchService.submitCard("m-sequence", { suit: "SPADES", rank: { v: 2, s: "2" } });
-  check("MOCKED — Task 7 req #4: p4 submits the FOURTH card and Firestore moves to the resolving/null-turn boundary — turn becomes null, cardPhase becomes RESOLVING",
+  check("MOCKED — Task J1/J2: p4 submits the FOURTH card and Firestore persists the resolved winner as turn with cardPhase RESOLVING",
     r4.seatId === "p4" && r4.nextTurnSeat === null && r4.cardPhase === "RESOLVING" &&
-    STORE[key("m-sequence")].turn === null && STORE[key("m-sequence")].cardPhase === "RESOLVING");
+    STORE[key("m-sequence")].turn === "userA" && STORE[key("m-sequence")].cardPhase === "RESOLVING");
 
   check("MOCKED — Task 7 req #13: the full four-card sequence produced exactly 4 cardLog entries, one per real seat, with ZERO manual Firestore turn edits anywhere in this test",
     STORE[key("m-sequence")].cardLog.length === 4 &&
@@ -410,16 +420,18 @@ var QUEEN_SPADES = { suit: "SPADES", rank: { v: 12, s: "Q" } };
   // re-verified against THIS sprint's own additions.
   // ============================================================
   var fs = require("fs");
-  var serviceSource = fs.readFileSync("/home/user/demo-test/design-ui/match-service.js", "utf8");
+  var serviceSource = fs.readFileSync(REPO_ROOT + "/design-ui/match-service.js", "utf8");
   // Checks actual CODE (a function definition/call), not a bare-word
   // match — this file's own comments correctly NAME `nextCCW()` in
   // prose while explaining it is NOT reimplemented here; a bare regex
   // would false-positive on that documentation sentence itself (the
   // same class of test fragility already fixed once in
   // turn-sync.test.cjs's own "adapter isolation" check).
-  check("MOCKED — Task 7 req #10: match-service.js contains no follow-suit/turn-order logic of its own — no `ledSuit` field access, no `nextCCW()` function definition/call",
-    !/ledSuit/.test(serviceSource) && !/function nextCCW/.test(serviceSource) && !/[^`]nextCCW\(/.test(serviceSource));
-  check("MOCKED — Task 7 req #10: match-service.js never calls a GameSession/TableEngine setter directly — its only TableEngine reference is the read-only previewPlay() query",
+  check("MOCKED — Task J1: match-service.js delegates fourth-card winner resolution to existing TableEngine.resolveTrick() without duplicating follow-suit/trick-winner/turn-order algorithms",
+    /TableEngine\.resolveTrick\(\)/.test(serviceSource) &&
+    !/function (?:nextCCW|trickWinner|cardValue)\s*\(/.test(serviceSource) &&
+    !/TableEngine\.emit/.test(serviceSource));
+  check("MOCKED — Task J1: match-service.js does not call TableEngine.emit() or a GameSession turn setter; resolveTrick() is used only for winner readback",
     !/TableEngine\.emit/.test(serviceSource) && !/GameSession\.setTurn/.test(serviceSource));
 
   // ============================================================

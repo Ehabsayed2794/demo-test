@@ -1,3 +1,4 @@
+var REPO_ROOT = require("path").join(__dirname, "..");
 // Firestore Rules Production Stability sprint — Phase 1 (P0-2):
 // real-emulator regression test for the matches/{matchId} `allow
 // update` dispatcher restructuring.
@@ -44,7 +45,7 @@ async function run() {
     testEnv = await initializeTestEnvironment({
       projectId: "demo-test-p02-dispatch",
       firestore: {
-        rules: fs.readFileSync("/home/user/demo-test/firestore.rules", "utf8"),
+        rules: fs.readFileSync(REPO_ROOT + "/firestore.rules", "utf8"),
         host: "127.0.0.1",
         port: 8080
       }
