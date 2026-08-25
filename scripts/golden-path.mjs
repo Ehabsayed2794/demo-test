@@ -240,7 +240,13 @@ async function driveBidding(pages, matchId, maxIterations) {
     var states = await Promise.all(pages.map((p) => p.evaluate(() => window.BiddingEngine ? window.BiddingEngine.getState() : null).catch(() => null)));
     if (states.some((s) => !s)) { await sleep(200); continue; }
     if (states.every((s) => s.subPhase === "DONE")) return { ok: true, log: log };
+    // A reference page can be one delivery behind at a phase/turn
+    // boundary. Act only after all four live engines agree on the same
+    // round, sub-phase, and waiting seat; legality remains the engine's
+    // own canSubmit() decision on the actor page.
     var ref = states[0];
+    var converged = states.every((s) => s.round === ref.round && s.subPhase === ref.subPhase && s.waitingFor === ref.waitingFor);
+    if (!converged) { await sleep(150); continue; }
     var waitingFor = ref.waitingFor;
     if (!waitingFor) { await sleep(150); continue; }
     var idx = SEATS.indexOf(waitingFor);

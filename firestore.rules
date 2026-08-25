@@ -11,11 +11,10 @@ rules_version = '2';
 // already live on this project before Sprint 2.6
 // (see docs/architecture/ArchitectureDecisionLog.md).
 //
-// NOT YET DEPLOYED — this file is the reviewable artifact. To publish:
-// Firebase Console → Firestore Database → Rules → paste this file's
-// contents → Publish. See docs/implementation/FirebasePlayerFoundation.md
-// and docs/implementation/RoomSecurityFix.md for the exact steps and
-// what to verify afterward.
+// DEPLOYMENT HISTORY — hardened Ruleset deployed 2026-08-25 by the owner
+// via Firebase Console. Sprint L adds the owner-authorized Round-1 opening
+// window below; the amended file must be pasted and published by the owner
+// through the same Firebase Console flow before production golden testing.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -1031,6 +1030,13 @@ service cloud.firestore {
     // This remains structural only: the rule verifies that the published
     // uid is a real seat owner and that the transition is exactly the
     // null-turn -> PLAY shape; it does not reimplement bidding-engine.js.
+    // Sprint L (owner-authorized 2026-08): Round-1 opening window. A fresh match is
+    // created with turn=dealer (buildInitialMatchDoc) and the official rules (CANONICAL
+    // RULES §2.2) make the CALLER the first trick leader. This window allows publishing
+    // that fact exactly once per fresh match: round 1 only, dealer-held turn, zero cards
+    // played, null->PLAY transition, version+1, structural seat-owner target only.
+    // Turn authority DURING play is unchanged (card validator still requires
+    // oldData.turn == request.auth.uid).
     function isValidOpeningTurnPublication() {
       let oldData = resource.data;
       let newData = request.resource.data;
@@ -1040,7 +1046,11 @@ service cloud.firestore {
              && 'seats' in oldData && 'version' in oldData
              && 'turn' in oldData && 'cardPhase' in oldData
              && ('status' in oldData ? oldData.status != 'complete' : true)
-             && oldData.turn == null
+             && (oldData.turn == null
+                 || ('dealer' in oldData && 'currentRound' in oldData && 'cardLog' in oldData
+                     && oldData.currentRound == 1
+                     && oldData.turn == oldData.dealer
+                     && oldData.cardLog.size() == 0))
              && oldData.cardPhase == null
              && newData.diff(oldData).affectedKeys().hasOnly(['turn', 'cardPhase', 'version', 'updatedAt'])
              && newData.version == oldData.version + 1

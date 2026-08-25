@@ -310,6 +310,17 @@ var QUEEN_SPADES = { suit: "SPADES", rank: { v: 12, s: "Q" } };
     STORE[key("m-opening-bridge-wrong-actor")].cardLog.length === 0 &&
     STORE[key("m-opening-bridge-wrong-actor")].turn === null);
 
+  fakeEngine = installFakeTableEngine();
+  seedMatch("m-round-one-dealer-window", { turn: "userA", cardPhase: null, cardLog: [], biddingLog: [{ round: 1, actionType: "SubmitConfirmCall" }] });
+  signInAs("userB");
+  var roundOneOpeningResult = await MatchService.submitCard("m-round-one-dealer-window", QUEEN_SPADES);
+  check("MOCKED — Sprint L service bridge: a Round-1 caller may publish over the initial dealer placeholder, then the normal card write advances again",
+    roundOneOpeningResult.seatId === "p2" &&
+    STORE[key("m-round-one-dealer-window")].cardLog.length === 1 &&
+    STORE[key("m-round-one-dealer-window")].turn === "userC" &&
+    STORE[key("m-round-one-dealer-window")].cardPhase === "PLAY" &&
+    STORE[key("m-round-one-dealer-window")].version === 3);
+
   // ============================================================
   // MOCKED — an unknown next-seat name from the engine is rejected
   // defensively (should never happen against a real, correctly-seated

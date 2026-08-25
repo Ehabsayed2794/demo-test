@@ -921,11 +921,25 @@
      *  instruction. Throws a `bidError()`-shaped structured error
      *  (this file's own established convention) rather than exposing
      *  `assertLocalTurn()`'s own raw `NOT_LOCAL_TURN` reason. */
+    function isRoundOneOpeningWindow(match) {
+      return !!match && match.currentRound === 1 && match.cardPhase == null &&
+        match.turn != null && match.turn === match.dealer &&
+        Array.isArray(match.cardLog) && match.cardLog.length === 0 &&
+        Array.isArray(match.biddingLog) && match.biddingLog.length > 0;
+    }
+
     function resolveSeatAndAuthorize(match) {
       var seatId = global.MatchAdapter.uidToSeat(match, callingUid);
       if (!seatId) {
         throw bidError("PERMISSION_DENIED", "submitCard: you do not own a seat in this match.");
       }
+      // Sprint L: the owner-authorized Rules window covers a fresh Round 1
+      // whose initial placeholder turn is still the dealer. The local
+      // TableEngine preview below remains the gameplay authority and must
+      // prove this caller is the bidding-selected opening leader; once the
+      // bridge publishes that leader, this function returns to the ordinary
+      // MatchAdapter.assertLocalTurn() gate inside the card transaction.
+      if (isRoundOneOpeningWindow(match)) return seatId;
       try {
         global.MatchAdapter.assertLocalTurn(match, seatId);
       } catch (e) {
@@ -944,12 +958,14 @@
      * decide bidding or card legality, and the Rules remain the authority.
      */
     function publishOpeningTurnIfNeeded(match, seatId) {
-      if (match.turn != null || match.cardPhase != null) return Promise.resolve(match);
+      if (!((match && match.turn == null && match.cardPhase == null) || isRoundOneOpeningWindow(match))) {
+        return Promise.resolve(match);
+      }
       return db().runTransaction(function (tx) {
         return tx.get(matchRef).then(function (freshSnap) {
           if (!freshSnap.exists) throw bidError("MATCH_NOT_FOUND", "submitCard: match '" + matchId + "' was not found.");
           var freshMatch = freshSnap.data();
-          if (freshMatch.turn != null || freshMatch.cardPhase != null) return freshMatch;
+          if (!((freshMatch && freshMatch.turn == null && freshMatch.cardPhase == null) || isRoundOneOpeningWindow(freshMatch))) return freshMatch;
           var openingUid = global.MatchAdapter.seatToUid(freshMatch, seatId);
           if (!openingUid) {
             throw bidError("UNKNOWN_OPENING_SEAT", "submitCard: the engine opening seat ('" + seatId + "') is not a real seat in this match.");
