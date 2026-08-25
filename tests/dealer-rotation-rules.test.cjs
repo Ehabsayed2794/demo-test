@@ -7,6 +7,7 @@ const REPO_ROOT = path.join(__dirname, "..");
 const RULES_PATH = path.join(REPO_ROOT, "firestore.rules");
 const RULES = fs.readFileSync(RULES_PATH, "utf8");
 const RULES_HASH = crypto.createHash("sha256").update(RULES).digest("hex");
+const TEST_PROJECT_ID = "p1-08-r-dealer-" + process.pid + "-" + Date.now();
 
 let passed = 0;
 let failed = 0;
@@ -29,7 +30,7 @@ function baseMatch(players, seats, overrides) {
     roomId: "room-f6",
     players: players.slice(),
     status: "starting",
-    createdAt: 1,
+    createdAt: new Date(),
     currentRound: 1,
     maxRounds: 18,
     extendedRounds: [],
@@ -68,7 +69,7 @@ async function main() {
   let env;
   try {
     env = await initializeTestEnvironment({
-      projectId: "p1-08-r-dealer",
+      projectId: TEST_PROJECT_ID,
       firestore: { rules: RULES, host: "127.0.0.1", port: 8080 }
     });
   } catch (error) {
@@ -91,7 +92,7 @@ async function main() {
     await env.withSecurityRulesDisabled(async (admin) => {
       await admin.firestore().collection("rooms").doc(id).set({
         creator: roomPlayers[0], players: roomPlayers.slice(), readyPlayers: roomPlayers.slice(),
-        status: "waiting", name: "f6-test-room", createdAt: 1
+        status: "waiting", name: "f6-test-room", createdAt: new Date(), updatedAt: new Date()
       });
     });
   }
@@ -101,8 +102,14 @@ async function main() {
     const roomRef = db.collection("rooms").doc(roomId);
     const doc = baseMatch(matchPlayers, matchSeats, { roomId });
     return db.runTransaction(async (tx) => {
+      // MatchService.startMatch() reads the room inside the transaction
+      // before pairing the match create with the room binding update.
+      await tx.get(roomRef);
       tx.set(matchRef, doc);
-      tx.update(roomRef, { status: "in_game", matchId });
+      // MatchService.startMatch() writes the room binding atomically with
+      // the server-timestamp updatedAt field; keep this Rules fixture
+      // faithful to that committed transaction shape.
+      tx.update(roomRef, { status: "in_game", matchId, updatedAt: new Date() });
     });
   }
 
