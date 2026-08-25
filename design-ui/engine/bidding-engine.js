@@ -176,6 +176,7 @@ function initState() {
       fastRound,
       // Only meaningful mid-CONFIRM in a fast round; harmless otherwise.
       noSuitConstraint: fastRound && bs.phase === "CONFIRM",
+      fastSuperResolved: !!bs.fastSuperResolved,
       logs: [],
       busy: false,
     };
@@ -203,6 +204,7 @@ function initState() {
       lastBidderId: null,
       fastRound: true,
       noSuitConstraint: false,
+      fastSuperResolved: false,
       logs: [],
       busy: false,
     };
@@ -227,6 +229,7 @@ function initState() {
       lastBidderId: null,
       fastRound: false,
       noSuitConstraint: false,
+      fastSuperResolved: false,
       logs: [],
       busy: false,               // true while an AI is "thinking"
     };
@@ -463,20 +466,43 @@ function emit(intent) {
       state.bids[intent.playerId] = { type: "TRICKS", amount: t };
 
       if (state.noSuitConstraint) {
-        // Fast-round Super Call: every seat already submitted a final
-        // estimate before the Super Call was detected (that's how it was
-        // detected) — go straight to trick play instead of re-opening
-        // Final Estimates. Mirrors kotlinCode.ts's DeclareTrump handler,
-        // where firstEstimator is null once updatedBids already covers
-        // every player.
+        // Fast-round Super Call: selecting the replacement trump is followed
+        // by re-estimation only for seats that bid before the Super Caller.
+        // Later estimates remain committed. The marker prevents the final
+        // re-estimation pass from reopening the Super Call confirmation.
+        const biddingOrder = [];
+        { let seat = state.firstBidder; for (let k = 0; k < PLAYERS.length; k++) { biddingOrder.push(seat); seat = nextCCW(seat); } }
+        const callerIndex = biddingOrder.indexOf(intent.playerId);
+        const preSuperPlayers = callerIndex > 0 ? biddingOrder.slice(0, callerIndex) : [];
+        preSuperPlayers.forEach(id => { delete state.bids[id]; });
+        state.callerId = intent.playerId;
+        state.fastSuperResolved = true;
         pushLog("intent", `${nameOf(intent.playerId)} locks ${t} ${SUITS[s].name} as trump (Super Call).`, "DeclareTrump");
-        pushLog("phase", "SUPER CALL CONFIRMED · TRICK-TAKING");
-        state.subPhase = "DONE";
-        GameSession.completeBidding({
-          trump: s, callerId: intent.playerId, withPlayers: [],
-          estimates: extractEstimates(state.bids), dashCallers: [],   // fast rounds never have a Dash phase
-          riskPlayerId: state.lastBidderId, leaderId: intent.playerId
-        });
+        if (preSuperPlayers.length) {
+          state.subPhase = "ESTIMATES";
+          state.noSuitConstraint = false;
+          state.waitingFor = preSuperPlayers[0];
+          pushLog("phase", "SUPER CALL TRUMP SELECTED · PRE-SUPER ESTIMATES");
+          pushLog("", `${preSuperPlayers.map(nameOf).join(", ")} must re-estimate; later estimates remain in force.`);
+          GameSession.recordBidAction({
+            playerId: intent.playerId, actionType: "CONFIRM_TRUMP", value: t, suit: s,
+            bids: sparseBidsToDense(state.bids), activeBidders: state.activeBidders,
+            auctionTop: state.auctionTop, auctionSuit: state.auctionSuit, auctionBidderId: state.auctionBidder,
+            withPlayers: state.withPlayers, phase: state.subPhase, turnId: state.waitingFor
+          });
+          GameSession.updateBiddingState({
+            callerId: state.callerId, declaredTrump: state.declaredTrump,
+            estimates: extractEstimates(state.bids), fastSuperResolved: true, lastBidderId: null
+          });
+        } else {
+          pushLog("phase", "SUPER CALL CONFIRMED · TRICK-TAKING");
+          state.subPhase = "DONE";
+          GameSession.completeBidding({
+            trump: s, callerId: intent.playerId, withPlayers: state.withPlayers,
+            estimates: extractEstimates(state.bids), dashCallers: [],   // fast rounds never have a Dash phase
+            riskPlayerId: state.lastBidderId, leaderId: intent.playerId
+          });
+        }
       } else {
         pushLog("intent", `${nameOf(intent.playerId)} locks ${t} ${SUITS[s].name} as trump.`, "DeclareTrump");
         state.subPhase = "ESTIMATES";
@@ -582,12 +608,14 @@ function emit(intent) {
             .sort((a, b) => (state.bids[b].amount - state.bids[a].amount) || (biddingOrder.indexOf(a) - biddingOrder.indexOf(b)));
           const superCallerId = superCandidates[0] || null;
 
-          if (superCallerId) {
+          if (superCallerId && !state.fastSuperResolved) {
             const superBid = state.bids[superCallerId].amount;
+            const superWithPlayers = superCandidates.slice(1, 4);
+            state.callerId = superCallerId;
+            state.withPlayers = superWithPlayers.slice();
             pushLog("phase", "ESTIMATION COMPLETE · SUPER CALL");
             pushLog("intent", `Total bids: ${sum} (${diff > 0 ? "OVER +" + diff : "UNDER " + diff}).`, "TrickTaking");
             pushLog("intent", `⚡ SUPER CALL! ${nameOf(superCallerId)} (${superBid} tricks) may override the forced trump.`, "DeclareTrump");
-            state.callerId = superCallerId;
             state.auctionTop = superBid;
             state.subPhase = "CONFIRM";
             state.noSuitConstraint = true;
@@ -597,14 +625,42 @@ function emit(intent) {
               phase: state.subPhase, turnId: state.waitingFor
             });
             GameSession.updateBiddingState({ lastBidderId: state.lastBidderId });
-          } else {
-            pushLog("phase", "ESTIMATION COMPLETE");
-            pushLog("intent", `Total bids: ${sum} (${diff > 0 ? "OVER +" + diff : "UNDER " + diff}). Forced trump stands — no Super Call.`, "TrickTaking");
+          } else if (state.fastSuperResolved) {
+            pushLog("phase", "FINAL ESTIMATES COMPLETE · SUPER CALL");
             state.subPhase = "DONE";
             GameSession.completeBidding({
-              trump: state.declaredTrump, callerId: null, withPlayers: [],
+              trump: state.declaredTrump, callerId: state.callerId, withPlayers: state.withPlayers,
+              estimates: extractEstimates(state.bids), dashCallers: [],
+              riskPlayerId: state.lastBidderId, leaderId: state.callerId
+            });
+          } else {
+            // Canonical §3 fast-round rule: the first player to bid the
+            // highest number is Caller; every other player at that same
+            // number is With (up to the other three seats). Use this
+            // round's actual bidding order for the tie-break, not the
+            // static TURN_ORDER.
+            const highestAmount = TURN_ORDER.reduce((max, id) =>
+              state.bids[id].type === "TRICKS" ? Math.max(max, state.bids[id].amount) : max, 0);
+            const highestCandidates = TURN_ORDER
+              .filter(id => state.bids[id].type === "TRICKS" && state.bids[id].amount === highestAmount)
+              .sort((a, b) => biddingOrder.indexOf(a) - biddingOrder.indexOf(b));
+            const fastCallerId = highestCandidates[0] || null;
+            const fastWithPlayers = highestCandidates.slice(1, 4);
+
+            pushLog("phase", "ESTIMATION COMPLETE");
+            pushLog("intent", `Total bids: ${sum} (${diff > 0 ? "OVER +" + diff : "UNDER " + diff}). Forced trump stands — no Super Call.`, "TrickTaking");
+            if (fastCallerId) {
+              pushLog("intent", `${nameOf(fastCallerId)} (${highestAmount} tricks) is the Caller for this fast round.` +
+                (fastWithPlayers.length ? ` With: ${fastWithPlayers.map(nameOf).join(", ")}.` : ""), "DeclareTrump");
+            }
+            state.callerId = fastCallerId;
+            state.withPlayers = fastWithPlayers.slice();
+            state.auctionTop = highestAmount;
+            state.subPhase = "DONE";
+            GameSession.completeBidding({
+              trump: state.declaredTrump, callerId: fastCallerId, withPlayers: fastWithPlayers,
               estimates: extractEstimates(state.bids), dashCallers: [],   // fast rounds never have a Dash phase
-              riskPlayerId: state.lastBidderId, leaderId: state.firstBidder
+              riskPlayerId: state.lastBidderId, leaderId: fastCallerId != null ? fastCallerId : state.firstBidder
             });
           }
         } else {
