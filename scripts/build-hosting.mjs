@@ -16,7 +16,7 @@
  *   hosting-dist/estemshan/  <- the built Estemshan score tracker
  *     index.html  assets/…
  */
-import { existsSync, rmSync, mkdirSync, cpSync } from "node:fs";
+import { existsSync, rmSync, mkdirSync, cpSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -50,4 +50,10 @@ console.log("[build-hosting] Copying dist/ -> hosting-dist/estemshan/");
 mkdirSync(OUT_ESTEMSHAN, { recursive: true });
 cpSync(VITE_DIST, OUT_ESTEMSHAN, { recursive: true });
 
-console.log("[build-hosting] Done. hosting-dist/ is ready for `firebase deploy --only hosting`.");
+// Capacitor requires the configured webDir itself to contain an index.html.
+// Firebase still rewrites `/` directly to `/login/index.html`; this small
+// generated wrapper exists only for the native shell and preserves the full
+// multi-page hosting layout under the same artifact directory.
+writeFileSync(path.join(OUT, "index.html"), `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=login/index.html"><title>Estimation</title></head><body><script>location.replace("login/index.html");</script><noscript><a href="login/index.html">Continue to Estimation</a></noscript></body></html>\n`);
+
+console.log("[build-hosting] Done. hosting-dist/ is ready for `firebase deploy --only hosting` and Capacitor.");

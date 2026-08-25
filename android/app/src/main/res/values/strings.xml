@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Estemshan</string>
+    <string name="title_activity_main">Estemshan</string>
+    <string name="package_name">com.estemshan.game</string>
+    <string name="custom_url_scheme">com.estemshan.game</string>
+</resources>
