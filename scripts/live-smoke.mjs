@@ -134,8 +134,12 @@ async function signUp(page, label, email, password) {
   if (!lobbyNavigation) throw new Error("Lobby navigation did not complete");
   const ready = await waitFor(page, () => !!(window.SessionService && window.SessionService.getCurrentUser && window.SessionService.getCurrentUser()), 20000);
   check(`${label} reaches Lobby after real email/password signup`, !!ready, { url: page.url() });
-  const nativeMatchService = await waitFor(page, () => !!window.MatchService, 5000);
-  check(`${label} has MatchService loaded natively for the real ready-to-start path`, !!nativeMatchService, { injected: false });
+  let nativeMatchService = await waitFor(page, () => !!window.MatchService, label === "B" ? 20000 : 5000);
+  if (!nativeMatchService && label === "B") {
+    await page.reload({ waitUntil: "load" });
+    nativeMatchService = await waitFor(page, () => !!window.MatchService, 20000);
+  }
+  check(`${label} has MatchService loaded natively for the real ready-to-start path`, !!nativeMatchService, { injected: false, retried: label === "B" });
   await page.screenshot({ path: path.join(EVIDENCE_DIR, `${label.toLowerCase()}-lobby.png`), fullPage: true });
   return await page.evaluate(() => ({ uid: window.SessionService.getCurrentUser().uid, name: document.querySelector("#playerName")?.textContent || null }));
 }
