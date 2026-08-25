@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - integration/sprint-m1
+      - main
 
 permissions:
   contents: read
