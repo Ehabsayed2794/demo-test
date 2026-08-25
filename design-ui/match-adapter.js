@@ -1183,15 +1183,21 @@
   var lastAppliedCardCountByMatch = {};
 
   /** Task 2 (Remote Card Application): replays every cardLog entry
-   *  this adapter has not yet applied, IN ORDER, through
-   *  `TableEngine.emit({type:"PlayCard", playerId, card})` — the ONLY
-   *  call this function makes into any engine file. Never mutates
-   *  Firestore (no `db()`/write-path reference anywhere in this
-   *  function); every effect flows one way, into the local
-   *  `GameSession`, and only ever THROUGH the real, unmodified
-   *  `table-engine.js` reducer — this function never calls a
-   *  `GameSession` setter directly for play data, exactly matching
-   *  `applyRemoteBid()`'s own "never second-guess the engine" design.
+   *  this adapter has not yet applied, IN ORDER, through the existing
+   *  TableEngine reducer. `localSeatId` is optional for backward
+   *  compatibility with direct callers/tests; when supplied, the local
+   *  seat keeps the reducer's complete turn/hand/follow-suit validation.
+   *  A non-local seat's card is an observed Firestore fact: this adapter
+   *  temporarily exposes only that observed card to the existing reducer
+   *  so turn/trick progression and the reducer's own state transitions
+   *  remain authoritative, without pretending this client knows the
+   *  opponent's private hand. The temporary hand is restored immediately
+   *  after the reducer call and is never persisted as an opponent hand.
+   *
+   *  Never mutates Firestore (no `db()`/write-path reference anywhere in
+   *  this function); every effect flows one way through the real,
+   *  unmodified `table-engine.js` reducer. The local seat's own echo and
+   *  all callers that omit `localSeatId` retain the prior full validation.
    *
    *  Returns a small, structured result object — `{ applied: boolean,
    *  reason: string, appliedCount, results: [...] }` — covering every
@@ -1199,7 +1205,7 @@
    *  "nothing to do" cases (a malformed snapshot, a stale version, an
    *  empty log) — those are expected, routine inputs in a live sync
    *  pipeline, not caller errors. */
-  function applyRemoteCard(matchId, matchDoc) {
+  function applyRemoteCard(matchId, matchDoc, localSeatId) {
     // Task 5: reject malformed snapshots outright, before touching any
     // version bookkeeping or the engine at all.
     if (!matchId) return { applied: false, reason: "MALFORMED_SNAPSHOT" };
@@ -1364,14 +1370,36 @@
           results: results
         };
       }
+      // Local echoes retain the full reducer validation. For a non-local
+      // seat, opponent hand contents are intentionally unknowable: make
+      // this one observed card temporarily available to the unchanged
+      // reducer, which still enforces the authoritative current turn and
+      // performs all existing turn/trick state transitions. The temporary
+      // card is restored immediately and never becomes a persisted hand.
+      var isObservedOpponentPlay = localSeatId != null && entry.seatId !== localSeatId;
+      var observedHand;
+      var observedCard;
+      if (isObservedOpponentPlay) {
+        observedHand = engineState && engineState.hands ? engineState.hands[entry.seatId] : undefined;
+        observedCard = { suit: entry.card.suit, rank: { v: entry.card.rank.v, s: entry.card.rank.s } };
+        if (engineState && engineState.hands) engineState.hands[entry.seatId] = [observedCard];
+      }
+
       // The ONLY call in this codebase's card-sync path into
-      // table-engine.js. Every legality/ordering decision from here is
-      // the real engine's, not this file's — this function only ever
-      // reads the response.
-      var engineResult = TableEngine.emit({
-        type: "PlayCard", playerId: entry.seatId,
-        card: { suit: entry.card.suit, rank: { v: entry.card.rank.v, s: entry.card.rank.s } }
-      });
+      // table-engine.js. Every turn/trick decision remains the real
+      // engine's; this adapter changes only whether an opponent's private
+      // hand is temporarily represented for this already-observed card.
+      var engineResult;
+      try {
+        engineResult = TableEngine.emit({
+          type: "PlayCard", playerId: entry.seatId,
+          card: observedCard || { suit: entry.card.suit, rank: { v: entry.card.rank.v, s: entry.card.rank.s } }
+        });
+      } finally {
+        if (isObservedOpponentPlay && engineState && engineState.hands) {
+          engineState.hands[entry.seatId] = observedHand;
+        }
+      }
       if (!engineResult || engineResult.rejected) {
         // Sprint 4.2.1, Task 3 — the SECOND Critical defect this
         // hotfix closes: Sprint 4.2's original version pushed this
@@ -1687,14 +1715,14 @@
    *  through `applyRemoteCard()` instead. Fail-open on a delivery
    *  error, same as the other two. Throws `MATCH_SERVICE_UNAVAILABLE`
    *  if `MatchService` isn't loaded. */
-  function startCardSync(matchId) {
+  function startCardSync(matchId, localSeatId) {
     if (!matchId) throw adapterError("INVALID_ARGUMENT", "startCardSync: matchId is required.");
     if (!global.MatchService || typeof global.MatchService.subscribeToMatch !== "function") {
       throw adapterError("MATCH_SERVICE_UNAVAILABLE", "startCardSync: MatchService is not available on this page.");
     }
     return global.MatchService.subscribeToMatch(matchId, function (data, err) {
       if (err || !data) return;
-      applyRemoteCard(matchId, data);
+      applyRemoteCard(matchId, data, localSeatId);
     });
   }
 
@@ -1738,7 +1766,7 @@
    *  Returns the same unsubscribe function `subscribeToMatch()` itself
    *  returns. Throws `MATCH_SERVICE_UNAVAILABLE` if `MatchService`
    *  isn't loaded. */
-  function startTrickSync(matchId) {
+  function startTrickSync(matchId, localSeatId) {
     if (!matchId) throw adapterError("INVALID_ARGUMENT", "startTrickSync: matchId is required.");
     if (!global.MatchService || typeof global.MatchService.subscribeToMatch !== "function") {
       throw adapterError("MATCH_SERVICE_UNAVAILABLE", "startTrickSync: MatchService is not available on this page.");
@@ -1746,7 +1774,7 @@
     return global.MatchService.subscribeToMatch(matchId, function (data, err) {
       if (err || !data) return;
       for (var i = 0; i < 13; i++) {
-        applyRemoteCard(matchId, data);
+        applyRemoteCard(matchId, data, localSeatId);
         var trickResult = applyRemoteTrick(matchId, data);
         if (!trickResult.applied) break;
       }

@@ -30,6 +30,9 @@
 // every card-sync scenario within that ONE round's worth of real
 // engine state, using DIFFERENT tricks/positions within the same round
 // to keep each scenario's own engine state independent.
+var REPO_ROOT = require("path").join(__dirname, "..");
+function repoPath() { return require("path").join.apply(require("path"), [REPO_ROOT].concat(Array.prototype.slice.call(arguments))); }
+
 global.window = global;
 global.window.addEventListener = function () {};
 
@@ -125,14 +128,14 @@ var CURRENT_USER = null;
 global.SessionService = { getCurrentUser: function () { return CURRENT_USER ? { uid: CURRENT_USER } : null; }, setCurrentMatchId: function () { return Promise.resolve(); } };
 function signInAs(uid) { CURRENT_USER = uid; }
 
-require("/home/user/demo-test/design-ui/match-service.js");
-require("/home/user/demo-test/design-ui/engine/cards.js");
-require("/home/user/demo-test/design-ui/engine/deck.js");
-require("/home/user/demo-test/design-ui/engine/dealer.js");
-require("/home/user/demo-test/design-ui/engine/session.js");
-require("/home/user/demo-test/design-ui/engine/bidding-engine.js");
-require("/home/user/demo-test/design-ui/engine/scoring-engine.js");
-require("/home/user/demo-test/design-ui/match-adapter.js");
+require(repoPath("design-ui", "match-service.js"));
+require(repoPath("design-ui", "engine", "cards.js"));
+require(repoPath("design-ui", "engine", "deck.js"));
+require(repoPath("design-ui", "engine", "dealer.js"));
+require(repoPath("design-ui", "engine", "session.js"));
+require(repoPath("design-ui", "engine", "bidding-engine.js"));
+require(repoPath("design-ui", "engine", "scoring-engine.js"));
+require(repoPath("design-ui", "match-adapter.js"));
 // table-engine.js required LATER, after bidding completes — see this
 // file's own header comment.
 
@@ -180,7 +183,7 @@ function driveBiddingToCommittedRound() {
 }
 
 driveBiddingToCommittedRound();
-require("/home/user/demo-test/design-ui/engine/table-engine.js");
+require(repoPath("design-ui", "engine", "table-engine.js"));
 var TableEngine = global.TableEngine;
 TableEngine.initState();
 
@@ -485,6 +488,31 @@ function finishCurrentTrick() {
   check("MOCKED — adapter corruption (end-to-end): a malformed live delivery (cardLog not an array) never throws/crashes the pipeline", !corruptThrew);
   check("MOCKED — adapter corruption (end-to-end): the malformed delivery caused no engine change", TableEngine.getState().plays.length === playsBeforeCorrupt);
   unsub8();
+
+  // ============================================================
+  // MOCKED — Observed opponent replay: a private-hand client does not
+  // know an opponent's card. The adapter must still replay the observed
+  // fact through the real reducer, while leaving the local fake hand
+  // untouched after the reducer call.
+  // ============================================================
+  seedMockMatch("m-observed-opponent");
+  var observedState = TableEngine.getState();
+  var observedSeat = observedState.turn;
+  var observedLocalSeat = observedSeat === "p1" ? "p2" : "p1";
+  var observedSourceCard = observedState.hands[observedSeat][0];
+  var observedCard = { suit: observedSourceCard.suit, rank: { v: observedSourceCard.rank.v, s: observedSourceCard.rank.s } };
+  observedState.hands[observedSeat] = observedState.hands[observedSeat].filter(function (c) {
+    return !(c.suit === observedCard.suit && c.rank.v === observedCard.rank.v);
+  });
+  var observedResult = MatchAdapter.applyRemoteCard("m-observed-opponent", {
+    version: 2,
+    cardLog: [{ seatId: observedSeat, card: observedCard }]
+  }, observedLocalSeat);
+  check("MOCKED — observed opponent replay: a real card absent from the local fake hand is applied",
+    observedResult.applied === true && TableEngine.getState().plays.some(function (p) { return p.playerId === observedSeat; }));
+  check("MOCKED — observed opponent replay: the local fake hand remains without the opponent card after replay",
+    !TableEngine.getState().hands[observedSeat].some(function (c) { return c.suit === observedCard.suit && c.rank.v === observedCard.rank.v; }));
+  finishCurrentTrick();
 
   // ============================================================
   // MOCKED — Regression sanity: MatchService's other gameplay stubs

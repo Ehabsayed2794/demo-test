@@ -49,6 +49,9 @@
 // a CONTROLLABLE FAKE engine in tests/match-adapter.test.cjs's own
 // "multiple consecutive tricks" section instead, where predicting a
 // fake's "winner" carries none of that real-engine-divergence risk.
+var REPO_ROOT = require("path").join(__dirname, "..");
+function repoPath() { return require("path").join.apply(require("path"), [REPO_ROOT].concat(Array.prototype.slice.call(arguments))); }
+
 global.window = global;
 global.window.addEventListener = function () {};
 
@@ -144,14 +147,14 @@ var CURRENT_USER = null;
 global.SessionService = { getCurrentUser: function () { return CURRENT_USER ? { uid: CURRENT_USER } : null; }, setCurrentMatchId: function () { return Promise.resolve(); } };
 function signInAs(uid) { CURRENT_USER = uid; }
 
-require("/home/user/demo-test/design-ui/match-service.js");
-require("/home/user/demo-test/design-ui/engine/cards.js");
-require("/home/user/demo-test/design-ui/engine/deck.js");
-require("/home/user/demo-test/design-ui/engine/dealer.js");
-require("/home/user/demo-test/design-ui/engine/session.js");
-require("/home/user/demo-test/design-ui/engine/bidding-engine.js");
-require("/home/user/demo-test/design-ui/engine/scoring-engine.js");
-require("/home/user/demo-test/design-ui/match-adapter.js");
+require(repoPath("design-ui", "match-service.js"));
+require(repoPath("design-ui", "engine", "cards.js"));
+require(repoPath("design-ui", "engine", "deck.js"));
+require(repoPath("design-ui", "engine", "dealer.js"));
+require(repoPath("design-ui", "engine", "session.js"));
+require(repoPath("design-ui", "engine", "bidding-engine.js"));
+require(repoPath("design-ui", "engine", "scoring-engine.js"));
+require(repoPath("design-ui", "match-adapter.js"));
 // table-engine.js required LATER, after bidding completes — see this
 // file's own header comment.
 
@@ -196,7 +199,7 @@ function driveBiddingToCommittedRound() {
 }
 
 driveBiddingToCommittedRound();
-require("/home/user/demo-test/design-ui/engine/table-engine.js");
+require(repoPath("design-ui", "engine", "table-engine.js"));
 var TableEngine = global.TableEngine;
 TableEngine.initState();
 
@@ -431,7 +434,7 @@ function independentlyComputeWinner(plays, trump) {
   // against the REAL table-engine.js.
   // ============================================================
   seedMockMatch("m-trickrejected");
-  var unsub6 = MatchAdapter.startTrickSync("m-trickrejected");
+  var unsub6 = MatchAdapter.startTrickSync("m-trickrejected", "p1");
   var leaderSeat = TableEngine.getState().turn;
   var wrongSeat = ["p1", "p2", "p3", "p4"].filter(function (s) { return s !== leaderSeat; })[0];
   var illegalEntry = { seatId: wrongSeat, card: legalCardForCurrentTurn() }; // a real card, but attributed to a seat whose turn it is NOT
@@ -449,7 +452,7 @@ function independentlyComputeWinner(plays, trump) {
   // inspect the full structured desync shape applyRemoteTrick() itself
   // deliberately never re-derives or duplicates (see that function's
   // own header comment).
-  var directCardResult = MatchAdapter.applyRemoteCard("m-trickrejected", STORE[key("m-trickrejected")]);
+  var directCardResult = MatchAdapter.applyRemoteCard("m-trickrejected", STORE[key("m-trickrejected")], "p1");
   check("MOCKED — desync reporting: the underlying applyRemoteCard() call reports a structured desync — desync:true, reason:ENGINE_REJECTED",
     directCardResult.desync === true && directCardResult.reason === "ENGINE_REJECTED");
   check("MOCKED — desync reporting: the desync result carries matchId/index/seatId diagnostics, not a bare boolean",
@@ -495,7 +498,7 @@ function independentlyComputeWinner(plays, trump) {
   // MOCKED — Task 1 (Architecture Verification), re-verified directly:
   // no new export was added to table-engine.js for this sprint.
   // ============================================================
-  var tableEngineSource = require("fs").readFileSync("/home/user/demo-test/design-ui/engine/table-engine.js", "utf8");
+  var tableEngineSource = require("fs").readFileSync(repoPath("design-ui", "engine", "table-engine.js"), "utf8");
   var tableEngineExportsMatch = tableEngineSource.match(/window\.TableEngine = \{[\s\S]*?\};/);
   check("MOCKED — Task 1: table-engine.js's own export object is UNCHANGED by this sprint — still exactly initState/emit/resolveTrick/getState/canPlayCard/previewPlay",
     !!tableEngineExportsMatch && /initState:\s*initState/.test(tableEngineExportsMatch[0]) &&
@@ -507,10 +510,10 @@ function independentlyComputeWinner(plays, trump) {
   // MOCKED — Task 4/5 (no MatchService/firestore.rules change was
   // required): re-verified directly here, not just asserted in docs.
   // ============================================================
-  var matchServiceSource = require("fs").readFileSync("/home/user/demo-test/design-ui/match-service.js", "utf8");
+  var matchServiceSource = require("fs").readFileSync(repoPath("design-ui", "match-service.js"), "utf8");
   check("MOCKED — Task 4: MatchService.submitCard()'s own transaction patch is UNCHANGED by this sprint — still exactly {cardLog, lastCardSeat, turn, cardPhase, version, updatedAt}, no new trick-related field",
     /cardLog: cardLog,\s*\n\s*lastCardSeat: freshSeatId,\s*\n\s*turn: nextTurnUid,\s*\n\s*cardPhase: preview\.nextPhase,\s*\n\s*version: nextVersion,\s*\n\s*updatedAt: serverTimestamp\(\)/.test(matchServiceSource));
-  var rulesSource = require("fs").readFileSync("/home/user/demo-test/firestore.rules", "utf8");
+  var rulesSource = require("fs").readFileSync(repoPath("firestore.rules"), "utf8");
   check("MOCKED — Task 5: firestore.rules' isValidCardSubmission() affectedKeys allowlist is UNCHANGED by this sprint — still exactly ['cardLog', 'lastCardSeat', 'version', 'turn', 'cardPhase', 'updatedAt'], no new trick-related field permitted",
     /affectedKeys\(\)\.hasOnly\(\['cardLog', 'lastCardSeat', 'version', 'turn', 'cardPhase', 'updatedAt'\]\)/.test(rulesSource));
 

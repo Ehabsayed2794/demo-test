@@ -1689,13 +1689,13 @@
     // existing public pipelines, and applyRemoteCard()'s own idempotency
     // gate makes their shared delivery safe.
     if (!cardSyncStarted && window.MatchAdapter && typeof window.MatchAdapter.startCardSync === "function") {
-      try { window.MatchAdapter.startCardSync(matchId); cardSyncStarted = true; } catch (e) { console.error("[Match] startCardSync() threw:", e); }
+      try { window.MatchAdapter.startCardSync(matchId, localSeatId); cardSyncStarted = true; } catch (e) { console.error("[Match] startCardSync() threw:", e); }
     }
     if (!turnSyncStarted && window.MatchAdapter && typeof window.MatchAdapter.startTurnSync === "function") {
       try { window.MatchAdapter.startTurnSync(matchId); turnSyncStarted = true; } catch (e) { console.error("[Match] startTurnSync() threw:", e); }
     }
     if (!trickSyncStarted && window.MatchAdapter && typeof window.MatchAdapter.startTrickSync === "function") {
-      try { window.MatchAdapter.startTrickSync(matchId); trickSyncStarted = true; } catch (e) { console.error("[Match] startTrickSync() threw:", e); }
+      try { window.MatchAdapter.startTrickSync(matchId, localSeatId); trickSyncStarted = true; } catch (e) { console.error("[Match] startTrickSync() threw:", e); }
     }
   }
 
