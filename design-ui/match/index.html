@@ -1595,6 +1595,15 @@
   // once per round, never a redesign of the guard's own one-shot-per-
   // round intent.
   var tableEngineStartedForRound = null;
+  // Bootstrap-only guards: the shared MatchService listener is ref-counted,
+  // but each adapter start*Sync() call registers one local callback. Start
+  // the play pipelines once for the match and let their existing round-aware
+  // adapter logic process later rounds without accumulating callbacks.
+  var cardSyncStarted = false;
+  var turnSyncStarted = false;
+  var trickSyncStarted = false;
+  var handSyncStarted = false;
+  var dealRequestedForRound = {};
 
   // Single in-flight-submission guard for card play — the exact same
   // pattern already established and browser-verified in Bidding
@@ -1673,17 +1682,20 @@
       tableEngineStartedForRound = null; // allow a later delivery to retry rather than getting permanently stuck
       return;
     }
-    if (window.MatchAdapter && typeof window.MatchAdapter.startTrickSync === "function") {
-      // startTrickSync() alone already calls applyRemoteCard() as part
-      // of its own per-delivery catch-up loop (Sprint 4.3) — a
-      // separate startCardSync() call would be redundant (harmless,
-      // since applyRemoteCard()'s own version gate is idempotent, but
-      // pure duplication of work for every future delivery). One call
-      // covers both card application and trick resolution.
-      try { window.MatchAdapter.startTrickSync(matchId); } catch (e) { console.error("[Match] startTrickSync() threw:", e); }
+    // Start the existing card replay, trick-resolution, and turn-mirror
+    // pipelines once, after the real TableEngine for this round exists.
+    // startTrickSync() also replays cards; startCardSync() is nevertheless
+    // started explicitly because this bootstrap contract requires both
+    // existing public pipelines, and applyRemoteCard()'s own idempotency
+    // gate makes their shared delivery safe.
+    if (!cardSyncStarted && window.MatchAdapter && typeof window.MatchAdapter.startCardSync === "function") {
+      try { window.MatchAdapter.startCardSync(matchId); cardSyncStarted = true; } catch (e) { console.error("[Match] startCardSync() threw:", e); }
     }
-    if (window.MatchAdapter && typeof window.MatchAdapter.startTurnSync === "function") {
-      try { window.MatchAdapter.startTurnSync(matchId); } catch (e) { console.error("[Match] startTurnSync() threw:", e); }
+    if (!turnSyncStarted && window.MatchAdapter && typeof window.MatchAdapter.startTurnSync === "function") {
+      try { window.MatchAdapter.startTurnSync(matchId); turnSyncStarted = true; } catch (e) { console.error("[Match] startTurnSync() threw:", e); }
+    }
+    if (!trickSyncStarted && window.MatchAdapter && typeof window.MatchAdapter.startTrickSync === "function") {
+      try { window.MatchAdapter.startTrickSync(matchId); trickSyncStarted = true; } catch (e) { console.error("[Match] startTrickSync() threw:", e); }
     }
   }
 
@@ -2137,6 +2149,31 @@
         var currentUser = window.SessionService.getCurrentUser();
         localSeatId = currentUser ? window.MatchAdapter.uidToSeat(data, currentUser.uid) : null;
       }
+
+      // Hand-deal authority: only the client occupying the authoritative
+      // dealer seat requests the existing idempotent deal transaction when
+      // this round has not yet been committed. The transaction/rules remain
+      // the source of truth; this is bootstrap orchestration only.
+      var currentRoundForDeal = typeof data.currentRound === "number" ? data.currentRound : null;
+      var dealtRound = data.gameState && typeof data.gameState.dealtRound === "number" ? data.gameState.dealtRound : 0;
+      var dealerSeat = window.MatchAdapter && typeof window.MatchAdapter.uidToSeat === "function"
+        ? window.MatchAdapter.uidToSeat(data, data.dealer) : null;
+      if (localSeatId && dealerSeat === localSeatId && currentRoundForDeal != null && dealtRound < currentRoundForDeal &&
+          dealRequestedForRound[matchId] !== currentRoundForDeal &&
+          window.MatchService && typeof window.MatchService.dealRound === "function") {
+        dealRequestedForRound[matchId] = currentRoundForDeal;
+        window.MatchService.dealRound(matchId, currentRoundForDeal).catch(function (e) {
+          console.error("[Match] dealer dealRound() attempt failed (non-fatal):", e);
+        });
+      }
+
+      // Every client consumes only its own protected hand document. The
+      // existing adapter also watches the shared match document for the
+      // deal-needed signal and keeps GameSession in Firestore-authority mode.
+      if (!handSyncStarted && localSeatId && window.MatchAdapter && typeof window.MatchAdapter.startHandSync === "function") {
+        try { window.MatchAdapter.startHandSync(matchId, localSeatId); handSyncStarted = true; } catch (e) { console.error("[Match] startHandSync() threw:", e); }
+      }
+
       renderMatch(data);
       bootstrapEngineOnce(data);
       // Table Controls sprint: checked BEFORE renderSeats() so
