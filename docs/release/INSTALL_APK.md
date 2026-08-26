@@ -1,12 +1,13 @@
 # Estemshan Debug APK — Installation Guide
 
-**Release:** 1.1
+**Release:** 1.2
 
-**Android versionCode:** 2
+**Android versionCode:** 3
 
 **Package:** `com.estemshan.game`
 
 **Build type:** Debug APK
+
 **Scope:** Casual testing only; this build is not a ranked-release or production-device certification.
 
 ## English
@@ -23,7 +24,7 @@ Android may display a warning because this is a debug build rather than a store-
 
 ### 3. Open the app
 
-After installation, open **Estemshan** from the launcher. The application requires network access to connect to the live game services. Keep the device online while signing in, joining a room, and playing.
+After installation, open **Estemshan** from the launcher. This APK loads the live production site at launch and **requires an internet connection from startup**. Keep the device online while signing in, joining a room, and playing.
 
 ### 4. Troubleshooting
 
@@ -43,7 +44,7 @@ If installation fails, remove an older conflicting debug build and try again, or
 
 ### ٣. فتح التطبيق
 
-بعد التثبيت، افتح تطبيق **Estemshan** من قائمة التطبيقات. يحتاج التطبيق إلى اتصال بالشبكة للوصول إلى خدمات اللعبة المباشرة. حافظ على اتصال الجهاز بالإنترنت أثناء تسجيل الدخول والانضمام إلى الغرفة واللعب.
+بعد التثبيت، افتح تطبيق **Estemshan** من قائمة التطبيقات. يقوم هذا الإصدار بتحميل الموقع المباشر عند التشغيل، ولذلك **يتطلب اتصالاً بالإنترنت منذ بدء التطبيق**. حافظ على اتصال الجهاز بالإنترنت أثناء تسجيل الدخول والانضمام إلى الغرفة واللعب.
 
 ### ٤. حل المشاكل الشائعة
 
@@ -53,8 +54,8 @@ If installation fails, remove an older conflicting debug build and try again, or
 
 | Field | Value |
 |---|---|
-| Version name | `1.1` |
-| Version code | `2` |
+| Version name | `1.2` |
+| Version code | `3` |
 | Application ID | `com.estemshan.game` |
 | Artifact | `estemshan-debug-apk` |
 | Build workflow | `apk-debug` |
