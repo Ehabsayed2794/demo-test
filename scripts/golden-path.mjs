@@ -84,7 +84,9 @@ async function installEmulatorRedirect(page) {
 
 async function gotoReady(page, url) {
   for (var attempt = 0; attempt < 4; attempt++) {
-    await page.goto(url, { waitUntil: "load" });
+    // Live Hosting can take longer than Playwright's 30s default to finish
+    // every external font/static request; this is a harness timeout only.
+    await page.goto(url, { waitUntil: "load", timeout: 90000 });
     var ready = await page.evaluate(() => typeof firebase !== "undefined" && typeof firebase.auth === "function" && typeof firebase.firestore === "function").catch(() => false);
     if (ready) return true;
     await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));

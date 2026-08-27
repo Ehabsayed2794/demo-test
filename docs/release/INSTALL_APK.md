@@ -53,7 +53,7 @@ If installation fails, remove an older conflicting debug build and try again, or
 ## Release details
 
 | Field | Value |
-|---|---|
+| --- | --- |
 | Version name | `1.2` |
 | Version code | `3` |
 | Application ID | `com.estemshan.game` |
