@@ -956,14 +956,13 @@ function restart() {
   advance();
 }
 
-// kick off
-window.addEventListener("DOMContentLoaded", () => {
-  GameState.sync(GameState.STATES.BIDDING);
-  initState();
-  buildHand();
-  bindStatic();
-  advance();
-});
+// The integrated production screen owns engine lifecycle wiring through the
+// public APIs below. There is no paired standalone bidding UI in this
+// repository, so this engine must not auto-run an obsolete DOMContentLoaded
+// handler that called the missing buildHand()/bindStatic()/render()/showDone()
+// UI hooks. Removing that dead bootstrap is the minimal F2-1 fix: the match
+// page continues to call initState()/getState() explicitly, while loading
+// this engine can no longer raise a UI-hook ReferenceError.
 
 // Sprint 3.6 (Match Flow Integration): the minimum export required to
 // make this file's reducer callable from outside a browser page —
