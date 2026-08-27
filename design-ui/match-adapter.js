@@ -1794,6 +1794,12 @@
   // Firestore traffic for no benefit).
   var roundAdvanceAttemptedByMatch = {};
 
+  function clearRoundAdvanceAttempt(matchId, round) {
+    if (roundAdvanceAttemptedByMatch[matchId] === round) {
+      delete roundAdvanceAttemptedByMatch[matchId];
+    }
+  }
+
   /** Detects "MY local TableEngine just reached phase DONE for round
    *  R" and attempts EXACTLY ONE `MatchService.advanceToNextRound(matchId,
    *  R)` call — never a second, third, ... call for the SAME round from
@@ -1820,7 +1826,10 @@
     if (!state || state.phase !== "DONE" || state.round == null) return;
     if (roundAdvanceAttemptedByMatch[matchId] === state.round) return;
     roundAdvanceAttemptedByMatch[matchId] = state.round;
-    maybeExtendOrCompleteMatch(matchId, state.round);
+    Promise.resolve(maybeExtendOrCompleteMatch(matchId, state.round)).catch(function () {
+      // A failed attempt must not permanently suppress a retry for this round.
+      clearRoundAdvanceAttempt(matchId, state.round);
+    });
   }
 
   // ── Match Completion sprint: Extension + Completion Orchestration ──
@@ -1856,7 +1865,7 @@
    *  logged, never thrown into the caller's snapshot callback; another
    *  client (or a later local retry) may still succeed. */
   function maybeExtendOrCompleteMatch(matchId, completedRound) {
-    if (!global.MatchService) return;
+    if (!global.MatchService) return Promise.reject(new Error("MATCH_SERVICE_UNAVAILABLE"));
     var lastResult = (global.GameSession && typeof global.GameSession.getLastRoundResult === "function")
       ? global.GameSession.getLastRoundResult() : null;
     var extension = (lastResult && lastResult.round === completedRound) ? lastResult.roundExtension : null;
@@ -1864,27 +1873,30 @@
     var extendStep = (extension && extension.extend && typeof global.MatchService.extendMatchRounds === "function")
       ? global.MatchService.extendMatchRounds(matchId, completedRound, extension.reason).catch(function (e) {
           console.error("[MatchAdapter] extendMatchRounds() attempt failed (non-fatal — another client, or a later delivery, may still succeed):", e);
+          throw e;
         })
       : Promise.resolve();
 
-    extendStep.then(function () {
+    return extendStep.then(function () {
       var complete = global.GameSession && typeof global.GameSession.isMatchComplete === "function" && global.GameSession.isMatchComplete();
       if (complete) {
         if (typeof global.MatchService.endMatch !== "function") return;
         var finalScores = global.GameSession.getMatchScores();
         var winnerIds = (global.ScoringEngine && typeof global.ScoringEngine.computeWinner === "function")
           ? global.ScoringEngine.computeWinner(finalScores) : [];
-        global.MatchService.endMatch(matchId, completedRound, finalScores, winnerIds).then(function (result) {
+        return global.MatchService.endMatch(matchId, completedRound, finalScores, winnerIds).then(function (result) {
           if (result && result.complete && typeof global.GameSession.setWinnerIds === "function") {
             global.GameSession.setWinnerIds(result.winnerIds);
           }
         }).catch(function (e) {
           console.error("[MatchAdapter] endMatch() attempt failed (non-fatal — another client, or a later delivery, may still succeed):", e);
+          throw e;
         });
       } else {
         if (typeof global.MatchService.advanceToNextRound !== "function") return;
-        global.MatchService.advanceToNextRound(matchId, completedRound).catch(function (e) {
+        return global.MatchService.advanceToNextRound(matchId, completedRound).catch(function (e) {
           console.error("[MatchAdapter] advanceToNextRound() attempt failed (non-fatal — another client, or a later delivery, may still succeed):", e);
+          throw e;
         });
       }
     });
