@@ -261,7 +261,14 @@
    *  the flag's own declaration above) — a fresh load must re-declare
    *  its context every time, exactly like remoteMatchSubscription. */
   function setHandAuthorityMode(mode) {
-    handAuthorityMode = (mode === "firestore") ? "firestore" : "local";
+    var next = (mode === "firestore") ? "firestore" : "local";
+    // F1-2: clear only the local fallback state when first entering Firestore authority.
+    if (next === "firestore" && handAuthorityMode !== "firestore") {
+      session.hands = {};
+      session.dealState = { roundNumber: null, completed: false, dealtAt: null };
+      persist();
+    }
+    handAuthorityMode = next;
   }
   function getHandAuthorityMode() { return handAuthorityMode; }
 

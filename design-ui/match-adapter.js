@@ -2074,15 +2074,22 @@
    *  A rejection (a genuine error, or another client's transaction
    *  already won) is swallowed here, never thrown into the caller's
    *  snapshot callback. */
-  function maybeDealRound(matchId, matchDoc) {
+  function maybeDealRound(matchId, matchDoc, mySeatId) {
     if (!global.MatchService || typeof global.MatchService.dealRound !== "function") return;
     if (typeof matchDoc.currentRound !== "number") return;
     var currentRound = matchDoc.currentRound;
     var gameState = matchDoc.gameState || { dealtRound: 0 };
     if ((gameState.dealtRound || 0) >= currentRound) return;
+    // F1-1: only the client occupying the authoritative dealer seat may attempt the deal.
+    var dealerSeat = uidToSeat(matchDoc, matchDoc.dealer);
+    if (!mySeatId || !dealerSeat || dealerSeat !== mySeatId) return;
     if (dealAttemptedByMatch[matchId] === currentRound) return;
     dealAttemptedByMatch[matchId] = currentRound;
-    global.MatchService.dealRound(matchId, currentRound).catch(function () {});
+    global.MatchService.dealRound(matchId, currentRound).catch(function (err) {
+      // F1-3: preserve the full denial body for diagnosis without rethrowing into the listener.
+      console.error("[MatchAdapter] dealRound() attempt failed (swallowed, non-fatal):",
+        err instanceof Error ? { name: err.name, code: err.code, message: err.message, stack: err.stack } : err);
+    });
   }
 
   /** Reconstructs this seat's full, playable Card objects (id/
@@ -2135,7 +2142,7 @@
     }
     var unsubscribeMatch = global.MatchService.subscribeToMatch(matchId, function (data, err) {
       if (err || !data) return;
-      maybeDealRound(matchId, data);
+      maybeDealRound(matchId, data, mySeatId);
     });
     var unsubscribeHand = global.MatchService.subscribeToHand(matchId, mySeatId, function (data, err) {
       if (err || !data) return;
