@@ -1,0 +1,110 @@
+{
+  "capturedInputs": {
+    "oldData": {
+      "version": 1150,
+      "currentRound": 16,
+      "maxRounds": 19,
+      "extendedRounds": [
+        14
+      ],
+      "status": "starting",
+      "completedRound": null,
+      "cardLogLength": 832,
+      "players": [
+        "GNZPc0AWW9tm0M9ULOzKKaSx8LfE"
+      ],
+      "seats": {
+        "p1": "GNZPc0AWW9tm0M9ULOzKKaSx8LfE"
+      }
+    },
+    "newData": {
+      "version": 1151,
+      "currentRound": 16,
+      "maxRounds": 20,
+      "extendedRounds": [
+        14,
+        16
+      ],
+      "status": "starting"
+    },
+    "authUid": "GNZPc0AWW9tm0M9ULOzKKaSx8LfE",
+    "completedRound": 16,
+    "reason": "SAAYDA",
+    "matchId": "uI6ShzMCynV3BJjSeoQV"
+  },
+  "predicateResults": {
+    "P01": {
+      "result": "PASS",
+      "line": 1092
+    },
+    "P02": {
+      "result": "PASS",
+      "line": 1093
+    },
+    "P03": {
+      "result": "PASS",
+      "line": 1094
+    },
+    "P04": {
+      "result": "PASS",
+      "line": 1098
+    },
+    "P05": {
+      "result": "PASS",
+      "line": 1099
+    },
+    "P06": {
+      "result": "PASS",
+      "line": 1100
+    },
+    "P07": {
+      "result": "PASS",
+      "line": 1087
+    },
+    "P08": {
+      "result": "PASS",
+      "line": 1102
+    },
+    "P09": {
+      "result": "PASS",
+      "line": 1106
+    },
+    "P10": {
+      "result": "PASS",
+      "line": 1123
+    },
+    "P11": {
+      "result": "PASS",
+      "line": 1124
+    },
+    "P12": {
+      "result": "PASS",
+      "line": 1125
+    },
+    "P13": {
+      "result": "PASS",
+      "line": 1126
+    }
+  },
+  "emulatorResponse": {
+    "code": "permission-denied",
+    "message": "evaluation error at L1513:24 for 'update' @ L1513, false for 'update' @ L1860, false for 'update' @ L1513, false for 'update' @ L1860",
+    "affectedClients": [
+      "p4 (RPC 0x32ffe579)",
+      "p3 (RPC 0x2baae7cb)"
+    ],
+    "successfulClients": [
+      "p1",
+      "p2"
+    ]
+  },
+  "concurrencyModel": {
+    "initialInvocations": 4,
+    "rejectedInvocations": 2,
+    "successfulInvocations": 2,
+    "secondInvocations": 3,
+    "retryIdentity": "The Firestore SDK does NOT retry runTransaction on permission-denied errors. The 2 REJECTED events are from 2 different clients' initial invocations. The 3 SUCCESS_WRAP events are from the outer .then of second invocations (which returned ALREADY_EXTENDED, not permission-denied)."
+  },
+  "conclusion": "RULE FAILURE = UNKNOWN",
+  "mostLikelyHypothesis": "I. Emulator-specific behavior (supported by documented emulator bug for list operations in Rules comments at lines 1107-1119)"
+}
