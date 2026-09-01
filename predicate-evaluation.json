@@ -1,0 +1,181 @@
+{
+  "results": [
+    {
+      "id": "P01",
+      "sourceLine": 1092,
+      "expression": "request.auth != null",
+      "input": {
+        "authUid": "GNZPc0AWW9tm0M9ULOzKKaSx8LfE"
+      },
+      "result": "PASS",
+      "note": "authUid is non-null string"
+    },
+    {
+      "id": "P02",
+      "sourceLine": 1093,
+      "expression": "request.auth.uid in oldData.players",
+      "input": {
+        "authUid": "GNZPc0AWW9tm0M9ULOzKKaSx8LfE",
+        "players": [
+          "GNZPc0AWW9tm0M9ULOzKKaSx8LfE",
+          "zFkMnch0fcZHm1GNLTtLfikpR9Yi",
+          "gFxGIF3WRA3IQ5Yj7oCUZ1SeI4kO",
+          "nMUolfN5WAMWnPRGVu78eAfpCWht"
+        ]
+      },
+      "result": "PASS",
+      "note": "authUid found in players list"
+    },
+    {
+      "id": "P03",
+      "sourceLine": 1094,
+      "expression": "'maxRounds' in oldData && 'extendedRounds' in oldData && 'version' in oldData",
+      "input": {
+        "oldKeys": [
+          "version",
+          "currentRound",
+          "maxRounds",
+          "extendedRounds",
+          "status",
+          "completedRound",
+          "cardLog",
+          "players",
+          "seats",
+          "gameState",
+          "biddingLog",
+          "cardPhase",
+          "currentDealer",
+          "turn",
+          "biddingOpen",
+          "bids",
+          "lastBidSeat",
+          "lastCardSeat"
+        ]
+      },
+      "result": "PASS",
+      "note": "all three fields present in oldData"
+    },
+    {
+      "id": "P04",
+      "sourceLine": 1098,
+      "expression": "('status' in oldData ? oldData.status != 'complete' : true)",
+      "input": {
+        "status": "starting"
+      },
+      "result": "PASS",
+      "note": "oldData.status = \"starting\" != \"complete\""
+    },
+    {
+      "id": "P05",
+      "sourceLine": 1099,
+      "expression": "newData.diff(oldData).affectedKeys().hasOnly(['maxRounds', 'extendedRounds', 'version', 'updatedAt'])",
+      "input": {
+        "changedKeys": [
+          "version",
+          "maxRounds",
+          "extendedRounds"
+        ],
+        "allowedKeys": [
+          "maxRounds",
+          "extendedRounds",
+          "version",
+          "updatedAt"
+        ],
+        "unexpectedKeys": []
+      },
+      "result": "PASS",
+      "note": "Changed keys: [version, maxRounds, extendedRounds] — all within allowed set"
+    },
+    {
+      "id": "P06",
+      "sourceLine": 1100,
+      "expression": "newData.version == oldData.version + 1",
+      "input": {
+        "oldVersion": 1150,
+        "newVersion": 1151
+      },
+      "result": "PASS",
+      "note": "1151 == 1150 + 1 = 1151"
+    },
+    {
+      "id": "P07",
+      "sourceLine": 1087,
+      "expression": "oldRounds is list && newRounds is list",
+      "input": {
+        "oldRoundsType": "Array",
+        "newRoundsType": "Array"
+      },
+      "result": "PASS",
+      "note": "Both are JS Arrays. In Firestore Rules CEL, \"is list\" requires the Firestore List type, not JS Array."
+    },
+    {
+      "id": "P08",
+      "sourceLine": 1102,
+      "expression": "newData.maxRounds == oldData.maxRounds + 1",
+      "input": {
+        "oldMaxRounds": 19,
+        "newMaxRounds": 20
+      },
+      "result": "PASS",
+      "note": "20 == 19 + 1 = 20"
+    },
+    {
+      "id": "P09",
+      "sourceLine": 1106,
+      "expression": "newRounds.size() == oldRounds.size() + 1",
+      "input": {
+        "oldRoundsSize": 1,
+        "newRoundsSize": 2
+      },
+      "result": "PASS",
+      "note": "2 == 1 + 1 = 2"
+    },
+    {
+      "id": "P10",
+      "sourceLine": 1123,
+      "expression": "(oldRounds.size() == 0 ? true : newRounds[0:oldRounds.size()] == oldRounds)",
+      "input": {
+        "oldRoundsLength": 1
+      },
+      "result": "PASS",
+      "note": "newRounds[0:1] = [14], oldRounds = [14], match = true"
+    },
+    {
+      "id": "P11",
+      "sourceLine": 1124,
+      "expression": "appendedRound is int",
+      "input": {
+        "appendedRound": 16,
+        "type": "number"
+      },
+      "result": "PASS",
+      "note": "appendedRound = 16 (number)"
+    },
+    {
+      "id": "P12",
+      "sourceLine": 1125,
+      "expression": "appendedRound >= 14 && appendedRound <= 18",
+      "input": {
+        "appendedRound": 16
+      },
+      "result": "PASS",
+      "note": "16 >= 14 && 16 <= 18"
+    },
+    {
+      "id": "P13",
+      "sourceLine": 1126,
+      "expression": "!(appendedRound in oldRounds)",
+      "input": {
+        "appendedRound": 16,
+        "oldRounds": [
+          14
+        ]
+      },
+      "result": "PASS",
+      "note": "16 in [14] = false, so ! = true"
+    }
+  ],
+  "allPass": true,
+  "anyFail": false,
+  "anyError": false
+}

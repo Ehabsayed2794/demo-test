@@ -9,7 +9,7 @@ import { resolveChromiumExecutablePath } from "./resolve-chromium.cjs";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const __REPO_ROOT__ = path.join(__dirname, "..");
 
-const ROOT = __REPO_ROOT__ + "/design-ui";
+const ROOT = path.resolve(__REPO_ROOT__, "design-ui");
 const MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json" };
 const HTTP_PORT = Number(process.env.GOLDEN_PORT || 5240);
 const FIRESTORE_HOST = "127.0.0.1", FIRESTORE_PORT = 8080;
@@ -50,8 +50,8 @@ function startServer() {
   return new Promise((resolve) => {
     var server = http.createServer((req, res) => {
       var urlPath = decodeURIComponent(req.url.split("?")[0]);
-      var filePath = path.join(ROOT, urlPath);
-      if (!filePath.startsWith(ROOT)) { res.writeHead(403); res.end(); return; }
+      var filePath = path.resolve(ROOT, "." + urlPath);
+      if (filePath !== ROOT && !filePath.startsWith(ROOT + path.sep)) { res.writeHead(403); res.end(); return; }
       fs.readFile(filePath, (err, data) => {
         if (err) { res.writeHead(404); res.end("Not found: " + urlPath); return; }
         var ext = path.extname(filePath);
@@ -300,7 +300,7 @@ async function attemptOneCardPlay(page, matchId, seatId) {
 // can differ by one delivery across clients right at the boundary).
 async function driveRoundCardPlay(pages, matchId, roundNumber, maxIterations) {
   const log = [];
-  let lastTurn = null, stall = 0, lastValidatedTrick = 0;
+  let lastTurn = null, stall = 0, lastValidatedTrick = 0, staleRetries = 0;
   const initialDoc = await pages[0].evaluate((id) => window.MatchService.loadMatch(id), matchId).catch(() => null);
   const initialCardCount = initialDoc && Array.isArray(initialDoc.cardLog) ? initialDoc.cardLog.length : 0;
   for (let iter = 0; iter < (maxIterations || 520); iter++) {
@@ -350,12 +350,21 @@ async function driveRoundCardPlay(pages, matchId, roundNumber, maxIterations) {
     log.push({ iter, seat: turn, res });
     if (res.noLegalCard) return { ok: false, reason: "NO_LEGAL_CARD", log, seat: turn };
     if (res.error) {
+      var isStale = res.code === "STALE_GAME_STATE" || (res.error && res.error.indexOf("STALE_GAME_STATE") !== -1) || (res.error && res.error.indexOf("match document changed since this card was validated") !== -1);
+      if (isStale && staleRetries < 1) {
+        staleRetries++;
+        logEvent('STALE_GAME_STATE_RETRY', { round: roundNumber, seat: turn, iter: iter, retry: staleRetries, errorCode: res.code || "STALE_GAME_STATE", attempted: res.attempted || null });
+        await sleep(250);
+        continue;
+      }
+      staleRetries = 0;
       findings.push({ label: `card-write-${roundNumber}-${iter}`, note: res });
       // A rejected public write is a first-class blocker. Do not retry the
       // same actor/card until a generic stall timeout hides the original
       // cause; the task requires stopping at the first observed failure.
       return { ok: false, reason: "CARD_WRITE_REJECTED", log, seat: turn, error: res };
     }
+    staleRetries = 0;
 
     const afterStates = await Promise.all(pages.map((p) => p.evaluate(() => window.TableEngine ? window.TableEngine.getState() : null).catch(() => null)));
     const boundaryState = afterStates.find((s) => s && (s.phase === "RESOLVING" || s.phase === "DONE"));
