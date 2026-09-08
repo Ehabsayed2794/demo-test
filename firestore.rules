@@ -1007,12 +1007,26 @@ service cloud.firestore {
              // of the JS-side check and corrupt the completed
              // document). `'status' in oldData` defensively guards a
              // pre-Sprint-3.4 document shape, though none exist today.
-             && ('status' in oldData ? oldData.status != 'complete' : true)
-             && newData.diff(oldData).affectedKeys().hasOnly(
-                  ['currentRound', 'dealer', 'version', 'biddingOpen', 'bids', 'lastBidSeat', 'cardPhase', 'turn', 'updatedAt'])
-             && newData.version == oldData.version + 1
-             && newData.currentRound == oldData.currentRound + 1
-             // Dealer rotates to the exact next active seat in the
+              && ('status' in oldData ? oldData.status != 'complete' : true)
+              // Per-Round Log Window sprint: the SAME transaction that
+              // advances the round MUST also reset the current-round
+              // windows (`cardLog`/`biddingLog`) to empty — the completed
+              // round's own 52 cards + bidding actions land in
+              // `roundArchive/{completedRound}` in that SAME transaction
+              // (see that subcollection's own block below), so no reader
+              // ever observes "advanced but not archived" or vice versa.
+              // Requiring the post-write value to be EXACTLY empty (not
+              // merely "if touched") keeps every pre-existing emulator
+              // expectation green: an advance that never touches the logs
+              // (both already []) still passes, while any non-empty log
+              // content on an advance is denied.
+              && newData.diff(oldData).affectedKeys().hasOnly(
+                   ['currentRound', 'dealer', 'version', 'biddingOpen', 'bids', 'lastBidSeat', 'cardPhase', 'turn', 'cardLog', 'biddingLog', 'updatedAt'])
+              && newData.version == oldData.version + 1
+              && newData.currentRound == oldData.currentRound + 1
+              && newData.cardLog == []
+              && newData.biddingLog == []
+              // Dealer rotates to the exact next active seat in the
              // immutable positional seat map, including wraparound and
              // supported under-four-player shapes.
              && newData.dealer == expectedNextDealer(oldData)
@@ -1183,11 +1197,20 @@ service cloud.firestore {
              // match's document can never be re-targeted by this rule
              // again (idempotent no-op returns, never a second write,
              // are MatchService.endMatch()'s own job for that case).
-             && oldData.status != 'complete'
-             && newData.status == 'complete'
-             && newData.diff(oldData).affectedKeys().hasOnly(
-                  ['status', 'winnerIds', 'finalScores', 'completedRound', 'version', 'updatedAt'])
-             && newData.version == oldData.version + 1
+              && oldData.status != 'complete'
+              && newData.status == 'complete'
+              // Per-Round Log Window sprint: the terminal transition
+              // archives the FINAL round exactly like isValidRoundAdvance()
+              // does for every prior round (same-transaction
+              // `roundArchive/{completedRound}` write — see below), so the
+              // completed document itself stays small for every post-match
+              // read. Same "post-write value must be EXACTLY empty"
+              // discipline as the advance rule above.
+              && newData.diff(oldData).affectedKeys().hasOnly(
+                   ['status', 'winnerIds', 'finalScores', 'completedRound', 'version', 'cardLog', 'biddingLog', 'updatedAt'])
+              && newData.version == oldData.version + 1
+              && newData.cardLog == []
+              && newData.biddingLog == []
              // The match may only end once the completed round reaches
              // the CURRENT authoritative ceiling — never a hardcoded 18,
              // always `oldData.maxRounds` (which extendMatchRounds() may
@@ -1512,6 +1535,73 @@ service cloud.firestore {
       }
       allow update: if request.auth != null && isValidMatchUpdateDispatch();
       allow delete: if false;
+
+      // ── matches/{matchId}/roundArchive/{archiveId} ────────────────
+      // Per-Round Log Window sprint: the pressure valve for the stored-
+      // array-size root cause (proven by 2 CI runs: arrayUnion() shrinks
+      // each WRITE to one entry yet the Commit still 500s at ~930-960
+      // cumulative entries — and even pure BatchGet reads 500 — so the
+      // failure is a function of the STORED array size at read/rules-
+      // evaluation time, never the per-write payload size).
+      //
+      // SCHEMA: one document per COMPLETED round, id === String(round)
+      // (e.g. "1".."21"), written ATOMICALLY in the SAME transaction
+      // that advances past (or completes on) that round:
+      //   { round: int, matchId: string,
+      //     cardLog: [exactly the round's 52 {seatId,card,round} plays],
+      //     biddingLog: [that round's {seatId,actionType,...,round} actions] }
+      // The parent's own `cardLog`/`biddingLog` then reset to [] in that
+      // SAME transaction (see isValidRoundAdvance()/isValidMatchCompletion()
+      // above), so the parent NEVER holds more than one round's window
+      // (<=52 cards + dozens of bidding actions, ~10 KB, not ~200 KB).
+      // A mid-round reconnect needs ONLY the parent window (every entry
+      // is round-tagged; the adapter replays from window index 0); the
+      // archive exists for forensics and a future "review past rounds"
+      // screen — TODAY nothing in production reads it (verified: the
+      // only cardLog/biddingLog readers are MatchService/MatchAdapter
+      // themselves, both round-scoped).
+      //
+      // Write-once (immutable after create — update/delete denied), the
+      // same terminal discipline `status:'complete'` already uses. The
+      // create rule binds the archive to the round actually being closed
+      // by reading the PARENT pre-transaction (`get()` is pre-commit
+      // state — the same guarantee isValidNewMatch() already relies on):
+      // the archived `round` must equal the parent's CURRENT round.
+      // HONEST LIMITATION (this file's own convention): the reverse
+      // direction is NOT enforced — a client could advance with empty
+      // logs and skip archiving (history loss, gameplay unaffected;
+      // engines score locally per round). Enforcing "advance IMPLIES
+      // archive" in CEL would need a dynamic getAfter() path built from
+      // an int round number, which this file's compile-safe subset
+      // cannot express (see the Sprint 4.2.3 `.all()`/`.exists()` hotfix
+      // notes). The production writer (MatchService) always archives;
+      // this rule guarantees every archive that DOES exist is genuine.
+      match /roundArchive/{archiveId} {
+        function parentMatch() {
+          return get(/databases/$(database)/documents/matches/$(matchId)).data;
+        }
+        function isValidRoundArchiveCreate() {
+          let parent = parentMatch();
+          let data = request.resource.data;
+          return request.auth != null
+                 && request.auth.uid in parent.players
+                 && ('status' in parent ? parent.status != 'complete' : true)
+                 && data.keys().hasOnly(['round', 'matchId', 'cardLog', 'biddingLog'])
+                 && data.round is int
+                 && data.round >= 1
+                 && data.matchId == matchId
+                 && data.cardLog is list
+                 && data.cardLog.size() == 52
+                 && data.biddingLog is list
+                 && data.round == parent.currentRound;
+        }
+
+        allow get: if request.auth != null && request.auth.uid in parentMatch().players;
+        allow list: if false;
+        allow create: if isValidRoundArchiveCreate();
+        allow update: if false;
+        allow delete: if false;
+      }
 
       // ── matches/{matchId}/rematchVote/{voteId} ──────────────────────
       // Post-Match Rematch Vote sprint. A single well-known document,

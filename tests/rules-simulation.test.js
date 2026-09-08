@@ -599,7 +599,7 @@ function isValidRoundAdvance(oldData, newData, requestAuthUid) {
   // isValidRoundAdvance() (found via real-browser QA).
   if ("status" in oldData && oldData.status === "complete") return false;
 
-  var allowedChangedKeys = ["currentRound", "version", "biddingOpen", "bids", "lastBidSeat", "cardPhase", "turn", "updatedAt"];
+  var allowedChangedKeys = ["currentRound", "version", "biddingOpen", "bids", "lastBidSeat", "cardPhase", "turn", "cardLog", "biddingLog", "updatedAt"];
   var changedKeys = Object.keys(newData).filter(function (k) { return JSON.stringify(newData[k]) !== JSON.stringify(oldData[k]); })
     .concat(Object.keys(oldData).filter(function (k) { return !(k in newData); }));
   var onlyAllowedKeysChanged = changedKeys.every(function (k) { return allowedChangedKeys.indexOf(k) !== -1; });
@@ -610,6 +610,12 @@ function isValidRoundAdvance(oldData, newData, requestAuthUid) {
   if (newData.biddingOpen !== true) return false;
   if (newData.cardPhase !== null) return false;
   if (newData.turn !== null) return false;
+  // Per-Round Log Window sprint: mirrors the real rule's post-write
+  // EXACTLY-empty requirement — the advance transaction must leave
+  // both windows reset (the round's own history moves to
+  // roundArchive/{round} in the same commit).
+  if (!Array.isArray(newData.cardLog) || newData.cardLog.length !== 0) return false;
+  if (!Array.isArray(newData.biddingLog) || newData.biddingLog.length !== 0) return false;
 
   return true;
 }
@@ -1545,7 +1551,16 @@ var matchAfterCreate423_fourSeats = Object.assign({}, matchAfterCreate42, {
   players: ["userB", "userC", "userD", "userE"],
   seats: { p1: "userB", p2: "userC", p3: "userD", p4: "userE" },
   bids: { p1: null, p2: null, p3: null, p4: null },
-  dealer: "userB", turn: "userB"
+  dealer: "userB", turn: "userB",
+  // Per-Round Log Window sprint: a CURRENT match document always carries
+  // biddingLog (established at creation since Sprint 3.7) — this fixture
+  // predates that field and never had it. Added here (not in any
+  // create-validation fixture, which must keep testing the OLD shapes)
+  // so the advance/completion mirrors' new exactly-empty requirements
+  // evaluate against a production-accurate base. Diff-based mirrors only
+  // ever compare CHANGED keys, so an unchanged [] is invisible to every
+  // pre-existing section using this fixture.
+  biddingLog: []
 });
 
 function fourSeatCardSubmissionWithTurn(nextTurn, nextPhase) {
@@ -1964,16 +1979,41 @@ var matchReadyForRoundAdvance = Object.assign({}, matchAfterCreate423_fourSeats,
   version: 55
 });
 check(
-  "SIMULATED — round advance: a well-formed transition (currentRound+1, version+1, biddingOpen reset true, cardPhase/turn reset null) is ALLOWED for ANY seated player, not just a designated host",
+  "SIMULATED — round advance: a well-formed transition (currentRound+1, version+1, biddingOpen reset true, cardPhase/turn reset null, BOTH log windows reset to []) is ALLOWED for ANY seated player, not just a designated host",
   isValidRoundAdvance(
     matchReadyForRoundAdvance,
     Object.assign({}, matchReadyForRoundAdvance, {
       currentRound: 2, version: 56, biddingOpen: true,
       bids: { p1: null, p2: null, p3: null, p4: null }, lastBidSeat: null,
-      cardPhase: null, turn: null
+      cardPhase: null, turn: null, cardLog: [], biddingLog: []
     }),
     "userE" // p4 — NOT the dealer/turn seat, still allowed to advance
   ) === true
+);
+check(
+  "SIMULATED — round advance: leaving the 52-entry cardLog in place instead of resetting it to [] — DENIED (Per-Round Log Window: the advance must leave the window reset, history moves to roundArchive)",
+  isValidRoundAdvance(
+    matchReadyForRoundAdvance,
+    Object.assign({}, matchReadyForRoundAdvance, {
+      currentRound: 2, version: 56, biddingOpen: true,
+      bids: { p1: null, p2: null, p3: null, p4: null }, lastBidSeat: null,
+      cardPhase: null, turn: null, cardLog: matchReadyForRoundAdvance.cardLog, biddingLog: []
+    }),
+    "userB"
+  ) === false
+);
+check(
+  "SIMULATED — round advance: resetting cardLog to [] but leaving a non-empty biddingLog — DENIED (both windows must reset together, atomically)",
+  isValidRoundAdvance(
+    matchReadyForRoundAdvance,
+    Object.assign({}, matchReadyForRoundAdvance, {
+      currentRound: 2, version: 56, biddingOpen: true,
+      bids: { p1: null, p2: null, p3: null, p4: null }, lastBidSeat: null,
+      cardPhase: null, turn: null, cardLog: [],
+      biddingLog: [{ seatId: "p1", actionType: "SubmitDashCallDecision", declaredDashCall: false, round: 1 }]
+    }),
+    "userB"
+  ) === false
 );
 check(
   "SIMULATED — round advance: currentRound jumping by 2 (skipping a round) — DENIED",
@@ -2011,8 +2051,101 @@ check(
   "SIMULATED — round advance: a non-player uid attempting the transition — DENIED",
   isValidRoundAdvance(
     matchReadyForRoundAdvance,
-    Object.assign({}, matchReadyForRoundAdvance, { currentRound: 2, version: 56, cardPhase: null, turn: null }),
+    Object.assign({}, matchReadyForRoundAdvance, { currentRound: 2, version: 56, cardPhase: null, turn: null, cardLog: [], biddingLog: [] }),
     "some-fabricated-uid"
+  ) === false
+);
+
+// ============================================================
+// Per-Round Log Window sprint — isValidRoundArchiveCreate() mirror +
+// tests, ALL SIMULATED (same convention as every prior sprint).
+// parentPre: matches/{matchId} BEFORE the same transaction commits
+// (rules get() is pre-commit state). data: the roundArchive/{round}
+// candidate. Mirrors the real rule 1:1: seated writer, parent not
+// complete, exact 4-key shape, int round >= 1, matchId binding,
+// cardLog exactly 52, biddingLog a list, round == parent.currentRound.
+// ============================================================
+function isValidRoundArchiveCreate(parentPre, data, requestAuthUid, matchIdParam) {
+  if (requestAuthUid == null) return false;
+  if (!parentPre || typeof parentPre !== "object") return false;
+  if ((parentPre.players || []).indexOf(requestAuthUid) === -1) return false;
+  if ("status" in parentPre && parentPre.status === "complete") return false;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return false;
+  var keys = Object.keys(data);
+  if (keys.length !== 4) return false;
+  if (["round", "matchId", "cardLog", "biddingLog"].every(function (k) { return keys.indexOf(k) !== -1; }) === false) return false;
+  if (!Number.isInteger(data.round) || data.round < 1) return false;
+  if (data.matchId !== matchIdParam) return false;
+  if (!Array.isArray(data.cardLog) || data.cardLog.length !== 52) return false;
+  if (!Array.isArray(data.biddingLog)) return false;
+  if (data.round !== parentPre.currentRound) return false;
+  return true;
+}
+
+var archiveParentR1 = { players: ["userB", "userC", "userD", "userE"], status: "starting", currentRound: 1 };
+function fiftyTwoCardEntries(round) {
+  var log = [];
+  for (var t = 0; t < 13; t++) {
+    ["p1", "p2", "p3", "p4"].forEach(function (seatId) {
+      log.push({ seatId: seatId, card: { suit: "SPADES", rank: { v: 2, s: "2" } }, round: round });
+    });
+  }
+  return log;
+}
+check(
+  "SIMULATED — roundArchive create: a well-formed Round 1 archive (52 plays, round == parent.currentRound, seated writer) — ALLOWED",
+  isValidRoundArchiveCreate(
+    archiveParentR1,
+    { round: 1, matchId: "m1", cardLog: fiftyTwoCardEntries(1), biddingLog: [] },
+    "userB", "m1"
+  ) === true
+);
+check(
+  "SIMULATED — roundArchive create: archiving the WRONG round (2 while the parent is still on 1) — DENIED",
+  isValidRoundArchiveCreate(
+    archiveParentR1,
+    { round: 2, matchId: "m1", cardLog: fiftyTwoCardEntries(2), biddingLog: [] },
+    "userB", "m1"
+  ) === false
+);
+check(
+  "SIMULATED — roundArchive create: short cardLog (51 plays, not a complete round) — DENIED",
+  isValidRoundArchiveCreate(
+    archiveParentR1,
+    { round: 1, matchId: "m1", cardLog: fiftyTwoCardEntries(1).slice(0, 51), biddingLog: [] },
+    "userB", "m1"
+  ) === false
+);
+check(
+  "SIMULATED — roundArchive create: matchId pointing at a DIFFERENT match — DENIED",
+  isValidRoundArchiveCreate(
+    archiveParentR1,
+    { round: 1, matchId: "other-match", cardLog: fiftyTwoCardEntries(1), biddingLog: [] },
+    "userB", "m1"
+  ) === false
+);
+check(
+  "SIMULATED — roundArchive create: non-player writer — DENIED",
+  isValidRoundArchiveCreate(
+    archiveParentR1,
+    { round: 1, matchId: "m1", cardLog: fiftyTwoCardEntries(1), biddingLog: [] },
+    "some-fabricated-uid", "m1"
+  ) === false
+);
+check(
+  "SIMULATED — roundArchive create: parent already complete (post-match fabrication) — DENIED",
+  isValidRoundArchiveCreate(
+    Object.assign({}, archiveParentR1, { status: "complete" }),
+    { round: 1, matchId: "m1", cardLog: fiftyTwoCardEntries(1), biddingLog: [] },
+    "userB", "m1"
+  ) === false
+);
+check(
+  "SIMULATED — roundArchive create: extra key smuggled alongside the 4 allowed ones — DENIED",
+  isValidRoundArchiveCreate(
+    archiveParentR1,
+    { round: 1, matchId: "m1", cardLog: fiftyTwoCardEntries(1), biddingLog: [], winnerIds: ["p1"] },
+    "userB", "m1"
   ) === false
 );
 
@@ -2061,13 +2194,17 @@ function isValidMatchCompletion(oldData, newData, requestAuthUid) {
   if (oldData.status === "complete") return false;
   if (newData.status !== "complete") return false;
 
-  var allowedChangedKeys = ["status", "winnerIds", "finalScores", "completedRound", "version", "updatedAt"];
+  var allowedChangedKeys = ["status", "winnerIds", "finalScores", "completedRound", "version", "cardLog", "biddingLog", "updatedAt"];
   var changedKeys = Object.keys(newData).filter(function (k) { return JSON.stringify(newData[k]) !== JSON.stringify(oldData[k]); })
     .concat(Object.keys(oldData).filter(function (k) { return !(k in newData); }));
   var onlyAllowedKeysChanged = changedKeys.every(function (k) { return allowedChangedKeys.indexOf(k) !== -1; });
   if (!onlyAllowedKeysChanged) return false;
 
   if (newData.version !== oldData.version + 1) return false;
+  // Per-Round Log Window sprint: mirrors the real rule — the terminal
+  // transition archives the final round and leaves both windows reset.
+  if (!Array.isArray(newData.cardLog) || newData.cardLog.length !== 0) return false;
+  if (!Array.isArray(newData.biddingLog) || newData.biddingLog.length !== 0) return false;
   if (!Number.isInteger(newData.completedRound)) return false;
   if (newData.completedRound !== oldData.currentRound) return false;
   if (!(newData.completedRound + 1 > oldData.maxRounds)) return false;
@@ -2189,6 +2326,28 @@ check(
     matchReadyForCompletion,
     Object.assign({}, matchReadyForCompletion, {
       status: "complete", winnerIds: ["p1", "p2"], finalScores: twoKingsScores, completedRound: 18, version: 91
+    }),
+    "userB"
+  ) === true
+);
+check(
+  "SIMULATED — match completion: terminal write leaving the final round's 52-entry cardLog in place instead of resetting to [] — DENIED (Per-Round Log Window: the final round archives to roundArchive, the terminal doc stays small)",
+  isValidMatchCompletion(
+    Object.assign({}, matchReadyForCompletion, { cardLog: fiftyTwoCardEntries(18) }),
+    Object.assign({}, matchReadyForCompletion, {
+      cardLog: fiftyTwoCardEntries(18),
+      status: "complete", winnerIds: ["p1"], finalScores: singleWinnerScores, completedRound: 18, version: 91
+    }),
+    "userB"
+  ) === false
+);
+check(
+  "SIMULATED — match completion: terminal write with BOTH windows explicitly reset to [] — ALLOWED (the production endMatch() shape)",
+  isValidMatchCompletion(
+    Object.assign({}, matchReadyForCompletion, { cardLog: fiftyTwoCardEntries(18), biddingLog: [{ seatId: "p1", actionType: "SubmitDashCallDecision", declaredDashCall: false, round: 18 }] }),
+    Object.assign({}, matchReadyForCompletion, {
+      cardLog: [], biddingLog: [],
+      status: "complete", winnerIds: ["p1"], finalScores: singleWinnerScores, completedRound: 18, version: 91
     }),
     "userB"
   ) === true

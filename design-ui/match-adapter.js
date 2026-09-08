@@ -739,6 +739,22 @@
     }
 
     var lastCount = lastAppliedBiddingActionCountByMatch[matchId] || 0;
+    // Per-Round Log Window sprint: the parent log now resets to [] on
+    // every round advance (archived to roundArchive/{round} atomically —
+    // see match-service.js's schema block). A newer-version delivery
+    // SHORTER than what this adapter already replayed therefore means
+    // "a new round's window has begun", never "history was deleted":
+    // rebase the count to 0 and replay from the window's start. The
+    // round-tag guards below (AWAITING_ROUND_TRANSITION/STALE_ROUND)
+    // still decide, entry by entry, whether the local engine is ready
+    // for each rebased index — the rebase itself claims nothing about
+    // readiness, it only un-sticks the monotonic gate. (Without this,
+    // the first ~52 entries of every round after Round 1 would be
+    // skipped as already-seen, since 3 <= 52.)
+    if (matchDoc.biddingLog.length < lastCount) {
+      lastCount = 0;
+      lastAppliedBiddingActionCountByMatch[matchId] = 0;
+    }
     if (matchDoc.biddingLog.length <= lastCount) {
       // A structurally newer version whose log has not actually grown
       // beyond what we've already replayed (e.g. a version bump caused
@@ -1231,6 +1247,16 @@
     }
 
     var lastCount = lastAppliedCardCountByMatch[matchId] || 0;
+    // Per-Round Log Window sprint: same window-reset rebase as
+    // applyRemoteBiddingAction() above (see that function's own comment
+    // for the full account) — a newer-version delivery shorter than the
+    // already-replayed count means the new round's window has begun, so
+    // replay from index 0; the round-tag guards below still gate each
+    // entry against the local engine's own round.
+    if (matchDoc.cardLog.length < lastCount) {
+      lastCount = 0;
+      lastAppliedCardCountByMatch[matchId] = 0;
+    }
     if (matchDoc.cardLog.length <= lastCount) {
       // A structurally newer version whose log has not actually grown
       // beyond what we've already replayed (e.g. a version bump caused
@@ -2065,9 +2091,9 @@
   //  1. WATCH the already-active subscribeToMatch() listener (no
   //     second match-level listener) for `gameState.dealtRound` falling
   //     behind `currentRound`, and safely ATTEMPT
-  //     `MatchService.dealRound()` — the exact same "any client may
-  //     attempt it, the transaction makes it safe" shape
-  //     maybeAdvanceRound()/maybeAdvanceRematchVote() already use.
+  //     `MatchService.dealRound()` from the DEALER seat only (TASK F1-1:
+  //     the attempt path is dealer-gated, identical in predicate to the
+  //     page gate and to the rules' own race-resolution model).
   //  2. CONSUME this client's OWN seat's hand document (never any
   //     other seat's) via the new `MatchService.subscribeToHand()`,
   //     translating it INTO GameSession — the one genuinely new
@@ -2078,13 +2104,23 @@
    *  attempts EXACTLY ONE `MatchService.dealRound(matchId, currentRound)`
    *  call per round from THIS client — never a second call for the SAME
    *  round, mirroring `maybeAdvanceRound()`'s own
-   *  `roundAdvanceAttemptedByMatch` guard exactly. Does not wait for
-   *  confirmation that THIS call is the one that wins the transaction —
-   *  every client that independently observes the same stale
-   *  `dealtRound` may safely make this same call; Firestore's
-   *  transaction semantics ensure exactly one attempt actually commits.
-   *  A rejection (a genuine error, or another client's transaction
-   *  already won) is swallowed here, never thrown into the caller's
+   *  `roundAdvanceAttemptedByMatch` guard exactly.
+   *
+   *  TASK F1-1 (P0 security fix): this watcher is now DEALER-GATED — the
+   *  same predicate as the page gate (match/index.html's bootstrap watcher)
+   *  and the same server-side authority model the rules enforce ("any
+   *  member MAY write, but the race makes exactly one winner"). The
+   *  previous "any client may attempt it" posture left a live race window
+   *  in which a non-dealer's lagged transaction was correctly denied
+   *  permission-denied in production (see docs/postmortem/
+  *  2026-08-26-deal-denial.md, V-FINAL). Gating here removes the client-side
+   *  source of that race: only the client occupying the authoritative
+   *  dealer seat (`uidToSeat(matchDoc, matchDoc.dealer) === mySeatId`)
+   *  ever issues the attempt. Does not wait for confirmation that THIS
+   *  call is the one that wins the transaction — the dealer's own retry
+   *  loop and Firestore transaction semantics remain the backstop.
+   *  A rejection is logged WITH its full denial body (TASK F1-3 — was an
+   *  empty .catch) and swallowed, never thrown into the caller's
    *  snapshot callback. */
   function maybeDealRound(matchId, matchDoc, mySeatId) {
     if (!global.MatchService || typeof global.MatchService.dealRound !== "function") return;
