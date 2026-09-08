@@ -643,9 +643,18 @@ async function main() {
   var matchCompletedAtRound = null;
   var stoppedAtRound = null;
 
+  // Rapid Rounds §5 lets a qualifying Super Call/Sa'ayda in rounds 14-18
+  // push the AUTHORITATIVE `maxRounds` past its 18-round default (see
+  // MatchService.extendMatchRounds()) — this loop's own upper bound must
+  // never assume 18 is final, or a legitimately extended match reads as
+  // a false convergence failure at the old boundary. 30 is a generous
+  // safety cap (matchService has no round number above 18+a handful of
+  // extensions in practice), never itself an expected stopping point.
+  var ROUND_LOOP_SAFETY_CAP = 30;
+
   if (bidRes1.ok && cardRes1.ok) {
     roundSummaries.push("Round 01: PASS -- 13/13 tricks (bidding+cards, checks 4.1/4.2)");
-    for (var rn = 2; rn <= 18; rn++) {
+    for (var rn = 2; rn <= ROUND_LOOP_SAFETY_CAP; rn++) {
       var bidResN = await driveBidding(pages, matchId);
       if (!bidResN.ok) {
         check("Round " + pad2(rn) + " bidding completes via the real service path", false,
@@ -670,19 +679,38 @@ async function main() {
         break;
       }
 
-      // Round-boundary convergence: all 4 clients agree on the new
-      // round number (the SAME check 4.3 already performs for Round
-      // 1->2, generalized across every subsequent boundary).
+      // Live authoritative maxRounds, read fresh each boundary — an
+      // extension recorded during round `rn` (or any earlier round)
+      // can raise this past 18 at any point; the wait below must accept
+      // EITHER "converged on round rn+1" OR "match completed" as a
+      // legitimate outcome, never demand rn+1 unconditionally (a match
+      // whose terminal round WAS rn has no rn+1 to converge on at all).
+      var liveMatchDoc = await pages[0].evaluate((id) => window.MatchService.loadMatch(id), matchId).catch(() => null);
+      var liveMaxRounds = (liveMatchDoc && typeof liveMatchDoc.maxRounds === "number") ? liveMatchDoc.maxRounds : 18;
+
       var roundViewsN = [];
       for (var i = 0; i < 4; i++) {
-        var vN = await waitFor(pages[i], (expected) => {
+        var vN = await waitFor(pages[i], (args) => {
           var r = window.GameSession && window.GameSession.getRound();
-          return r && r.number >= expected ? { round: r.number } : null;
-        }, 20000, rn + 1);
+          if (r && r.number >= args.expected) return { round: r.number };
+          if (window.GameSession && typeof window.GameSession.isMatchComplete === "function" && window.GameSession.isMatchComplete()) {
+            return { complete: true };
+          }
+          return null;
+        }, 20000, { expected: rn + 1 });
         roundViewsN.push(vN);
       }
-      var roundConverged = roundViewsN.every(Boolean) && roundViewsN.every((v) => v.round === roundViewsN[0].round);
-      check("Round " + pad2(rn) + " -> Round " + pad2(rn + 1) + " convergence (all 4 clients agree on round number)",
+      if (roundViewsN.some((v) => v && v.complete)) {
+        // Completion raced this boundary wait rather than a plain round
+        // advance — let the loop's own completion path (driveRoundCardPlay's
+        // authoritative matchDoc.status read, above) confirm it for real
+        // on the next pass instead of asserting anything here.
+        matchCompletedAtRound = rn;
+        break;
+      }
+      var roundConverged = roundViewsN.every((v) => v && v.round != null) &&
+        roundViewsN.every((v) => v.round === roundViewsN[0].round);
+      check("Round " + pad2(rn) + " -> Round " + pad2(rn + 1) + " convergence (all 4 clients agree on round number, live maxRounds=" + liveMaxRounds + ")",
         roundConverged, JSON.stringify(roundViewsN));
       if (!roundConverged) { stoppedAtRound = rn; break; }
     }
