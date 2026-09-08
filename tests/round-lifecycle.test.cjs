@@ -472,6 +472,49 @@ function runRemainingChecks() {
     })
 
     // ════════════════════════════════════════════════════════════════
+    // M — Advance-guard retry: a DENIED/stale attempt must not deadlock
+    // the round. The guard suppresses only same-version repeats; a newer
+    // document version with the round still stuck proves the attempt did
+    // not win, so the next delivery retries. (Without this, N clients
+    // denied simultaneously on a contended atomic archive+advance commit
+    // would each burn their single one-shot attempt and the round would
+    // never advance — observed live as repeated permission-denied storms
+    // at round boundaries with no forward progress guarantee.)
+    // ════════════════════════════════════════════════════════════════
+    .then(function () {
+      var realMS = global.MatchService, realTE = global.TableEngine;
+      var calls = { total: 0 };
+      global.MatchService = {
+        advanceToNextRound: function () { calls.total++; return Promise.resolve({ advanced: false, reason: "ALREADY_ADVANCED" }); },
+        extendMatchRounds: function () { calls.total++; return Promise.resolve({ extended: false }); },
+        endMatch: function () { calls.total++; return Promise.resolve({ complete: false }); }
+      };
+      global.TableEngine = { getState: function () { return { phase: "DONE", round: 5 }; } };
+      MatchAdapter.resetSyncState();
+      function flush2() { return new Promise(function (r) { setImmediate(function () { setImmediate(r); }); }); }
+      MatchAdapter.maybeAdvanceRound("match-m", { version: 10, currentRound: 5 });
+      return flush2().then(function () {
+        check("M. first DONE delivery attempts exactly once", calls.total === 1);
+        MatchAdapter.maybeAdvanceRound("match-m", { version: 10, currentRound: 5 });
+        return flush2();
+      }).then(function () {
+        check("M. same-version repeat delivery is still suppressed (no per-delivery spam)", calls.total === 1);
+        MatchAdapter.maybeAdvanceRound("match-m", { version: 11, currentRound: 5 });
+        return flush2();
+      }).then(function () {
+        check("M. newer version with the round still stuck RETRIES (no deadlock after a lost race/denial)", calls.total === 2);
+        global.TableEngine = { getState: function () { return { phase: "DONE", round: 6 }; } };
+        MatchAdapter.maybeAdvanceRound("match-m", { version: 11, currentRound: 6 });
+        return flush2();
+      }).then(function () {
+        check("M. new round attempts normally (guard is per-round)", calls.total === 3);
+        global.MatchService = realMS;
+        global.TableEngine = realTE;
+        MatchAdapter.resetSyncState();
+      });
+    })
+
+    // ════════════════════════════════════════════════════════════════
     // J — synchronization: startRoundSync() shares the SAME single
     // Firestore listener as every other start*Sync() function.
     // ════════════════════════════════════════════════════════════════

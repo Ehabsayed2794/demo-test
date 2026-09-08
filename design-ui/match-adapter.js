@@ -1809,27 +1809,48 @@
   }
 
   // ── Round Lifecycle sprint: Round Transition Sync ───────────────
-  // matchId -> the highest round number this adapter has already
-  // ATTEMPTED to advance PAST, via advanceToNextRound(). Deliberately
-  // NOT a version/count-style gate (there is no log to count entries
-  // in) — this only exists to stop a client from calling
+  // matchId -> the {round, version} of this adapter's most recent
+  // advance ATTEMPT for that round, via advanceToNextRound().
+  // Deliberately NOT a version/count-style gate (there is no log to
+  // count entries in) — this only exists to stop a client from calling
   // MatchService.advanceToNextRound() again on every single delivery
   // once its own TableEngine reaches phase "DONE" (that call is itself
   // idempotent/safe to repeat — see MatchService's own doc comment —
   // but repeating it on every delivery forever would be needless
   // Firestore traffic for no benefit).
+  //
+  // Per-Round Log Window sprint, RETRY HARDENING: the pre-existing
+  // shape was once-per-round-per-client EVER — a single DENIED attempt
+  // (rules/contention, e.g. several clients racing the same atomic
+  // archive+advance transaction on a loaded emulator) permanently
+  // suppressed this client's retries for that round; if EVERY client's
+  // lone attempt lost simultaneously, the round could never advance
+  // (deadlock — no client would ever try again). The record now keeps
+  // the document version alongside the round: a delivery with a HIGHER
+  // version but the SAME round proves forward movement that was NOT
+  // our advance (our attempt demonstrably did not win), so the guard
+  // lifts and this client tries again. Bounded, not a spam loop:
+  // post-completion versions only ever move via terminal-path writes
+  // (advance/endMatch/extend), each of which either advances the round
+  // (guard key changes) or resolves the race. A same-version repeat
+  // delivery is still suppressed exactly as before.
   var roundAdvanceAttemptedByMatch = {};
 
   function clearRoundAdvanceAttempt(matchId, round) {
-    if (roundAdvanceAttemptedByMatch[matchId] === round) {
+    var rec = roundAdvanceAttemptedByMatch[matchId];
+    if (rec && rec.round === round) {
       delete roundAdvanceAttemptedByMatch[matchId];
     }
   }
 
   /** Detects "MY local TableEngine just reached phase DONE for round
-   *  R" and attempts EXACTLY ONE `MatchService.advanceToNextRound(matchId,
-   *  R)` call — never a second, third, ... call for the SAME round from
-   *  THIS client. Deliberately does NOT wait for confirmation that this
+   *  R" and attempts `MatchService.advanceToNextRound(matchId, R)` —
+   *  once per round normally, and AGAIN if the document demonstrably
+   *  moved (higher version) without the round advancing (a previous
+   *  attempt provably lost a race or was denied — see the registry
+   *  comment above for why a single one-shot attempt per client can
+   *  deadlock a round when every client's lone attempt loses at once).
+   *  Deliberately does NOT wait for confirmation that this
    *  particular call is the one that "wins" the transaction — per
    *  advanceToNextRound()'s own idempotent-any-client-may-attempt
    *  design (see docs/reviews/Sprint_RoundLifecycle_Architecture_Report.md
@@ -1850,8 +1871,16 @@
     var state;
     try { state = global.TableEngine.getState(); } catch (e) { return; }
     if (!state || state.phase !== "DONE" || state.round == null) return;
-    if (roundAdvanceAttemptedByMatch[matchId] === state.round) return;
-    roundAdvanceAttemptedByMatch[matchId] = state.round;
+    // Retry gate (see the registry comment above): suppress only a
+    // repeat delivery of a state we already attempted against. A newer
+    // document version with the round still stuck means our attempt
+    // did not win — try again rather than deadlocking the round.
+    var prev = roundAdvanceAttemptedByMatch[matchId];
+    var docVersion = (matchDoc && typeof matchDoc.version === "number") ? matchDoc.version : null;
+    if (prev && prev.round === state.round) {
+      if (docVersion == null || docVersion <= prev.version) return;
+    }
+    roundAdvanceAttemptedByMatch[matchId] = { round: state.round, version: docVersion };
     Promise.resolve(maybeExtendOrCompleteMatch(matchId, state.round)).catch(function () {
       // A failed attempt must not permanently suppress a retry for this round.
       clearRoundAdvanceAttempt(matchId, state.round);
@@ -2339,8 +2368,11 @@
     startTrickSync: startTrickSync,
     getLastResolvedTrickNo: getLastResolvedTrickNo,
     // Round Lifecycle sprint: round-transition detection + the
-    // one-attempt-per-round advance trigger. See each function's own
-    // doc comment above.
+    // guarded advance trigger (one attempt per round normally, retried
+    // when the document demonstrably moves without the round advancing).
+    // See each function's own doc comment above. Exported for the same
+    // testability reason as every other applyRemote*/maybe* function.
+    maybeAdvanceRound: maybeAdvanceRound,
     applyRemoteRoundTransition: applyRemoteRoundTransition,
     startRoundSync: startRoundSync,
     // Match Completion sprint: extension + completion orchestration and

@@ -63,11 +63,21 @@ function flush() {
   await flush();
   check("later delivery retries the same failed round", calls === 2);
 
-  // Once the retry succeeds, further deliveries remain effectively single-attempt.
+  // Once the retry succeeds, a repeat delivery of the SAME version stays
+  // idempotent (no per-delivery spam)...
+  delivery({ cardLog: [], version: 2 });
+  await flush();
+  await flush();
+  check("successful retry remains idempotent on same-version repeats", calls === 2);
+
+  // ...but a NEWER version with the round still stuck proves forward
+  // movement that was not our advance (a lost race/denial), so the
+  // guard lifts and the client tries again instead of deadlocking.
+  // (Per-Round Log Window sprint, retry hardening.)
   delivery({ cardLog: [], version: 3 });
   await flush();
   await flush();
-  check("successful retry remains idempotent", calls === 2);
+  check("newer version with round still stuck retries (no deadlock)", calls === 3);
 
   console.log("=== RESULTS ===");
   console.log(pass + " passed, " + fail + " failed");
