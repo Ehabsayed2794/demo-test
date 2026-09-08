@@ -126,7 +126,7 @@ async function readMatchDocs(pages, matchId) {
   return Promise.all(pages.map((p) => p.evaluate((id) => window.MatchService.loadMatch(id), matchId).catch(() => null)));
 }
 
-async function waitForTrickSettlement(pages, matchId, expectedCardCount, timeoutMs = 20000) {
+async function waitForTrickSettlement(pages, matchId, expectedCardCount, timeoutMs = 20000, roundNumber = null, completedTrick = null) {
   const deadline = Date.now() + timeoutMs;
   let lastDocs = null, lastStates = null;
   while (Date.now() < deadline) {
@@ -137,6 +137,25 @@ async function waitForTrickSettlement(pages, matchId, expectedCardCount, timeout
       docs.every((d) => d && (d.cardLog || []).length === (docs[0] && (docs[0].cardLog || []).length));
     const localSettled = states.every((s) => s && (s.phase === "PLAY" || s.phase === "DONE") && (s.plays || []).length === 0);
     if (sameCardCount && localSettled) return { docs, states };
+    // Per-Round Log Window sprint: at trick 13 ONLY, advanceToNextRound()
+    // (see match-service.js's own schema doc) can win the race and reset
+    // the parent's cardLog/currentRound before this poll's first tick
+    // ever observes the round's own 52 cards — the parent window can
+    // jump straight from 51 to 0 (archived to roundArchive/{round}, never
+    // lost), which the ORIGINAL `>= expectedCardCount` check above can
+    // never see again. advanceToNextRound() itself already verified
+    // 52/52 card plays for THIS exact round server-side
+    // (match-service.js:1599-1604) before ever writing that reset — so
+    // "every client agrees currentRound moved past this round, with a
+    // consistent (reset) log length" is an equally authoritative
+    // settlement signal, exclusively for trick 13 (tricks 1-12 have no
+    // such transition and are completely unaffected by this branch).
+    if (completedTrick === 13 && roundNumber != null &&
+        docs.every((d) => d && d.currentRound > roundNumber) &&
+        docs.every((d) => d && (d.cardLog || []).length === (docs[0] && (docs[0].cardLog || []).length))) {
+      logEvent("TRICK_SETTLEMENT_VIA_ADVANCE", { round: roundNumber, docCurrentRounds: docs.map((d) => d && d.currentRound) });
+      return { docs, states, advanced: true };
+    }
     await sleep(180);
   }
   // Diagnostic-only: the caller reports TIMEOUT without saying WHICH half
@@ -399,7 +418,7 @@ async function driveRoundCardPlay(pages, matchId, roundNumber, maxIterations) {
     const boundaryState = afterStates.find((s) => s && (s.phase === "RESOLVING" || s.phase === "DONE"));
     if (boundaryState && boundaryState.trickNo > lastValidatedTrick) {
       const completedTrick = boundaryState.trickNo;
-      const settled = await waitForTrickSettlement(pages, matchId, initialCardCount + completedTrick * 4);
+      const settled = await waitForTrickSettlement(pages, matchId, initialCardCount + completedTrick * 4, 20000, roundNumber, completedTrick);
       if (!settled) return { ok: false, reason: "TRICK_SETTLEMENT_TIMEOUT", log, trick: completedTrick };
       const docs = settled.docs;
       const settledStates = settled.states;
