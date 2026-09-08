@@ -128,15 +128,33 @@ async function readMatchDocs(pages, matchId) {
 
 async function waitForTrickSettlement(pages, matchId, expectedCardCount, timeoutMs = 20000) {
   const deadline = Date.now() + timeoutMs;
+  let lastDocs = null, lastStates = null;
   while (Date.now() < deadline) {
     const docs = await readMatchDocs(pages, matchId);
     const states = await Promise.all(pages.map((p) => p.evaluate(() => window.TableEngine ? window.TableEngine.getState() : null).catch(() => null)));
+    lastDocs = docs; lastStates = states;
     const sameCardCount = docs.every((d) => d && (d.cardLog || []).length >= expectedCardCount) &&
       docs.every((d) => d && (d.cardLog || []).length === (docs[0] && (docs[0].cardLog || []).length));
     const localSettled = states.every((s) => s && (s.phase === "PLAY" || s.phase === "DONE") && (s.plays || []).length === 0);
     if (sameCardCount && localSettled) return { docs, states };
     await sleep(180);
   }
+  // Diagnostic-only: the caller reports TIMEOUT without saying WHICH half
+  // (docs diverged vs. an engine stuck) failed to converge. Snapshot both
+  // halves here so the next evidence file answers that directly. No
+  // behavior change: same timeout, same null, one extra log line.
+  try {
+    logEvent("TRICK_SETTLEMENT_DIAGNOSTIC", {
+      matchId: matchId, expectedCardCount: expectedCardCount,
+      docCardCounts: (lastDocs || []).map((d) => d ? (d.cardLog || []).length : null),
+      docVersions: (lastDocs || []).map((d) => d ? d.version : null),
+      docRounds: (lastDocs || []).map((d) => d ? d.currentRound : null),
+      enginePhases: (lastStates || []).map((s) => s ? s.phase : null),
+      engineTrickNos: (lastStates || []).map((s) => s ? s.trickNo : null),
+      enginePlaysLens: (lastStates || []).map((s) => s && Array.isArray(s.plays) ? s.plays.length : null),
+      engineRounds: (lastStates || []).map((s) => s ? s.round : null)
+    });
+  } catch (e) { /* logging must never break the harness */ }
   return null;
 }
 
@@ -303,6 +321,17 @@ async function driveRoundCardPlay(pages, matchId, roundNumber, maxIterations) {
   let lastTurn = null, stall = 0, lastValidatedTrick = 0, staleRetries = 0;
   const initialDoc = await pages[0].evaluate((id) => window.MatchService.loadMatch(id), matchId).catch(() => null);
   const initialCardCount = initialDoc && Array.isArray(initialDoc.cardLog) ? initialDoc.cardLog.length : 0;
+  // Diagnostic-only (pairs with TRICK_SETTLEMENT_DIAGNOSTIC): with the
+  // per-round log window, a correct round start reads 0 here; a stale
+  // pre-reset read would show 52 and make every expected count
+  // unreachable by construction. Logged once per round, no behavior change.
+  try {
+    logEvent("ROUND_WINDOW_BASELINE", {
+      matchId: matchId, roundNumber: roundNumber, initialCardCount: initialCardCount,
+      initialVersion: initialDoc ? initialDoc.version : null,
+      initialCurrentRound: initialDoc ? initialDoc.currentRound : null
+    });
+  } catch (e) { /* logging must never break the harness */ }
   for (let iter = 0; iter < (maxIterations || 520); iter++) {
     const matchDoc = await pages[0].evaluate((id) => window.MatchService.loadMatch(id), matchId).catch(() => null);
     if (!matchDoc) { await sleep(200); continue; }
