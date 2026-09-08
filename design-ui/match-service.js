@@ -1124,22 +1124,37 @@
           // merely alongside, the write. (Version-equal implies this
           // should already hold — re-checked anyway, defensively.)
           var freshSeatId = resolveSeatAndAuthorize(freshMatch);
-          var cardLog = (freshMatch.cardLog || []).slice();
+          var newEntry = { seatId: freshSeatId, card: { suit: card.suit, rank: { v: card.rank.v, s: card.rank.s } }, round: freshMatch.currentRound };
           // Round Lifecycle sprint: same round-stamp as buildBiddingLogEntry()
           // above, for the identical reason — `cardLog` is the other
           // never-cleared, append-only log this schema decision applies
           // to. Read from the FRESH in-transaction document's own
           // `currentRound`, never the caller's local round number.
-          cardLog.push({ seatId: freshSeatId, card: { suit: card.suit, rank: { v: card.rank.v, s: card.rank.s } }, round: freshMatch.currentRound });
+          //
+          // Payload-size hotfix (Golden Path Sprint, found via a 4-real-
+          // client full-match CI run stalling on Commit RPC failures once
+          // `cardLog` grew past ~900 entries near Round 18): this used to
+          // `.slice()` the ENTIRE fresh `cardLog`, push one entry, and
+          // write the WHOLE array back on every single card — an O(N)
+          // (and, across a full match's worth of cards, O(N^2) total)
+          // payload that only grows, never resets. `FieldValue.arrayUnion()`
+          // sends ONLY the new entry; Firestore resolves the transform
+          // server-side BEFORE `isValidCardSubmission()` evaluates
+          // `request.resource.data` (both `newLog.size()`/`appended`
+          // there already assume the POST-transform array — no rules
+          // change needed). `localCardLog` below is kept ONLY for this
+          // transaction's own in-memory winner computation and the
+          // returned `cardCount` — it is never itself written.
+          var localCardLog = (freshMatch.cardLog || []).concat([newEntry]);
           // J.1: use the FRESH four-card log and current engine round
           // context before writing. The winner UID is persisted atomically
           // with this card append and the RESOLVING phase marker.
           if (preview.nextPhase === "RESOLVING") {
-            nextTurnUid = resolveFourthCardWinnerUid(freshMatch, cardLog);
+            nextTurnUid = resolveFourthCardWinnerUid(freshMatch, localCardLog);
           }
           var nextVersion = expectedVersion + 1;
           var patch = {
-            cardLog: cardLog,
+            cardLog: firebase.firestore.FieldValue.arrayUnion(newEntry),
             lastCardSeat: freshSeatId,
             turn: nextTurnUid,
             cardPhase: preview.nextPhase,
@@ -1148,7 +1163,7 @@
           };
           tx.update(matchRef, patch);
           return {
-            matchId: matchId, seatId: freshSeatId, card: card, version: nextVersion, cardCount: cardLog.length,
+            matchId: matchId, seatId: freshSeatId, card: card, version: nextVersion, cardCount: localCardLog.length,
             nextTurnSeat: preview.nextTurnSeat, cardPhase: preview.nextPhase
           };
         });
@@ -1373,18 +1388,34 @@
             throw bidError("STALE_GAME_STATE", "submitBiddingAction: the match document changed since this action was validated (expected version " + expectedVersion + ", found " + freshMatch.version + ") — not written; re-fetch and retry.");
           }
           var freshSeatId = resolveSeat(freshMatch);
-          var biddingLog = (freshMatch.biddingLog || []).slice();
-          biddingLog.push(buildBiddingLogEntry(freshSeatId, action, freshMatch.currentRound));
+          var newEntry = buildBiddingLogEntry(freshSeatId, action, freshMatch.currentRound);
+          // Payload-size hotfix (see submitCard()'s identical fix, above,
+          // for the full account — same never-cleared, append-only log
+          // shape, same O(N) full-array-rewrite problem on every action).
+          // `arrayUnion()` sends only the one new entry; the rules-side
+          // `newLog.size() == oldLog.size() + 1` check in
+          // isValidBiddingActionSubmission() already assumes the
+          // POST-transform array, so no rules change is needed. One
+          // accepted trade-off, noted for future maintainers: arrayUnion()
+          // silently no-ops on an EXACT duplicate entry — a seat
+          // submitting the byte-for-byte same action twice in the same
+          // round (e.g. two identical passes) would then fail the
+          // `size()+1` check and be rejected as a normal write conflict,
+          // not corrupt the log. This codebase's own BiddingEngine
+          // turn-taking already makes a genuine duplicate exceedingly
+          // rare (a seat cannot legally act again for the same sub-phase
+          // once it has), and a rejection here is always safe/retryable.
+          var localBiddingLog = (freshMatch.biddingLog || []).concat([newEntry]);
           var nextVersion = expectedVersion + 1;
           var patch = {
-            biddingLog: biddingLog,
+            biddingLog: firebase.firestore.FieldValue.arrayUnion(newEntry),
             version: nextVersion,
             updatedAt: serverTimestamp()
           };
           tx.update(matchRef, patch);
           return {
             matchId: matchId, seatId: freshSeatId, actionType: action.actionType,
-            version: nextVersion, logLength: biddingLog.length
+            version: nextVersion, logLength: localBiddingLog.length
           };
         });
       });

@@ -55,7 +55,7 @@ function makeMatchRef(id) {
       return Promise.resolve({ exists: exists, data: function () { return exists ? Object.assign({}, STORE[k]) : undefined; } });
     },
     update: function (patch) {
-      STORE[k] = Object.assign({}, STORE[k], patch);
+      STORE[k] = __resolveWritePatch(STORE[k], patch);
       DOC_VERSION[k] = (DOC_VERSION[k] || 0) + 1;
       notify(k);
       return Promise.resolve();
@@ -88,14 +88,42 @@ var FAKE_DB = {
     return Promise.resolve(fn(tx)).then(function (result) {
       var conflict = Object.keys(seenVersions).some(function (k) { return (DOC_VERSION[k] || 0) !== seenVersions[k]; });
       if (conflict) return FAKE_DB.runTransaction(fn, attempt + 1);
-      Object.keys(pending).forEach(function (k) { STORE[k] = Object.assign({}, STORE[k], pending[k].data); DOC_VERSION[k] = (DOC_VERSION[k] || 0) + 1; });
+      Object.keys(pending).forEach(function (k) { STORE[k] = __resolveWritePatch(STORE[k], pending[k].data); DOC_VERSION[k] = (DOC_VERSION[k] || 0) + 1; });
       Object.keys(pending).forEach(function (k) { notify(k); });
       return result;
     });
   }
 };
 global.Db = FAKE_DB;
-global.firebase = { firestore: { FieldValue: { serverTimestamp: function () { return { __sentinel: "serverTimestamp" }; } } } };
+global.firebase = { firestore: { FieldValue: {
+  serverTimestamp: function () { return { __sentinel: "serverTimestamp" }; },
+  // Mirrors real Firestore's arrayUnion() transform semantics closely
+  // enough for these mocks: resolves BEFORE being merged into STORE (see
+  // __resolveWritePatch below), appending only values not already
+  // present (deep-equal), exactly like the real server-side transform —
+  // added when match-service.js's submitCard()/submitBiddingAction()
+  // switched cardLog/biddingLog from full-array-rewrite to arrayUnion()
+  // (payload-size hotfix) so these existing mocked tests keep exercising
+  // the REAL match-service.js code unchanged.
+  arrayUnion: function () { return { __sentinel: "arrayUnion", values: Array.prototype.slice.call(arguments) }; }
+} } };
+function __resolveWritePatch(existing, patch) {
+  var resolved = {};
+  Object.keys(patch).forEach(function (k) {
+    var v = patch[k];
+    if (v && v.__sentinel === "arrayUnion") {
+      var arr = (existing && Array.isArray(existing[k])) ? existing[k].slice() : [];
+      v.values.forEach(function (item) {
+        var already = arr.some(function (e) { return JSON.stringify(e) === JSON.stringify(item); });
+        if (!already) arr.push(item);
+      });
+      resolved[k] = arr;
+    } else {
+      resolved[k] = v;
+    }
+  });
+  return Object.assign({}, existing, resolved);
+}
 
 var CURRENT_USER = null;
 global.SessionService = { getCurrentUser: function () { return CURRENT_USER ? { uid: CURRENT_USER } : null; }, setCurrentMatchId: function () { return Promise.resolve(); } };
