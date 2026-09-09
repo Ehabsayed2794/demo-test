@@ -2198,6 +2198,25 @@
     var cards = handDoc.cards.map(function (c) { return global.Cards.createCard(c.suit, c.rank, seatId); });
     if (global.Dealer && typeof global.Dealer.sortHand === "function") cards = global.Dealer.sortHand(cards);
     global.GameSession.setAuthoritativeHand(seatId, cards, handDoc.round);
+    // P1-3 reconnect hardening (see TableEngine.restoreHand's own
+    // comment for the full account): a mid-round reload replays bidding
+    // to DONE -- re-running TableEngine.initState() -- BEFORE this hand
+    // re-delivers, and the F1-2 authority switch legitimately wiped the
+    // pre-reload cache, so the live engine is missing exactly this seat
+    // while GameSession already has it. Without re-seeding, every later
+    // canPlayCard() for this seat throws and every card-sync replay of
+    // its own already-played entries desyncs forever (no later
+    // initState() ever re-runs mid-round). This is state restoration
+    // from already-reconstructed cards -- never a legality decision: no
+    // turn, trump, or hand-content rule is evaluated here; the engine
+    // still decides all of that itself on every later call. Best-effort
+    // (older/fake engines simply lack the API); the structured result
+    // below stands regardless.
+    try {
+      if (global.TableEngine && typeof global.TableEngine.restoreHand === "function") {
+        global.TableEngine.restoreHand(seatId, cards, handDoc.round);
+      }
+    } catch (e) { /* best-effort seeding; result below is unaffected */ }
     return { applied: true, seatId: seatId, round: handDoc.round, count: cards.length };
   }
 

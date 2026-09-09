@@ -156,7 +156,18 @@ function pushLog(kind, text) { state.logs.push({ kind, text }); }
 
 // ── card legality (follow suit) ──
 function legalCards(id) {
-  const hand = state.hands[id];
+  const hands = state.hands || {};
+  const hand = hands[id];
+  // P1-3 reconnect hardening: after a mid-round reload the live engine
+  // can be replayed to PLAY before the authoritative hand has been
+  // re-seeded (initState() snapshots GameSession once per round; the
+  // hand re-delivers later via MatchAdapter.applyRemoteHand). A
+  // read-only legality query must answer "nothing is legal", never
+  // throw -- production's own render path already try/catches
+  // canPlayCard() for the same reason, and the card-sync replay relies
+  // on a structured ENGINE_REJECTED (not an exception) to stay
+  // retryable from its stuck index.
+  if (!hand) return [];
   if (!state.ledSuit) return hand.slice();             // leader may play anything
   const inSuit = hand.filter(c => c.suit === state.ledSuit);
   return inSuit.length ? inSuit : hand.slice();        // must follow if able, else anything
@@ -415,13 +426,37 @@ function previewPlay(playerId, card) {
   return { legal: true, nextTurnSeat: null, nextPhase: "RESOLVING" };
 }
 
+// P1-3 reconnect hardening (companion to legalCards()'s own note
+// above; called only from MatchAdapter.applyRemoteHand, never from a
+// legality path): re-seeds the live engine's copy of ONE seat's hand
+// from already-reconstructed, already-validated cards. Needed because
+// initState() snapshots GameSession hands once per round while the
+// authoritative hand of a reloaded client re-delivers later -- without
+// re-seeding, the card-sync replay of that seat's own already-played
+// entries can never proceed (no later initState() re-runs mid-round).
+// Deliberately NARROW, never a legality decision and never a rewrite:
+// seeds ONLY when the engine is live, on the SAME round, and genuinely
+// missing the seat (null/undefined -- never an existing array, so
+// replayed emits that already shrank the hand are never resurrected).
+function restoreHand(seatId, cards, round) {
+  if (!state || typeof state !== "object") return { restored: false, reason: "NOT_INITIALIZED" };
+  if (typeof round !== "number" || round !== state.round) return { restored: false, reason: "ROUND_MISMATCH" };
+  if (!seatId || !Array.isArray(cards)) return { restored: false, reason: "INVALID_ARGUMENT" };
+  const hands = state.hands || {};
+  if (hands[seatId] != null) return { restored: false, reason: "ALREADY_PRESENT" };
+  state.hands = hands;
+  state.hands[seatId] = cards.slice();
+  return { restored: true, seatId: seatId, round: round, count: cards.length };
+}
+
 window.TableEngine = {
   initState: initState,
   emit: emit,
   resolveTrick: resolveTrick,
   getState: function () { return state; },
   canPlayCard: canPlayCard,
-  previewPlay: previewPlay
+  previewPlay: previewPlay,
+  restoreHand: restoreHand
 };
 
 })(window);

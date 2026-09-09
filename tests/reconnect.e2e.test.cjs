@@ -147,7 +147,14 @@ async function attemptOneBiddingAction(page, matchId, seatId) {
     }
     for (var i = 0; i < candidates.length; i++) {
       var c = candidates[i];
-      var verdict = window.BiddingEngine.canSubmit(c);
+      // A mid-sync oracle can throw instead of answering (never a
+      // legality verdict). Production's own render path try/catches the
+      // same call: treat as "cannot answer yet", never as a harness
+      // crash; the driver's stall guard diagnoses persistence.
+      var verdict = null, oracleError = null;
+      try { verdict = window.BiddingEngine.canSubmit(c); }
+      catch (e) { oracleError = (e && e.message) || String(e); }
+      if (oracleError) return { oracleError: oracleError, subPhase: subPhase };
       if (verdict && verdict.legal) {
         try {
           var result;
@@ -175,9 +182,16 @@ async function attemptOneCardPlay(page, matchId, seatId) {
     var state = window.TableEngine.getState();
     if (!state || state.turn !== args.seatId || state.phase !== "PLAY") return { skipped: "not-my-turn" };
     var hand = window.GameSession.getHand(args.seatId);
+    var oracleError = null;
     for (var i = 0; i < hand.length; i++) {
       var card = hand[i];
-      var verdict = window.TableEngine.canPlayCard(args.seatId, card);
+      // Same mid-sync tolerance as the bidding driver above (mirrors
+      // production renderTablePanel's own try/catch around this exact
+      // call): a reloaded page whose engine has not re-seeded this
+      // seat's hand yet cannot answer -- retry later, never crash.
+      var verdict = null;
+      try { verdict = window.TableEngine.canPlayCard(args.seatId, card); }
+      catch (e) { oracleError = (e && e.message) || String(e); continue; }
       if (verdict && verdict.legal) {
         try {
           await window.MatchService.submitCard(args.matchId, { suit: card.suit, rank: card.rank });
@@ -185,7 +199,7 @@ async function attemptOneCardPlay(page, matchId, seatId) {
         } catch (e) { return { error: e.message }; }
       }
     }
-    return { noLegalCard: true };
+    return { noLegalCard: true, oracleError: oracleError };
   }, { matchId: matchId, seatId: seatId });
 }
 
@@ -195,7 +209,7 @@ function seatIndex(seat) { return SEATS.indexOf(seat); }
 // accepted action came from into submittedBy (a seat -> count map) so
 // callers can prove a SPECIFIC reconnected page participated.
 async function driveBidding(pages, matchId, submittedBy, maxIters) {
-  var stall = 0, lastWaiting = null;
+  var stall = 0, lastWaiting = null, lastDetail = null;
   for (var iter = 0; iter < (maxIters || 120); iter++) {
     if (outOfTime()) return { ok: false, reason: "TIME_BUDGET" };
     var states = await Promise.all(pages.map(function (p) {
@@ -208,13 +222,15 @@ async function driveBidding(pages, matchId, submittedBy, maxIters) {
     if (!converged || !ref.waitingFor) { await sleep(120); continue; }
     var idx = seatIndex(ref.waitingFor);
     if (idx === -1) return { ok: false, reason: "INVALID_WAITING_FOR" };
-    var res = await attemptOneBiddingAction(pages[idx], matchId, ref.waitingFor);
+    var res = await attemptOneBiddingAction(pages[idx], matchId, ref.waitingFor).catch(function (e) { return { transportError: (e && e.message) || String(e) }; });
+    if (res && (res.oracleError || res.transportError)) lastDetail = res.oracleError || res.transportError;
+    if (res && res.noLegalCandidate && !res.oracleError) return { ok: false, reason: "NO_LEGAL_BIDDING_CANDIDATE", log: log };
     if (res && res.submitted && !res.error) {
       submittedBy[ref.waitingFor] = (submittedBy[ref.waitingFor] || 0) + 1;
       stall = 0;
     } else if (ref.waitingFor === lastWaiting) { stall++; } else { stall = 0; }
     lastWaiting = ref.waitingFor;
-    if (stall > 25) return { ok: false, reason: "STALLED" };
+    if (stall > 25) return { ok: false, reason: "STALLED", lastDetail: lastDetail };
     await sleep(80);
   }
   return { ok: false, reason: "MAX_ITERS" };
@@ -223,7 +239,7 @@ async function driveBidding(pages, matchId, submittedBy, maxIters) {
 // Drives card plays until totalPlaysSubmitted reaches target (or the
 // round advances/completes). Tracks per-seat submissions the same way.
 async function driveCards(pages, matchId, roundNumber, targetPlays, submittedBy, maxIters) {
-  var plays = 0, stall = 0, lastTurn = null;
+  var plays = 0, stall = 0, lastTurn = null, lastDetail = null;
   for (var iter = 0; iter < (maxIters || 220); iter++) {
     if (outOfTime()) return { ok: false, reason: "TIME_BUDGET", plays: plays };
     if (plays >= targetPlays) return { ok: true, plays: plays };
@@ -238,14 +254,15 @@ async function driveCards(pages, matchId, roundNumber, targetPlays, submittedBy,
     if (!turn || states[0].phase !== "PLAY") { await sleep(120); continue; }
     var idx = seatIndex(turn);
     if (idx === -1) return { ok: false, reason: "INVALID_TURN", plays: plays };
-    var res = await attemptOneCardPlay(pages[idx], matchId, turn);
+    var res = await attemptOneCardPlay(pages[idx], matchId, turn).catch(function (e) { return { transportError: (e && e.message) || String(e) }; });
+    if (res && (res.oracleError || res.transportError || res.error)) lastDetail = res.oracleError || res.transportError || res.error;
     if (res && res.submitted) {
       plays++;
       submittedBy[turn] = (submittedBy[turn] || 0) + 1;
       stall = 0;
     } else if (turn === lastTurn) { stall++; } else { stall = 0; }
     lastTurn = turn;
-    if (stall > 30) return { ok: false, reason: "STALLED", plays: plays };
+    if (stall > 30) return { ok: false, reason: "STALLED", plays: plays, lastDetail: lastDetail };
     await sleep(60);
   }
   return { ok: false, reason: "MAX_ITERS", plays: plays };
@@ -464,7 +481,7 @@ async function main() {
     // ── R4 (NEW): drop mid-round after trick 6, return mid-round ──
     var bidSubs = {};
     var bidRes = await driveBidding(pages, matchId, bidSubs, 150);
-    check("R4.pre round-1 bidding completes via the real path", bidRes.ok === true, bidRes.reason);
+    check("R4.pre round-1 bidding completes via the real path", bidRes.ok === true, bidRes.reason + (bidRes.lastDetail ? " :: " + bidRes.lastDetail : ""));
     if (!bidRes.ok) { await cleanup(1); return; }
     var cardSubs = {};
     var sixTricks = await driveCards(pages, matchId, 1, 24, cardSubs, 200);
@@ -510,7 +527,7 @@ async function main() {
     check("R5 reloaded P3 reads roundArchive/1 with round 1's 52 plays", !!arch && arch.round === 1 && arch.cardLog.length === 52);
     var r2subs = {};
     var r2done = await driveBidding(pages, matchId, r2subs, 150);
-    check("R5.pre round-2 bidding completes", r2done.ok === true, r2done.reason);
+    check("R5.pre round-2 bidding completes", r2done.ok === true, r2done.reason + (r2done.lastDetail ? " :: " + r2done.lastDetail : ""));
     check("R5 reloaded P3 submitted in the new round (registry-rebase path works)", (r2subs[p3seat] || 0) >= 1, r2subs);
 
     // ── R9/R10: cheap listener + repeated-reload hygiene ──
