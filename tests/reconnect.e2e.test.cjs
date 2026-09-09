@@ -268,6 +268,47 @@ async function driveBidding(pages, matchId, submittedBy, maxIters) {
   return { ok: false, reason: "MAX_ITERS" };
 }
 
+// Diagnostic-only snapshot of every page's sync position against the
+// authoritative document (engine turn/phase/trick + adapter card count
+// per page; projected doc fields only, never full logs). Never throws;
+// prints one JSON line the runner relays verbatim. Doc-turn uid is
+// printed tail-only; seats are already public seat ids.
+async function dumpSyncState(pages, matchId, tag) {
+  try {
+    var doc = await pages[0].evaluate(function (id) { return window.MatchService.loadMatch(id); }, matchId).catch(function () { return null; });
+    var perPage = await Promise.all(pages.map(function (p, i) {
+      return p.evaluate(function (args) {
+        var out = { page: args.seat };
+        try {
+          var s = window.TableEngine ? window.TableEngine.getState() : null;
+          out.turn = s ? s.turn : null;
+          out.phase = s ? s.phase : null;
+          out.trick = s ? s.trickNo : null;
+          out.eplays = (s && s.plays) ? s.plays.length : null;
+        } catch (e) { out.engError = true; }
+        try {
+          out.count = (window.MatchAdapter && typeof window.MatchAdapter.getLastAppliedCardCount === "function")
+            ? window.MatchAdapter.getLastAppliedCardCount(args.matchId) : null;
+        } catch (e) { out.count = "ERR"; }
+        return out;
+      }, { seat: SEATS[i], matchId: matchId }).catch(function () { return { page: SEATS[i], evalError: true }; });
+    }));
+    var docTurnSeat = null, docTurnTail = null;
+    if (doc && doc.turn) {
+      docTurnTail = String(doc.turn).slice(-6);
+      if (doc.seats) docTurnSeat = Object.keys(doc.seats).find(function (s) { return doc.seats[s] === doc.turn; }) || null;
+    }
+    console.log("SYNC_STATE " + tag + " " + JSON.stringify({
+      doc: doc ? {
+        turnSeat: docTurnSeat, turnTail: docTurnTail, phase: doc.cardPhase,
+        round: doc.currentRound, version: doc.version,
+        logLen: doc.cardLog && doc.cardLog.length, status: doc.status
+      } : null,
+      pages: perPage
+    }).slice(0, 3000));
+  } catch (e) {}
+}
+
 // Drives card plays until totalPlaysSubmitted reaches target (or the
 // round advances/completes). Tracks per-seat submissions the same way.
 async function driveCards(pages, matchId, roundNumber, targetPlays, submittedBy, maxIters) {
@@ -282,7 +323,18 @@ async function driveCards(pages, matchId, roundNumber, targetPlays, submittedBy,
       return p.evaluate(function () { return window.TableEngine ? window.TableEngine.getState() : null; }).catch(function () { return null; });
     }));
     if (states.some(function (s) { return !s; })) { await sleep(150); continue; }
-    var turn = states[0].turn;
+    // Follow the AUTHORITATIVE document turn (what the rules enforce),
+    // not any single page's engine cache: after a reload/divergence a
+    // page's engine turn can disagree with the doc, and asking the
+    // wrong page stalls forever (no write => no delivery => no heal).
+    // Falls back to the reference engine when the doc turn is missing
+    // or unmapped (identical behavior to before in that case). Phase is
+    // still gated on the reference engine (never ask mid-resolution).
+    var turn = null;
+    if (doc && doc.turn && doc.seats) {
+      turn = Object.keys(doc.seats).find(function (s) { return doc.seats[s] === doc.turn; }) || null;
+    }
+    if (!turn) turn = states[0].turn;
     if (!turn || states[0].phase !== "PLAY") { await sleep(120); continue; }
     var idx = seatIndex(turn);
     if (idx === -1) return { ok: false, reason: "INVALID_TURN", plays: plays };
@@ -299,6 +351,7 @@ async function driveCards(pages, matchId, roundNumber, targetPlays, submittedBy,
       // Untruncated field evidence (check() truncates notes): the exact
       // submit context behind the stall, most-informative fields first.
       try { console.log("STALL_DETAIL cards round=" + roundNumber + " " + JSON.stringify({ plays: plays, lastDetail: lastDetail, fullDetail: fullDetail }).slice(0, 2000)); } catch (e) {}
+      await dumpSyncState(pages, matchId, "stall-cards-r" + roundNumber);
       return { ok: false, reason: "STALLED", plays: plays, lastDetail: lastDetail, fullDetail: fullDetail };
     }
     await sleep(60);
@@ -546,6 +599,9 @@ async function main() {
 
     // ── R5 (NEW): return post-advance — empty window + archive + new-round play ──
     // 24 (pre-drop) + 4 (post-drop) already played; 24 more completes 52.
+    // Baseline sync map first: if the long drive below stalls, this shows
+    // exactly which page(s) diverged from the authoritative turn.
+    await dumpSyncState(pages, matchId, "pre-r5");
     var rest = await driveCards(pages, matchId, 1, 24, {}, 260);
     check("R5.pre round 1 reaches 52 plays", rest.ok === true && rest.plays === 24, rest);
     if (!rest.ok) { await cleanup(1); return; }
