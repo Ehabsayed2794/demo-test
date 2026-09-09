@@ -126,8 +126,10 @@
    NOT trick resolution, NOT scoring, NOT winner detection — see this
    sprint's own stop list.
      - applyRemoteCard(matchId, matchDoc) [Task 2/4/5]: replays every
-       NEW entry in `matches/{matchId}.cardLog` (an append-only log of
-       `{seatId, card}` tuples — see match-service.js's submitCard())
+        NEW entry in `matches/{matchId}.cardLog` (an append-only log of
+        `{seatId, card}` tuples within the current round's window — the
+        window resets at round boundaries, see the Per-Round Log Window
+        note in match-service.js — see match-service.js's submitCard())
        through `TableEngine.emit({type:"PlayCard", playerId, card})` —
        the ONLY `table-engine.js` action shape this sprint touches, and
        the ONLY call this function ever makes into that engine. Unlike
@@ -257,9 +259,11 @@
    Firestore listener), exactly like `startBidSync()`/`startTurnSync()`/
    `startCardSync()` already do. ONE documented, honest architectural
    necessity beyond a single `applyRemoteX()` call per delivery — see
-   that function's own comment for the full account: `cardLog` is
-   append-only and NEVER cleared across trick boundaries (Sprint 4.2's
-   own documented design), so a single delivery (a late subscriber, or
+    that function's own comment for the full account: `cardLog` is
+    append-only and never cleared across trick boundaries within a round
+    (Sprint 4.2's own documented design; the whole window resets at ROUND
+    boundaries — see Per-Round Log Window), so a single delivery (a late
+    subscriber, or
    a reconnect that missed several deliveries) can legitimately carry
    MORE than one already-completed-but-not-yet-locally-resolved trick.
    `table-engine.js`'s own `emit()` correctly refuses a new card while
@@ -1500,10 +1504,11 @@
   // `matchDoc.version`, unlike every OTHER `applyRemote*()` registry in
   // this file — a single Firestore delivery's `cardLog` can legitimately
   // span MULTIPLE already-completed tricks (a late subscriber, or a
-  // reconnect that missed several deliveries — `cardLog` is append-only
-  // and never cleared across trick boundaries, per Sprint 4.2's own
-  // documented design), which means this function may need to run
-  // MORE THAN ONCE for the exact same `matchDoc.version` (see
+   // reconnect that missed several deliveries — `cardLog` is append-only
+   // and never cleared across trick boundaries within a round, per
+   // Sprint 4.2's own documented design (the window resets at ROUND
+   // boundaries — see Per-Round Log Window), which means this function may
+   // need to run MORE THAN ONCE for the exact same `matchDoc.version` (see
   // `startTrickSync()`'s own catch-up loop below) — a version-number
   // gate would incorrectly block every resolution after the first one
   // in that same delivery. `trickNo` itself, read fresh from the REAL
@@ -1771,9 +1776,10 @@
    *  its own version+count gate) and the new `applyRemoteTrick()`, up
    *  to 13 times (the maximum possible tricks in one round) per
    *  delivery, stopping the instant a pass resolves nothing further.
-   *  This is REQUIRED, not a stylistic choice: `cardLog` is append-only
-   *  and never cleared across trick boundaries (Sprint 4.2's own
-   *  documented design), so ONE delivery (a late subscriber, or a
+    *  This is REQUIRED, not a stylistic choice: `cardLog` is append-only
+    *  and never cleared across trick boundaries within a round (Sprint 4.2's
+    *  own documented design; the window resets at ROUND boundaries — see
+    *  Per-Round Log Window), so ONE delivery (a late subscriber, or a
    *  reconnect that missed several deliveries) can legitimately carry
    *  MULTIPLE already-completed-but-not-yet-locally-resolved tricks —
    *  and `table-engine.js`'s own `emit()` correctly refuses a new card

@@ -1,5 +1,7 @@
 # Round Lifecycle Sprint — Round 1 → Round 2 Synchronized Transition: Final Report
 
+> **SUPERSEDED IN PART (Per-Round Log Window sprint, post-R1):** this report's Option A decision (one flat, ever-growing, append-only log) was correct AT THIS SPRINT. Stored-array-size Commit 500s later proved a never-cleared log unviable at match scale — the parent log is now a **per-round window**, reset to `[]` atomically with a write-once `roundArchive/{round}` write. This report is otherwise preserved as-is as the record of this sprint; the round-tagging it introduced remains in use.
+
 **Authorization:** "SPRINT AUTHORIZATION — ROUND LIFECYCLE & MULTIPLAYER ROUND TRANSITION." Goal: Round N completes → all clients observe completion → round result finalized exactly once → match advances to Round N+1 → all clients converge on the same round number/configuration → new bidding begins → old round logs never contaminate the new round → new round card play remains synchronized. Explicitly NOT Match Completion.
 
 ---
