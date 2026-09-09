@@ -612,6 +612,23 @@ async function main() {
   var uniqueCards = new Set(allHandCards);
   check("3.3 No duplicate cards across the 4 hands (52 unique cards, one real shuffle, no leakage/collision)",
     allHandCards.length === 52 && uniqueCards.size === 52, "count=" + allHandCards.length + " unique=" + uniqueCards.size);
+  // P1-2 (R1 dealer-gate naming): the production incident's fix target —
+  // only the legitimate dealer path may dealRound (see
+  // docs/postmortem/2026-08-26-deal-denial.md V-FINAL). Gates 3.1–3.3
+  // prove the deal LANDED; this gate names the authority fact explicitly:
+  // the match document's own gameState shows Round 1 committed exactly
+  // once (initialized=true, dealtRound=1). Read-only (one match-doc get
+  // on p1's client) — adds no write and changes no verdict logic.
+  var r1DealState = await pages[0].evaluate(async (matchId) => {
+    try {
+      var snap = await window.Db.collection("matches").doc(matchId).get();
+      if (!snap.exists) return { exists: false };
+      var gs = snap.data().gameState || {};
+      return { initialized: gs.initialized, dealtRound: gs.dealtRound };
+    } catch (e) { return { error: String((e && e.message) || e) }; }
+  }, matchId);
+  check("R1.1 Dealer-gate: Round-1 deal committed exactly once (gameState.initialized=true, dealtRound=1)",
+    r1DealState && r1DealState.initialized === true && r1DealState.dealtRound === 1, JSON.stringify(r1DealState));
   const authoritativeHandsReady = Object.values(hands).every((h) => h && h.mode === "firestore" && h.hand.length === 13) &&
     allHandCards.length === 52 && uniqueCards.size === 52;
   if (!authoritativeHandsReady) {
@@ -630,7 +647,7 @@ async function main() {
       return { denied: false, exists: snap.exists };
     } catch (e) { return { denied: true, code: e.code }; }
   }, matchId);
-  check("3.4 P1 cannot read P2's hand document directly (real rules-enforced denial, not just UI omission)",
+  check("R1.2 (ex-3.4) P1 cannot read P2's hand document directly (real rules-enforced denial, not just UI omission)",
     leakAttempt.denied === true, JSON.stringify(leakAttempt));
 
   // ══════════════════════════════════════════════════════════════
