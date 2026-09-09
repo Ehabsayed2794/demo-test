@@ -2,7 +2,8 @@ name: R1 Golden Verification (Manual)
 
 # Isolated R1 verification only — runs the full 4-client Golden Path
 # against the real Firestore Rules Emulator and checks Gate 3.3
-# (52 total / 52 unique). Manual trigger only. Does not modify,
+# (52 total / 52 unique). Manual trigger + automatic on PRs targeting
+# main that touch rules/game code (P0-3). Does not modify,
 # replace, or duplicate test.yml / deploy-production.yml / apk-debug.yml.
 #
 # Proves: scripts/golden-path.mjs PASS 3.3 with 4 real browser contexts.
@@ -10,6 +11,18 @@ name: R1 Golden Verification (Manual)
 
 on:
   workflow_dispatch:
+  # P0-3 merge protection: run the Golden Path automatically when a PR
+  # targeting main touches rules, game code, or the harness itself.
+  # Kept OUT of test.yml on purpose (the golden run takes minutes;
+  # test:ci stays fast).
+  pull_request:
+    branches:
+      - main
+    paths:
+      - firestore.rules
+      - design-ui/**
+      - scripts/golden-path.mjs
+      - .github/workflows/r1-golden-verification.yml
 
 permissions:
   contents: read

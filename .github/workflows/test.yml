@@ -17,6 +17,7 @@ on:
   push:
     branches:
       - claude/busy-bohr-ez5rz3
+      - claude/**
       - main
 
 jobs:
