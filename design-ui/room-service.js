@@ -93,13 +93,37 @@
       });
   }
 
-  /** Creates a new room document. Resolves the new roomId.
+  // Short, human-shareable room code (max 6 chars): unambiguous uppercase
+  // letters + digits only — no I/L/O/0/1 so a code read aloud or copied
+  // by hand can't be misread. Replaces the old 20-char Firestore
+  // auto-ID so players can join by typing a short code.
+  var ROOM_CODE_LENGTH = 6;
+  var ROOM_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  var ROOM_CODE_MAX_ATTEMPTS = 5;
+
+  function generateRoomCode() {
+    var code = "";
+    for (var i = 0; i < ROOM_CODE_LENGTH; i++) {
+      code += ROOM_CODE_ALPHABET.charAt(Math.floor(Math.random() * ROOM_CODE_ALPHABET.length));
+    }
+    return code;
+  }
+
+  /** Creates a new room document under a short 6-char code. Resolves
+   *  the new roomId (the code itself).
    *  readyPlayers starts empty — creating a room does not imply being
-   *  ready; that's a separate, explicit action (see setReady below). */
+   *  ready; that's a separate, explicit action (see setReady below).
+   *  Collision-safe: the code is checked for existence first and
+   *  regenerated on collision (up to ROOM_CODE_MAX_ATTEMPTS); on the
+   *  astronomically unlikely event of repeated collisions it falls
+   *  back to a Firestore auto-ID so creation never fails. */
   function createRoom(playerId, roomName) {
     if (!playerId) return Promise.reject(new Error("createRoom: playerId is required."));
     if (!db()) return Promise.reject(new Error("RoomService: Firestore is not initialized on this page."));
-    var ref = db().collection("rooms").doc();
+    return tryCreateRoomWithCode(playerId, roomName, ROOM_CODE_MAX_ATTEMPTS);
+  }
+
+  function tryCreateRoomWithCode(playerId, roomName, attemptsLeft) {
     var room = {
       name: roomName || null,
       status: "waiting",
@@ -109,11 +133,33 @@
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     };
-    return ref.set(room).then(function () {
-      return syncCurrentRoomOnProfile(playerId, ref.id);
-    }).then(function () {
-      return ref.id;
+    if (attemptsLeft <= 0) {
+      // Last-resort fallback: plain auto-ID (same as the old behavior).
+      var autoRef = db().collection("rooms").doc();
+      return autoRef.set(room).then(function () {
+        return syncCurrentRoomOnProfile(playerId, autoRef.id);
+      }).then(function () {
+        return autoRef.id;
+      });
+    }
+    var code = generateRoomCode();
+    var ref = db().collection("rooms").doc(code);
+    return ref.get().then(function (snap) {
+      if (snap.exists) return tryCreateRoomWithCode(playerId, roomName, attemptsLeft - 1);
+      return ref.set(room).then(function () {
+        return syncCurrentRoomOnProfile(playerId, ref.id);
+      }).then(function () {
+        return ref.id;
+      });
     });
+  }
+
+  /** Normalizes a player-typed room code: trims whitespace and
+   *  uppercases short codes so "x7k2pq" joins room "X7K2PQ". Long
+   *  legacy auto-IDs (case-sensitive) pass through unchanged. */
+  function normalizeRoomCode(roomId) {
+    var trimmed = String(roomId).trim();
+    return trimmed.length <= ROOM_CODE_LENGTH ? trimmed.toUpperCase() : trimmed;
   }
 
   /** Joins an existing room. Validates existence and open/not-full
@@ -124,7 +170,7 @@
   function joinRoom(roomId, playerId) {
     if (!roomId || !playerId) return Promise.reject(new Error("joinRoom: roomId and playerId are both required."));
     if (!db()) return Promise.reject(new Error("RoomService: Firestore is not initialized on this page."));
-    var ref = db().collection("rooms").doc(roomId);
+    var ref = db().collection("rooms").doc(normalizeRoomCode(roomId));
     return db().runTransaction(function (tx) {
       return tx.get(ref).then(function (snap) {
         if (!snap.exists) throw new Error("Room not found.");
@@ -152,7 +198,7 @@
   function leaveRoom(roomId, playerId) {
     if (!roomId || !playerId) return Promise.reject(new Error("leaveRoom: roomId and playerId are both required."));
     if (!db()) return Promise.reject(new Error("RoomService: Firestore is not initialized on this page."));
-    var ref = db().collection("rooms").doc(roomId);
+    var ref = db().collection("rooms").doc(normalizeRoomCode(roomId));
     return db().runTransaction(function (tx) {
       return tx.get(ref).then(function (snap) {
         if (!snap.exists) return null; // already gone — no-op
@@ -187,7 +233,7 @@
   function setReady(roomId, playerId, ready) {
     if (!roomId || !playerId) return Promise.reject(new Error("setReady: roomId and playerId are both required."));
     if (!db()) return Promise.reject(new Error("RoomService: Firestore is not initialized on this page."));
-    var ref = db().collection("rooms").doc(roomId);
+    var ref = db().collection("rooms").doc(normalizeRoomCode(roomId));
     return db().runTransaction(function (tx) {
       return tx.get(ref).then(function (snap) {
         if (!snap.exists) throw new Error("Room not found.");
@@ -279,7 +325,7 @@
   function loadRoom(roomId) {
     if (!roomId) return Promise.reject(new Error("loadRoom: roomId is required."));
     if (!db()) return Promise.reject(new Error("RoomService: Firestore is not initialized on this page."));
-    return db().collection("rooms").doc(roomId).get().then(function (snap) {
+    return db().collection("rooms").doc(normalizeRoomCode(roomId)).get().then(function (snap) {
       return snap.exists ? snap.data() : null;
     });
   }
