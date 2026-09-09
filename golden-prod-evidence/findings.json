@@ -1,0 +1,6 @@
+[
+  {
+    "label": "3.3 No duplicate cards across the 4 hands (52 unique cards, one real shuffle, no leakage/collision)",
+    "note": "count=52 unique=41"
+  }
+]
