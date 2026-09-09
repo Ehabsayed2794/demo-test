@@ -255,7 +255,7 @@ async function reloadPage(contexts, pages, i, url) {
   var oldPage = pages[i];
   var fresh = await contexts[i].newPage();
   await installRedirect(fresh);
-  await gotoReady(fresh, url);
+  await gotoReady(fresh, MATCH_URL);
   pages[i] = fresh;
   await oldPage.close();
   return fresh;
@@ -289,7 +289,10 @@ async function main() {
     process.exitCode = 2; return;
   }
 
-  var URL = "http://127.0.0.1:" + HTTP_PORT + "/match/index.html";
+  var BASE = "http://127.0.0.1:" + HTTP_PORT;
+  var LOBBY_URL = BASE + "/lobby/index.html";
+  var MATCH_URL = BASE + "/match/index.html";
+  var STORAGE_KEY = "estimation_game_state_v1";
   var contexts = [], pages = [], uids = {};
   var contextsToClose = [];
   async function cleanup(code) {
@@ -301,11 +304,13 @@ async function main() {
   }
 
   try {
+    // Boot on LOBBY (like scripts/golden-path.mjs): match/index.html needs
+    // the GameState handoff to bootstrap engines/seat for a match.
     for (var i = 0; i < 4; i++) {
       var ctx = await browser.newContext();
       var page = await ctx.newPage();
       await installRedirect(page);
-      if (!await gotoReady(page, URL)) throw new Error("page " + SEATS[i] + " never ready");
+      if (!await gotoReady(page, LOBBY_URL)) throw new Error("page " + SEATS[i] + " never ready");
       contexts.push(ctx); pages.push(page); contextsToClose.push(ctx);
     }
     for (var j = 0; j < 4; j++) {
@@ -316,12 +321,12 @@ async function main() {
       }, email);
     }
 
-    // ── R1: lobby reconnect keeps membership, join stays idempotent ──
+    // ── R1: lobby reload keeps membership, join stays idempotent ──
     var roomId = await pages[0].evaluate(async function (uid) { return window.RoomService.createRoom(uid, "Reconnect Room"); }, uids.p1);
     for (var k = 1; k < 4; k++) {
       await pages[k].evaluate(async function (a) { return window.RoomService.joinRoom(a.roomId, a.uid); }, { roomId: roomId, uid: uids[SEATS[k]] });
     }
-    await reloadPage(contexts, pages, 1, URL);
+    await reloadPage(contexts, pages, 1, LOBBY_URL);
     var roomAfter = await pages[1].evaluate(async function (id) { return window.RoomService.loadRoom(id); }, roomId);
     check("R1 reloaded P2 still a member, membership unchanged (4)",
       !!roomAfter && roomAfter.players.indexOf(uids.p2) !== -1 && roomAfter.players.length === 4);
@@ -332,18 +337,40 @@ async function main() {
     }, { roomId: roomId, uid: uids.p2 });
     check("R1 re-join after reload is idempotent (no duplicate)", dupCount === 1);
 
-    // ── R2: match start + reconnect pre-deal ──
-    var started = null;
-    for (var m = 0; m < 4; m++) {
-      var r = await pages[m].evaluate(async function (a) { return (await window.RoomService.setReady(a.roomId, a.uid, true)).matchStart || null; }, { roomId: roomId, uid: uids[SEATS[m]] });
-      if (r && r.started) started = r;
+    // ── R2: match start (non-creators first, creator last — exercises the
+    // creator-only startMatch guard) + GameState handoff into match pages ──
+    for (var m = 1; m < 4; m++) {
+      await pages[m].evaluate(async function (a) { return window.RoomService.setReady(a.roomId, a.uid, true); }, { roomId: roomId, uid: uids[SEATS[m]] });
     }
-    var matchId = started && started.matchId;
+    var creatorReady = await pages[0].evaluate(async function (a) { return window.RoomService.setReady(a.roomId, a.uid, true); }, { roomId: roomId, uid: uids.p1 });
+    var matchId = creatorReady && creatorReady.matchStart && creatorReady.matchStart.matchId;
+    if (!matchId) {
+      var roomNow = await pages[0].evaluate(async function (id) { return window.RoomService.loadRoom(id); }, roomId);
+      matchId = roomNow && roomNow.matchId;
+    }
     check("R2.pre match started via all-ready", !!matchId);
     if (!matchId) { await cleanup(1); return; }
+    // Same handoff shape the real lobby uses (scripts/golden-path.mjs).
+    for (var h = 0; h < 4; h++) {
+      await pages[h].evaluate(function (args) {
+        var data = {
+          current: "Gameplay", previous: "Lobby", history: ["Lobby"],
+          data: {
+            player: { id: args.uid, name: "Player " + args.seat },
+            account: { type: "test", email: null }, room: { code: null, host: false, seats: [] }, lastResult: null,
+            match: { id: args.matchId, roomId: args.roomId }
+          }
+        };
+        window.sessionStorage.setItem(args.storageKey, JSON.stringify(data));
+      }, { matchId: matchId, roomId: roomId, uid: uids[SEATS[h]], seat: SEATS[h], storageKey: STORAGE_KEY });
+      await pages[h].goto(MATCH_URL, { waitUntil: "load" });
+    }
+    for (var w = 0; w < 4; w++) {
+      await waitFor(pages[w], function () { return !!(window.SessionService && window.SessionService.getCurrentUser()); }, 8000);
+    }
     var seatsOf = function (doc, uid) { return Object.keys(doc.seats).find(function (s) { return doc.seats[s] === uid; }); };
     var p3seat = seatsOf(await pages[0].evaluate(async function (x) { return window.MatchService.loadMatch(x); }, matchId), uids.p3);
-    await reloadPage(contexts, pages, 2, URL);
+    await reloadPage(contexts, pages, 2, MATCH_URL);
     var matchP3 = await pages[2].evaluate(async function (x) { return window.MatchService.loadMatch(x); }, matchId);
     check("R2 reconnected P3 observes the same match doc", !!matchP3 && matchP3.roomId === roomId);
     check("R2 P3 seat identity unchanged after reconnect", !!matchP3 && matchP3.seats[p3seat] === uids.p3);
@@ -368,7 +395,7 @@ async function main() {
       var s = await window.Db.collection("matches").doc(a.matchId).collection("hands").doc(a.seat).get();
       return s.exists ? s.data() : null;
     }, { matchId: matchId, seat: p2seat });
-    await reloadPage(contexts, pages, 1, URL);
+    await reloadPage(contexts, pages, 1, MATCH_URL);
     var handAfter = await pages[1].evaluate(async function (a) {
       var s = await window.Db.collection("matches").doc(a.matchId).collection("hands").doc(a.seat).get();
       return s.exists ? s.data() : null;
@@ -391,7 +418,7 @@ async function main() {
     var sixTricks = await driveCards(pages, matchId, 1, 24, cardSubs, 200);
     check("R4.pre 6 tricks (24 plays) driven pre-drop", sixTricks.ok === true && sixTricks.plays >= 24, sixTricks);
     if (!sixTricks.ok) { await cleanup(1); return; }
-    await reloadPage(contexts, pages, 1, URL);
+    await reloadPage(contexts, pages, 1, MATCH_URL);
     var p2view = await pages[1].evaluate(async function (x) { return window.MatchService.loadMatch(x); }, matchId);
     check("R4 reloaded P2 mid-round observes the live round (still round 1)", !!p2view && p2view.currentRound === 1);
     var p2handView = await pages[1].evaluate(async function (a) {
@@ -420,7 +447,7 @@ async function main() {
     }, matchId);
     check("R5.pre advance to round 2 commits", adv && adv.advanced === true, adv && (adv.error || adv.reason));
     if (!adv || !adv.advanced) { await cleanup(1); return; }
-    await reloadPage(contexts, pages, 2, URL);
+    await reloadPage(contexts, pages, 2, MATCH_URL);
     var p3r2 = await pages[2].evaluate(async function (x) { return window.MatchService.loadMatch(x); }, matchId);
     check("R5 reloaded P3 post-advance sees round 2", !!p3r2 && p3r2.currentRound === 2);
     check("R5 reloaded P3 sees the reset parent window (empty logs)", !!p3r2 && p3r2.cardLog.length === 0 && p3r2.biddingLog.length === 0);
@@ -449,7 +476,7 @@ async function main() {
     check("R9 subscribe/unsubscribe/resubscribe: exactly one delivery per active sub", dbl2.every(function (c) { return c === 1; }), dbl2);
     var seenRooms = [];
     for (var rr = 0; rr < 3; rr++) {
-      await reloadPage(contexts, pages, 0, URL);
+      await reloadPage(contexts, pages, 0, MATCH_URL);
       var mm = await pages[0].evaluate(async function (x) { return window.MatchService.loadMatch(x); }, matchId);
       seenRooms.push(mm && mm.roomId);
     }
@@ -462,3 +489,4 @@ async function main() {
 }
 
 main().catch(function (e) { console.log("HARNESS CRASHED: " + ((e && e.stack) || e)); process.exitCode = 3; });
+
