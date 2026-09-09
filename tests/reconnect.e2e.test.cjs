@@ -252,20 +252,38 @@ async function driveCards(pages, matchId, roundNumber, targetPlays, submittedBy,
 }
 
 async function reloadPage(contexts, pages, i, url) {
-  var oldPage = pages[i];
-  var fresh = await contexts[i].newPage();
-  await installRedirect(fresh);
-  await gotoReady(fresh, MATCH_URL);
-  pages[i] = fresh;
-  await oldPage.close();
-  return fresh;
+  // Same-tab reload (a real user reload): preserves the tab's
+  // sessionStorage GameState handoff and the context's auth, and keeps
+  // the already-installed route handlers (they persist across
+  // same-page navigations). A fresh newPage() tab would lose
+  // sessionStorage and drop the match bootstrap.
+  // NOTE: uses the `url` argument -- a previous revision referenced the
+  // main-scoped MATCH_URL here (out of scope, ReferenceError on every
+  // call), whose crash-path leak (server+browser left open, process
+  // never exiting) is what surfaced as the runner's 180s TIMEOUT.
+  var page = pages[i];
+  var ok = await gotoReady(page, url);
+  if (!ok) throw new Error("reload failed: page " + i + " never ready at " + url);
+  return page;
 }
 
 async function main() {
   console.log("=== P1-3 reconnect E2E (window world): 4 real clients vs emulator ===\n");
+  var server = null, browser = null;
+  // Overall abort guard (as documented in this file's header): converts
+  // ANY hang (hung evaluate/goto/launch, stalled driver) into a
+  // diagnosed exit-1 well inside the runner's per-file timeout, instead
+  // of a silent 180s TIMEOUT. process.exit (not just exitCode) because
+  // a hung await would otherwise suppress the exit indefinitely.
+  var abortTimer = setTimeout(function () {
+    console.log("ABORT: time budget (" + TIME_BUDGET_MS + "ms) exceeded -- forcing exit with diagnosis, not a hang.");
+    try { if (server) server.close(); } catch (e) {}
+    if (browser) { try { browser.close().catch(function () {}); } catch (e) {} }
+    setTimeout(function () { process.exit(1); }, 1000);
+  }, TIME_BUDGET_MS + 10000);
   var rulesText;
   try { rulesText = fs.readFileSync(path.join(REPO_ROOT, "firestore.rules"), "utf8"); }
-  catch (e) { console.log("CANNOT READ firestore.rules: " + e.message); process.exitCode = 2; return; }
+  catch (e) { clearTimeout(abortTimer); console.log("CANNOT READ firestore.rules: " + e.message); process.exitCode = 2; return; }
 
   var bootEnv;
   try {
@@ -275,17 +293,19 @@ async function main() {
     });
   } catch (e) {
     // NOTE: deliberately NOT the word SKIPPED — the runner hard-fails on it.
+    clearTimeout(abortTimer);
     console.log("EMULATOR UNREACHABLE (bootstrap): " + e.message);
     process.exitCode = 2; return;
   }
   await bootEnv.cleanup();
 
-  var server = await startServer();
-  var browser;
+  server = await startServer();
   try {
     browser = await chromium.launch({ executablePath: resolveChromiumExecutablePath() });
   } catch (e) {
+    clearTimeout(abortTimer);
     console.log("BROWSER LAUNCH FAILED: " + e.message);
+    try { if (server) server.close(); } catch (ee) {}
     process.exitCode = 2; return;
   }
 
@@ -295,10 +315,27 @@ async function main() {
   var STORAGE_KEY = "estimation_game_state_v1";
   var contexts = [], pages = [], uids = {};
   var contextsToClose = [];
+  var cleanedUp = false;
+  function withTimeout(promise, ms) {
+    var t;
+    var timeout = new Promise(function (_, reject) { t = setTimeout(function () { reject(new Error("cleanup-timeout")); }, ms); });
+    return Promise.race([Promise.resolve(promise), timeout]).then(
+      function (v) { clearTimeout(t); return v; },
+      function (e) { clearTimeout(t); throw e; }
+    );
+  }
   async function cleanup(code) {
-    for (var c of contextsToClose) { try { await c.close(); } catch (e) {} }
-    try { await browser.close(); } catch (e) {}
-    try { server.close(); } catch (e) {}
+    if (cleanedUp) { process.exitCode = code; return; }
+    cleanedUp = true;
+    clearTimeout(abortTimer);
+    for (var c of contextsToClose) { try { await withTimeout(c.close(), 5000); } catch (e) {} }
+    try { if (browser) await withTimeout(browser.close(), 10000); } catch (e) {}
+    try {
+      if (server) {
+        try { if (server.closeAllConnections) server.closeAllConnections(); } catch (e) {}
+        await withTimeout(new Promise(function (resolve) { server.close(function () { resolve(); }); }), 5000);
+      }
+    } catch (e) {}
     console.log("\n=== RESULTS ===\n" + pass + " passed, " + fail + " failed");
     process.exitCode = code;
   }
@@ -483,10 +520,10 @@ async function main() {
     check("R10 3x reload: same roomId every time (identity never regresses)", seenRooms.every(function (r) { return r === roomId; }), seenRooms);
   } catch (e) {
     console.log("HARNESS CRASHED: " + ((e && e.stack) || e));
-    process.exitCode = 3; return;
+    await cleanup(3); return;
   }
   await cleanup(fail > 0 ? 1 : 0);
 }
 
-main().catch(function (e) { console.log("HARNESS CRASHED: " + ((e && e.stack) || e)); process.exitCode = 3; });
+main().catch(function (e) { console.log("HARNESS CRASHED: " + ((e && e.stack) || e)); try { process.exit(3); } catch (ee) { process.exitCode = 3; } });
 
