@@ -26,7 +26,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          expected='3ceb49242b8ffd900eed347997c77b74cc8af3eee7f2f2e169bad039608f557b'
+          expected='9d8662e3da774b74e1d8570521b64a69bbde6fda4d18ad4158f81daa0cc4b516'
           actual="$(sha256sum firestore.rules | awk '{print $1}')"
           echo "firestore.rules SHA256=$actual"
           test "$actual" = "$expected" || {
