@@ -150,11 +150,25 @@ async function waitForTrickSettlement(pages, matchId, expectedCardCount, timeout
     // consistent (reset) log length" is an equally authoritative
     // settlement signal, exclusively for trick 13 (tricks 1-12 have no
     // such transition and are completely unaffected by this branch).
+    // Terminal-round twin (run #11 evidence): when trick 13 is ALSO the
+    // match's last trick, endMatch() — not advanceToNextRound() — writes
+    // the reset (status complete + empty windows + roundArchive/N in one
+    // commit), so currentRound never moves past and the advance branch
+    // above can never fire. "Every client agrees status==complete, with
+    // a consistent (reset) log length" is the same class of
+    // second-observation signal for the terminal case: endMatch() only
+    // commits after archiving this round's own 52 plays, so a unanimous
+    // complete is proof the round genuinely finished, not a weaker check.
     if (completedTrick === 13 && roundNumber != null &&
-        docs.every((d) => d && d.currentRound > roundNumber) &&
         docs.every((d) => d && (d.cardLog || []).length === (docs[0] && (docs[0].cardLog || []).length))) {
-      logEvent("TRICK_SETTLEMENT_VIA_ADVANCE", { round: roundNumber, docCurrentRounds: docs.map((d) => d && d.currentRound) });
-      return { docs, states, advanced: true };
+      if (docs.every((d) => d && d.currentRound > roundNumber)) {
+        logEvent("TRICK_SETTLEMENT_VIA_ADVANCE", { round: roundNumber, docCurrentRounds: docs.map((d) => d && d.currentRound) });
+        return { docs, states, advanced: true };
+      }
+      if (docs.every((d) => d && d.status === "complete")) {
+        logEvent("TRICK_SETTLEMENT_VIA_COMPLETION", { round: roundNumber, docStatuses: docs.map((d) => d && d.status) });
+        return { docs, states, completed: true };
+      }
     }
     await sleep(180);
   }
