@@ -126,17 +126,54 @@ async function readMatchDocs(pages, matchId) {
   return Promise.all(pages.map((p) => p.evaluate((id) => window.MatchService.loadMatch(id), matchId).catch(() => null)));
 }
 
-async function waitForTrickSettlement(pages, matchId, expectedCardCount, timeoutMs = 20000) {
+async function waitForTrickSettlement(pages, matchId, expectedCardCount, timeoutMs = 20000, roundNumber = null, completedTrick = null) {
   const deadline = Date.now() + timeoutMs;
+  let lastDocs = null, lastStates = null;
   while (Date.now() < deadline) {
     const docs = await readMatchDocs(pages, matchId);
     const states = await Promise.all(pages.map((p) => p.evaluate(() => window.TableEngine ? window.TableEngine.getState() : null).catch(() => null)));
+    lastDocs = docs; lastStates = states;
     const sameCardCount = docs.every((d) => d && (d.cardLog || []).length >= expectedCardCount) &&
       docs.every((d) => d && (d.cardLog || []).length === (docs[0] && (docs[0].cardLog || []).length));
     const localSettled = states.every((s) => s && (s.phase === "PLAY" || s.phase === "DONE") && (s.plays || []).length === 0);
     if (sameCardCount && localSettled) return { docs, states };
+    // Per-Round Log Window sprint: at trick 13 ONLY, advanceToNextRound()
+    // (see match-service.js's own schema doc) can win the race and reset
+    // the parent's cardLog/currentRound before this poll's first tick
+    // ever observes the round's own 52 cards — the parent window can
+    // jump straight from 51 to 0 (archived to roundArchive/{round}, never
+    // lost), which the ORIGINAL `>= expectedCardCount` check above can
+    // never see again. advanceToNextRound() itself already verified
+    // 52/52 card plays for THIS exact round server-side
+    // (match-service.js:1599-1604) before ever writing that reset — so
+    // "every client agrees currentRound moved past this round, with a
+    // consistent (reset) log length" is an equally authoritative
+    // settlement signal, exclusively for trick 13 (tricks 1-12 have no
+    // such transition and are completely unaffected by this branch).
+    if (completedTrick === 13 && roundNumber != null &&
+        docs.every((d) => d && d.currentRound > roundNumber) &&
+        docs.every((d) => d && (d.cardLog || []).length === (docs[0] && (docs[0].cardLog || []).length))) {
+      logEvent("TRICK_SETTLEMENT_VIA_ADVANCE", { round: roundNumber, docCurrentRounds: docs.map((d) => d && d.currentRound) });
+      return { docs, states, advanced: true };
+    }
     await sleep(180);
   }
+  // Diagnostic-only: the caller reports TIMEOUT without saying WHICH half
+  // (docs diverged vs. an engine stuck) failed to converge. Snapshot both
+  // halves here so the next evidence file answers that directly. No
+  // behavior change: same timeout, same null, one extra log line.
+  try {
+    logEvent("TRICK_SETTLEMENT_DIAGNOSTIC", {
+      matchId: matchId, expectedCardCount: expectedCardCount,
+      docCardCounts: (lastDocs || []).map((d) => d ? (d.cardLog || []).length : null),
+      docVersions: (lastDocs || []).map((d) => d ? d.version : null),
+      docRounds: (lastDocs || []).map((d) => d ? d.currentRound : null),
+      enginePhases: (lastStates || []).map((s) => s ? s.phase : null),
+      engineTrickNos: (lastStates || []).map((s) => s ? s.trickNo : null),
+      enginePlaysLens: (lastStates || []).map((s) => s && Array.isArray(s.plays) ? s.plays.length : null),
+      engineRounds: (lastStates || []).map((s) => s ? s.round : null)
+    });
+  } catch (e) { /* logging must never break the harness */ }
   return null;
 }
 
@@ -303,6 +340,17 @@ async function driveRoundCardPlay(pages, matchId, roundNumber, maxIterations) {
   let lastTurn = null, stall = 0, lastValidatedTrick = 0, staleRetries = 0;
   const initialDoc = await pages[0].evaluate((id) => window.MatchService.loadMatch(id), matchId).catch(() => null);
   const initialCardCount = initialDoc && Array.isArray(initialDoc.cardLog) ? initialDoc.cardLog.length : 0;
+  // Diagnostic-only (pairs with TRICK_SETTLEMENT_DIAGNOSTIC): with the
+  // per-round log window, a correct round start reads 0 here; a stale
+  // pre-reset read would show 52 and make every expected count
+  // unreachable by construction. Logged once per round, no behavior change.
+  try {
+    logEvent("ROUND_WINDOW_BASELINE", {
+      matchId: matchId, roundNumber: roundNumber, initialCardCount: initialCardCount,
+      initialVersion: initialDoc ? initialDoc.version : null,
+      initialCurrentRound: initialDoc ? initialDoc.currentRound : null
+    });
+  } catch (e) { /* logging must never break the harness */ }
   for (let iter = 0; iter < (maxIterations || 520); iter++) {
     const matchDoc = await pages[0].evaluate((id) => window.MatchService.loadMatch(id), matchId).catch(() => null);
     if (!matchDoc) { await sleep(200); continue; }
@@ -370,7 +418,7 @@ async function driveRoundCardPlay(pages, matchId, roundNumber, maxIterations) {
     const boundaryState = afterStates.find((s) => s && (s.phase === "RESOLVING" || s.phase === "DONE"));
     if (boundaryState && boundaryState.trickNo > lastValidatedTrick) {
       const completedTrick = boundaryState.trickNo;
-      const settled = await waitForTrickSettlement(pages, matchId, initialCardCount + completedTrick * 4);
+      const settled = await waitForTrickSettlement(pages, matchId, initialCardCount + completedTrick * 4, 20000, roundNumber, completedTrick);
       if (!settled) return { ok: false, reason: "TRICK_SETTLEMENT_TIMEOUT", log, trick: completedTrick };
       const docs = settled.docs;
       const settledStates = settled.states;
@@ -643,9 +691,18 @@ async function main() {
   var matchCompletedAtRound = null;
   var stoppedAtRound = null;
 
+  // Rapid Rounds §5 lets a qualifying Super Call/Sa'ayda in rounds 14-18
+  // push the AUTHORITATIVE `maxRounds` past its 18-round default (see
+  // MatchService.extendMatchRounds()) — this loop's own upper bound must
+  // never assume 18 is final, or a legitimately extended match reads as
+  // a false convergence failure at the old boundary. 30 is a generous
+  // safety cap (matchService has no round number above 18+a handful of
+  // extensions in practice), never itself an expected stopping point.
+  var ROUND_LOOP_SAFETY_CAP = 30;
+
   if (bidRes1.ok && cardRes1.ok) {
     roundSummaries.push("Round 01: PASS -- 13/13 tricks (bidding+cards, checks 4.1/4.2)");
-    for (var rn = 2; rn <= 18; rn++) {
+    for (var rn = 2; rn <= ROUND_LOOP_SAFETY_CAP; rn++) {
       var bidResN = await driveBidding(pages, matchId);
       if (!bidResN.ok) {
         check("Round " + pad2(rn) + " bidding completes via the real service path", false,
@@ -670,19 +727,38 @@ async function main() {
         break;
       }
 
-      // Round-boundary convergence: all 4 clients agree on the new
-      // round number (the SAME check 4.3 already performs for Round
-      // 1->2, generalized across every subsequent boundary).
+      // Live authoritative maxRounds, read fresh each boundary — an
+      // extension recorded during round `rn` (or any earlier round)
+      // can raise this past 18 at any point; the wait below must accept
+      // EITHER "converged on round rn+1" OR "match completed" as a
+      // legitimate outcome, never demand rn+1 unconditionally (a match
+      // whose terminal round WAS rn has no rn+1 to converge on at all).
+      var liveMatchDoc = await pages[0].evaluate((id) => window.MatchService.loadMatch(id), matchId).catch(() => null);
+      var liveMaxRounds = (liveMatchDoc && typeof liveMatchDoc.maxRounds === "number") ? liveMatchDoc.maxRounds : 18;
+
       var roundViewsN = [];
       for (var i = 0; i < 4; i++) {
-        var vN = await waitFor(pages[i], (expected) => {
+        var vN = await waitFor(pages[i], (args) => {
           var r = window.GameSession && window.GameSession.getRound();
-          return r && r.number >= expected ? { round: r.number } : null;
-        }, 20000, rn + 1);
+          if (r && r.number >= args.expected) return { round: r.number };
+          if (window.GameSession && typeof window.GameSession.isMatchComplete === "function" && window.GameSession.isMatchComplete()) {
+            return { complete: true };
+          }
+          return null;
+        }, 20000, { expected: rn + 1 });
         roundViewsN.push(vN);
       }
-      var roundConverged = roundViewsN.every(Boolean) && roundViewsN.every((v) => v.round === roundViewsN[0].round);
-      check("Round " + pad2(rn) + " -> Round " + pad2(rn + 1) + " convergence (all 4 clients agree on round number)",
+      if (roundViewsN.some((v) => v && v.complete)) {
+        // Completion raced this boundary wait rather than a plain round
+        // advance — let the loop's own completion path (driveRoundCardPlay's
+        // authoritative matchDoc.status read, above) confirm it for real
+        // on the next pass instead of asserting anything here.
+        matchCompletedAtRound = rn;
+        break;
+      }
+      var roundConverged = roundViewsN.every((v) => v && v.round != null) &&
+        roundViewsN.every((v) => v.round === roundViewsN[0].round);
+      check("Round " + pad2(rn) + " -> Round " + pad2(rn + 1) + " convergence (all 4 clients agree on round number, live maxRounds=" + liveMaxRounds + ")",
         roundConverged, JSON.stringify(roundViewsN));
       if (!roundConverged) { stoppedAtRound = rn; break; }
     }

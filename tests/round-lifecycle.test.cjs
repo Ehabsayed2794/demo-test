@@ -55,10 +55,17 @@ function makeMatchRef(id) {
       return Promise.resolve({ exists: exists, data: function () { return exists ? Object.assign({}, STORE[k]) : undefined; } });
     },
     update: function (patch) {
-      STORE[k] = Object.assign({}, STORE[k], patch);
+      STORE[k] = __resolveWritePatch(STORE[k], patch);
       DOC_VERSION[k] = (DOC_VERSION[k] || 0) + 1;
       notify(k);
       return Promise.resolve();
+    },
+    // Per-Round Log Window sprint: subcollection refs for
+    // matches/{id}/roundArchive/{round} (the archive tx.set() in
+    // advanceToNextRound()/endMatch()). Same minimal get/set shape as
+    // the parent ref — no onSnapshot (nothing subscribes to archives).
+    collection: function (sub) {
+      return { doc: function (subId) { return makeSubRef(k, sub, subId); } };
     },
     onSnapshot: function (onNext) {
       ONSNAPSHOT_CALLS[k] = (ONSNAPSHOT_CALLS[k] || 0) + 1;
@@ -69,6 +76,22 @@ function makeMatchRef(id) {
       return function unsubscribe() {
         LISTENERS[k] = (LISTENERS[k] || []).filter(function (cb) { return cb !== onNext; });
       };
+    }
+  };
+}
+function makeSubRef(parentKey, sub, subId) {
+  var k = parentKey + "/" + sub + "/" + subId;
+  return {
+    id: subId, _key: k,
+    get: function () {
+      var exists = Object.prototype.hasOwnProperty.call(STORE, k);
+      return Promise.resolve({ exists: exists, data: function () { return exists ? Object.assign({}, STORE[k]) : undefined; } });
+    },
+    set: function (data) {
+      STORE[k] = Object.assign({}, data);
+      DOC_VERSION[k] = (DOC_VERSION[k] || 0) + 1;
+      notify(k);
+      return Promise.resolve();
     }
   };
 }
@@ -83,19 +106,56 @@ var FAKE_DB = {
     var seenVersions = {}, pending = {};
     var tx = {
       get: function (ref) { seenVersions[ref._key] = DOC_VERSION[ref._key] || 0; return ref.get(); },
-      update: function (ref, patch) { pending[ref._key] = { ref: ref, data: patch }; }
+      // Per-Round Log Window sprint: tx.set() for the archive write
+      // (tx.update() alone can no longer express advance/endMatch).
+      set: function (ref, data) { pending[ref._key] = { ref: ref, mode: "set", data: data }; },
+      update: function (ref, patch) { pending[ref._key] = { ref: ref, mode: "update", data: patch }; }
     };
     return Promise.resolve(fn(tx)).then(function (result) {
       var conflict = Object.keys(seenVersions).some(function (k) { return (DOC_VERSION[k] || 0) !== seenVersions[k]; });
       if (conflict) return FAKE_DB.runTransaction(fn, attempt + 1);
-      Object.keys(pending).forEach(function (k) { STORE[k] = Object.assign({}, STORE[k], pending[k].data); DOC_VERSION[k] = (DOC_VERSION[k] || 0) + 1; });
+      Object.keys(pending).forEach(function (k) {
+        // Per-Round Log Window sprint: tx.set() (the roundArchive write)
+        // overwrites wholesale; tx.update() resolves first (including
+        // arrayUnion sentinels) then merges — see __resolveWritePatch.
+        STORE[k] = pending[k].mode === "set" ? Object.assign({}, pending[k].data) : __resolveWritePatch(STORE[k], pending[k].data);
+        DOC_VERSION[k] = (DOC_VERSION[k] || 0) + 1;
+      });
       Object.keys(pending).forEach(function (k) { notify(k); });
       return result;
     });
   }
 };
 global.Db = FAKE_DB;
-global.firebase = { firestore: { FieldValue: { serverTimestamp: function () { return { __sentinel: "serverTimestamp" }; } } } };
+global.firebase = { firestore: { FieldValue: {
+  serverTimestamp: function () { return { __sentinel: "serverTimestamp" }; },
+  // Mirrors real Firestore's arrayUnion() transform semantics closely
+  // enough for these mocks: resolves BEFORE being merged into STORE (see
+  // __resolveWritePatch below), appending only values not already
+  // present (deep-equal), exactly like the real server-side transform —
+  // added when match-service.js's submitCard()/submitBiddingAction()
+  // switched cardLog/biddingLog from full-array-rewrite to arrayUnion()
+  // (payload-size hotfix) so these existing mocked tests keep exercising
+  // the REAL match-service.js code unchanged.
+  arrayUnion: function () { return { __sentinel: "arrayUnion", values: Array.prototype.slice.call(arguments) }; }
+} } };
+function __resolveWritePatch(existing, patch) {
+  var resolved = {};
+  Object.keys(patch).forEach(function (k) {
+    var v = patch[k];
+    if (v && v.__sentinel === "arrayUnion") {
+      var arr = (existing && Array.isArray(existing[k])) ? existing[k].slice() : [];
+      v.values.forEach(function (item) {
+        var already = arr.some(function (e) { return JSON.stringify(e) === JSON.stringify(item); });
+        if (!already) arr.push(item);
+      });
+      resolved[k] = arr;
+    } else {
+      resolved[k] = v;
+    }
+  });
+  return Object.assign({}, existing, resolved);
+}
 
 var CURRENT_USER = null;
 global.SessionService = { getCurrentUser: function () { return CURRENT_USER ? { uid: CURRENT_USER } : null; }, setCurrentMatchId: function () { return Promise.resolve(); } };
@@ -242,7 +302,17 @@ function runRemainingChecks() {
       check("D. advanceToNextRound(): bids reset to all-null", doc.bids.p1 === null && doc.bids.p2 === null && doc.bids.p3 === null && doc.bids.p4 === null);
       check("D. advanceToNextRound(): turn reset to null (no defined meaning until new bidding resumes)", doc.turn === null);
       check("D. advanceToNextRound(): cardPhase reset to null", doc.cardPhase === null);
-      check("D. advanceToNextRound(): Round 1's own 52 cardLog entries are completely untouched (append-only, never cleared)", doc.cardLog.length === 52 && doc.cardLog.every(function (e) { return e.round === 1; }));
+      // Per-Round Log Window sprint: the parent windows reset to [] and
+      // Round 1's own 52 entries live on in roundArchive/1 — the OLD
+      // "append-only, never cleared" invariant is now per-round-window.
+      check("D. advanceToNextRound(): parent cardLog window reset to [] (archived, not lost)", Array.isArray(doc.cardLog) && doc.cardLog.length === 0);
+      check("D. advanceToNextRound(): parent biddingLog window reset to []", Array.isArray(doc.biddingLog) && doc.biddingLog.length === 0);
+      check("D. advanceToNextRound(): result reports the archived round", result.archivedRound === 1);
+      var archive1 = STORE[key("match-adv-2") + "/roundArchive/1"];
+      check("D. advanceToNextRound(): roundArchive/1 was written atomically in the SAME transaction", !!archive1);
+      check("D. advanceToNextRound(): roundArchive/1 carries round+matchId binding", archive1 && archive1.round === 1 && archive1.matchId === "match-adv-2");
+      check("D. advanceToNextRound(): roundArchive/1 holds Round 1's own 52 round-tagged card plays verbatim", archive1 && archive1.cardLog.length === 52 && archive1.cardLog.every(function (e) { return e && e.round === 1; }));
+      check("D. advanceToNextRound(): roundArchive/1 holds Round 1's bidding window as an array", archive1 && Array.isArray(archive1.biddingLog));
 
       // E — idempotent no-op on a second call for the SAME completed round
       return MatchService.advanceToNextRound("match-adv-2", 1);
@@ -252,6 +322,8 @@ function runRemainingChecks() {
       check("E. advanceToNextRound(): a second call for the SAME already-advanced round is a harmless no-op, not an error", result.advanced === false && result.reason === "ALREADY_ADVANCED");
       check("E. advanceToNextRound(): the no-op did NOT create a Round 3 — currentRound is still 2", doc.currentRound === 2);
       check("E. advanceToNextRound(): the no-op did NOT bump version again", doc.version === 2);
+      check("E. advanceToNextRound(): the no-op did NOT duplicate the archive — roundArchive/1 still holds exactly 52 plays", STORE[key("match-adv-2") + "/roundArchive/1"].cardLog.length === 52);
+      check("E. advanceToNextRound(): the no-op did NOT fabricate a roundArchive/2", !Object.prototype.hasOwnProperty.call(STORE, key("match-adv-2") + "/roundArchive/2"));
     })
 
     .then(function () {
@@ -333,6 +405,113 @@ function runRemainingChecks() {
       var deferred = MatchAdapter.applyRemoteCard(matchId, doc);
       check("I. applyRemoteCard(): an entry tagged for the NEXT round is DEFERRED while TableEngine is still on the current round", deferred.applied === false && deferred.desync === false && deferred.reason === "AWAITING_ROUND_TRANSITION");
       check("I. applyRemoteCard(): the count registry did NOT advance past the deferred entry", MatchAdapter.getLastAppliedCardCount(matchId) === 0);
+    })
+
+    // ════════════════════════════════════════════════════════════════
+    // K — Per-Round Log Window: applyRemoteBiddingAction() rebases its
+    // count registry when a newer-version delivery is SHORTER than what
+    // was already replayed (the round-advance reset), instead of
+    // skipping the new round's first entries as already-seen. Without
+    // the rebase, the Round 2 entry below would hit `1 <= 2` and return
+    // NO_NEW_CARDS — silently dropping every early Round 2 action.
+    // ════════════════════════════════════════════════════════════════
+    .then(function () {
+      driveBiddingToCommittedRound(); // local round 1, DONE
+      var matchId = "match-k";
+      // NOTE: the local engine is DONE, so these two Round 1 dashes are
+      // replay-skipped as ALREADY_APPLIED_LOCALLY (benign phase
+      // mismatch) — exactly like a real echo — which still advances the
+      // count registry to 2, the setup this test needs.
+      MatchAdapter.applyRemoteBiddingAction(matchId, { version: 1, biddingLog: [
+        { seatId: "p1", actionType: "SubmitDashCallDecision", declaredDashCall: false, round: 1 },
+        { seatId: "p2", actionType: "SubmitDashCallDecision", declaredDashCall: false, round: 1 }
+      ] });
+      check("K. setup: two Round 1 entries advance the count registry to 2", MatchAdapter.getLastAppliedBiddingActionCount(matchId) === 2);
+      // The round-advance delivery itself: empty window, newer version.
+      var r2 = MatchAdapter.applyRemoteBiddingAction(matchId, { version: 2, biddingLog: [] });
+      check("K. window-reset delivery rebases the count to 0 (not stuck at 2)", MatchAdapter.getLastAppliedBiddingActionCount(matchId) === 0);
+      check("K. window-reset delivery is NO_NEW_BIDDING_ACTIONS, never a desync", r2.applied === false && !r2.desync && r2.reason === "NO_NEW_BIDDING_ACTIONS");
+      // This client catches up locally, then Round 2's first real dash
+      // arrives — it MUST apply (count was rebased, not stuck at 2).
+      MatchAdapter.applyRemoteRoundTransition(matchId, { currentRound: 2 });
+      var w2 = BiddingEngine.getState().waitingFor;
+      var r3 = MatchAdapter.applyRemoteBiddingAction(matchId, { version: 3, biddingLog: [
+        { seatId: w2, actionType: "SubmitDashCallDecision", declaredDashCall: false, round: 2 }
+      ] });
+      check("K. Round 2's first entry APPLIES after the reset (not skipped as already-seen)", r3.applied === true && r3.appliedCount === 1);
+      check("K. count registry tracks the new window (1, not 3)", MatchAdapter.getLastAppliedBiddingActionCount(matchId) === 1);
+    })
+
+    // ════════════════════════════════════════════════════════════════
+    // L — Per-Round Log Window: the identical rebase for
+    // applyRemoteCard(), exercised through the REAL TableEngine with
+    // genuinely legal observed-opponent plays (the rebase logic itself
+    // is round-agnostic: length < lastCount on a newer version means a
+    // new window has begun).
+    // ════════════════════════════════════════════════════════════════
+    .then(function () {
+      TableEngine.initState(); // fresh round 1, real hands/turn order
+      var matchId = "match-l";
+      var localRound = TableEngine.getState().round;
+      function cardEntry(seat) { return { seatId: seat, card: { suit: "SPADES", rank: { v: 2, s: "2" } }, round: localRound }; }
+      var t1 = TableEngine.getState().turn;
+      var a1 = MatchAdapter.applyRemoteCard(matchId, { version: 1, cardLog: [cardEntry(t1)] }, "px");
+      check("L. setup: first observed play applies (count 1)", a1.applied === true && MatchAdapter.getLastAppliedCardCount(matchId) === 1);
+      var t2 = TableEngine.getState().turn;
+      var a2 = MatchAdapter.applyRemoteCard(matchId, { version: 2, cardLog: [cardEntry(t1), cardEntry(t2)] }, "px");
+      check("L. setup: second observed play applies (count 2)", a2.applied === true && MatchAdapter.getLastAppliedCardCount(matchId) === 2);
+      // The reset delivery: empty window, newer version.
+      var r0 = MatchAdapter.applyRemoteCard(matchId, { version: 3, cardLog: [] }, "px");
+      check("L. window-reset delivery rebases the count to 0 (not stuck at 2)", MatchAdapter.getLastAppliedCardCount(matchId) === 0);
+      check("L. window-reset delivery is NO_NEW_CARDS, never a desync", r0.applied === false && !r0.desync && r0.reason === "NO_NEW_CARDS");
+      // A new-window entry MUST apply — without the rebase it would hit
+      // `1 <= 2` and be dropped as NO_NEW_CARDS.
+      var t3 = TableEngine.getState().turn;
+      var r3 = MatchAdapter.applyRemoteCard(matchId, { version: 4, cardLog: [cardEntry(t3)] }, "px");
+      check("L. new-window entry APPLIES after the reset (not skipped as already-seen)", r3.applied === true && r3.appliedCount === 1);
+    })
+
+    // ════════════════════════════════════════════════════════════════
+    // M — Advance-guard retry: a DENIED/stale attempt must not deadlock
+    // the round. The guard suppresses only same-version repeats; a newer
+    // document version with the round still stuck proves the attempt did
+    // not win, so the next delivery retries. (Without this, N clients
+    // denied simultaneously on a contended atomic archive+advance commit
+    // would each burn their single one-shot attempt and the round would
+    // never advance — observed live as repeated permission-denied storms
+    // at round boundaries with no forward progress guarantee.)
+    // ════════════════════════════════════════════════════════════════
+    .then(function () {
+      var realMS = global.MatchService, realTE = global.TableEngine;
+      var calls = { total: 0 };
+      global.MatchService = {
+        advanceToNextRound: function () { calls.total++; return Promise.resolve({ advanced: false, reason: "ALREADY_ADVANCED" }); },
+        extendMatchRounds: function () { calls.total++; return Promise.resolve({ extended: false }); },
+        endMatch: function () { calls.total++; return Promise.resolve({ complete: false }); }
+      };
+      global.TableEngine = { getState: function () { return { phase: "DONE", round: 5 }; } };
+      MatchAdapter.resetSyncState();
+      function flush2() { return new Promise(function (r) { setImmediate(function () { setImmediate(r); }); }); }
+      MatchAdapter.maybeAdvanceRound("match-m", { version: 10, currentRound: 5 });
+      return flush2().then(function () {
+        check("M. first DONE delivery attempts exactly once", calls.total === 1);
+        MatchAdapter.maybeAdvanceRound("match-m", { version: 10, currentRound: 5 });
+        return flush2();
+      }).then(function () {
+        check("M. same-version repeat delivery is still suppressed (no per-delivery spam)", calls.total === 1);
+        MatchAdapter.maybeAdvanceRound("match-m", { version: 11, currentRound: 5 });
+        return flush2();
+      }).then(function () {
+        check("M. newer version with the round still stuck RETRIES (no deadlock after a lost race/denial)", calls.total === 2);
+        global.TableEngine = { getState: function () { return { phase: "DONE", round: 6 }; } };
+        MatchAdapter.maybeAdvanceRound("match-m", { version: 11, currentRound: 6 });
+        return flush2();
+      }).then(function () {
+        check("M. new round attempts normally (guard is per-round)", calls.total === 3);
+        global.MatchService = realMS;
+        global.TableEngine = realTE;
+        MatchAdapter.resetSyncState();
+      });
     })
 
     // ════════════════════════════════════════════════════════════════

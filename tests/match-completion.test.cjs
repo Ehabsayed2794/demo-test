@@ -41,10 +41,17 @@ function makeMatchRef(id) {
       return Promise.resolve({ exists: exists, data: function () { return exists ? Object.assign({}, STORE[k]) : undefined; } });
     },
     update: function (patch) {
-      STORE[k] = Object.assign({}, STORE[k], patch);
+      STORE[k] = __resolveWritePatch(STORE[k], patch);
       DOC_VERSION[k] = (DOC_VERSION[k] || 0) + 1;
       notify(k);
       return Promise.resolve();
+    },
+    // Per-Round Log Window sprint: subcollection refs for
+    // matches/{id}/roundArchive/{round} (the archive tx.set() in
+    // advanceToNextRound()/endMatch()). Same minimal get/set shape as
+    // the parent ref — no onSnapshot (nothing subscribes to archives).
+    collection: function (sub) {
+      return { doc: function (subId) { return makeSubRef(k, sub, subId); } };
     },
     onSnapshot: function (onNext) {
       ONSNAPSHOT_CALLS[k] = (ONSNAPSHOT_CALLS[k] || 0) + 1;
@@ -55,6 +62,22 @@ function makeMatchRef(id) {
       return function unsubscribe() {
         LISTENERS[k] = (LISTENERS[k] || []).filter(function (cb) { return cb !== onNext; });
       };
+    }
+  };
+}
+function makeSubRef(parentKey, sub, subId) {
+  var k = parentKey + "/" + sub + "/" + subId;
+  return {
+    id: subId, _key: k,
+    get: function () {
+      var exists = Object.prototype.hasOwnProperty.call(STORE, k);
+      return Promise.resolve({ exists: exists, data: function () { return exists ? Object.assign({}, STORE[k]) : undefined; } });
+    },
+    set: function (data) {
+      STORE[k] = Object.assign({}, data);
+      DOC_VERSION[k] = (DOC_VERSION[k] || 0) + 1;
+      notify(k);
+      return Promise.resolve();
     }
   };
 }
@@ -69,19 +92,56 @@ var FAKE_DB = {
     var seenVersions = {}, pending = {};
     var tx = {
       get: function (ref) { seenVersions[ref._key] = DOC_VERSION[ref._key] || 0; return ref.get(); },
-      update: function (ref, patch) { pending[ref._key] = { ref: ref, data: patch }; }
+      // Per-Round Log Window sprint: tx.set() for the archive write
+      // (tx.update() alone can no longer express advance/endMatch).
+      set: function (ref, data) { pending[ref._key] = { ref: ref, mode: "set", data: data }; },
+      update: function (ref, patch) { pending[ref._key] = { ref: ref, mode: "update", data: patch }; }
     };
     return Promise.resolve(fn(tx)).then(function (result) {
       var conflict = Object.keys(seenVersions).some(function (k) { return (DOC_VERSION[k] || 0) !== seenVersions[k]; });
       if (conflict) return FAKE_DB.runTransaction(fn, attempt + 1);
-      Object.keys(pending).forEach(function (k) { STORE[k] = Object.assign({}, STORE[k], pending[k].data); DOC_VERSION[k] = (DOC_VERSION[k] || 0) + 1; });
+      Object.keys(pending).forEach(function (k) {
+        // Per-Round Log Window sprint: tx.set() (the roundArchive write)
+        // overwrites wholesale; tx.update() resolves first (including
+        // arrayUnion sentinels) then merges — see __resolveWritePatch.
+        STORE[k] = pending[k].mode === "set" ? Object.assign({}, pending[k].data) : __resolveWritePatch(STORE[k], pending[k].data);
+        DOC_VERSION[k] = (DOC_VERSION[k] || 0) + 1;
+      });
       Object.keys(pending).forEach(function (k) { notify(k); });
       return result;
     });
   }
 };
 global.Db = FAKE_DB;
-global.firebase = { firestore: { FieldValue: { serverTimestamp: function () { return { __sentinel: "serverTimestamp" }; } } } };
+global.firebase = { firestore: { FieldValue: {
+  serverTimestamp: function () { return { __sentinel: "serverTimestamp" }; },
+  // Mirrors real Firestore's arrayUnion() transform semantics closely
+  // enough for these mocks: resolves BEFORE being merged into STORE (see
+  // __resolveWritePatch below), appending only values not already
+  // present (deep-equal), exactly like the real server-side transform —
+  // added when match-service.js's submitCard()/submitBiddingAction()
+  // switched cardLog/biddingLog from full-array-rewrite to arrayUnion()
+  // (payload-size hotfix) so these existing mocked tests keep exercising
+  // the REAL match-service.js code unchanged.
+  arrayUnion: function () { return { __sentinel: "arrayUnion", values: Array.prototype.slice.call(arguments) }; }
+} } };
+function __resolveWritePatch(existing, patch) {
+  var resolved = {};
+  Object.keys(patch).forEach(function (k) {
+    var v = patch[k];
+    if (v && v.__sentinel === "arrayUnion") {
+      var arr = (existing && Array.isArray(existing[k])) ? existing[k].slice() : [];
+      v.values.forEach(function (item) {
+        var already = arr.some(function (e) { return JSON.stringify(e) === JSON.stringify(item); });
+        if (!already) arr.push(item);
+      });
+      resolved[k] = arr;
+    } else {
+      resolved[k] = v;
+    }
+  });
+  return Object.assign({}, existing, resolved);
+}
 
 var CURRENT_USER = null;
 global.SessionService = { getCurrentUser: function () { return CURRENT_USER ? { uid: CURRENT_USER } : null; }, setCurrentMatchId: function () { return Promise.resolve(); } };
@@ -272,6 +332,16 @@ Promise.resolve()
       check("A. endMatch(): a well-formed completion at currentRound==maxRounds is applied — complete:true, status:'complete'", result.complete === true && STORE[key("match-end-1")].status === "complete");
       check("A. endMatch(): finalScores/winnerIds/completedRound are persisted verbatim", JSON.stringify(STORE[key("match-end-1")].finalScores) === JSON.stringify(finalScores) &&
         JSON.stringify(STORE[key("match-end-1")].winnerIds) === JSON.stringify(["p1"]) && STORE[key("match-end-1")].completedRound === 18);
+      // Per-Round Log Window sprint: the FINAL round is archived and the
+      // terminal document's own windows reset — post-match reads stay
+      // small, history is preserved in roundArchive/18.
+      check("A. endMatch(): result reports the archived round", result.archivedRound === 18);
+      check("A. endMatch(): terminal document's cardLog window reset to []", Array.isArray(STORE[key("match-end-1")].cardLog) && STORE[key("match-end-1")].cardLog.length === 0);
+      check("A. endMatch(): terminal document's biddingLog window reset to []", Array.isArray(STORE[key("match-end-1")].biddingLog) && STORE[key("match-end-1")].biddingLog.length === 0);
+      var archive18 = STORE[key("match-end-1") + "/roundArchive/18"];
+      check("A. endMatch(): roundArchive/18 written atomically in the SAME transaction", !!archive18);
+      check("A. endMatch(): roundArchive/18 holds the final round's 52 round-tagged plays verbatim", archive18 && archive18.round === 18 && archive18.matchId === "match-end-1" &&
+        archive18.cardLog.length === 52 && archive18.cardLog.every(function (e) { return e && e.round === 18; }));
     });
   })
   .then(function () {

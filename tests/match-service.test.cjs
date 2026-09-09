@@ -37,7 +37,32 @@ var FAKE_TS = { __sentinel: "serverTimestamp" };
 var idCounter = 0;
 var FIRESTORE_AVAILABLE = true;
 
-global.firebase = { firestore: { FieldValue: { serverTimestamp: function () { return FAKE_TS; } } } };
+global.firebase = { firestore: { FieldValue: {
+  serverTimestamp: function () { return FAKE_TS; },
+  // See tests/submit-card.test.cjs's identical comment: mirrors real
+  // Firestore's arrayUnion() transform closely enough for this mock
+  // (resolved via __resolveWritePatch before merging into STORE) —
+  // added when match-service.js's submitCard()/submitBiddingAction()
+  // switched cardLog/biddingLog from full-array-rewrite to arrayUnion().
+  arrayUnion: function () { return { __sentinel: "arrayUnion", values: Array.prototype.slice.call(arguments) }; }
+} } };
+function __resolveWritePatch(existing, patch) {
+  var resolved = {};
+  Object.keys(patch).forEach(function (k) {
+    var v = patch[k];
+    if (v && v.__sentinel === "arrayUnion") {
+      var arr = (existing && Array.isArray(existing[k])) ? existing[k].slice() : [];
+      v.values.forEach(function (item) {
+        var already = arr.some(function (e) { return JSON.stringify(e) === JSON.stringify(item); });
+        if (!already) arr.push(item);
+      });
+      resolved[k] = arr;
+    } else {
+      resolved[k] = v;
+    }
+  });
+  return Object.assign({}, existing, resolved);
+}
 
 function key(collection, id) { return collection + "/" + id; }
 
@@ -68,7 +93,7 @@ function makeRef(collection, id) {
     },
     update: function (patch) {
       if (!FIRESTORE_AVAILABLE) return Promise.reject(new Error("simulated Firestore unavailable"));
-      STORE[k] = Object.assign({}, STORE[k], patch);
+      STORE[k] = __resolveWritePatch(STORE[k], patch);
       VERSION[k] = (VERSION[k] || 0) + 1;
       notifyListeners(k);
       return Promise.resolve();
@@ -114,7 +139,7 @@ var FAKE_DB = {
         if (entry.mode === "set") {
           STORE[k] = Object.assign({}, entry.data);
         } else {
-          STORE[k] = Object.assign({}, STORE[k], entry.data);
+          STORE[k] = __resolveWritePatch(STORE[k], entry.data);
         }
         VERSION[k] = (VERSION[k] || 0) + 1;
       });

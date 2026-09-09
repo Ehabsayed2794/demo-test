@@ -474,6 +474,13 @@
       // comment). `lastCardSeat` mirrors `lastBidSeat`'s role: which
       // seat the MOST RECENT entry belongs to, for a quick read
       // without inspecting the log's tail.
+      // Per-Round Log Window sprint: "never cleared" above now means
+      // "never cleared WITHIN a round" — advanceToNextRound()/endMatch()
+      // archive the finished round to roundArchive/{round} and reset
+      // this window to [] atomically (see the schema block above
+      // advanceToNextRound()). Entries remain append-only and every
+      // entry stays round-tagged, so the window is always exactly the
+      // current round's history, at most 52 entries.
       cardLog: [],
       lastCardSeat: null,
       // Sprint 3.7 (Online Bidding Synchronization Contract): the SAME
@@ -1124,22 +1131,37 @@
           // merely alongside, the write. (Version-equal implies this
           // should already hold — re-checked anyway, defensively.)
           var freshSeatId = resolveSeatAndAuthorize(freshMatch);
-          var cardLog = (freshMatch.cardLog || []).slice();
+          var newEntry = { seatId: freshSeatId, card: { suit: card.suit, rank: { v: card.rank.v, s: card.rank.s } }, round: freshMatch.currentRound };
           // Round Lifecycle sprint: same round-stamp as buildBiddingLogEntry()
           // above, for the identical reason — `cardLog` is the other
           // never-cleared, append-only log this schema decision applies
           // to. Read from the FRESH in-transaction document's own
           // `currentRound`, never the caller's local round number.
-          cardLog.push({ seatId: freshSeatId, card: { suit: card.suit, rank: { v: card.rank.v, s: card.rank.s } }, round: freshMatch.currentRound });
+          //
+          // Payload-size hotfix (Golden Path Sprint, found via a 4-real-
+          // client full-match CI run stalling on Commit RPC failures once
+          // `cardLog` grew past ~900 entries near Round 18): this used to
+          // `.slice()` the ENTIRE fresh `cardLog`, push one entry, and
+          // write the WHOLE array back on every single card — an O(N)
+          // (and, across a full match's worth of cards, O(N^2) total)
+          // payload that only grows, never resets. `FieldValue.arrayUnion()`
+          // sends ONLY the new entry; Firestore resolves the transform
+          // server-side BEFORE `isValidCardSubmission()` evaluates
+          // `request.resource.data` (both `newLog.size()`/`appended`
+          // there already assume the POST-transform array — no rules
+          // change needed). `localCardLog` below is kept ONLY for this
+          // transaction's own in-memory winner computation and the
+          // returned `cardCount` — it is never itself written.
+          var localCardLog = (freshMatch.cardLog || []).concat([newEntry]);
           // J.1: use the FRESH four-card log and current engine round
           // context before writing. The winner UID is persisted atomically
           // with this card append and the RESOLVING phase marker.
           if (preview.nextPhase === "RESOLVING") {
-            nextTurnUid = resolveFourthCardWinnerUid(freshMatch, cardLog);
+            nextTurnUid = resolveFourthCardWinnerUid(freshMatch, localCardLog);
           }
           var nextVersion = expectedVersion + 1;
           var patch = {
-            cardLog: cardLog,
+            cardLog: firebase.firestore.FieldValue.arrayUnion(newEntry),
             lastCardSeat: freshSeatId,
             turn: nextTurnUid,
             cardPhase: preview.nextPhase,
@@ -1148,7 +1170,7 @@
           };
           tx.update(matchRef, patch);
           return {
-            matchId: matchId, seatId: freshSeatId, card: card, version: nextVersion, cardCount: cardLog.length,
+            matchId: matchId, seatId: freshSeatId, card: card, version: nextVersion, cardCount: localCardLog.length,
             nextTurnSeat: preview.nextTurnSeat, cardPhase: preview.nextPhase
           };
         });
@@ -1373,18 +1395,34 @@
             throw bidError("STALE_GAME_STATE", "submitBiddingAction: the match document changed since this action was validated (expected version " + expectedVersion + ", found " + freshMatch.version + ") — not written; re-fetch and retry.");
           }
           var freshSeatId = resolveSeat(freshMatch);
-          var biddingLog = (freshMatch.biddingLog || []).slice();
-          biddingLog.push(buildBiddingLogEntry(freshSeatId, action, freshMatch.currentRound));
+          var newEntry = buildBiddingLogEntry(freshSeatId, action, freshMatch.currentRound);
+          // Payload-size hotfix (see submitCard()'s identical fix, above,
+          // for the full account — same never-cleared, append-only log
+          // shape, same O(N) full-array-rewrite problem on every action).
+          // `arrayUnion()` sends only the one new entry; the rules-side
+          // `newLog.size() == oldLog.size() + 1` check in
+          // isValidBiddingActionSubmission() already assumes the
+          // POST-transform array, so no rules change is needed. One
+          // accepted trade-off, noted for future maintainers: arrayUnion()
+          // silently no-ops on an EXACT duplicate entry — a seat
+          // submitting the byte-for-byte same action twice in the same
+          // round (e.g. two identical passes) would then fail the
+          // `size()+1` check and be rejected as a normal write conflict,
+          // not corrupt the log. This codebase's own BiddingEngine
+          // turn-taking already makes a genuine duplicate exceedingly
+          // rare (a seat cannot legally act again for the same sub-phase
+          // once it has), and a rejection here is always safe/retryable.
+          var localBiddingLog = (freshMatch.biddingLog || []).concat([newEntry]);
           var nextVersion = expectedVersion + 1;
           var patch = {
-            biddingLog: biddingLog,
+            biddingLog: firebase.firestore.FieldValue.arrayUnion(newEntry),
             version: nextVersion,
             updatedAt: serverTimestamp()
           };
           tx.update(matchRef, patch);
           return {
             matchId: matchId, seatId: freshSeatId, actionType: action.actionType,
-            version: nextVersion, logLength: biddingLog.length
+            version: nextVersion, logLength: localBiddingLog.length
           };
         });
       });
@@ -1436,14 +1474,57 @@
    *    round completion, this structural check still catches it
    *    (fewer than 52 tagged entries exist) without knowing anything
    *    about WHY a round completes.
-   *  - The reset patch only ever touches `currentRound`, `version`,
-   *    and the legacy/derived bookkeeping fields (`biddingOpen`,
-   *    `bids`, `lastBidSeat`, `cardPhase`, `turn`) that a fresh round's
-   *    bidding phase starts from — `biddingLog`/`cardLog` themselves
-   *    are NEVER cleared, rewritten, or reset (append-only, prefix-
-   *    immutable, exactly as established since Sprint 4.2.1) — Round 1's
-   *    entries remain in the log forever, simply superseded by Round 2's
-   *    higher `round` tag going forward. */
+   *  - The reset patch touches `currentRound`, `version`, the
+   *    legacy/derived bookkeeping fields (`biddingOpen`, `bids`,
+   *    `lastBidSeat`, `cardPhase`, `turn`) that a fresh round's bidding
+   *    phase starts from — AND, since the Per-Round Log Window sprint,
+   *    `cardLog`/`biddingLog` themselves, reset to `[]`. The completed
+   *    round's own entries are NOT lost: they are first copied verbatim
+   *    into `roundArchive/{completedRound}` in this SAME transaction
+   *    (see the Per-Round Log Window schema block below) — no observer
+   *    ever sees "advanced but not archived" or vice versa. */
+  /** ═══════════════════════════════════════════════════════════════
+   *  Per-Round Log Window SCHEMA (root-cause fix, not a payload tweak).
+   *  Proven by 2 CI runs: switching the write to arrayUnion() shrinks
+   *  every Commit to a single entry, yet the run still fails with
+   *  `Commit RPC failed - 500` at the same cumulative size (~930-960
+   *  entries) — and even pure BatchGet READS 500 past that point. The
+   *  failure is therefore a function of the STORED array size at
+   *  read/rules-evaluation time, never the per-write payload size.
+   *  Full-array rewrites were real waste (O(N^2) traffic) but NOT the
+   *  cause; arrayUnion alone cannot fix a stored-size limit.
+   *
+   *  New invariant: matches/{matchId} carries ONLY the CURRENT round's
+   *  window — `cardLog` holds at most 52 entries (13 tricks x 4 seats),
+   *  `biddingLog` at most that round's few dozen actions (~10 KB worst
+   *  case, never ~200 KB). One document per completed round lives at
+   *  matches/{matchId}/roundArchive/{roundNumber} (id === String(round)):
+   *    { round: <int>, matchId: <id>,
+   *      cardLog: [exactly the round's 52 {seatId,card,round} plays],
+   *      biddingLog: [that round's {seatId,actionType,...,round} actions] }
+   *  Archive docs are write-once (rules deny update/delete) and readable
+   *  by any of the match's own 4 players, exactly like hands/.
+   *
+   *  WHEN archiving happens: inside advanceToNextRound()'s (this
+   *  function) and endMatch()'s own transaction — archive tx.set() +
+   *  parent reset in ONE atomic commit. Deterministic archive id
+   *  (String(completedRound)) plus the existing idempotent no-op paths
+   *  (ALREADY_ADVANCED / ALREADY_COMPLETE / MATCH_ALREADY_COMPLETE)
+   *  make concurrent callers converge on exactly one archive write:
+   *  the loser re-reads post-commit state and no-ops without writing.
+   *
+   *  RECONNECT contract (read side, see match-adapter.js): a mid-round
+   *  reconnect needs ONLY the parent window — every entry is round-
+   *  tagged, and the adapter's count registries rebase to 0 when they
+   *  observe the window shrink (length < lastCount on a newer version).
+   *  A post-round reconnect needs NO history at all: engines score
+   *  per-round locally (ScoringEngine.applyRoundResult per round,
+   *  GameSession accumulates matchScores), and completion reads only
+   *  winnerIds/finalScores. The archive is forensics + a future
+   *  "review past rounds" screen — TODAY nothing reads it (verified:
+   *  the only cardLog/biddingLog readers in design-ui/ are this file
+   *  and match-adapter.js, both round-scoped).
+   *  ═══════════════════════════════════════════════════════════════ */
   /** P1-08 round-advance contract: dealer ownership is part of the
    *  authoritative round boundary. Rotate through the immutable positional
    *  seat map, skipping seats that are absent in supported under-four-player
@@ -1521,6 +1602,23 @@
           throw bidError("ROUND_NOT_COMPLETE",
             "advanceToNextRound: round " + completedRound + " has only " + roundCardCount + "/52 recorded card plays — not advancing.");
         }
+        // Per-Round Log Window sprint: archive THIS round's own window
+        // before resetting it — filtered defensively by round tag (the
+        // window can only ever hold this round's entries, since no
+        // next-round write is possible before this advance commits, but
+        // this file's convention is "never trust a monotonic assumption
+        // blindly"). The archive id is the deterministic
+        // String(completedRound) — see the schema block above for why a
+        // racing loser can never duplicate it (it re-reads post-commit
+        // state and takes the ALREADY_ADVANCED no-op without writing).
+        var biddingLog = Array.isArray(match.biddingLog) ? match.biddingLog : [];
+        var archiveRef = matchRef.collection("roundArchive").doc(String(completedRound));
+        var archiveDoc = {
+          round: completedRound,
+          matchId: matchId,
+          cardLog: cardLog.filter(function (entry) { return entry && entry.round === completedRound; }),
+          biddingLog: biddingLog.filter(function (entry) { return entry && entry.round === completedRound; })
+        };
         var seats = match.seats || {};
         var resetBids = {};
         Object.keys(seats).forEach(function (seatId) { resetBids[seatId] = null; });
@@ -1546,12 +1644,22 @@
           // misleading for Round N+1's bidding.
           turn: null,
           cardPhase: null,
+          // Per-Round Log Window sprint: reset the current-round windows
+          // (archived above, atomically) so the parent never grows past
+          // one round (~10 KB, not ~200 KB). Allowed by the Rules'
+          // isValidRoundAdvance() ONLY as exactly-[] alongside THIS
+          // round-advance shape — any other writer touching these fields
+          // with non-empty content is still denied.
+          cardLog: [],
+          biddingLog: [],
           updatedAt: serverTimestamp()
         };
+        tx.set(archiveRef, archiveDoc);
         tx.update(matchRef, patch);
         return {
           advanced: true, matchId: matchId,
           previousRound: completedRound, currentRound: completedRound + 1,
+          archivedRound: completedRound,
           version: nextVersion
         };
       });
@@ -1751,17 +1859,37 @@
         if (!winnerIdsMatchFinalScores(finalScores, winnerIds, match.seats || {})) {
           throw bidError("INVALID_RESULT", "endMatch: winnerIds does not match the highest score(s) in finalScores.");
         }
+        // Per-Round Log Window sprint: archive the FINAL round exactly
+        // like advanceToNextRound() does for every prior round (same
+        // atomicity, same deterministic String(completedRound) id, same
+        // idempotent no-op convergence — ALREADY_COMPLETE callers never
+        // reach this write), AND reset the parent windows, so the
+        // terminal document itself stays small for every post-match read
+        // (score screen, rematch vote). Post-match readers need only
+        // winnerIds/finalScores/completedRound — never the play history.
+        var biddingLog = Array.isArray(match.biddingLog) ? match.biddingLog : [];
+        var archiveRef = matchRef.collection("roundArchive").doc(String(completedRound));
+        var archiveDoc = {
+          round: completedRound,
+          matchId: matchId,
+          cardLog: cardLog.filter(function (entry) { return entry && entry.round === completedRound; }),
+          biddingLog: biddingLog.filter(function (entry) { return entry && entry.round === completedRound; })
+        };
         var nextVersion = match.version + 1;
+        tx.set(archiveRef, archiveDoc);
         tx.update(matchRef, {
           status: "complete",
           winnerIds: winnerIds.slice(),
           finalScores: Object.assign({}, finalScores),
           completedRound: completedRound,
           version: nextVersion,
+          cardLog: [],
+          biddingLog: [],
           updatedAt: serverTimestamp()
         });
         return {
           complete: true, matchId: matchId, completedRound: completedRound,
+          archivedRound: completedRound,
           winnerIds: winnerIds.slice(), finalScores: Object.assign({}, finalScores), version: nextVersion
         };
       });

@@ -739,6 +739,22 @@
     }
 
     var lastCount = lastAppliedBiddingActionCountByMatch[matchId] || 0;
+    // Per-Round Log Window sprint: the parent log now resets to [] on
+    // every round advance (archived to roundArchive/{round} atomically —
+    // see match-service.js's schema block). A newer-version delivery
+    // SHORTER than what this adapter already replayed therefore means
+    // "a new round's window has begun", never "history was deleted":
+    // rebase the count to 0 and replay from the window's start. The
+    // round-tag guards below (AWAITING_ROUND_TRANSITION/STALE_ROUND)
+    // still decide, entry by entry, whether the local engine is ready
+    // for each rebased index — the rebase itself claims nothing about
+    // readiness, it only un-sticks the monotonic gate. (Without this,
+    // the first ~52 entries of every round after Round 1 would be
+    // skipped as already-seen, since 3 <= 52.)
+    if (matchDoc.biddingLog.length < lastCount) {
+      lastCount = 0;
+      lastAppliedBiddingActionCountByMatch[matchId] = 0;
+    }
     if (matchDoc.biddingLog.length <= lastCount) {
       // A structurally newer version whose log has not actually grown
       // beyond what we've already replayed (e.g. a version bump caused
@@ -1231,6 +1247,16 @@
     }
 
     var lastCount = lastAppliedCardCountByMatch[matchId] || 0;
+    // Per-Round Log Window sprint: same window-reset rebase as
+    // applyRemoteBiddingAction() above (see that function's own comment
+    // for the full account) — a newer-version delivery shorter than the
+    // already-replayed count means the new round's window has begun, so
+    // replay from index 0; the round-tag guards below still gate each
+    // entry against the local engine's own round.
+    if (matchDoc.cardLog.length < lastCount) {
+      lastCount = 0;
+      lastAppliedCardCountByMatch[matchId] = 0;
+    }
     if (matchDoc.cardLog.length <= lastCount) {
       // A structurally newer version whose log has not actually grown
       // beyond what we've already replayed (e.g. a version bump caused
@@ -1783,27 +1809,48 @@
   }
 
   // ── Round Lifecycle sprint: Round Transition Sync ───────────────
-  // matchId -> the highest round number this adapter has already
-  // ATTEMPTED to advance PAST, via advanceToNextRound(). Deliberately
-  // NOT a version/count-style gate (there is no log to count entries
-  // in) — this only exists to stop a client from calling
+  // matchId -> the {round, version} of this adapter's most recent
+  // advance ATTEMPT for that round, via advanceToNextRound().
+  // Deliberately NOT a version/count-style gate (there is no log to
+  // count entries in) — this only exists to stop a client from calling
   // MatchService.advanceToNextRound() again on every single delivery
   // once its own TableEngine reaches phase "DONE" (that call is itself
   // idempotent/safe to repeat — see MatchService's own doc comment —
   // but repeating it on every delivery forever would be needless
   // Firestore traffic for no benefit).
+  //
+  // Per-Round Log Window sprint, RETRY HARDENING: the pre-existing
+  // shape was once-per-round-per-client EVER — a single DENIED attempt
+  // (rules/contention, e.g. several clients racing the same atomic
+  // archive+advance transaction on a loaded emulator) permanently
+  // suppressed this client's retries for that round; if EVERY client's
+  // lone attempt lost simultaneously, the round could never advance
+  // (deadlock — no client would ever try again). The record now keeps
+  // the document version alongside the round: a delivery with a HIGHER
+  // version but the SAME round proves forward movement that was NOT
+  // our advance (our attempt demonstrably did not win), so the guard
+  // lifts and this client tries again. Bounded, not a spam loop:
+  // post-completion versions only ever move via terminal-path writes
+  // (advance/endMatch/extend), each of which either advances the round
+  // (guard key changes) or resolves the race. A same-version repeat
+  // delivery is still suppressed exactly as before.
   var roundAdvanceAttemptedByMatch = {};
 
   function clearRoundAdvanceAttempt(matchId, round) {
-    if (roundAdvanceAttemptedByMatch[matchId] === round) {
+    var rec = roundAdvanceAttemptedByMatch[matchId];
+    if (rec && rec.round === round) {
       delete roundAdvanceAttemptedByMatch[matchId];
     }
   }
 
   /** Detects "MY local TableEngine just reached phase DONE for round
-   *  R" and attempts EXACTLY ONE `MatchService.advanceToNextRound(matchId,
-   *  R)` call — never a second, third, ... call for the SAME round from
-   *  THIS client. Deliberately does NOT wait for confirmation that this
+   *  R" and attempts `MatchService.advanceToNextRound(matchId, R)` —
+   *  once per round normally, and AGAIN if the document demonstrably
+   *  moved (higher version) without the round advancing (a previous
+   *  attempt provably lost a race or was denied — see the registry
+   *  comment above for why a single one-shot attempt per client can
+   *  deadlock a round when every client's lone attempt loses at once).
+   *  Deliberately does NOT wait for confirmation that this
    *  particular call is the one that "wins" the transaction — per
    *  advanceToNextRound()'s own idempotent-any-client-may-attempt
    *  design (see docs/reviews/Sprint_RoundLifecycle_Architecture_Report.md
@@ -1824,8 +1871,16 @@
     var state;
     try { state = global.TableEngine.getState(); } catch (e) { return; }
     if (!state || state.phase !== "DONE" || state.round == null) return;
-    if (roundAdvanceAttemptedByMatch[matchId] === state.round) return;
-    roundAdvanceAttemptedByMatch[matchId] = state.round;
+    // Retry gate (see the registry comment above): suppress only a
+    // repeat delivery of a state we already attempted against. A newer
+    // document version with the round still stuck means our attempt
+    // did not win — try again rather than deadlocking the round.
+    var prev = roundAdvanceAttemptedByMatch[matchId];
+    var docVersion = (matchDoc && typeof matchDoc.version === "number") ? matchDoc.version : null;
+    if (prev && prev.round === state.round) {
+      if (docVersion == null || docVersion <= prev.version) return;
+    }
+    roundAdvanceAttemptedByMatch[matchId] = { round: state.round, version: docVersion };
     Promise.resolve(maybeExtendOrCompleteMatch(matchId, state.round)).catch(function () {
       // A failed attempt must not permanently suppress a retry for this round.
       clearRoundAdvanceAttempt(matchId, state.round);
@@ -2065,9 +2120,9 @@
   //  1. WATCH the already-active subscribeToMatch() listener (no
   //     second match-level listener) for `gameState.dealtRound` falling
   //     behind `currentRound`, and safely ATTEMPT
-  //     `MatchService.dealRound()` — the exact same "any client may
-  //     attempt it, the transaction makes it safe" shape
-  //     maybeAdvanceRound()/maybeAdvanceRematchVote() already use.
+  //     `MatchService.dealRound()` from the DEALER seat only (TASK F1-1:
+  //     the attempt path is dealer-gated, identical in predicate to the
+  //     page gate and to the rules' own race-resolution model).
   //  2. CONSUME this client's OWN seat's hand document (never any
   //     other seat's) via the new `MatchService.subscribeToHand()`,
   //     translating it INTO GameSession — the one genuinely new
@@ -2078,13 +2133,23 @@
    *  attempts EXACTLY ONE `MatchService.dealRound(matchId, currentRound)`
    *  call per round from THIS client — never a second call for the SAME
    *  round, mirroring `maybeAdvanceRound()`'s own
-   *  `roundAdvanceAttemptedByMatch` guard exactly. Does not wait for
-   *  confirmation that THIS call is the one that wins the transaction —
-   *  every client that independently observes the same stale
-   *  `dealtRound` may safely make this same call; Firestore's
-   *  transaction semantics ensure exactly one attempt actually commits.
-   *  A rejection (a genuine error, or another client's transaction
-   *  already won) is swallowed here, never thrown into the caller's
+   *  `roundAdvanceAttemptedByMatch` guard exactly.
+   *
+   *  TASK F1-1 (P0 security fix): this watcher is now DEALER-GATED — the
+   *  same predicate as the page gate (match/index.html's bootstrap watcher)
+   *  and the same server-side authority model the rules enforce ("any
+   *  member MAY write, but the race makes exactly one winner"). The
+   *  previous "any client may attempt it" posture left a live race window
+   *  in which a non-dealer's lagged transaction was correctly denied
+   *  permission-denied in production (see docs/postmortem/
+  *  2026-08-26-deal-denial.md, V-FINAL). Gating here removes the client-side
+   *  source of that race: only the client occupying the authoritative
+   *  dealer seat (`uidToSeat(matchDoc, matchDoc.dealer) === mySeatId`)
+   *  ever issues the attempt. Does not wait for confirmation that THIS
+   *  call is the one that wins the transaction — the dealer's own retry
+   *  loop and Firestore transaction semantics remain the backstop.
+   *  A rejection is logged WITH its full denial body (TASK F1-3 — was an
+   *  empty .catch) and swallowed, never thrown into the caller's
    *  snapshot callback. */
   function maybeDealRound(matchId, matchDoc, mySeatId) {
     if (!global.MatchService || typeof global.MatchService.dealRound !== "function") return;
@@ -2303,8 +2368,11 @@
     startTrickSync: startTrickSync,
     getLastResolvedTrickNo: getLastResolvedTrickNo,
     // Round Lifecycle sprint: round-transition detection + the
-    // one-attempt-per-round advance trigger. See each function's own
-    // doc comment above.
+    // guarded advance trigger (one attempt per round normally, retried
+    // when the document demonstrably moves without the round advancing).
+    // See each function's own doc comment above. Exported for the same
+    // testability reason as every other applyRemote*/maybe* function.
+    maybeAdvanceRound: maybeAdvanceRound,
     applyRemoteRoundTransition: applyRemoteRoundTransition,
     startRoundSync: startRoundSync,
     // Match Completion sprint: extension + completion orchestration and
