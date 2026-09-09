@@ -1453,10 +1453,20 @@
    *  is genuinely finished (structurally — see below) and advances
    *  `currentRound` to `completedRound + 1`, in a single Firestore
    *  transaction. Idempotent and safe to call from MULTIPLE clients at
-   *  once (see docs/reviews/Sprint_RoundLifecycle_Architecture_Report.md
-   *  §2's "who advances the round" analysis — the answer is "any
-   *  client may attempt it; the transaction is what makes that safe,"
-   *  not a designated host/caller):
+    *  once (see docs/reviews/Sprint_RoundLifecycle_Architecture_Report.md
+    *  §2's "who advances the round" analysis — the answer is "any
+    *  client may attempt it; the transaction is what makes that safe,"
+    *  not a designated host/caller):
+    *  P1-4 OWNER DECISION (2026-09-09, permanent): any-client model
+    *  CONFIRMED, dealer-only advance evaluated and REJECTED. Rationale:
+    *  one device leaving must never stall the match (natural fault
+    *  tolerance); the signal is invisible to players so it needs no tie
+    *  to the dealer role; Firestore's transaction gives exactly-once
+    *  advancement no matter how many clients attempt; match lifecycle
+    *  must never depend on one player's device. Dealer-only would add
+    *  a single point of failure plus a rules change and production
+    *  redeploy for no gameplay gain. Proven live: golden-path runs show
+    *  exactly one winner per boundary with bounded loser retries.
    *
    *  - If, by the time this transaction actually reads the document,
    *    `currentRound` is no longer `completedRound` (another client's

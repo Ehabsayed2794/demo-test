@@ -335,6 +335,39 @@ function runRemainingChecks() {
     })
 
     // ════════════════════════════════════════════════════════════════
+    // R — P1-4: genuine 4-client race for the SAME round boundary.
+    // D/E above cover the sequence (win, then late no-op); this covers
+    // the race itself: four advanceToNextRound() calls fired on the same
+    // tick as four DIFFERENT players (each call captures its own uid
+    // synchronously at entry — see advanceToNextRound()'s callingUid),
+    // racing through the mock's optimistic-concurrency transaction
+    // retry, exactly like room-service.test.cjs's own race coverage.
+    // MOCKED per this file's header (fake Firestore, real
+    // match-service.js) — not a substitute for the live 4-browser
+    // golden path, which proves the same property for real.
+    .then(function () {
+      var seeded = fiftyTwoRoundTaggedCardEntries(1);
+      seedMockMatch("match-race-1", { cardLog: seeded });
+      signInAs("u1"); var race1 = MatchService.advanceToNextRound("match-race-1", 1);
+      signInAs("u2"); var race2 = MatchService.advanceToNextRound("match-race-1", 1);
+      signInAs("u3"); var race3 = MatchService.advanceToNextRound("match-race-1", 1);
+      signInAs("u4"); var race4 = MatchService.advanceToNextRound("match-race-1", 1);
+      return Promise.all([race1, race2, race3, race4]);
+    })
+    .then(function (results) {
+      var doc = STORE[key("match-race-1")];
+      var winners = results.filter(function (r) { return r && r.advanced === true; });
+      var losers = results.filter(function (r) { return r && r.advanced === false; });
+      check("R. 4-client advance race: EXACTLY ONE winner (any-client model converges, no duplicate advance)", winners.length === 1);
+      check("R. 4-client advance race: all three losers are harmless ALREADY_ADVANCED no-ops, never errors", losers.length === 3 && losers.every(function (r) { return r.reason === "ALREADY_ADVANCED"; }));
+      check("R. 4-client advance race: currentRound moved exactly 1 -> 2 (never 3+)", doc.currentRound === 2);
+      check("R. 4-client advance race: version bumped exactly once (1 -> 2)", doc.version === 2);
+      var archive = STORE[key("match-race-1") + "/roundArchive/1"];
+      check("R. 4-client advance race: roundArchive/1 exists with exactly the 52 seeded plays, verbatim", !!archive && archive.cardLog.length === 52 && JSON.stringify(archive.cardLog) === JSON.stringify(fiftyTwoRoundTaggedCardEntries(1)));
+      check("R. 4-client advance race: no roundArchive/2 was fabricated by any loser", !Object.prototype.hasOwnProperty.call(STORE, key("match-race-1") + "/roundArchive/2"));
+    })
+
+    // ════════════════════════════════════════════════════════════════
     // G — applyRemoteRoundTransition(): the read-side counterpart —
     // detects a Firestore currentRound bump and drives the REAL
     // GameSession.nextRound() + BiddingEngine.initState().
