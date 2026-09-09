@@ -150,11 +150,25 @@ async function waitForTrickSettlement(pages, matchId, expectedCardCount, timeout
     // consistent (reset) log length" is an equally authoritative
     // settlement signal, exclusively for trick 13 (tricks 1-12 have no
     // such transition and are completely unaffected by this branch).
+    // Terminal-round twin (run #11 evidence): when trick 13 is ALSO the
+    // match's last trick, endMatch() — not advanceToNextRound() — writes
+    // the reset (status complete + empty windows + roundArchive/N in one
+    // commit), so currentRound never moves past and the advance branch
+    // above can never fire. "Every client agrees status==complete, with
+    // a consistent (reset) log length" is the same class of
+    // second-observation signal for the terminal case: endMatch() only
+    // commits after archiving this round's own 52 plays, so a unanimous
+    // complete is proof the round genuinely finished, not a weaker check.
     if (completedTrick === 13 && roundNumber != null &&
-        docs.every((d) => d && d.currentRound > roundNumber) &&
         docs.every((d) => d && (d.cardLog || []).length === (docs[0] && (docs[0].cardLog || []).length))) {
-      logEvent("TRICK_SETTLEMENT_VIA_ADVANCE", { round: roundNumber, docCurrentRounds: docs.map((d) => d && d.currentRound) });
-      return { docs, states, advanced: true };
+      if (docs.every((d) => d && d.currentRound > roundNumber)) {
+        logEvent("TRICK_SETTLEMENT_VIA_ADVANCE", { round: roundNumber, docCurrentRounds: docs.map((d) => d && d.currentRound) });
+        return { docs, states, advanced: true };
+      }
+      if (docs.every((d) => d && d.status === "complete")) {
+        logEvent("TRICK_SETTLEMENT_VIA_COMPLETION", { round: roundNumber, docStatuses: docs.map((d) => d && d.status) });
+        return { docs, states, completed: true };
+      }
     }
     await sleep(180);
   }
@@ -612,6 +626,23 @@ async function main() {
   var uniqueCards = new Set(allHandCards);
   check("3.3 No duplicate cards across the 4 hands (52 unique cards, one real shuffle, no leakage/collision)",
     allHandCards.length === 52 && uniqueCards.size === 52, "count=" + allHandCards.length + " unique=" + uniqueCards.size);
+  // P1-2 (R1 dealer-gate naming): the production incident's fix target —
+  // only the legitimate dealer path may dealRound (see
+  // docs/postmortem/2026-08-26-deal-denial.md V-FINAL). Gates 3.1–3.3
+  // prove the deal LANDED; this gate names the authority fact explicitly:
+  // the match document's own gameState shows Round 1 committed exactly
+  // once (initialized=true, dealtRound=1). Read-only (one match-doc get
+  // on p1's client) — adds no write and changes no verdict logic.
+  var r1DealState = await pages[0].evaluate(async (matchId) => {
+    try {
+      var snap = await window.Db.collection("matches").doc(matchId).get();
+      if (!snap.exists) return { exists: false };
+      var gs = snap.data().gameState || {};
+      return { initialized: gs.initialized, dealtRound: gs.dealtRound };
+    } catch (e) { return { error: String((e && e.message) || e) }; }
+  }, matchId);
+  check("R1.1 Dealer-gate: Round-1 deal committed exactly once (gameState.initialized=true, dealtRound=1)",
+    r1DealState && r1DealState.initialized === true && r1DealState.dealtRound === 1, JSON.stringify(r1DealState));
   const authoritativeHandsReady = Object.values(hands).every((h) => h && h.mode === "firestore" && h.hand.length === 13) &&
     allHandCards.length === 52 && uniqueCards.size === 52;
   if (!authoritativeHandsReady) {
@@ -630,7 +661,7 @@ async function main() {
       return { denied: false, exists: snap.exists };
     } catch (e) { return { denied: true, code: e.code }; }
   }, matchId);
-  check("3.4 P1 cannot read P2's hand document directly (real rules-enforced denial, not just UI omission)",
+  check("R1.2 (ex-3.4) P1 cannot read P2's hand document directly (real rules-enforced denial, not just UI omission)",
     leakAttempt.denied === true, JSON.stringify(leakAttempt));
 
   // ══════════════════════════════════════════════════════════════
