@@ -196,7 +196,39 @@ async function attemptOneCardPlay(page, matchId, seatId) {
         try {
           await window.MatchService.submitCard(args.matchId, { suit: card.suit, rank: card.rank });
           return { submitted: true, seat: args.seatId };
-        } catch (e) { return { error: e.message }; }
+        } catch (e) {
+          // Field diagnosis for CI: a rules denial here carries only
+          // the emulator's verdict, never the write it judged. Capture
+          // everything that DETERMINES the write (card shape as built,
+          // fresh-doc turn/version/log length, local engine turn/phase)
+          // so a failure prints ground truth instead of a bare denial.
+          // Most-informative fields first: check() truncates notes.
+          var diag = {
+            error: (e && e.message) || String(e),
+            seat: args.seatId,
+            cardSuit: card && card.suit,
+            cardRankV: card && card.rank && card.rank.v,
+            cardRankS: card && card.rank && card.rank.s,
+            cardKeys: card ? Object.keys(card) : null,
+            rankKeys: card && card.rank ? Object.keys(card.rank) : null
+          };
+          try {
+            var dd = await window.MatchService.loadMatch(args.matchId);
+            diag.docVersion = dd && dd.version;
+            diag.docTurnTail = dd && dd.turn ? String(dd.turn).slice(-6) : dd && dd.turn;
+            diag.docLogLen = dd && dd.cardLog && dd.cardLog.length;
+            diag.docPhase = dd && dd.cardPhase;
+            diag.docRound = dd && dd.currentRound;
+          } catch (ee) {}
+          try {
+            var st = window.TableEngine.getState();
+            diag.engTurn = st && st.turn;
+            diag.engPhase = st && st.phase;
+            diag.engTrick = st && st.trickNo;
+            diag.engPlays = st && st.plays && st.plays.length;
+          } catch (ee) {}
+          return { error: diag.error, detail: diag };
+        }
       }
     }
     return { noLegalCard: true, oracleError: oracleError };
@@ -239,7 +271,7 @@ async function driveBidding(pages, matchId, submittedBy, maxIters) {
 // Drives card plays until totalPlaysSubmitted reaches target (or the
 // round advances/completes). Tracks per-seat submissions the same way.
 async function driveCards(pages, matchId, roundNumber, targetPlays, submittedBy, maxIters) {
-  var plays = 0, stall = 0, lastTurn = null, lastDetail = null;
+  var plays = 0, stall = 0, lastTurn = null, lastDetail = null, fullDetail = null;
   for (var iter = 0; iter < (maxIters || 220); iter++) {
     if (outOfTime()) return { ok: false, reason: "TIME_BUDGET", plays: plays };
     if (plays >= targetPlays) return { ok: true, plays: plays };
@@ -256,13 +288,19 @@ async function driveCards(pages, matchId, roundNumber, targetPlays, submittedBy,
     if (idx === -1) return { ok: false, reason: "INVALID_TURN", plays: plays };
     var res = await attemptOneCardPlay(pages[idx], matchId, turn).catch(function (e) { return { transportError: (e && e.message) || String(e) }; });
     if (res && (res.oracleError || res.transportError || res.error)) lastDetail = res.oracleError || res.transportError || res.error;
+    if (res && res.detail) fullDetail = res.detail;
     if (res && res.submitted) {
       plays++;
       submittedBy[turn] = (submittedBy[turn] || 0) + 1;
       stall = 0;
     } else if (turn === lastTurn) { stall++; } else { stall = 0; }
     lastTurn = turn;
-    if (stall > 30) return { ok: false, reason: "STALLED", plays: plays, lastDetail: lastDetail };
+    if (stall > 30) {
+      // Untruncated field evidence (check() truncates notes): the exact
+      // submit context behind the stall, most-informative fields first.
+      try { console.log("STALL_DETAIL cards round=" + roundNumber + " " + JSON.stringify({ plays: plays, lastDetail: lastDetail, fullDetail: fullDetail }).slice(0, 2000)); } catch (e) {}
+      return { ok: false, reason: "STALLED", plays: plays, lastDetail: lastDetail, fullDetail: fullDetail };
+    }
     await sleep(60);
   }
   return { ok: false, reason: "MAX_ITERS", plays: plays };
