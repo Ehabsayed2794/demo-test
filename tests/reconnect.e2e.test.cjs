@@ -422,11 +422,26 @@ async function main() {
     check("R2 two local subs share one listener (1 delivery each)", dbl[0] === 1 && dbl[1] === 1, dbl);
 
     // ── R3: real deal, hand re-read after reload, opponent denied ──
+    // NOTE: the explicit deal below RACES production's own auto-deal
+    // watcher (MatchAdapter.maybeDealRound, dealer-gated) running on the
+    // four live match pages since the R2 handoff -- either may commit
+    // first, and dealRound() is idempotent by design (ALREADY_DEALT
+    // no-op, never a second deal). Both outcomes prove the same setup
+    // as long as the AUTHORITATIVE doc verifies dealt; only a missing
+    // dealt state is a real failure.
     var deal = await pages[0].evaluate(async function (x) {
       try { return await window.MatchService.dealRound(x, 1); } catch (e) { return { error: e.message }; }
     }, matchId);
-    check("R3.pre dealRound(1) commits (any seated member may deal)", deal && deal.dealt === true, deal && (deal.error || deal.reason));
-    if (!deal || !deal.dealt) { await cleanup(1); return; }
+    var dealtState = await pages[0].evaluate(async function (x) {
+      var d = await window.MatchService.loadMatch(x);
+      var g = (d && d.gameState) || {};
+      return { initialized: g.initialized, dealtRound: g.dealtRound };
+    }, matchId);
+    var dealOk = !!deal && (deal.dealt === true ||
+      (deal.reason === "ALREADY_DEALT" && dealtState.initialized === true && (dealtState.dealtRound || 0) >= 1));
+    check("R3.pre round 1 dealt via the real deal path (explicit commit or production auto-deal, verified on the authoritative doc)",
+      dealOk, { deal: deal, dealtState: dealtState });
+    if (!dealOk) { await cleanup(1); return; }
     var p2seat = seatsOf(await pages[0].evaluate(async function (x) { return window.MatchService.loadMatch(x); }, matchId), uids.p2);
     var handBefore = await pages[1].evaluate(async function (a) {
       var s = await window.Db.collection("matches").doc(a.matchId).collection("hands").doc(a.seat).get();
