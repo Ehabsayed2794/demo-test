@@ -467,11 +467,11 @@
       // generically-shaped sync primitive" treatment bids got in
       // Sprint 3.8, adapted for MANY sequential values per seat
       // instead of one. `cardLog` is an append-only history of every
-      // card played this match so far ({seatId, card} tuples, in
-      // submission order) — never rewritten, never cleared by this
-      // sprint (trick/round-boundary clearing is trick-resolution
-      // territory, explicitly out of scope — see submitCard()'s own
-      // comment). `lastCardSeat` mirrors `lastBidSeat`'s role: which
+      // card played this ROUND so far ({seatId, card} tuples, in
+      // submission order) — never rewritten, and never cleared WITHIN
+      // a round (the old "round-boundary clearing is out of scope" note
+      // is superseded by the Per-Round Log Window note below — see
+      // submitCard()'s own comment). `lastCardSeat` mirrors `lastBidSeat`'s role: which
       // seat the MOST RECENT entry belongs to, for a quick read
       // without inspecting the log's tail.
       // Per-Round Log Window sprint: "never cleared" above now means
@@ -1133,9 +1133,9 @@
           var freshSeatId = resolveSeatAndAuthorize(freshMatch);
           var newEntry = { seatId: freshSeatId, card: { suit: card.suit, rank: { v: card.rank.v, s: card.rank.s } }, round: freshMatch.currentRound };
           // Round Lifecycle sprint: same round-stamp as buildBiddingLogEntry()
-          // above, for the identical reason — `cardLog` is the other
-          // never-cleared, append-only log this schema decision applies
-          // to. Read from the FRESH in-transaction document's own
+      // above, for the identical reason — `cardLog` is the other
+      // append-only-within-a-round log this schema decision applies
+      // to. Read from the FRESH in-transaction document's own
           // `currentRound`, never the caller's local round number.
           //
           // Payload-size hotfix (Golden Path Sprint, found via a 4-real-
@@ -1257,6 +1257,11 @@
     // array, a subcollection, or a destructive reset at the round
     // boundary — see match-adapter.js's own Round Lifecycle section for
     // the read side of this contract.
+    // PER-ROUND LOG WINDOW UPDATE: the "single never-cleared log carrying
+    // multiple rounds" half of the rationale above is SUPERSEDED — the log
+    // is now a per-round window, reset atomically with an archive write
+    // (see buildInitialMatchDoc above); round tags remain and still drive
+    // the adapter's round guard.
     entry.round = round;
     return entry;
   }
@@ -1397,7 +1402,7 @@
           var freshSeatId = resolveSeat(freshMatch);
           var newEntry = buildBiddingLogEntry(freshSeatId, action, freshMatch.currentRound);
           // Payload-size hotfix (see submitCard()'s identical fix, above,
-          // for the full account — same never-cleared, append-only log
+          // for the full account — same append-only (within a round) log
           // shape, same O(N) full-array-rewrite problem on every action).
           // `arrayUnion()` sends only the one new entry; the rules-side
           // `newLog.size() == oldLog.size() + 1` check in
