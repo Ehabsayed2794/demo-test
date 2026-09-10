@@ -5,9 +5,65 @@
 body {
   margin: 0;
   font-family: system-ui, -apple-system, sans-serif;
+  line-height: 1.5;
+}
+
+html,
+body {
+  /* No screen in this game scrolls sideways; clip instead of letting a
+     missed flex min-width push 320px phones into horizontal scroll. */
+  overflow-x: clip;
+}
+
+button,
+select,
+input,
+a {
+  /* Kill the 300ms tap delay / double-tap zoom on mobile browsers. */
+  touch-action: manipulation;
+}
+
+button {
+  /* Our active: backgrounds are the press feedback; drop the gray flash. */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Hint text must stay readable on gray-700 inputs (placeholder-gray-400
+   sits at ~4.1:1; labels carry the meaning, but hints shouldn't strain). */
+::placeholder {
+  color: #d1d5db;
+  opacity: 1;
 }
 
 #root {
   width: 100%;
+  min-height: 100vh; /* fallback for browsers without svh/dvh */
   min-height: 100svh;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* Subtle screen entrance (200ms, ease-out, 6px rise). Screens remount on
+   every screen change, so this replays exactly then. Transform/opacity
+   only — no layout cost. The reduced-motion block above fully disables it. */
+@keyframes screen-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.screen-enter {
+  animation: screen-in 200ms ease-out;
 }
