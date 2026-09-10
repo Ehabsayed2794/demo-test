@@ -1,0 +1,698 @@
+var REPO_ROOT = require("path").join(__dirname, "..");
+// P1-3 — reconnect E2E for the per-round-window world.
+//
+// Supersedes the abandoned root verify-sprint-c-reconnect.cjs (hard-coded
+// /home/user paths, single-client deal to dodge emulator behavior, no
+// mid-round / post-advance scenarios, prints the SKIPPED word this
+// runner hard-fails on). That file is deleted alongside this landing.
+//
+// What this proves, against REAL Chromium pages + the REAL Firestore
+// Rules Emulator (same bootstrap shape as scripts/golden-path.mjs):
+//   R1 lobby reload keeps membership, no duplicate join.
+//   R2 match reconnect pre-deal: same doc, same seat, single delivery.
+//   R3 deal + hand re-read after reload, opponent hands still denied.
+//   R4 (NEW) drop mid-round after trick 6, return mid-round, keep playing.
+//   R5 (NEW) return post-advance: empty window + archive observed, and the
+//       returned client participates in the new round (registry-rebase
+//       path: match-service.js's shrink-to-0 rebase).
+//   R9/R10 cheap listener + repeated-reload hygiene (kept from Sprint C).
+//
+// Card/bidding play is driven through the REAL TableEngine/BiddingEngine
+// oracles + the REAL MatchService write paths (copied pattern-for-pattern
+// from scripts/golden-path.mjs's own bots — never invented legality).
+// No SKIPPED marker is ever printed: emulator-unreachable is a hard
+// failure with a different message. Overall 150s abort guard keeps this
+// file inside the runner's per-file timeout with a diagnosis, not a hang.
+var http = require("http");
+var fs = require("fs");
+var path = require("path");
+var chromium = require("playwright").chromium;
+var initializeTestEnvironment = require("@firebase/rules-unit-testing").initializeTestEnvironment;
+var resolveChromiumExecutablePath = require("../scripts/resolve-chromium.cjs").resolveChromiumExecutablePath;
+
+var ROOT = path.resolve(REPO_ROOT, "design-ui");
+var MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json" };
+var HTTP_PORT = Number(process.env.RECONNECT_PORT || 5241);
+var FIRESTORE_HOST = "127.0.0.1", FIRESTORE_PORT = 8080;
+var AUTH_HOST = "127.0.0.1", AUTH_PORT = 9099;
+// MUST match design-ui/firebase.json's own hardcoded projectId exactly.
+var PROJECT_ID = "made---estimation-card-game";
+var CDN_CACHE = path.join(REPO_ROOT, "tests", "fixtures", "firebase-cdn");
+var CDN_MAP = {
+  "https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js": "firebase-app-compat.js",
+  "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js": "firebase-auth-compat.js",
+  "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js": "firebase-firestore-compat.js"
+};
+var SEATS = ["p1", "p2", "p3", "p4"];
+var STARTED_AT = Date.now();
+var TIME_BUDGET_MS = 150000;
+
+var pass = 0, fail = 0;
+var findings = [];
+function check(label, ok, note) {
+  if (ok) { console.log("PASS  " + label); pass++; }
+  else { console.log("FAIL  " + label + (note ? " -- " + JSON.stringify(note).slice(0, 300) : "")); fail++; findings.push(label); }
+}
+function outOfTime() { return Date.now() - STARTED_AT > TIME_BUDGET_MS; }
+function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+function startServer() {
+  return new Promise(function (resolve) {
+    var server = http.createServer(function (req, res) {
+      var urlPath = decodeURIComponent(req.url.split("?")[0]);
+      var filePath = path.resolve(ROOT, "." + urlPath);
+      if (filePath !== ROOT && filePath.indexOf(ROOT + path.sep) !== 0) { res.writeHead(403); res.end(); return; }
+      fs.readFile(filePath, function (err, data) {
+        if (err) { res.writeHead(404); res.end("Not found: " + urlPath); return; }
+        res.writeHead(200, { "Content-Type": MIME[path.extname(filePath)] || "application/octet-stream" });
+        res.end(data);
+      });
+    });
+    server.listen(HTTP_PORT, function () { resolve(server); });
+  });
+}
+
+async function installRedirect(page) {
+  for (var cdnUrl in CDN_MAP) {
+    (function (url, file) {
+      return page.route(url, function (route) {
+        route.fulfill({ status: 200, contentType: "text/javascript", body: fs.readFileSync(path.join(CDN_CACHE, file), "utf8") });
+      });
+    })(cdnUrl, CDN_MAP[cdnUrl]);
+  }
+  await page.route("**/firebase-init.js", async function (route) {
+    var body = fs.readFileSync(path.join(ROOT, "firebase-init.js"), "utf8");
+    var injected = body.replace(
+      "window.Db = (typeof firebase.firestore === \"function\") ? firebase.firestore() : null;",
+      "window.Db = (typeof firebase.firestore === \"function\") ? firebase.firestore() : null;\n" +
+      "  if (window.Db) window.Db.useEmulator(\"" + FIRESTORE_HOST + "\", " + FIRESTORE_PORT + ");\n" +
+      "  if (window.Auth) window.Auth.useEmulator(\"http://" + AUTH_HOST + ":" + AUTH_PORT + "\");"
+    );
+    await route.fulfill({ status: 200, contentType: "text/javascript", body: injected });
+  });
+}
+
+async function gotoReady(page, url) {
+  for (var attempt = 0; attempt < 4; attempt++) {
+    await page.goto(url, { waitUntil: "load", timeout: 60000 });
+    var ready = await page.evaluate(function () { return typeof firebase !== "undefined" && typeof firebase.auth === "function" && typeof firebase.firestore === "function"; }).catch(function () { return false; });
+    if (ready) return true;
+    await sleep(400 * (attempt + 1));
+  }
+  return false;
+}
+
+async function waitFor(page, fn, timeoutMs, arg) {
+  var deadline = Date.now() + (timeoutMs || 10000);
+  while (Date.now() < deadline) {
+    var v = await page.evaluate(fn, arg).catch(function () { return null; });
+    if (v) return v;
+    await sleep(120);
+  }
+  return null;
+}
+
+// One real bidding action for the WAITING seat, executed on THAT seat's
+// own page. Pattern-for-pattern from scripts/golden-path.mjs.
+async function attemptOneBiddingAction(page, matchId, seatId) {
+  return page.evaluate(async function (args) {
+    var state = window.BiddingEngine.getState();
+    if (!state || state.waitingFor !== args.seatId) return { skipped: "not-my-turn" };
+    var subPhase = state.subPhase;
+    var suits = ["SPADES", "HEARTS", "DIAMONDS", "CLUBS", "SANS"];
+    var candidates = [];
+    if (subPhase === "DASH") {
+      candidates.push({ type: "SubmitDashCallDecision", playerId: args.seatId, declaredDashCall: false });
+    } else if (subPhase === "AUCTION") {
+      var auctionStart = Math.max(4, (state.auctionTop || 0) + 1);
+      for (var t = auctionStart; t <= 13; t++) {
+        for (var s = 0; s < suits.length; s++) {
+          candidates.push({ type: "SubmitAuctionBid", playerId: args.seatId, isPass: false, tricks: t, suit: suits[s] });
+        }
+      }
+      candidates.push({ type: "SubmitAuctionBid", playerId: args.seatId, isPass: true });
+    } else if (subPhase === "CONFIRM") {
+      var startT = state.auctionTop || 4;
+      for (var t2 = startT; t2 <= 13; t2++) {
+        for (var s2 = 0; s2 < suits.length; s2++) {
+          candidates.push({ type: "SubmitConfirmCall", playerId: args.seatId, tricks: t2, suit: suits[s2] });
+        }
+      }
+    } else if (subPhase === "ESTIMATES") {
+      for (var t3 = 0; t3 <= 13; t3++) {
+        candidates.push({ type: "SubmitFinalEstimate", playerId: args.seatId, tricks: t3 });
+      }
+    } else {
+      return { skipped: "subphase-" + subPhase };
+    }
+    for (var i = 0; i < candidates.length; i++) {
+      var c = candidates[i];
+      // A mid-sync oracle can throw instead of answering (never a
+      // legality verdict). Production's own render path try/catches the
+      // same call: treat as "cannot answer yet", never as a harness
+      // crash; the driver's stall guard diagnoses persistence.
+      var verdict = null, oracleError = null;
+      try { verdict = window.BiddingEngine.canSubmit(c); }
+      catch (e) { oracleError = (e && e.message) || String(e); }
+      if (oracleError) return { oracleError: oracleError, subPhase: subPhase };
+      if (verdict && verdict.legal) {
+        try {
+          var result;
+          if (c.type === "SubmitFinalEstimate") {
+            result = await window.MatchService.submitBid(args.matchId, args.seatId, c.tricks);
+          } else {
+            var action = { actionType: c.type };
+            if (c.declaredDashCall !== undefined) action.declaredDashCall = c.declaredDashCall;
+            if (c.isPass !== undefined) action.isPass = c.isPass;
+            if (c.tricks !== undefined) action.tricks = c.tricks;
+            if (c.suit !== undefined) action.suit = c.suit;
+            result = await window.MatchService.submitBiddingAction(args.matchId, action);
+          }
+          return { submitted: c.type, result: true };
+        } catch (e) { return { submitted: c.type, error: e.message }; }
+      }
+    }
+    return { noLegalCandidate: true, subPhase: subPhase };
+  }, { matchId: matchId, seatId: seatId });
+}
+
+// One real card play for the CURRENT turn seat, executed on its own page.
+async function attemptOneCardPlay(page, matchId, seatId) {
+  return page.evaluate(async function (args) {
+    var state = window.TableEngine.getState();
+    if (!state || state.turn !== args.seatId || state.phase !== "PLAY") return { skipped: "not-my-turn" };
+    var hand = window.GameSession.getHand(args.seatId);
+    var oracleError = null;
+    for (var i = 0; i < hand.length; i++) {
+      var card = hand[i];
+      // Same mid-sync tolerance as the bidding driver above (mirrors
+      // production renderTablePanel's own try/catch around this exact
+      // call): a reloaded page whose engine has not re-seeded this
+      // seat's hand yet cannot answer -- retry later, never crash.
+      var verdict = null;
+      try { verdict = window.TableEngine.canPlayCard(args.seatId, card); }
+      catch (e) { oracleError = (e && e.message) || String(e); continue; }
+      if (verdict && verdict.legal) {
+        try {
+          await window.MatchService.submitCard(args.matchId, { suit: card.suit, rank: card.rank });
+          return { submitted: true, seat: args.seatId };
+        } catch (e) {
+          // Field diagnosis for CI: a rules denial here carries only
+          // the emulator's verdict, never the write it judged. Capture
+          // everything that DETERMINES the write (card shape as built,
+          // fresh-doc turn/version/log length, local engine turn/phase)
+          // so a failure prints ground truth instead of a bare denial.
+          // Most-informative fields first: check() truncates notes.
+          var diag = {
+            error: (e && e.message) || String(e),
+            seat: args.seatId,
+            cardSuit: card && card.suit,
+            cardRankV: card && card.rank && card.rank.v,
+            cardRankS: card && card.rank && card.rank.s,
+            cardKeys: card ? Object.keys(card) : null,
+            rankKeys: card && card.rank ? Object.keys(card.rank) : null
+          };
+          try {
+            var dd = await window.MatchService.loadMatch(args.matchId);
+            diag.docVersion = dd && dd.version;
+            diag.docTurnTail = dd && dd.turn ? String(dd.turn).slice(-6) : dd && dd.turn;
+            diag.docLogLen = dd && dd.cardLog && dd.cardLog.length;
+            diag.docPhase = dd && dd.cardPhase;
+            diag.docRound = dd && dd.currentRound;
+          } catch (ee) {}
+          try {
+            var st = window.TableEngine.getState();
+            diag.engTurn = st && st.turn;
+            diag.engPhase = st && st.phase;
+            diag.engTrick = st && st.trickNo;
+            diag.engPlays = st && st.plays && st.plays.length;
+          } catch (ee) {}
+          return { error: diag.error, detail: diag };
+        }
+      }
+    }
+    return { noLegalCard: true, oracleError: oracleError };
+  }, { matchId: matchId, seatId: seatId });
+}
+
+function seatIndex(seat) { return SEATS.indexOf(seat); }
+
+// Drives bidding until DONE (or budget out). Records which SEAT each
+// accepted action came from into submittedBy (a seat -> count map) so
+// callers can prove a SPECIFIC reconnected page participated.
+async function driveBidding(pages, matchId, submittedBy, maxIters) {
+  var stall = 0, lastWaiting = null, lastDetail = null;
+  for (var iter = 0; iter < (maxIters || 120); iter++) {
+    if (outOfTime()) return { ok: false, reason: "TIME_BUDGET" };
+    var states = await Promise.all(pages.map(function (p) {
+      return p.evaluate(function () { return window.BiddingEngine ? window.BiddingEngine.getState() : null; }).catch(function () { return null; });
+    }));
+    if (states.some(function (s) { return !s; })) { await sleep(150); continue; }
+    if (states.every(function (s) { return s.subPhase === "DONE"; })) return { ok: true };
+    var ref = states[0];
+    var converged = states.every(function (s) { return s.round === ref.round && s.subPhase === ref.subPhase && s.waitingFor === ref.waitingFor; });
+    if (!converged || !ref.waitingFor) { await sleep(120); continue; }
+    var idx = seatIndex(ref.waitingFor);
+    if (idx === -1) return { ok: false, reason: "INVALID_WAITING_FOR" };
+    var res = await attemptOneBiddingAction(pages[idx], matchId, ref.waitingFor).catch(function (e) { return { transportError: (e && e.message) || String(e) }; });
+    if (res && (res.oracleError || res.transportError)) lastDetail = res.oracleError || res.transportError;
+    if (res && res.noLegalCandidate && !res.oracleError) return { ok: false, reason: "NO_LEGAL_BIDDING_CANDIDATE", log: log };
+    if (res && res.submitted && !res.error) {
+      submittedBy[ref.waitingFor] = (submittedBy[ref.waitingFor] || 0) + 1;
+      stall = 0;
+    } else if (ref.waitingFor === lastWaiting) { stall++; } else { stall = 0; }
+    lastWaiting = ref.waitingFor;
+    if (stall > 25) return { ok: false, reason: "STALLED", lastDetail: lastDetail };
+    await sleep(80);
+  }
+  return { ok: false, reason: "MAX_ITERS" };
+}
+
+// Diagnostic-only snapshot of every page's sync position against the
+// authoritative document (engine turn/phase/trick + adapter card count
+// per page; projected doc fields only, never full logs). Never throws;
+// prints one JSON line the runner relays verbatim. Doc-turn uid is
+// printed tail-only; seats are already public seat ids.
+async function dumpSyncState(pages, matchId, tag) {
+  try {
+    var doc = await pages[0].evaluate(function (id) { return window.MatchService.loadMatch(id); }, matchId).catch(function () { return null; });
+    var perPage = await Promise.all(pages.map(function (p, i) {
+      return p.evaluate(function (args) {
+        var out = { page: args.seat };
+        try {
+          var s = window.TableEngine ? window.TableEngine.getState() : null;
+          out.turn = s ? s.turn : null;
+          out.phase = s ? s.phase : null;
+          out.trick = s ? s.trickNo : null;
+          out.eplays = (s && s.plays) ? s.plays.length : null;
+          out.round = s ? s.round : null;
+          out.won = s ? s.tricksWon : null;
+          try {
+            out.hands = s && s.hands ? Object.keys(s.hands).map(function (k) { return k + ":" + (s.hands[k] ? s.hands[k].length : "null"); }).join(",") : null;
+          } catch (e) { out.hands = "ERR"; }
+          try {
+            var b = window.BiddingEngine ? window.BiddingEngine.getState() : null;
+            out.bsub = b ? b.subPhase : null;
+            out.bwait = b ? b.waitingFor : null;
+          } catch (e) {}
+          try {
+            var ps = window.GameSession ? window.GameSession.getPlayState() : null;
+            out.ps = ps ? { r: ps.roundNumber, ph: ps.phase, t: ps.trickNumber } : null;
+          } catch (e) {}
+          try {
+            out.ghand = window.GameSession ? window.GameSession.getHand(args.seat).length : null;
+          } catch (e) {}
+        } catch (e) { out.engError = true; }
+        try {
+          out.count = (window.MatchAdapter && typeof window.MatchAdapter.getLastAppliedCardCount === "function")
+            ? window.MatchAdapter.getLastAppliedCardCount(args.matchId) : null;
+          out.resolved = (window.MatchAdapter && typeof window.MatchAdapter.getLastResolvedTrickNo === "function")
+            ? window.MatchAdapter.getLastResolvedTrickNo(args.matchId) : null;
+        } catch (e) { out.count = "ERR"; }
+        return out;
+      }, { seat: SEATS[i], matchId: matchId }).catch(function () { return { page: SEATS[i], evalError: true }; });
+    }));
+    var docTurnSeat = null, docTurnTail = null;
+    if (doc && doc.turn) {
+      docTurnTail = String(doc.turn).slice(-6);
+      if (doc.seats) docTurnSeat = Object.keys(doc.seats).find(function (s) { return doc.seats[s] === doc.turn; }) || null;
+    }
+    console.log("SYNC_STATE " + tag + " " + JSON.stringify({
+      doc: doc ? {
+        turnSeat: docTurnSeat, turnTail: docTurnTail, phase: doc.cardPhase,
+        round: doc.currentRound, version: doc.version,
+        logLen: doc.cardLog && doc.cardLog.length, status: doc.status
+      } : null,
+      pages: perPage
+    }).slice(0, 3000));
+  } catch (e) {}
+}
+
+// Drives card plays until totalPlaysSubmitted reaches target (or the
+// round advances/completes). Tracks per-seat submissions the same way.
+async function driveCards(pages, matchId, roundNumber, targetPlays, submittedBy, maxIters) {
+  var plays = 0, stall = 0, lastTurn = null, lastDetail = null, fullDetail = null;
+  for (var iter = 0; iter < (maxIters || 220); iter++) {
+    if (outOfTime()) return { ok: false, reason: "TIME_BUDGET", plays: plays };
+    if (plays >= targetPlays) return { ok: true, plays: plays };
+    var doc = await pages[0].evaluate(function (id) { return window.MatchService.loadMatch(id); }, matchId).catch(function () { return null; });
+    if (!doc) { await sleep(150); continue; }
+    if (doc.currentRound !== roundNumber || doc.status === "complete") return { ok: true, plays: plays, movedOn: true };
+    var states = await Promise.all(pages.map(function (p) {
+      return p.evaluate(function () { return window.TableEngine ? window.TableEngine.getState() : null; }).catch(function () { return null; });
+    }));
+    if (states.some(function (s) { return !s; })) { await sleep(150); continue; }
+    // Follow the AUTHORITATIVE document turn (what the rules enforce),
+    // not any single page's engine cache: after a reload/divergence a
+    // page's engine turn can disagree with the doc, and asking the
+    // wrong page stalls forever (no write => no delivery => no heal).
+    // Falls back to the reference engine when the doc turn is missing
+    // or unmapped (identical behavior to before in that case). Phase is
+    // still gated on the reference engine (never ask mid-resolution).
+    // EXCEPTION: the Round-1 opening window (match-service.js
+    // isRoundOneOpeningWindow: round 1, cardPhase null, turn still the
+    // dealer placeholder, empty cardLog, non-empty biddingLog). There
+    // the doc turn is INTENTIONALLY stale -- submitCard's own
+    // publishOpeningTurnIfNeeded bridge lets the engine-selected
+    // opening leader publish over it. Following the doc turn here
+    // asks the dealer page, whose engine correctly says not-my-turn,
+    // so no write ever fires and the bridge never runs (deadlock).
+    // Follow the converged engine turn until the first card lands.
+    var turn = null;
+    var isOpeningWindow = !!(doc && doc.currentRound === 1 && doc.cardPhase == null &&
+      doc.turn != null && doc.dealer != null && doc.turn === doc.dealer &&
+      Array.isArray(doc.cardLog) && doc.cardLog.length === 0 &&
+      Array.isArray(doc.biddingLog) && doc.biddingLog.length > 0);
+    if (isOpeningWindow && states[0] && states[0].turn) {
+      turn = states[0].turn;
+    } else if (doc && doc.turn && doc.seats) {
+      turn = Object.keys(doc.seats).find(function (s) { return doc.seats[s] === doc.turn; }) || null;
+    }
+    if (!turn) turn = states[0].turn;
+    if (!turn || states[0].phase !== "PLAY") { await sleep(120); continue; }
+    var idx = seatIndex(turn);
+    if (idx === -1) return { ok: false, reason: "INVALID_TURN", plays: plays };
+    var res = await attemptOneCardPlay(pages[idx], matchId, turn).catch(function (e) { return { transportError: (e && e.message) || String(e) }; });
+    if (res && (res.oracleError || res.transportError || res.error)) lastDetail = res.oracleError || res.transportError || res.error;
+    if (res && res.detail) fullDetail = res.detail;
+    if (res && res.submitted) {
+      plays++;
+      submittedBy[turn] = (submittedBy[turn] || 0) + 1;
+      stall = 0;
+    } else if (turn === lastTurn) { stall++; } else { stall = 0; }
+    lastTurn = turn;
+    if (stall > 30) {
+      // Untruncated field evidence (check() truncates notes): the exact
+      // submit context behind the stall, most-informative fields first.
+      try { console.log("STALL_DETAIL cards round=" + roundNumber + " " + JSON.stringify({ plays: plays, lastDetail: lastDetail, fullDetail: fullDetail }).slice(0, 2000)); } catch (e) {}
+      await dumpSyncState(pages, matchId, "stall-cards-r" + roundNumber);
+      return { ok: false, reason: "STALLED", plays: plays, lastDetail: lastDetail, fullDetail: fullDetail };
+    }
+    await sleep(60);
+  }
+  return { ok: false, reason: "MAX_ITERS", plays: plays };
+}
+
+async function reloadPage(contexts, pages, i, url) {
+  // Same-tab reload (a real user reload): preserves the tab's
+  // sessionStorage GameState handoff and the context's auth, and keeps
+  // the already-installed route handlers (they persist across
+  // same-page navigations). A fresh newPage() tab would lose
+  // sessionStorage and drop the match bootstrap.
+  // NOTE: uses the `url` argument -- a previous revision referenced the
+  // main-scoped MATCH_URL here (out of scope, ReferenceError on every
+  // call), whose crash-path leak (server+browser left open, process
+  // never exiting) is what surfaced as the runner's 180s TIMEOUT.
+  var page = pages[i];
+  var ok = await gotoReady(page, url);
+  if (!ok) throw new Error("reload failed: page " + i + " never ready at " + url);
+  return page;
+}
+
+async function main() {
+  console.log("=== P1-3 reconnect E2E (window world): 4 real clients vs emulator ===\n");
+  var server = null, browser = null;
+  // Overall abort guard (as documented in this file's header): converts
+  // ANY hang (hung evaluate/goto/launch, stalled driver) into a
+  // diagnosed exit-1 well inside the runner's per-file timeout, instead
+  // of a silent 180s TIMEOUT. process.exit (not just exitCode) because
+  // a hung await would otherwise suppress the exit indefinitely.
+  var abortTimer = setTimeout(function () {
+    console.log("ABORT: time budget (" + TIME_BUDGET_MS + "ms) exceeded -- forcing exit with diagnosis, not a hang.");
+    try { if (server) server.close(); } catch (e) {}
+    if (browser) { try { browser.close().catch(function () {}); } catch (e) {} }
+    setTimeout(function () { process.exit(1); }, 1000);
+  }, TIME_BUDGET_MS + 10000);
+  var rulesText;
+  try { rulesText = fs.readFileSync(path.join(REPO_ROOT, "firestore.rules"), "utf8"); }
+  catch (e) { clearTimeout(abortTimer); console.log("CANNOT READ firestore.rules: " + e.message); process.exitCode = 2; return; }
+
+  var bootEnv;
+  try {
+    bootEnv = await initializeTestEnvironment({
+      projectId: PROJECT_ID,
+      firestore: { rules: rulesText, host: FIRESTORE_HOST, port: FIRESTORE_PORT }
+    });
+  } catch (e) {
+    // NOTE: deliberately NOT the word SKIPPED — the runner hard-fails on it.
+    clearTimeout(abortTimer);
+    console.log("EMULATOR UNREACHABLE (bootstrap): " + e.message);
+    process.exitCode = 2; return;
+  }
+  await bootEnv.cleanup();
+
+  server = await startServer();
+  try {
+    browser = await chromium.launch({ executablePath: resolveChromiumExecutablePath() });
+  } catch (e) {
+    clearTimeout(abortTimer);
+    console.log("BROWSER LAUNCH FAILED: " + e.message);
+    try { if (server) server.close(); } catch (ee) {}
+    process.exitCode = 2; return;
+  }
+
+  var BASE = "http://127.0.0.1:" + HTTP_PORT;
+  var LOBBY_URL = BASE + "/lobby/index.html";
+  var MATCH_URL = BASE + "/match/index.html";
+  var STORAGE_KEY = "estimation_game_state_v1";
+  var contexts = [], pages = [], uids = {};
+  var contextsToClose = [];
+  var cleanedUp = false;
+  function withTimeout(promise, ms) {
+    var t;
+    var timeout = new Promise(function (_, reject) { t = setTimeout(function () { reject(new Error("cleanup-timeout")); }, ms); });
+    return Promise.race([Promise.resolve(promise), timeout]).then(
+      function (v) { clearTimeout(t); return v; },
+      function (e) { clearTimeout(t); throw e; }
+    );
+  }
+  async function cleanup(code) {
+    if (cleanedUp) { process.exitCode = code; return; }
+    cleanedUp = true;
+    clearTimeout(abortTimer);
+    for (var c of contextsToClose) { try { await withTimeout(c.close(), 5000); } catch (e) {} }
+    try { if (browser) await withTimeout(browser.close(), 10000); } catch (e) {}
+    try {
+      if (server) {
+        try { if (server.closeAllConnections) server.closeAllConnections(); } catch (e) {}
+        await withTimeout(new Promise(function (resolve) { server.close(function () { resolve(); }); }), 5000);
+      }
+    } catch (e) {}
+    console.log("\n=== RESULTS ===\n" + pass + " passed, " + fail + " failed");
+    process.exitCode = code;
+  }
+
+  try {
+    // Boot on LOBBY (like scripts/golden-path.mjs): match/index.html needs
+    // the GameState handoff to bootstrap engines/seat for a match.
+    for (var i = 0; i < 4; i++) {
+      var ctx = await browser.newContext();
+      var page = await ctx.newPage();
+      await installRedirect(page);
+      if (!await gotoReady(page, LOBBY_URL)) throw new Error("page " + SEATS[i] + " never ready");
+      contexts.push(ctx); pages.push(page); contextsToClose.push(ctx);
+    }
+    for (var j = 0; j < 4; j++) {
+      var email = "recon-" + SEATS[j] + "-" + Date.now() + "-" + j + "@test.local";
+      uids[SEATS[j]] = await pages[j].evaluate(async function (em) {
+        var cred = await window.Auth.createUserWithEmailAndPassword(em, "TestPass123!");
+        return cred.user.uid;
+      }, email);
+    }
+
+    // ── R1: lobby reload keeps membership, join stays idempotent ──
+    var roomId = await pages[0].evaluate(async function (uid) { return window.RoomService.createRoom(uid, "Reconnect Room"); }, uids.p1);
+    for (var k = 1; k < 4; k++) {
+      await pages[k].evaluate(async function (a) { return window.RoomService.joinRoom(a.roomId, a.uid); }, { roomId: roomId, uid: uids[SEATS[k]] });
+    }
+    await reloadPage(contexts, pages, 1, LOBBY_URL);
+    var roomAfter = await pages[1].evaluate(async function (id) { return window.RoomService.loadRoom(id); }, roomId);
+    check("R1 reloaded P2 still a member, membership unchanged (4)",
+      !!roomAfter && roomAfter.players.indexOf(uids.p2) !== -1 && roomAfter.players.length === 4);
+    var dupCount = await pages[1].evaluate(async function (a) {
+      await window.RoomService.joinRoom(a.roomId, a.uid);
+      var r = await window.RoomService.loadRoom(a.roomId);
+      return r.players.filter(function (p) { return p === a.uid; }).length;
+    }, { roomId: roomId, uid: uids.p2 });
+    check("R1 re-join after reload is idempotent (no duplicate)", dupCount === 1);
+
+    // ── R2: match start (non-creators first, creator last — exercises the
+    // creator-only startMatch guard) + GameState handoff into match pages ──
+    for (var m = 1; m < 4; m++) {
+      await pages[m].evaluate(async function (a) { return window.RoomService.setReady(a.roomId, a.uid, true); }, { roomId: roomId, uid: uids[SEATS[m]] });
+    }
+    var creatorReady = await pages[0].evaluate(async function (a) { return window.RoomService.setReady(a.roomId, a.uid, true); }, { roomId: roomId, uid: uids.p1 });
+    var matchId = creatorReady && creatorReady.matchStart && creatorReady.matchStart.matchId;
+    if (!matchId) {
+      var roomNow = await pages[0].evaluate(async function (id) { return window.RoomService.loadRoom(id); }, roomId);
+      matchId = roomNow && roomNow.matchId;
+    }
+    check("R2.pre match started via all-ready", !!matchId);
+    if (!matchId) { await cleanup(1); return; }
+    // Same handoff shape the real lobby uses (scripts/golden-path.mjs).
+    for (var h = 0; h < 4; h++) {
+      await pages[h].evaluate(function (args) {
+        var data = {
+          current: "Gameplay", previous: "Lobby", history: ["Lobby"],
+          data: {
+            player: { id: args.uid, name: "Player " + args.seat },
+            account: { type: "test", email: null }, room: { code: null, host: false, seats: [] }, lastResult: null,
+            match: { id: args.matchId, roomId: args.roomId }
+          }
+        };
+        window.sessionStorage.setItem(args.storageKey, JSON.stringify(data));
+      }, { matchId: matchId, roomId: roomId, uid: uids[SEATS[h]], seat: SEATS[h], storageKey: STORAGE_KEY });
+      await pages[h].goto(MATCH_URL, { waitUntil: "load" });
+    }
+    for (var w = 0; w < 4; w++) {
+      await waitFor(pages[w], function () { return !!(window.SessionService && window.SessionService.getCurrentUser()); }, 8000);
+    }
+    var seatsOf = function (doc, uid) { return Object.keys(doc.seats).find(function (s) { return doc.seats[s] === uid; }); };
+    var p3seat = seatsOf(await pages[0].evaluate(async function (x) { return window.MatchService.loadMatch(x); }, matchId), uids.p3);
+    await reloadPage(contexts, pages, 2, MATCH_URL);
+    var matchP3 = await pages[2].evaluate(async function (x) { return window.MatchService.loadMatch(x); }, matchId);
+    check("R2 reconnected P3 observes the same match doc", !!matchP3 && matchP3.roomId === roomId);
+    check("R2 P3 seat identity unchanged after reconnect", !!matchP3 && matchP3.seats[p3seat] === uids.p3);
+    var dbl = await pages[2].evaluate(async function (x) {
+      var n = [0, 0];
+      var u1 = window.MatchService.subscribeToMatch(x, function () { n[0]++; });
+      var u2 = window.MatchService.subscribeToMatch(x, function () { n[1]++; });
+      await new Promise(function (rr) { setTimeout(rr, 600); });
+      u1(); u2();
+      return n;
+    }, matchId);
+    check("R2 two local subs share one listener (1 delivery each)", dbl[0] === 1 && dbl[1] === 1, dbl);
+
+    // ── R3: real deal, hand re-read after reload, opponent denied ──
+    // NOTE: the explicit deal below RACES production's own auto-deal
+    // watcher (MatchAdapter.maybeDealRound, dealer-gated) running on the
+    // four live match pages since the R2 handoff -- either may commit
+    // first, and dealRound() is idempotent by design (ALREADY_DEALT
+    // no-op, never a second deal). Both outcomes prove the same setup
+    // as long as the AUTHORITATIVE doc verifies dealt; only a missing
+    // dealt state is a real failure.
+    var deal = await pages[0].evaluate(async function (x) {
+      try { return await window.MatchService.dealRound(x, 1); } catch (e) { return { error: e.message }; }
+    }, matchId);
+    var dealtState = await pages[0].evaluate(async function (x) {
+      var d = await window.MatchService.loadMatch(x);
+      var g = (d && d.gameState) || {};
+      return { initialized: g.initialized, dealtRound: g.dealtRound };
+    }, matchId);
+    var dealOk = !!deal && (deal.dealt === true ||
+      (deal.reason === "ALREADY_DEALT" && dealtState.initialized === true && (dealtState.dealtRound || 0) >= 1));
+    check("R3.pre round 1 dealt via the real deal path (explicit commit or production auto-deal, verified on the authoritative doc)",
+      dealOk, { deal: deal, dealtState: dealtState });
+    if (!dealOk) { await cleanup(1); return; }
+    var p2seat = seatsOf(await pages[0].evaluate(async function (x) { return window.MatchService.loadMatch(x); }, matchId), uids.p2);
+    var handBefore = await pages[1].evaluate(async function (a) {
+      var s = await window.Db.collection("matches").doc(a.matchId).collection("hands").doc(a.seat).get();
+      return s.exists ? s.data() : null;
+    }, { matchId: matchId, seat: p2seat });
+    await reloadPage(contexts, pages, 1, MATCH_URL);
+    var handAfter = await pages[1].evaluate(async function (a) {
+      var s = await window.Db.collection("matches").doc(a.matchId).collection("hands").doc(a.seat).get();
+      return s.exists ? s.data() : null;
+    }, { matchId: matchId, seat: p2seat });
+    check("R3 reloaded P2 reads its own hand identical to pre-reload server state",
+      !!handAfter && !!handBefore && JSON.stringify(handAfter.cards) === JSON.stringify(handBefore.cards));
+    var otherSeat = SEATS.find(function (s) { return s !== p2seat; });
+    var leak = await pages[1].evaluate(async function (a) {
+      try { var s = await window.Db.collection("matches").doc(a.matchId).collection("hands").doc(a.seat).get(); return { denied: false }; }
+      catch (e) { return { denied: true }; }
+    }, { matchId: matchId, seat: otherSeat });
+    check("R3 reconnected P2 still cannot read an opponent hand", leak.denied === true);
+
+    // ── R4 (NEW): drop mid-round after trick 6, return mid-round ──
+    var bidSubs = {};
+    var bidRes = await driveBidding(pages, matchId, bidSubs, 150);
+    check("R4.pre round-1 bidding completes via the real path", bidRes.ok === true, bidRes.reason + (bidRes.lastDetail ? " :: " + bidRes.lastDetail : ""));
+    if (!bidRes.ok) { await cleanup(1); return; }
+    var cardSubs = {};
+    var sixTricks = await driveCards(pages, matchId, 1, 24, cardSubs, 200);
+    check("R4.pre 6 tricks (24 plays) driven pre-drop", sixTricks.ok === true && sixTricks.plays >= 24, sixTricks);
+    if (!sixTricks.ok) { await cleanup(1); return; }
+    await reloadPage(contexts, pages, 1, MATCH_URL);
+    var p2view = await pages[1].evaluate(async function (x) { return window.MatchService.loadMatch(x); }, matchId);
+    check("R4 reloaded P2 mid-round observes the live round (still round 1)", !!p2view && p2view.currentRound === 1);
+    var p2handView = await pages[1].evaluate(async function (a) {
+      var s = await window.Db.collection("matches").doc(a.matchId).collection("hands").doc(a.seat).get();
+      return s.exists ? s.data() : null;
+    }, { matchId: matchId, seat: p2seat });
+    check("R4 reloaded P2 hand doc is the live round-1 hand", !!p2handView && p2handView.round === 1 && p2handView.cards.length === 13);
+    var postSubs = {};
+    // NOTE: driveCards() counts from 0 per call; pre-drop drove exactly 24,
+    // so 4 more here then 24 in R5 lands the round at exactly 52 plays.
+    var afterDrop = await driveCards(pages, matchId, 1, 4, postSubs, 120);
+    check("R4 play continues after the drop (4 more plays accepted)", afterDrop.ok === true && afterDrop.plays === 4, afterDrop);
+    var p2PostPlays = (postSubs[p2seat] || 0);
+    check("R4 reloaded P2 itself submitted post-return (participates, not just observes)", p2PostPlays >= 1, postSubs);
+    var p2Count = await pages[1].evaluate(async function (x) { return window.MatchAdapter.getLastAppliedCardCount(x); }, matchId);
+    var p1Count = await pages[0].evaluate(async function (x) { return window.MatchAdapter.getLastAppliedCardCount(x); }, matchId);
+    check("R4 reloaded P2 adapter caught up to a control client (count parity)", p2Count !== null && p2Count === p1Count, { p2: p2Count, p1: p1Count });
+
+    // ── R5 (NEW): return post-advance — empty window + archive + new-round play ──
+    // 24 (pre-drop) + 4 (post-drop) already played; 24 more completes 52.
+    // Baseline sync map first: if the long drive below stalls, this shows
+    // exactly which page(s) diverged from the authoritative turn.
+    await dumpSyncState(pages, matchId, "pre-r5");
+    var rest = await driveCards(pages, matchId, 1, 24, {}, 260);
+    check("R5.pre round 1 reaches 52 plays", rest.ok === true && rest.plays === 24, rest);
+    if (!rest.ok) { await cleanup(1); return; }
+    var adv = await pages[0].evaluate(async function (x) {
+      try { return await window.MatchService.advanceToNextRound(x, 1); } catch (e) { return { error: e.message }; }
+    }, matchId);
+    // Production auto-advance (MatchAdapter's round-sync DONE delivery)
+    // can legitimately win this race: all four live match pages run the
+    // same auto-advance path, so by the time this explicit call runs the
+    // round may already be advanced. That is convergence, not failure --
+    // accept ALREADY_ADVANCED when the authoritative doc confirms
+    // currentRound actually moved to 2.
+    var advDoc = await pages[0].evaluate(async function (x) { return window.MatchService.loadMatch(x); }, matchId).catch(function () { return null; });
+    var advOk = !!(adv && adv.advanced === true) ||
+      !!((adv && adv.reason === "ALREADY_ADVANCED") && advDoc && advDoc.currentRound === 2);
+    check("R5.pre advance to round 2 commits", advOk, (adv && (adv.error || adv.reason)) || (advDoc && advDoc.currentRound));
+    if (!advOk) { await cleanup(1); return; }
+    await reloadPage(contexts, pages, 2, MATCH_URL);
+    var p3r2 = await pages[2].evaluate(async function (x) { return window.MatchService.loadMatch(x); }, matchId);
+    check("R5 reloaded P3 post-advance sees round 2", !!p3r2 && p3r2.currentRound === 2);
+    check("R5 reloaded P3 sees the reset parent window (empty logs)", !!p3r2 && p3r2.cardLog.length === 0 && p3r2.biddingLog.length === 0);
+    var arch = await pages[2].evaluate(async function (x) {
+      var s = await window.Db.collection("matches").doc(x).collection("roundArchive").doc("1").get();
+      return s.exists ? s.data() : null;
+    }, matchId);
+    check("R5 reloaded P3 reads roundArchive/1 with round 1's 52 plays", !!arch && arch.round === 1 && arch.cardLog.length === 52);
+    var r2subs = {};
+    var r2done = await driveBidding(pages, matchId, r2subs, 150);
+    check("R5.pre round-2 bidding completes", r2done.ok === true, r2done.reason + (r2done.lastDetail ? " :: " + r2done.lastDetail : ""));
+    check("R5 reloaded P3 submitted in the new round (registry-rebase path works)", (r2subs[p3seat] || 0) >= 1, r2subs);
+
+    // ── R9/R10: cheap listener + repeated-reload hygiene ──
+    var dbl2 = await pages[0].evaluate(async function (x) {
+      var n = [0, 0, 0];
+      var u1 = window.MatchService.subscribeToMatch(x, function () { n[0]++; });
+      var u2 = window.MatchService.subscribeToMatch(x, function () { n[1]++; });
+      await new Promise(function (rr) { setTimeout(rr, 400); });
+      u1(); u2();
+      var u3 = window.MatchService.subscribeToMatch(x, function () { n[2]++; });
+      await new Promise(function (rr) { setTimeout(rr, 400); });
+      u3();
+      return n;
+    }, matchId);
+    check("R9 subscribe/unsubscribe/resubscribe: exactly one delivery per active sub", dbl2.every(function (c) { return c === 1; }), dbl2);
+    var seenRooms = [];
+    for (var rr = 0; rr < 3; rr++) {
+      await reloadPage(contexts, pages, 0, MATCH_URL);
+      var mm = await pages[0].evaluate(async function (x) { return window.MatchService.loadMatch(x); }, matchId);
+      seenRooms.push(mm && mm.roomId);
+    }
+    check("R10 3x reload: same roomId every time (identity never regresses)", seenRooms.every(function (r) { return r === roomId; }), seenRooms);
+  } catch (e) {
+    console.log("HARNESS CRASHED: " + ((e && e.stack) || e));
+    await cleanup(3); return;
+  }
+  await cleanup(fail > 0 ? 1 : 0);
+}
+
+main().catch(function (e) { console.log("HARNESS CRASHED: " + ((e && e.stack) || e)); try { process.exit(3); } catch (ee) { process.exitCode = 3; } });
+

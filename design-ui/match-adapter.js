@@ -993,6 +993,7 @@
       delete lastAppliedTurnVersionByMatch[matchId];
       delete lastAppliedCardVersionByMatch[matchId];
       delete lastAppliedCardCountByMatch[matchId];
+      delete lastMatchDocByMatch[matchId];
       delete lastResolvedTrickNoByMatch[matchId];
       delete lastAppliedBiddingActionVersionByMatch[matchId];
       delete lastAppliedBiddingActionCountByMatch[matchId];
@@ -1005,6 +1006,7 @@
       lastAppliedTurnVersionByMatch = {};
       lastAppliedCardVersionByMatch = {};
       lastAppliedCardCountByMatch = {};
+      lastMatchDocByMatch = {};
       lastResolvedTrickNoByMatch = {};
       roundAdvanceAttemptedByMatch = {};
       matchCompletionAppliedByMatch = {};
@@ -1202,6 +1204,16 @@
   // subscribe or a reconnect that missed several deliveries.
   var lastAppliedCardCountByMatch = {};
 
+  // P1-3 reconnect hardening: the freshest well-formed match document
+  // observed through the card-sync path, per matchId. Lets a post-seed
+  // engine refresh (see refreshEngineFromDoc below) replay against
+  // already-delivered state without waiting for a new Firestore
+  // delivery — which can never arrive while the stalled turn sits on
+  // the very client that is still catching up. Set on every delivery
+  // (even ones that apply nothing), cleared alongside the other
+  // per-match registries by resetSyncState().
+  var lastMatchDocByMatch = {};
+
   /** Task 2 (Remote Card Application): replays every cardLog entry
    *  this adapter has not yet applied, IN ORDER, through the existing
    *  TableEngine reducer. `localSeatId` is optional for backward
@@ -1238,6 +1250,11 @@
     if (!Array.isArray(matchDoc.cardLog)) {
       return { applied: false, reason: "MALFORMED_SNAPSHOT" };
     }
+
+    // P1-3 reconnect hardening: remember the freshest well-formed
+    // document seen here (see lastMatchDocByMatch's own comment), so a
+    // post-seed refresh can replay without a new delivery.
+    lastMatchDocByMatch[matchId] = matchDoc;
 
     // Task 5: strict greater-than only, against this function's OWN
     // independent version registry. Equal (a duplicate delivery — Task
@@ -2175,6 +2192,51 @@
     });
   }
 
+  /** P1-3 reconnect hardening: delivery-independent engine catch-up.
+   *  Replays the freshest already-delivered match document (see
+   *  lastMatchDocByMatch) through the EXISTING, unmodified
+   *  applyRemoteCard()/applyRemoteTrick() pipeline, alternating exactly
+   *  like startTrickSync()'s own per-delivery catch-up loop. Called ONLY
+   *  right after TableEngine.restoreHand() actually re-seeds a missing
+   *  hand (see applyRemoteHand) — the one moment the engine gains data
+   *  no prior delivery could use. This is what unblocks a reloaded
+   *  client whose turn is already on it: without it, convergence would
+   *  need one more Firestore delivery, which can never arrive while the
+   *  stalled turn sits on the catching-up client itself.
+   *
+   *  Everything invoked here is idempotent and registry-gated
+   *  (re-running against already-applied state is a no-op), so this
+   *  terminates: the loop stops the instant a full card+trick pass
+   *  advances nothing, with a hard numeric bound regardless. Never
+   *  throws outward (best-effort healing; a still-stuck engine stays
+   *  visible through the registries, never hidden). Never writes
+   *  Firestore. Never computes legality — only re-invocations of the
+   *  pipeline, which still decides everything itself on every call. */
+  function refreshEngineFromDoc(matchId, localSeatId) {
+    if (!matchId) return;
+    var matchDoc = lastMatchDocByMatch[matchId];
+    if (!matchDoc || typeof matchDoc !== "object" || Array.isArray(matchDoc)) return;
+    if (!Array.isArray(matchDoc.cardLog)) return;
+    var bound = matchDoc.cardLog.length + 2;
+    if (!(bound > 0) || bound > 80) bound = 14;
+    for (var i = 0; i < bound; i++) {
+      var countBefore = null, trickBefore = null;
+      try { countBefore = getLastAppliedCardCount(matchId); } catch (e) {}
+      try { trickBefore = getLastResolvedTrickNo(matchId); } catch (e) {}
+      try { applyRemoteCard(matchId, matchDoc, localSeatId); }
+      catch (e) { console.error("[MatchAdapter] refresh: applyRemoteCard threw (non-fatal):", e && e.message); }
+      var trickApplied = false;
+      try {
+        var trickResult = applyRemoteTrick(matchId, matchDoc);
+        trickApplied = !!(trickResult && trickResult.applied);
+      } catch (e) { console.error("[MatchAdapter] refresh: applyRemoteTrick threw (non-fatal):", e && e.message); }
+      var countAfter = null, trickAfter = null;
+      try { countAfter = getLastAppliedCardCount(matchId); } catch (e) {}
+      try { trickAfter = getLastResolvedTrickNo(matchId); } catch (e) {}
+      if (countAfter === countBefore && trickAfter === trickBefore && !trickApplied) break;
+    }
+  }
+
   /** Reconstructs this seat's full, playable Card objects (id/
    *  displayName/value/owner/played — the EXACT shape Dealer.dealHands()
    *  already produces, via the SAME Cards.createCard()/Dealer.sortHand()
@@ -2183,8 +2245,13 @@
    *  result into GameSession as the CURRENT round's authoritative hand.
    *  Only ever called with THIS client's own seat/hand — never another
    *  seat's, since subscribeToHand() itself only ever delivers the one
-   *  document this client subscribed to. */
-  function applyRemoteHand(seatId, handDoc) {
+   *  document this client subscribed to. `matchId` is optional for
+   *  backward compatibility with direct callers/tests; when supplied
+   *  AND the hand actually re-seeds a missing engine hand (see
+   *  TableEngine.restoreHand), the freshest delivered match document is
+   *  replayed immediately (see refreshEngineFromDoc) so a reloaded
+   *  client converges without waiting for a new Firestore delivery. */
+  function applyRemoteHand(seatId, handDoc, matchId) {
     if (!handDoc || typeof handDoc !== "object") return { applied: false, reason: "NO_HAND_YET" };
     if (!Array.isArray(handDoc.cards) || typeof handDoc.round !== "number") {
       return { applied: false, reason: "MALFORMED_HAND" };
@@ -2198,6 +2265,36 @@
     var cards = handDoc.cards.map(function (c) { return global.Cards.createCard(c.suit, c.rank, seatId); });
     if (global.Dealer && typeof global.Dealer.sortHand === "function") cards = global.Dealer.sortHand(cards);
     global.GameSession.setAuthoritativeHand(seatId, cards, handDoc.round);
+    // P1-3 reconnect hardening (see TableEngine.restoreHand's own
+    // comment for the full account): a mid-round reload replays bidding
+    // to DONE -- re-running TableEngine.initState() -- BEFORE this hand
+    // re-delivers, and the F1-2 authority switch legitimately wiped the
+    // pre-reload cache, so the live engine is missing exactly this seat
+    // while GameSession already has it. Without re-seeding, every later
+    // canPlayCard() for this seat throws and every card-sync replay of
+    // its own already-played entries desyncs forever (no later
+    // initState() ever re-runs mid-round). This is state restoration
+    // from already-reconstructed cards -- never a legality decision: no
+    // turn, trump, or hand-content rule is evaluated here; the engine
+    // still decides all of that itself on every later call. Best-effort
+    // (older/fake engines simply lack the API); the structured result
+    // below stands regardless.
+    var seedRestored = false;
+    try {
+      if (global.TableEngine && typeof global.TableEngine.restoreHand === "function") {
+        var seedResult = global.TableEngine.restoreHand(seatId, cards, handDoc.round);
+        seedRestored = !!(seedResult && seedResult.restored);
+      }
+    } catch (e) { /* best-effort seeding; result below is unaffected */ }
+    // P1-3 reconnect hardening: a fresh seed means the live engine just
+    // gained data every prior delivery lacked -- replay the freshest
+    // delivered document immediately (no new Firestore delivery needed;
+    // see refreshEngineFromDoc). Without this, a client whose turn is
+    // already on it would wait forever for a delivery that only its own
+    // next play could produce.
+    if (seedRestored) {
+      try { refreshEngineFromDoc(matchId, seatId); } catch (e) { /* best-effort; registries stay visible */ }
+    }
     return { applied: true, seatId: seatId, round: handDoc.round, count: cards.length };
   }
 
@@ -2229,7 +2326,7 @@
     });
     var unsubscribeHand = global.MatchService.subscribeToHand(matchId, mySeatId, function (data, err) {
       if (err || !data) return;
-      applyRemoteHand(mySeatId, data);
+      applyRemoteHand(mySeatId, data, matchId);
     });
     return function () {
       unsubscribeMatch();
