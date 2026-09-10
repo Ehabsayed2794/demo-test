@@ -1,4 +1,3 @@
-var REPO_ROOT = require("path").join(__dirname, "..");
 // Real, executable END-TO-END tests for Sprint 4.0 (Online Bidding
 // Synchronization: Authority Layer) — the FULL pipeline:
 //   Player -> submitBid() -> Firestore -> MatchService listener ->
@@ -17,8 +16,8 @@ var REPO_ROOT = require("path").join(__dirname, "..");
 // involved). No real Firestore project, Firebase Emulator, or browser
 // was used — consistent with every prior sprint's own honesty
 // statement.
-global.window = global;
-global.window.addEventListener = function () {};
+var Harness = require("./support/harness.cjs");
+Harness.makeWindow();
 
 var STORE = {};
 var DOC_VERSION = {};
@@ -140,24 +139,23 @@ var CURRENT_USER = null;
 global.SessionService = { getCurrentUser: function () { return CURRENT_USER ? { uid: CURRENT_USER } : null; }, setCurrentMatchId: function () { return Promise.resolve(); } };
 function signInAs(uid) { CURRENT_USER = uid; }
 
-require(REPO_ROOT + "/design-ui/match-service.js");
-require(REPO_ROOT + "/design-ui/engine/cards.js");
-require(REPO_ROOT + "/design-ui/engine/deck.js");
-require(REPO_ROOT + "/design-ui/engine/dealer.js");
-require(REPO_ROOT + "/design-ui/engine/session.js");
-require(REPO_ROOT + "/design-ui/engine/bidding-engine.js");
-require(REPO_ROOT + "/design-ui/match-adapter.js");
+Harness.loadModules([
+  "design-ui/match-service.js",
+  "design-ui/engine/cards.js",
+  "design-ui/engine/deck.js",
+  "design-ui/engine/dealer.js",
+  "design-ui/engine/session.js",
+  "design-ui/engine/bidding-engine.js",
+  "design-ui/match-adapter.js"
+]);
 
 var MatchService = global.MatchService;
 var GameSession = global.GameSession;
 var BiddingEngine = global.BiddingEngine;
 var MatchAdapter = global.MatchAdapter;
 
-var pass = 0, fail = 0;
-function check(label, cond) {
-  if (cond) { console.log("PASS  " + label); pass++; }
-  else { console.log("FAIL  " + label); fail++; }
-}
+var counter = Harness.createCounter();
+var check = counter.check;
 function wait(ms) { return new Promise(function (resolve) { setTimeout(resolve, ms); }); }
 
 /** Drives the REAL bidding-engine.js, from a fresh state, all the way
@@ -388,6 +386,5 @@ function seedMockMatch(matchId) {
   check("MOCKED — regression: MatchAdapter.bootstrapGameSession (Sprint 3.9) is still present and unchanged in shape", typeof MatchAdapter.bootstrapGameSession === "function");
   check("MOCKED — regression: MatchAdapter.matchDocToEngineSnapshot (Sprint 3.9) is still present and unchanged in shape", typeof MatchAdapter.matchDocToEngineSnapshot === "function");
 
-  console.log("\n" + pass + " passed, " + fail + " failed");
-  process.exitCode = fail ? 1 : 0;
+  counter.summary();
 })();

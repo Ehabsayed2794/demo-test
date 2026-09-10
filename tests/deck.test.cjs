@@ -1,26 +1,24 @@
-var REPO_ROOT = require("path").join(__dirname, "..");
 // Real, executable tests for design-ui/engine/deck.js (Sprint 3.5 — Deck
 // Implementation & Engine Integration) and the resulting
 // design-ui/engine/dealer.js integration. Loads the ACTUAL, unmodified
-// (except for the minimal dealHands() change) engine files via require()
-// against a window-shimmed global — no mocking of Cards/Deck/Dealer
+// (except for the minimal dealHands() change) engine files via the shared
+// tests/support/harness.cjs bootstrap — no mocking of Cards/Deck/Dealer
 // themselves, since the whole point of this sprint is to prove the real
 // engine is now executable.
-global.window = global;
-
-require(REPO_ROOT + "/design-ui/engine/cards.js");
-require(REPO_ROOT + "/design-ui/engine/deck.js");
-require(REPO_ROOT + "/design-ui/engine/dealer.js");
+var Harness = require("./support/harness.cjs");
+Harness.makeWindow();
+Harness.loadModules([
+  "design-ui/engine/cards.js",
+  "design-ui/engine/deck.js",
+  "design-ui/engine/dealer.js"
+]);
 
 var Cards = global.Cards;
 var Deck = global.Deck;
 var Dealer = global.Dealer;
 
-var pass = 0, fail = 0;
-function check(label, cond) {
-  if (cond) { console.log("PASS  " + label); pass++; }
-  else { console.log("FAIL  " + label); fail++; }
-}
+var counter = Harness.createCounter();
+var check = counter.check;
 
 function comboKey(card) { return card.suit + "-" + card.rank.v; }
 function allCombos() {
@@ -176,6 +174,5 @@ function makeFixedRng(sequence) {
   check("dealHands(seatOrder) still respects an explicit seat order override (unchanged, pre-existing behavior)",
     JSON.stringify(Object.keys(hands3).sort()) === JSON.stringify(customOrder.slice().sort()));
 
-  console.log("\n" + pass + " passed, " + fail + " failed");
-  process.exitCode = fail ? 1 : 0;
+  counter.summary();
 })();
