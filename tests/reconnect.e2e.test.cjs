@@ -623,8 +623,17 @@ async function main() {
     var adv = await pages[0].evaluate(async function (x) {
       try { return await window.MatchService.advanceToNextRound(x, 1); } catch (e) { return { error: e.message }; }
     }, matchId);
-    check("R5.pre advance to round 2 commits", adv && adv.advanced === true, adv && (adv.error || adv.reason));
-    if (!adv || !adv.advanced) { await cleanup(1); return; }
+    // Production auto-advance (MatchAdapter's round-sync DONE delivery)
+    // can legitimately win this race: all four live match pages run the
+    // same auto-advance path, so by the time this explicit call runs the
+    // round may already be advanced. That is convergence, not failure --
+    // accept ALREADY_ADVANCED when the authoritative doc confirms
+    // currentRound actually moved to 2.
+    var advDoc = await pages[0].evaluate(async function (x) { return window.MatchService.loadMatch(x); }, matchId).catch(function () { return null; });
+    var advOk = !!(adv && adv.advanced === true) ||
+      !!((adv && adv.reason === "ALREADY_ADVANCED") && advDoc && advDoc.currentRound === 2);
+    check("R5.pre advance to round 2 commits", advOk, (adv && (adv.error || adv.reason)) || (advDoc && advDoc.currentRound));
+    if (!advOk) { await cleanup(1); return; }
     await reloadPage(contexts, pages, 2, MATCH_URL);
     var p3r2 = await pages[2].evaluate(async function (x) { return window.MatchService.loadMatch(x); }, matchId);
     check("R5 reloaded P3 post-advance sees round 2", !!p3r2 && p3r2.currentRound === 2);
