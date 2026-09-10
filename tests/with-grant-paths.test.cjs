@@ -1,4 +1,3 @@
-var REPO_ROOT = require("path").join(__dirname, "..");
 // Named regressions for the three With-grant paths plus the fast-round
 // Caller/With locks. Engine-track item (C) + (A)-as-locks.
 //
@@ -20,26 +19,23 @@ var REPO_ROOT = require("path").join(__dirname, "..");
 //
 // Deliberately NO engine change in this file's scope: if any check below
 // fails, the rule is broken and the failure must be reported, never
-// "fixed" by touching design-ui/engine/*.js here. Uses the SAME
-// require/harness pattern as every other test file in this suite — no
-// new testing framework introduced.
-global.window = global;
-global.window.addEventListener = function () {};
-
-require(REPO_ROOT + "/design-ui/engine/cards.js");
-require(REPO_ROOT + "/design-ui/engine/deck.js");
-require(REPO_ROOT + "/design-ui/engine/dealer.js");
-require(REPO_ROOT + "/design-ui/engine/session.js");
-require(REPO_ROOT + "/design-ui/engine/bidding-engine.js");
+// "fixed" by touching design-ui/engine/*.js here. Bootstrapped via
+// tests/support/harness.cjs — no new testing framework introduced.
+var Harness = require("./support/harness.cjs");
+Harness.makeWindow();
+Harness.loadModules([
+  "design-ui/engine/cards.js",
+  "design-ui/engine/deck.js",
+  "design-ui/engine/dealer.js",
+  "design-ui/engine/session.js",
+  "design-ui/engine/bidding-engine.js"
+]);
 
 var GameSession = global.GameSession;
 var BiddingEngine = global.BiddingEngine;
 
-var pass = 0, fail = 0;
-function check(label, cond) {
-  if (cond) { console.log("PASS  " + label); pass++; }
-  else { console.log("FAIL  " + label); fail++; }
-}
+var counter = Harness.createCounter();
+var check = counter.check;
 
 function beginRound(roundNumber, dealerId) {
   GameSession.reset(null);
@@ -210,5 +206,4 @@ function auctionBid(seat, tricks, suit, isPass) {
     Array.isArray(s.withPlayers) && s.withPlayers.length === 0);
 })();
 
-console.log("\n" + pass + " passed, " + fail + " failed");
-if (fail > 0) process.exit(1);
+counter.summary();
