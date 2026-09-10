@@ -285,10 +285,29 @@ async function dumpSyncState(pages, matchId, tag) {
           out.phase = s ? s.phase : null;
           out.trick = s ? s.trickNo : null;
           out.eplays = (s && s.plays) ? s.plays.length : null;
+          out.round = s ? s.round : null;
+          out.won = s ? s.tricksWon : null;
+          try {
+            out.hands = s && s.hands ? Object.keys(s.hands).map(function (k) { return k + ":" + (s.hands[k] ? s.hands[k].length : "null"); }).join(",") : null;
+          } catch (e) { out.hands = "ERR"; }
+          try {
+            var b = window.BiddingEngine ? window.BiddingEngine.getState() : null;
+            out.bsub = b ? b.subPhase : null;
+            out.bwait = b ? b.waitingFor : null;
+          } catch (e) {}
+          try {
+            var ps = window.GameSession ? window.GameSession.getPlayState() : null;
+            out.ps = ps ? { r: ps.roundNumber, ph: ps.phase, t: ps.trickNumber } : null;
+          } catch (e) {}
+          try {
+            out.ghand = window.GameSession ? window.GameSession.getHand(args.seat).length : null;
+          } catch (e) {}
         } catch (e) { out.engError = true; }
         try {
           out.count = (window.MatchAdapter && typeof window.MatchAdapter.getLastAppliedCardCount === "function")
             ? window.MatchAdapter.getLastAppliedCardCount(args.matchId) : null;
+          out.resolved = (window.MatchAdapter && typeof window.MatchAdapter.getLastResolvedTrickNo === "function")
+            ? window.MatchAdapter.getLastResolvedTrickNo(args.matchId) : null;
         } catch (e) { out.count = "ERR"; }
         return out;
       }, { seat: SEATS[i], matchId: matchId }).catch(function () { return { page: SEATS[i], evalError: true }; });
