@@ -330,8 +330,23 @@ async function driveCards(pages, matchId, roundNumber, targetPlays, submittedBy,
     // Falls back to the reference engine when the doc turn is missing
     // or unmapped (identical behavior to before in that case). Phase is
     // still gated on the reference engine (never ask mid-resolution).
+    // EXCEPTION: the Round-1 opening window (match-service.js
+    // isRoundOneOpeningWindow: round 1, cardPhase null, turn still the
+    // dealer placeholder, empty cardLog, non-empty biddingLog). There
+    // the doc turn is INTENTIONALLY stale -- submitCard's own
+    // publishOpeningTurnIfNeeded bridge lets the engine-selected
+    // opening leader publish over it. Following the doc turn here
+    // asks the dealer page, whose engine correctly says not-my-turn,
+    // so no write ever fires and the bridge never runs (deadlock).
+    // Follow the converged engine turn until the first card lands.
     var turn = null;
-    if (doc && doc.turn && doc.seats) {
+    var isOpeningWindow = !!(doc && doc.currentRound === 1 && doc.cardPhase == null &&
+      doc.turn != null && doc.dealer != null && doc.turn === doc.dealer &&
+      Array.isArray(doc.cardLog) && doc.cardLog.length === 0 &&
+      Array.isArray(doc.biddingLog) && doc.biddingLog.length > 0);
+    if (isOpeningWindow && states[0] && states[0].turn) {
+      turn = states[0].turn;
+    } else if (doc && doc.turn && doc.seats) {
       turn = Object.keys(doc.seats).find(function (s) { return doc.seats[s] === doc.turn; }) || null;
     }
     if (!turn) turn = states[0].turn;
