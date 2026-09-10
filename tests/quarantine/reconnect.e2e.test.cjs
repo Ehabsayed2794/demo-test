@@ -1,4 +1,4 @@
-var REPO_ROOT = require("path").join(__dirname, "..");
+var REPO_ROOT = require("path").join(__dirname, "..", "..");
 // P1-3 — reconnect E2E for the per-round-window world.
 //
 // Supersedes the abandoned root verify-sprint-c-reconnect.cjs (hard-coded
@@ -28,7 +28,7 @@ var fs = require("fs");
 var path = require("path");
 var chromium = require("playwright").chromium;
 var initializeTestEnvironment = require("@firebase/rules-unit-testing").initializeTestEnvironment;
-var resolveChromiumExecutablePath = require("../scripts/resolve-chromium.cjs").resolveChromiumExecutablePath;
+var resolveChromiumExecutablePath = require("../../scripts/resolve-chromium.cjs").resolveChromiumExecutablePath;
 
 var ROOT = path.resolve(REPO_ROOT, "design-ui");
 var MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json" };
