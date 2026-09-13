@@ -2,30 +2,43 @@ name: R1 Golden Verification (Manual)
 
 # Isolated R1 verification only — runs the full 4-client Golden Path
 # against the real Firestore Rules Emulator and checks Gate 3.3
-# (52 total / 52 unique). Manual trigger + automatic on PRs targeting
-# main that touch rules/game code (P0-3). Does not modify,
+# (52 total / 52 unique). Manual trigger + automatic on every PR
+# targeting main and every push to main. Does not modify,
 # replace, or duplicate test.yml / deploy-production.yml / apk-debug.yml.
 #
 # Proves: scripts/golden-path.mjs PASS 3.3 with 4 real browser contexts.
 # Does NOT prove production. MOCK PASS != EMULATOR PASS.
+#
+# NOTE: this intentionally runs on ALL PRs to main with no paths filter
+# (not just rules/game-code touches). A paths filter would let a PR that
+# only touches CI config or tests merge without ever executing
+# `node scripts/golden-path.mjs`, which defeats the required guarantee
+# that the golden check runs on every PR targeting main. Kept OUT of
+# test.yml on purpose (the golden run takes minutes; test:ci stays fast).
 
 on:
   workflow_dispatch:
-  # P0-3 merge protection: run the Golden Path automatically when a PR
-  # targeting main touches rules, game code, or the harness itself.
-  # Kept OUT of test.yml on purpose (the golden run takes minutes;
-  # test:ci stays fast).
+  # Merge protection: run the Golden Path automatically on every PR
+  # targeting main and every push to main, so the check in
+  # `node scripts/golden-path.mjs` always executes and its result is
+  # always shown on the PR. Feature/Claude branches are covered at PR
+  # time, not on every push (the golden run takes minutes).
+  push:
+    branches:
+      - main
   pull_request:
     branches:
       - main
-    paths:
-      - firestore.rules
-      - design-ui/**
-      - scripts/golden-path.mjs
-      - .github/workflows/r1-golden-verification.yml
 
 permissions:
   contents: read
+
+# Cancel superseded runs on the same ref (rapid pushes / PR syncs) so
+# runners aren't wasted; the latest commit is always fully checked.
+# This never reduces coverage -- it only drops stale, outdated runs.
+concurrency:
+  group: r1-golden-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   r1-golden:

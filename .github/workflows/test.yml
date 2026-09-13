@@ -19,6 +19,24 @@ on:
       - claude/busy-bohr-ez5rz3
       - claude/**
       - main
+  # PR#8 follow-up: run the suite automatically on every PR targeting
+  # main (push alone only covers claude/** + main branch pushes, not
+  # PRs opened from other branch names or forks).
+  pull_request:
+    branches:
+      - main
+
+# Least privilege (matches r1-golden-verification.yml). Checkout and
+# public npm install only need read access.
+permissions:
+  contents: read
+
+# Cancel superseded runs on the same ref (rapid pushes) so runners
+# aren't wasted; the latest commit is always fully checked. This never
+# reduces coverage -- it only drops stale, outdated runs.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -35,6 +53,14 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      # PR#8 + P1-3 reconnect fix verification, run as the exact required
+      # command so it is visible and diagnosable in the logs on its own.
+      # This file is mocked (no emulator/browser needed) and fails fast
+      # here before the Playwright download. It also runs again inside
+      # the full suite below; a non-zero exit fails this step and the job.
+      - name: Run round-lifecycle verification (PR#8 + P1-3 reconnect fix)
+        run: node tests/round-lifecycle.test.cjs
 
       # Hotfix (see Sprint-5.0-Review/CHANGELOG.md's "CI hang"
       # postmortem, added after a real run on this runner hung for 58
