@@ -346,11 +346,34 @@ function main() {
 
   // The 4 genuine next plays (trick 7, caller leads — the true game)
   // land on the diverged engine and race it to DONE, exactly like R5.
+  // NOTE: after the wipe above only the caller's hand exists in the live
+  // engine (other seats stay absent, exactly like production), so a direct
+  // hands[seatG][0] read crashes for non-caller seats. Pick the first
+  // rigged card not yet present in the authoritative log instead: any
+  // non-trump is legal when trump is led (holders without trump may play
+  // anything), and the adapter's observed-opponent path represents exactly
+  // this card, so replay stays deterministic.
   var ccw = ["p1", "p2", "p3", "p4"];
   var startIdx = ccw.indexOf(A.callerSeat);
+  var usedKeys = {};
+  A.doc.cardLog.forEach(function (e) {
+    if (e && e.card) usedKeys[e.card.suit + ":" + (e.card.rank && e.card.rank.v)] = true;
+  });
   for (var g = 0; g < 4; g++) {
     var seatG = ccw[(startIdx + g) % 4];
-    var cardG = TableEngine.getState().hands[seatG][0];
+    var handG = TableEngine.getState().hands && TableEngine.getState().hands[seatG];
+    var cardG = (handG && handG[0]) || null;
+    if (!cardG) {
+      var cands = A.fullHands[seatG] || [];
+      for (var ci = 0; ci < cands.length; ci++) {
+        var cand = cands[ci];
+        var ck = cand.suit + ":" + cand.rank.v;
+        if (!usedKeys[ck]) { cardG = cand; break; }
+      }
+    }
+    check("A next-play card available for " + seatG, !!cardG);
+    if (!cardG) continue;
+    usedKeys[cardG.suit + ":" + cardG.rank.v] = true;
     A.doc.cardLog.push({ seatId: seatG, card: { suit: cardG.suit, rank: { v: cardG.rank.v, s: cardG.rank.s } }, round: 1 });
     A.doc.version += 1;
   }
