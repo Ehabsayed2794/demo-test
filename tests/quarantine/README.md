@@ -13,9 +13,20 @@ node tests/quarantine/reconnect.e2e.test.cjs
 
 ## Active quarantines
 
-- `reconnect.e2e.test.cjs` — tracked in issue #16. Moved here 2026-09-10
-  after a green PR #15 went red on `main` with a NEW signature: the page
-  reloaded mid-round resolved 6 phantom tricks (adapter `resolved:13`
-  vs 7 on all other pages, tricksWon summing to 13 on a 28-card log),
-  stalling R5. Suspected reload resume+replay race, flaky by timing.
-  Re-entry criteria are in the issue. Do NOT move back without them.
+None.
+
+## Returned (issue #16 re-entry)
+
+- `reconnect.e2e.test.cjs` — quarantined here 2026-09-10 (mid-round
+  reload resolved 6 phantom tricks: adapter `resolved:13` vs 7,
+  tricksWon summing to 13 on a 28-card log, stalling R5), returned to
+  `tests/` after the reload resume+replay product fix in
+  `design-ui/match/index.html`'s `maybeEnterPlayPhase()` (discard
+  persisted playState before `TableEngine.initState()`, so the
+  from-scratch authoritative replay always converges onto a
+  round-fresh engine) plus the deterministic regression coverage in
+  `tests/reload-resume-replay.test.cjs`. Root cause was NOT timing:
+  the reloaded trick's leader == caller == trick-1 leader (~1/4 of
+  deals) aligns the replayed history turn-for-turn, re-resolving every
+  historical trick. Close issue #16 with the fixing commit + CI
+  evidence (criterion 3); criterion 2 needs repeated green CI runs.

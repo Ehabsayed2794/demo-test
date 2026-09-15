@@ -1642,39 +1642,49 @@
 
     tableEngineStartedForRound = bState.round;
     try {
-      // A SECOND, related staleness source discovered while verifying
-      // the Foundation Fix in the real browser: table-engine.js's own
-      // DOMContentLoaded listener (pre-existing, undocumented-as-a-bug
-      // until now) ALWAYS fires once, automatically, at page load —
-      // before this screen has any chance to know bidding hasn't
-      // started yet — and calls initState() itself, which persists a
-      // playState (GameSession.initializePlayState()) seeded from
-      // the SAME page-load mock leaderId the Foundation Fix's own
-      // ROUND_CFG bug produced. GameSession.isPlayStateValidForCurrentRound()
-      // only checks round NUMBER, not whether the persisted state was
-      // seeded before or after real bidding — so THIS call (the
-      // correct, timely one) would otherwise "resume" that stale
-      // leaderId/turn forever, even though ROUND_CFG itself is now
-      // fresh. Detected here, entirely with existing GameSession
-      // public APIs (getPlayState/getRound/getTurn/getDealer/
-      // clearPlayState — no engine file touched a second time): if a
-      // persisted playState's leaderId disagrees with what the JUST-
-      // COMPLETED real bidding outcome says it should be (the exact
-      // same leaderId formula table-engine.js's own buildRoundCfg()
-      // uses), it can only have been seeded before bidding completed
-      // — discard it. A genuine mid-play refresh's persisted state
-      // could only ever have been created AFTER bidding completed, so
-      // it will always already agree and is never discarded by this
-      // check.
-      if (window.GameSession && typeof window.GameSession.getPlayState === "function") {
-        var existingPlayState = window.GameSession.getPlayState();
-        var currentRound = window.GameSession.getRound();
-        var realLeaderId = (currentRound && currentRound.callerId) || window.GameSession.getTurn() || window.GameSession.getDealer();
-        if (existingPlayState && existingPlayState.initialized &&
-            currentRound && existingPlayState.roundNumber === currentRound.number &&
-            existingPlayState.leaderId !== realLeaderId) {
-          window.GameSession.clearPlayState();
-        }
+      // P1-3 reconnect fix (issue #16): ALWAYS discard any persisted
+      // playState before (re)starting the table engine for this round
+      // — even when it fully "agrees" with the bidding outcome. This
+      // replaces the old leaderId-disagreement check below it, whose
+      // core assumption ("a genuine mid-play refresh always agrees,
+      // so agreement implies safety") turned out to be exactly
+      // backwards for the agreeing case.
+      //
+      // Why agreement is not safety: MatchAdapter's replay registries
+      // are in-memory, so EVERY page load replays the authoritative
+      // cardLog from index 0 on first delivery. A mid-round reload
+      // restores the engine mid-round (exact trickNo/tricksWon/turn —
+      // resolveTrick() persists every resolution synchronously) AND
+      // re-seeds FULL hands (startHandSync()'s synchronous
+      // firestore-mode wipe runs before this function, then the
+      // authoritative hand re-delivers). Replaying history into that
+      // restored engine re-resolves every historical trick a second
+      // time whenever the restored turn happens to equal the log's
+      // first entry: turn order is deterministic CCW and replayed
+      // tricks re-derive the same winners, so one alignment replays
+      // the WHOLE history — observed as 6 phantom tricks, tricksWon
+      // summing to 13 on a 28-card log, the engine raced to DONE, and
+      // the driver stalled. The old check only cleared on
+      // DISagreement, so the agreeing case (reloaded trick's leader
+      // == caller == trick-1 leader, ~1/4 of deals) always diverged.
+      // That is the entire flake: deal-dependent determinism, not
+      // timing.
+      //
+      // Why discarding is lossless: the authoritative document fully
+      // determines engine state (dealt hands are static in the hands
+      // subcollection; every committed play is in cardLog, and the
+      // from-0 replay below re-derives turns, tricks, and scores
+      // exactly). Anything applied locally but never committed died
+      // with the reloaded page and is rightfully forgotten; anything
+      // committed is in the log and replayed. Fresh entries,
+      // post-advance reloads, and initState-throw retries all take
+      // the fresh branch either way, so the clear is a no-op for
+      // them. Entirely existing public APIs (clearPlayState — no
+      // engine or adapter file touched): after this, the replay
+      // pipelines below converge deterministically onto a
+      // round-fresh engine on every page load.
+      if (window.GameSession && typeof window.GameSession.clearPlayState === "function") {
+        window.GameSession.clearPlayState();
       }
       window.TableEngine.initState();
     } catch (e) {
