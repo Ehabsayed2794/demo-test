@@ -48,7 +48,10 @@ jobs:
           set -euo pipefail
           export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
           export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
-          yes | sdkmanager --licenses > /dev/null
+          # `yes` dies with SIGPIPE once sdkmanager exits — expected noise,
+          # not a failure (pipefail would fail the step on it). A genuinely
+          # unlicensed SDK still fails loudly at --install below.
+          yes | sdkmanager --licenses > /dev/null || true
           sdkmanager --install "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
       - name: Setup Gradle 8.10 (no wrapper committed yet)
