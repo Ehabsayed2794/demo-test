@@ -19,7 +19,7 @@ relative to repo root. Web code is frozen as reference except critical fixes.
 | P5 | Game Table / Bidding UI are placeholders | MOOT — replaced by native UI | No |
 | P6 | CI is JS-only (`test.yml`, `r1-golden-verification.yml`) | Must rebuild for Gradle | No — new pipeline |
 | P7 | Play may reject a bare website-wrapper; billing needs a native bridge | SOLVED by going native (keep as a listed win) | — |
-| P8 | Risk bonus in `src/` Normal is flat ±10; canonical risk table is 0/10/20/30 | OPEN QUESTION — never owner-confirmed | Decide (D2), then implement |
+| P8 | Risk bonus in `src/` Normal is flat ±10; canonical risk table is 0/10/20/30 | DECIDED 2026-09-17 (D2): native uses the graduated ladder; `src/` keeps flat ±10 until the owner says otherwise | Native: ladder; `src/`: unchanged |
 | P9 | Capacitor shell + live-URL loading (`capacitor.config.ts:8-14`) | DROPPED with the migration | No |
 
 ## 2. What transfers as-is (no rewrite)
@@ -76,9 +76,8 @@ DoD: 4-player playable match on emulator builds.
 **Phase 5 — Play readiness + monetization (M).**
 Signing, listing, privacy policy, content rating, data-safety form,
 closed track; AdMob (banner + rewarded) with EU consent; Play Billing
-(RevenueCat recommended — no server of our own on the free plan — or
-direct Billing Library, D3). DoD: closed-track release with working
-ads + test purchases.
+via RevenueCat free tier (D3 — no server, no paid plan).
+DoD: closed-track release with working ads + test purchases.
 
 **Phase 6 — Rollout & web decommission.**
 Staged rollout, crash/ANR watch, then decide web hosting's fate
@@ -100,14 +99,16 @@ same gate as before, new platform.
 - **R4 — Scope creep.** Economy/AI/social stay behind the native core
   release gate.
 
-## 7. Owner decisions needed (D1–D4, before Phase 2 code)
+## 7. Owner decisions (answered 2026-09-17 — Phase 0 unblocked)
 
-- **D1 — Native scoring:** carry bid² + dash tables + flat sole ±10 (recommended: yes, already decided for Normal; Classic unchanged)?
-- **D2 — Risk table:** flat ±10 (current `src/`) or canonical 0/10/20/30 ladder?
-- **D3 — Billing verification:** RevenueCard-style service (recommended, no server) vs direct Billing Library + own verification (needs paid plan)?
-- **D4 — Web fate:** kill hosting after Play launch, or keep a minimal site (listing + privacy)?
+- **D1 — Native scoring: DECIDED as-is.** Carry bid² + dash tables + flat sole ±10 (Classic unchanged) into the native game. Same numbers the owner confirmed for legacy.
+- **D2 — Risk table: DECIDED graduated (native only).** Native Risk uses the canonical ladder — diff-from-13 of 1→0, 2–3→10, 4–5→20, 6+→30 — applied ONLY to the Risk player, stacking with Caller/With/sole exactly like §4. `src/` keeps its flat ±10 (no change requested).
+- **D3 — Billing verification: DECIDED free tier.** RevenueCat (free tier, no server of our own). No paid plan required. Revisit only if volume outgrows the free tier.
+- **D4 — Web fate: DECIDED small page.** After Play launch, hosting shrinks to a minimal site (store link + privacy policy). Full decommission explicitly rejected.
 
 ## 8. Immediate next action
 
-Answer D1–D4 (D1+D2 unblock engine work; D3/D4 can wait until Phase 5),
-then kick off Phase 0. Nothing above starts without the four answers.
+D1–D4 answered 2026-09-17 — Phase 0 is unblocked. Next: kick off
+Phase 0 (spec freeze & extraction) + owner starts Play Console ($25)
+and AdMob signup in parallel (activation and Google's 14-day
+closed-testing clock run on their side).
