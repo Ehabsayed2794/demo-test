@@ -26,11 +26,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          expected='9d8662e3da774b74e1d8570521b64a69bbde6fda4d18ad4158f81daa0cc4b516'
+          # P2-3: single source of truth is firestore.rules.sha256
+          # (sha256sum format), pinned in the SAME PR as any rules change —
+          # test:ci (tests/rules-sha-pin.test.cjs) already failed fast if
+          # they differ. This guard re-checks at deploy time, fail-closed
+          # exactly as before.
+          expected="$(awk '{print $1}' firestore.rules.sha256)"
           actual="$(sha256sum firestore.rules | awk '{print $1}')"
-          echo "firestore.rules SHA256=$actual"
+          echo "firestore.rules SHA256=$actual (pinned $expected)"
           test "$actual" = "$expected" || {
-            echo "Rules SHA mismatch: expected $expected, got $actual" >&2
+            echo "Rules SHA mismatch: pinned $expected, got $actual." >&2
+            echo "If firestore.rules changed intentionally, update firestore.rules.sha256 in the same PR." >&2
             exit 1
           }
 

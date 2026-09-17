@@ -1,0 +1,5 @@
+# P2-3: firestore.rules must check out LF everywhere — the deploy SHA
+# guard and tests/rules-sha-pin.test.cjs hash its raw bytes
+# (sha256sum semantics). A CRLF checkout would fail both with a
+# misleading "mismatch".
+firestore.rules text eol=lf
