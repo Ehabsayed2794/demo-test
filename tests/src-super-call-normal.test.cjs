@@ -108,8 +108,37 @@ if (scores) {
     ];
     return scores(ps, 12, "NORMAL")[1];
   })();
-  check("SCOPE: other roles keep sole-loser doubling (CALLER sole loss still -22)",
+  check("SCOPE: CALLER sole loss is flat -10 extra (-(2+10)-10 = -22, no doubling)",
     callerSoleLoss === -22, "got " + callerSoleLoss);
+
+  // ── Owner-confirmed 2026-09-17: Normal sole loser takes a flat 10 ──
+  // extra on top of the ordinary loss (sheet §4 stacking) — never ×2.
+  function normalSoleLoss(bid, won) {
+    var ps = [
+      { playerId: 1, role: "NORMAL", bid: bid, won: won },
+      { playerId: 2, role: "NORMAL", bid: 1, won: 1 },
+      { playerId: 3, role: "NORMAL", bid: 2, won: 2 },
+      { playerId: 4, role: "NORMAL", bid: 3, won: 3 }
+    ];
+    return scores(ps, bid + 6, "NORMAL")[1];
+  }
+  check("owner example: bid 5 won 4, sole loss = -11 (-1 - 10)",
+    normalSoleLoss(5, 4) === -11, "got " + normalSoleLoss(5, 4));
+  check("owner example: bid 3 won 1, sole loss = -12 (-2 - 10)",
+    normalSoleLoss(3, 1) === -12, "got " + normalSoleLoss(3, 1));
+
+  // Non-sole ordinary loss is untouched (plain -miss, no ±10).
+  var sharedLoss = (function () {
+    var ps = [
+      { playerId: 1, role: "NORMAL", bid: 5, won: 4 },
+      { playerId: 2, role: "NORMAL", bid: 1, won: 1 },
+      { playerId: 3, role: "NORMAL", bid: 2, won: 2 },
+      { playerId: 4, role: "NORMAL", bid: 3, won: 5 }
+    ];
+    return scores(ps, 11, "NORMAL")[1];
+  })();
+  check("non-sole ordinary loss untouched (bid 5 won 4, two fail → -1)",
+    sharedLoss === -1, "got " + sharedLoss);
 
   // NOTE: DASH_CALL/REG_DASH have their own table since the flat-§4
   // fix — see tests/src-dash-normal.test.cjs. Not pinned here.
