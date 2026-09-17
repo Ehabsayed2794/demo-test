@@ -1,0 +1,58 @@
+name: Android (Native Kotlin)
+
+# Phase 1 native app under native/. JS workflows are untouched; this job
+# covers assemble + JVM unit tests. No wrapper is committed yet, so the
+# Gradle distribution comes from setup-gradle (pinned 8.10, matches AGP).
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - native/**
+      - .github/workflows/android.yml
+  push:
+    branches:
+      - main
+    paths:
+      - native/**
+      - .github/workflows/android.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle 8.10 (no wrapper committed yet)
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10'
+
+      - name: Assemble debug + run unit tests
+        run: gradle -p native :app:assembleDebug :app:testDebugUnitTest --stacktrace
+
+      - name: Upload unit test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-unit-test-reports
+          path: native/app/build/reports/tests/
+          if-no-files-found: warn
