@@ -14,7 +14,12 @@ import type { PlayerRole, RoundPlayerData, ScoringMode } from './types';
 // (-42/-51/-60/-71/-82/-95) instead of the shared doubling rule.
 // Nothing else in Normal mode changes — all other roles keep their
 // formulas below.
-// DashCall/RegDash: bid=0 success is 10, fail=0 miss counts
+// DashCall (pre-bid, canonical §4 flat — owner-confirmed 2026-09-17):
+// win Under (round total ≤13) +33 / Over (>13) +25; loss Under -33 /
+// Over -25; sole winner +10 via the shared rule, sole loser 10 extra
+// (shared doubling skipped for dash roles — see guard below).
+// RegDash (Normal Dash, canonical §4): ordinary 10+T logic — win +10,
+// loss -(10 + tricks taken); sole winner +10, sole loser 10 extra.
 
 function calcNormalScore(
   role: PlayerRole,
@@ -22,6 +27,7 @@ function calcNormalScore(
   won: number,
   isSoleWinner: boolean,
   isSoleLoser: boolean,
+  totalBids: number,
 ): number {
   const success = won === bid;
 
@@ -37,8 +43,19 @@ function calcNormalScore(
     score = success
       ? bid * bid
       : -Math.round((bid * bid) / 2) + (isSoleLoser ? -10 : 0);
-  } else if (role === 'DASH_CALL' || role === 'REG_DASH') {
-    score = success ? 10 : -(Math.abs(bid - won));
+  } else if (role === 'DASH_CALL') {
+    // Canonical §4 flat scoring (owner-confirmed 2026-09-17): Under
+    // means the round's total finished AT OR UNDER 13 (same convention
+    // as Classic's isGameOver below — total 13 is unreachable via the
+    // UI's 13-rule, this only pins the defensive boundary). Flat and
+    // independent of `won`; sole loser takes 10 extra via the dash
+    // rule below, never the doubling.
+    const isUnder = totalBids <= 13;
+    score = success ? (isUnder ? 33 : 25) : (isUnder ? -33 : -25);
+  } else if (role === 'REG_DASH') {
+    // Canonical §4 Normal Dash: ordinary 10+T logic — NOT the flat
+    // Dash Call table above.
+    score = success ? 10 : -(10 + won);
   } else {
     const miss = Math.abs(bid - won);
     if (success) {
@@ -57,10 +74,15 @@ function calcNormalScore(
   }
 
   if (success && isSoleWinner) score += 10;
-  // SUPER_CALL handles its own sole-loser rule inside its branch above
-  // (flat 10 extra, owner decision) — the doubling here is for every
-  // other Normal role only. Classic's identical lines below are untouched.
-  if (!success && isSoleLoser && role !== 'SUPER_CALL') score = Math.max(score * 2, -22);
+  // SUPER_CALL/DASH_CALL/REG_DASH handle their own sole-loser rule
+  // inside their branches above (flat 10 extra, owner decision for
+  // Super; canonical §4 stacking for dash roles) — the doubling here
+  // is for every other Normal role only. Classic's identical lines
+  // below are untouched.
+  if (!success && isSoleLoser && role !== 'SUPER_CALL' && role !== 'DASH_CALL' && role !== 'REG_DASH') score = Math.max(score * 2, -22);
+  // Dash roles: sole loser is a flat 10 extra (canonical §4 stacking),
+  // matching the Super Call convention decided with the owner.
+  if (!success && isSoleLoser && (role === 'DASH_CALL' || role === 'REG_DASH')) score += -10;
 
   return score;
 }
@@ -190,6 +212,7 @@ export function calculateRoundScores(
         p.won,
         isSoleWinner(p),
         isSoleLoser(p),
+        totalBids,
       );
     }
   }

@@ -111,16 +111,8 @@ if (scores) {
   check("SCOPE: other roles keep sole-loser doubling (CALLER sole loss still -22)",
     callerSoleLoss === -22, "got " + callerSoleLoss);
 
-  var dashWin = (function () {
-    var ps = [
-      { playerId: 1, role: "DASH_CALL", bid: 0, won: 0 },
-      { playerId: 2, role: "NORMAL", bid: 4, won: 4 },
-      { playerId: 3, role: "NORMAL", bid: 4, won: 4 },
-      { playerId: 4, role: "NORMAL", bid: 4, won: 4 }
-    ];
-    return scores(ps, 12, "NORMAL")[1];
-  })();
-  check("SCOPE: Normal DASH_CALL untouched (win still 10)", dashWin === 10, "got " + dashWin);
+  // NOTE: DASH_CALL/REG_DASH have their own table since the flat-§4
+  // fix — see tests/src-dash-normal.test.cjs. Not pinned here.
 
   var classicSuper = (function () {
     var ps = [
