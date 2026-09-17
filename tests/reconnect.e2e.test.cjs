@@ -648,6 +648,17 @@ async function main() {
     // round may already be advanced. That is convergence, not failure --
     // accept ALREADY_ADVANCED when the authoritative doc confirms
     // currentRound actually moved to 2.
+    // Lost-race denial (same known emulator zero-retry class as the
+    // Round-16 race): this explicit call's tx.get() can observe round 1
+    // with 52 plays while a concurrent auto-advance winner commits
+    // first — archive/1 then exists and the parent is already round 2,
+    // so OUR commit is denied at the rules layer (L1601 create +
+    // L1536 update) instead of returning ALREADY_ADVANCED. Production
+    // Firestore would retry into ALREADY_ADVANCED; the emulator does
+    // not. A rules-layer denial is therefore ALSO convergence — but
+    // ONLY when the authoritative doc proves another client won (round
+    // 2 + roundArchive/1 with round 1's 52 plays). A denial with the
+    // doc still on round 1 stays a hard FAIL (genuine bug, no winner).
     // Poll briefly to avoid stale-read on ALREADY_ADVANCED race (authoritative doc may lag one delivery).
     var advDoc = null;
     for (var _poll = 0; _poll < 8; _poll++) {
@@ -656,9 +667,26 @@ async function main() {
       if (adv && adv.advanced === true) break;
       await sleep(250);
     }
+    var advDeniedByRules = !!(adv && adv.error &&
+      (adv.error.indexOf("PERMISSION_DENIED") !== -1 ||
+       adv.error.indexOf("Missing or insufficient") !== -1 ||
+       adv.error.indexOf("evaluation error") !== -1));
+    var raceWonByPeer = false;
+    var raceArch = null;
+    if (advDeniedByRules && advDoc && advDoc.currentRound === 2) {
+      raceArch = await pages[0].evaluate(async function (x) {
+        var s = await window.Db.collection("matches").doc(x).collection("roundArchive").doc("1").get();
+        return s.exists ? s.data() : null;
+      }, matchId).catch(function () { return null; });
+      raceWonByPeer = !!(raceArch && raceArch.round === 1 &&
+        raceArch.cardLog && raceArch.cardLog.length === 52 && Array.isArray(raceArch.biddingLog));
+    }
     var advOk = !!(adv && adv.advanced === true) ||
-      !!((adv && adv.reason === "ALREADY_ADVANCED") && advDoc && advDoc.currentRound === 2);
-    check("R5.pre advance to round 2 commits", advOk, (adv && (adv.error || adv.reason)) || (advDoc && advDoc.currentRound));
+      !!((adv && adv.reason === "ALREADY_ADVANCED") && advDoc && advDoc.currentRound === 2) ||
+      raceWonByPeer;
+    check("R5.pre advance to round 2 commits", advOk,
+      raceWonByPeer ? { raceWonByPeer: true, archivedPlays: raceArch.cardLog.length } :
+      ((adv && (adv.error || adv.reason)) || (advDoc && advDoc.currentRound)));
     if (!advOk) { await cleanup(1); return; }
     await reloadPage(contexts, pages, 2, MATCH_URL);
     var p3r2 = await pages[2].evaluate(async function (x) { return window.MatchService.loadMatch(x); }, matchId);
