@@ -1,4 +1,4 @@
-var REPO_ROOT = require("path").join(__dirname, "..", "..");
+var REPO_ROOT = require("path").join(__dirname, "..");
 // P1-3 — reconnect E2E for the per-round-window world.
 //
 // Supersedes the abandoned root verify-sprint-c-reconnect.cjs (hard-coded
@@ -28,7 +28,7 @@ var fs = require("fs");
 var path = require("path");
 var chromium = require("playwright").chromium;
 var initializeTestEnvironment = require("@firebase/rules-unit-testing").initializeTestEnvironment;
-var resolveChromiumExecutablePath = require("../../scripts/resolve-chromium.cjs").resolveChromiumExecutablePath;
+var resolveChromiumExecutablePath = require("../scripts/resolve-chromium.cjs").resolveChromiumExecutablePath;
 
 var ROOT = path.resolve(REPO_ROOT, "design-ui");
 var MIME = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json" };
@@ -648,7 +648,14 @@ async function main() {
     // round may already be advanced. That is convergence, not failure --
     // accept ALREADY_ADVANCED when the authoritative doc confirms
     // currentRound actually moved to 2.
-    var advDoc = await pages[0].evaluate(async function (x) { return window.MatchService.loadMatch(x); }, matchId).catch(function () { return null; });
+    // Poll briefly to avoid stale-read on ALREADY_ADVANCED race (authoritative doc may lag one delivery).
+    var advDoc = null;
+    for (var _poll = 0; _poll < 8; _poll++) {
+      advDoc = await pages[0].evaluate(async function (x) { return window.MatchService.loadMatch(x); }, matchId).catch(function () { return null; });
+      if (advDoc && advDoc.currentRound === 2) break;
+      if (adv && adv.advanced === true) break;
+      await sleep(250);
+    }
     var advOk = !!(adv && adv.advanced === true) ||
       !!((adv && adv.reason === "ALREADY_ADVANCED") && advDoc && advDoc.currentRound === 2);
     check("R5.pre advance to round 2 commits", advOk, (adv && (adv.error || adv.reason)) || (advDoc && advDoc.currentRound));
