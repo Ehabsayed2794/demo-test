@@ -192,3 +192,13 @@ Sa'ayda multiplier: ×2 → ×4 → ×6 → ×8 (cap), applies to everything, re
 Classic Calculations mode (opt-in alternate scoring): Normal=E+13/−miss; Caller/Wizz=E+13+10/−(miss+10 or 20 if TotalBids≤11); Risk=E+13+10/−(miss+10); Wizz-Risk=E+33/−(miss+20); Super Call fixed +42/−20; Dash Call fixed +33/+23 (Under/Over 13) or −20/−10; Normal Dash fixed +23/+13 (Under/Over) or −10/−T; sole winner +10, sole loser doubles capped at −22 — same sole-winner/loser rule as the Official Scoring System.
 All scoring bonuses/penalties stack unless explicitly forbidden.
 — End of Official Reference —
+
+---
+
+## Amendment A1 — Legacy tracker Normal-mode Super Call (owner decision 2026-09-17)
+
+> **Provenance:** NOT from the DOCX extraction above — owner-mandated house rule for the legacy `src/` score tracker only (`src/utils.ts` `SUPER_CALL` role in Normal mode). Classic mode (line 192) and the `design-ui/` multiplayer engine are explicitly unaffected.
+
+- Win: **bid squared** — 8→64, 9→81, 10→100, 11→121, 12→144, 13→169. Sole winner still adds +10 (74/91/110/131/154/179).
+- Loss: **half of that, rounded half-up, flat by bid** — −32/−41/−50/−61/−72/−85 — independent of tricks taken. Sole loser takes 10 extra (−42/−51/−60/−71/−82/−95) instead of any doubling rule.
+- Everything else in Normal mode (other roles, Dash, Risk, sole-loser handling) is unchanged.

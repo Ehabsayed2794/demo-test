@@ -7,7 +7,13 @@ import type { PlayerRole, RoundPlayerData, ScoringMode } from './types';
 // Wizz bonus: +10 on success (stacks with Caller)
 // Risk bonus: +10 on success
 // WizzRisk: Wizz + Risk bonuses (both +10)
-// SuperCall: +20 on success (caller bid 8), -20 on fail — treated as CALLER with bid 8
+// SuperCall (legacy house rule, owner decision 2026-09-17): win is bid
+// SQUARED (bid*bid: 8->64 … 13->169, +10 sole winner via the shared
+// rule below); loss is half that, rounded half-up (-32/-41/-50/-61/
+// -72/-85), independent of tricks taken; sole loser takes 10 extra
+// (-42/-51/-60/-71/-82/-95) instead of the shared doubling rule.
+// Nothing else in Normal mode changes — all other roles keep their
+// formulas below.
 // DashCall/RegDash: bid=0 success is 10, fail=0 miss counts
 
 function calcNormalScore(
@@ -22,7 +28,15 @@ function calcNormalScore(
   let score: number;
 
   if (role === 'SUPER_CALL') {
-    score = success ? 20 : -20;
+    // Owner-mandated house rule (2026-09-17): square the bid on a win,
+    // half of that (rounded half-up) as a flat loss. Deliberately
+    // independent of `won` — matches the role's previous flat shape,
+    // only the values change. Sole loser takes 10 extra (owner
+    // decision): the shared doubling rule below is skipped for this
+    // role (see the role guard there).
+    score = success
+      ? bid * bid
+      : -Math.round((bid * bid) / 2) + (isSoleLoser ? -10 : 0);
   } else if (role === 'DASH_CALL' || role === 'REG_DASH') {
     score = success ? 10 : -(Math.abs(bid - won));
   } else {
@@ -43,7 +57,10 @@ function calcNormalScore(
   }
 
   if (success && isSoleWinner) score += 10;
-  if (!success && isSoleLoser) score = Math.max(score * 2, -22);
+  // SUPER_CALL handles its own sole-loser rule inside its branch above
+  // (flat 10 extra, owner decision) — the doubling here is for every
+  // other Normal role only. Classic's identical lines below are untouched.
+  if (!success && isSoleLoser && role !== 'SUPER_CALL') score = Math.max(score * 2, -22);
 
   return score;
 }
