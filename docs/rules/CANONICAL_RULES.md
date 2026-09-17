@@ -200,5 +200,5 @@ All scoring bonuses/penalties stack unless explicitly forbidden.
 > **Provenance:** NOT from the DOCX extraction above — owner-mandated house rule for the legacy `src/` score tracker only (`src/utils.ts` `SUPER_CALL` role in Normal mode). Classic mode (line 192) and the `design-ui/` multiplayer engine are explicitly unaffected.
 
 - Win: **bid squared** — 8→64, 9→81, 10→100, 11→121, 12→144, 13→169. Sole winner still adds +10 (74/91/110/131/154/179).
-- Loss: **half of that, rounded half-up, flat by bid** — −32/−41/−50/−61/−72/−85 — independent of tricks taken.
+- Loss: **half of that, rounded half-up, flat by bid** — −32/−41/−50/−61/−72/−85 — independent of tricks taken. Sole loser takes 10 extra (−42/−51/−60/−71/−82/−95) instead of any doubling rule.
 - Everything else in Normal mode (other roles, Dash, Risk, sole-loser handling) is unchanged.

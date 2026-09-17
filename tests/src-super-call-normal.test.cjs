@@ -77,6 +77,15 @@ if (scores) {
   check("loss ignores tricks taken (won 1 == won 7 == -32)", a === -32 && b === -32,
     "got " + a + " / " + b);
 
+  // ── Sole loser takes 10 extra (owner decision), no doubling ──
+  var soleLosses = [[8, -42], [9, -51], [10, -60], [11, -71], [12, -82], [13, -95]];
+  soleLosses.forEach(function (l) {
+    // Super alone fails (others succeed) → sole loser, no doubling.
+    var got = round(l[0], 0, [[1, 1], [2, 2], [3, 3]]);
+    check("sole lose " + l[0] + " scores " + l[1] + " (flat + 10 extra)",
+      got === l[1], "got " + got);
+  });
+
   // ── Scope pins: everything else untouched ──
   var callerWin = (function () {
     var ps = [
@@ -89,6 +98,18 @@ if (scores) {
   })();
   check("SCOPE: Normal CALLER untouched (win 6 still 10+6+10=26)",
     callerWin === 26, "got " + callerWin);
+
+  var callerSoleLoss = (function () {
+    var ps = [
+      { playerId: 1, role: "CALLER", bid: 6, won: 4 },
+      { playerId: 2, role: "NORMAL", bid: 1, won: 1 },
+      { playerId: 3, role: "NORMAL", bid: 2, won: 2 },
+      { playerId: 4, role: "NORMAL", bid: 3, won: 3 }
+    ];
+    return scores(ps, 12, "NORMAL")[1];
+  })();
+  check("SCOPE: other roles keep sole-loser doubling (CALLER sole loss still -22)",
+    callerSoleLoss === -22, "got " + callerSoleLoss);
 
   var dashWin = (function () {
     var ps = [
