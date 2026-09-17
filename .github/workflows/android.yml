@@ -38,8 +38,18 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Set up Android SDK packages
+        # NOTE: android-actions/setup-android@v3 is unusable — it hard-installs
+        # the obsolete `tools` package, which Google removed from the SDK
+        # repository (sdkmanager exits 1: "Failed to find package 'tools'").
+        # The ubuntu runner image already ships an SDK; install exactly the
+        # two packages AGP 8.7 needs and accept licenses non-interactively.
+        run: |
+          set -euo pipefail
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager --install "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
       - name: Setup Gradle 8.10 (no wrapper committed yet)
         uses: gradle/actions/setup-gradle@v4
