@@ -74,12 +74,13 @@ function calcNormalScore(
   }
 
   if (success && isSoleWinner) score += 10;
-  // SUPER_CALL/DASH_CALL/REG_DASH handle their own sole-loser rule
-  // inside their branches above (flat 10 extra, owner decision for
-  // Super; canonical §4 stacking for dash roles) — the doubling here
-  // is for every other Normal role only. Classic's identical lines
-  // below are untouched.
-  if (!success && isSoleLoser && role !== 'SUPER_CALL' && role !== 'DASH_CALL' && role !== 'REG_DASH') score = Math.max(score * 2, -22);
+  // Owner-confirmed 2026-09-17 (matches the sheet §4 and the screenshot
+  // table: Loss = -10 Round Score - Tricks): a sole loser in Normal mode
+  // takes a flat 10 extra — never the old doubling (which was Classic's
+  // rule, wrongly applied here). Dash/super roles already applied their
+  // own 10 above, so they are excluded from this line. Classic's
+  // identical doubling lines below are untouched.
+  if (!success && isSoleLoser && role !== 'SUPER_CALL' && role !== 'DASH_CALL' && role !== 'REG_DASH') score += -10;
   // Dash roles: sole loser is a flat 10 extra (canonical §4 stacking),
   // matching the Super Call convention decided with the owner.
   if (!success && isSoleLoser && (role === 'DASH_CALL' || role === 'REG_DASH')) score += -10;
