@@ -60,11 +60,13 @@ function calcNormalScore(
     const miss = Math.abs(bid - won);
     if (success) {
       const base = 10 + bid;
-      const callerBonus =
+      // Canonical §4 (owner-confirmed 2026-09-17): "+10 if the player is
+      // the Caller OR a With" — a single bonus, never both. WIZZ used
+      // to collect a separate callerBonus AND wizzBonus (+20); fixed.
+      const callerOrWithBonus =
         role === 'CALLER' || role === 'WIZZ' || role === 'WIZZ_RISK' ? 10 : 0;
-      const wizzBonus = role === 'WIZZ' || role === 'WIZZ_RISK' ? 10 : 0;
       const riskBonus = role === 'RISK' || role === 'WIZZ_RISK' ? 10 : 0;
-      score = base + callerBonus + wizzBonus + riskBonus;
+      score = base + callerOrWithBonus + riskBonus;
     } else {
       const callerPenalty =
         role === 'CALLER' || role === 'WIZZ' || role === 'WIZZ_RISK' ? 10 : 0;

@@ -140,6 +140,27 @@ if (scores) {
   check("non-sole ordinary loss untouched (bid 5 won 4, two fail → -1)",
     sharedLoss === -1, "got " + sharedLoss);
 
+  // ── Owner-confirmed 2026-09-17: single Caller/With bonus ──
+  // WIZZ (and WIZZ_RISK) used to collect callerBonus AND wizzBonus
+  // (+20); canonical §4 grants one +10 for "Caller OR With".
+  function winAs(role, bid) {
+    var ps = [
+      { playerId: 1, role: role, bid: bid, won: bid },
+      { playerId: 2, role: "NORMAL", bid: 1, won: 1 },
+      { playerId: 3, role: "NORMAL", bid: 2, won: 2 },
+      { playerId: 4, role: "NORMAL", bid: 3, won: 3 }
+    ];
+    return scores(ps, bid + 6, "NORMAL")[1];
+  }
+  check("WIZZ win 5 scores 25 (10+5+10, single bonus — was 35)",
+    winAs("WIZZ", 5) === 25, "got " + winAs("WIZZ", 5));
+  check("WIZZ_RISK win 5 scores 35 (10+5+10+10 — was 45)",
+    winAs("WIZZ_RISK", 5) === 35, "got " + winAs("WIZZ_RISK", 5));
+  check("CALLER win 5 still 25 (unchanged)", winAs("CALLER", 5) === 25,
+    "got " + winAs("CALLER", 5));
+  check("RISK win 5 still 25 (unchanged)", winAs("RISK", 5) === 25,
+    "got " + winAs("RISK", 5));
+
   // NOTE: DASH_CALL/REG_DASH have their own table since the flat-§4
   // fix — see tests/src-dash-normal.test.cjs. Not pinned here.
 
