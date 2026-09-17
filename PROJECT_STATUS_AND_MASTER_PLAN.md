@@ -402,3 +402,32 @@ For a genuinely playable, honestly-secured `design-ui/` core multiplayer game (t
 
 **WHAT IS THE MOST EFFICIENT PATH TO RELEASE?**
 Preserve the selected `design-ui/` architecture → commit and test the authoritative rules → fix fast-round roles → make the selected artifact build/deploy reproducibly → verify Rules Emulator and multi-client behavior → complete Bidding/Table UI and lifecycle wiring → harden trust/presence/recovery → release QA. Keep `src/` limited to explicit transition/deprecation work and defer AI/economy/social until the core multiplayer product passes its release gate.
+
+---
+
+## 23. Status update — 2026-09-17 (main @ `a74e7dc`)
+
+This section records what changed since the 2026-08-12 audit **without rewriting it**. The audit body above is a point-in-time record; what follows is the delta. Format: **[RESOLVED]** / **[STILL OPEN]** per finding, each with evidence.
+
+### Resolved since the audit
+
+- **[RESOLVED] Fast-round Caller/With (R3, §5/§8).** Fixed in `616744c` (`design-ui/engine/bidding-engine.js:637-658`): non-Super-Call fast rounds now assign the first highest bidder as Caller and the other top-number seats as With, per canonical §3. Pinned by `tests/with-grant-paths.test.cjs` A1/A2 (`b041dc8`) and scoring needs no change (`scoring-engine.js:189,196` already applies Caller/With ±10 generically).
+- **[RESOLVED] Golden Super Call reset (§8).** Implemented in `616744c` (`bidding-engine.js:468-505`): confirming a fast-round Super Call wipes only pre-super seats for re-estimation; later estimates stand. Pinned by `tests/fast-super-reset.test.cjs` (PR #24, merge `a74e7dc`).
+- **[RESOLVED] Canonical rules artifact (§8/P0-02, partial).** `docs/rules/CANONICAL_RULES.md` is committed (Markdown extraction of the DOCX with SHA-256 provenance). The DOCX itself remains outside the repo.
+- **[RESOLVED] CI/CD (§6/§12/§13).** Exists: `.github/workflows/test.yml` (PR triggers, explicit round-lifecycle step, `test:ci` on the real emulator) and `.github/workflows/r1-golden-verification.yml` (PR + push-to-main triggers). Commits `188d6b6`, `b0747ea`. "No CI" statements above are stale.
+- **[RESOLVED] Audit-roadmap P0/P1/P2-2.** P0-1 run-#9 evidence pinned on PR #8 (run `34224118833`, 1138/0 @ `e31ebbb`; PR #8 merged as `62d01ef`). P1-1 doc drift (PR #10), P1-2 R1 naming (PR #9), P1-4 any-client advance + exactly-once race test (`1391b10`, PR #14), P1-5 untracked files (PRs #11/#12/#13), P2-2 negative trust tests (`181d091`) — all merged.
+- **[RESOLVED] P1-3 reconnect E2E.** Fixed (`7aa62fc` root fix, `c228f2a` 46/46), forensic logging removed (`40947a2`), merged via PR #23 (`adcbcc3`); issue #16 closed.
+
+### Still open (verified 2026-09-17, no change)
+
+- **[STILL OPEN] `src/utils.ts` Normal-mode divergence (§5/R2).** Still present: `SUPER_CALL` flat ±20 (`src/utils.ts:24-25`) and `DASH_CALL`/`REG_DASH` 10/−miss (`src/utils.ts:26-27`) vs canonical §4 flat ±33/±25. Legacy-scoped per PD-001; needs the explicit compatibility/deprecation decision, not a silent fork.
+- **[STILL OPEN] Presence/abandonment (§6/P2-4).** `design-ui/presence-service.js` is still all-stub (`notImplemented`). Deferred by roadmap decision, not forgotten.
+- **[STILL OPEN] `design-ui/` build/deployment integration (§5/R1, §13 P0).** Still the critical path: no verified change making `design-ui/` the root build artifact. This is the current biggest risk (§21 in the original text stands).
+- **[STILL OPEN] UI/AI/economy gaps (§6/§10).** Game Table/Bidding placeholders, AI (~2%), Shop/Economy, Missions/Season mocks, analytics/monetization — unchanged.
+- **[STILL OPEN] Trust boundary.** `cardLog` prefix integrity, hand-content fairness, score-correctness trust remain accepted MVP limitations, unchanged.
+- **[STILL OPEN] Engine triplication debt (R10).** SUITS/RANKS tables and Risk-player formula still triplicated; no drift observed, no consolidation done.
+- **[STALE — DO NOT QUOTE] §20 percentages.** The 44% / 35–40% / 20–25% figures predate the fixes above (engine) but also predate any build-integration or UI progress. Treat them as stale pending a re-audit, not as raised.
+
+### Re-plan pointer
+
+Audit-roadmap P0/P1/P2-2 are complete; remaining roadmap items are explicit defers (P2-1 review screen, P2-3 SHA automation, P2-4 presence). The next program is master-plan Phases 2→4 in order: **build/deployment integration → core-loop UI completion → trust hardening**, with the legacy `src/` decision tracked separately and never blocking `design-ui/`.
