@@ -639,23 +639,9 @@ async function main() {
     var rest = await driveCards(pages, matchId, 1, 24, {}, 260);
     check("R5.pre round 1 reaches 52 plays", rest.ok === true && rest.plays === 24, rest);
     if (!rest.ok) { await cleanup(1); return; }
-    // ── Forensic capture BEFORE advance: exact state driving the Rules ──
-    var preAdv = await pages[0].evaluate(async function (x) {
-      var d = await window.MatchService.loadMatch(x);
-      var hist = {};
-      (d.cardLog || []).forEach(function (e) { var r = (e && e.round != null) ? String(e.round) : "null"; hist[r] = (hist[r] || 0) + 1; });
-      return d ? {
-        currentRound: d.currentRound, version: d.version, turn: d.turn, cardPhase: d.cardPhase, status: d.status, dealer: d.dealer,
-        cardLogLen: (d.cardLog || []).length, cardLogRound1: (d.cardLog || []).filter(function (e) { return e && e.round === 1; }).length,
-        biddingLogLen: (d.biddingLog || []).length, roundHist: hist,
-        seats: d.seats, players: d.players
-      } : null;
-    }, matchId).catch(function (e) { return { forensicError: e.message }; });
-    try { console.log("FORENSIC pre-advance " + JSON.stringify(preAdv).slice(0, 3000)); } catch (e) {}
     var adv = await pages[0].evaluate(async function (x) {
-      try { return await window.MatchService.advanceToNextRound(x, 1); } catch (e) { return { error: e.message, code: e.code || null, stack: (e.stack || "").slice(0, 800) }; }
+      try { return await window.MatchService.advanceToNextRound(x, 1); } catch (e) { return { error: e.message }; }
     }, matchId);
-    try { console.log("FORENSIC adv result " + JSON.stringify(adv).slice(0, 3000)); } catch (e) {}
     // Production auto-advance (MatchAdapter's round-sync DONE delivery)
     // can legitimately win this race: all four live match pages run the
     // same auto-advance path, so by the time this explicit call runs the
@@ -669,13 +655,6 @@ async function main() {
       if (advDoc && advDoc.currentRound === 2) break;
       if (adv && adv.advanced === true) break;
       await sleep(250);
-    }
-    try { console.log("FORENSIC post-advance doc " + JSON.stringify(advDoc ? { currentRound: advDoc.currentRound, version: advDoc.version, cardLogLen: (advDoc.cardLog||[]).length, biddingLogLen: (advDoc.biddingLog||[]).length, turn: advDoc.turn, cardPhase: advDoc.cardPhase, dealer: advDoc.dealer } : null).slice(0, 2000)); } catch (e) {}
-    // Classify failure bucket without touching production: JS guard vs Rules.
-    if (adv && adv.error) {
-      var isRoundNotComplete = adv.error.indexOf("ROUND_NOT_COMPLETE") !== -1;
-      var isPermissionDenied = adv.error.indexOf("PERMISSION_DENIED") !== -1 || adv.error.indexOf("Missing or insufficient") !== -1;
-      try { console.log("FORENSIC bucket " + (isRoundNotComplete ? "ROUND_NOT_COMPLETE" : isPermissionDenied ? "RULES_DENIED" : "OTHER") + " preAdvRound1=" + (preAdv && preAdv.cardLogRound1) + " cardLogLen=" + (preAdv && preAdv.cardLogLen)); } catch (e) {}
     }
     var advOk = !!(adv && adv.advanced === true) ||
       !!((adv && adv.reason === "ALREADY_ADVANCED") && advDoc && advDoc.currentRound === 2);
