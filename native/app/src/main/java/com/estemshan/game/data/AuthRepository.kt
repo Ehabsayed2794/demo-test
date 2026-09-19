@@ -18,6 +18,8 @@ sealed interface AuthUiState {
 interface AuthBackend {
   suspend fun signInAnonymously(): Result<String>
   suspend fun signInWithEmail(email: String, password: String): Result<String>
+  /** Persisted session, if any (Firebase Auth restores it across launches). */
+  fun currentUid(): String?
   fun signOut()
 }
 
@@ -34,6 +36,8 @@ class FirebaseAuthBackend(
       auth.signInWithEmailAndPassword(email.trim(), password).await().user?.uid
         ?: error("Email sign-in returned no user")
     }
+
+  override fun currentUid(): String? = auth.currentUser?.uid
 
   override fun signOut() {
     auth.signOut()
@@ -64,5 +68,11 @@ class AuthRepository(private val backend: AuthBackend) {
   fun signOut() {
     backend.signOut()
     _state.value = AuthUiState.SignedOut
+  }
+
+  /** Splash entry: restore a persisted session, if the backend holds one. */
+  fun checkSession() {
+    val uid = backend.currentUid()
+    _state.value = if (uid != null) AuthUiState.SignedIn(uid) else AuthUiState.SignedOut
   }
 }
