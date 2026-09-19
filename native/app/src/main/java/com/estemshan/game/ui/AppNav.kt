@@ -27,6 +27,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.estemshan.game.data.AuthUiState
 import com.estemshan.game.ui.login.LoginViewModel
+import com.estemshan.game.ui.profile.ProfileScreen
+import com.estemshan.game.ui.settings.SettingsRoute
 import com.estemshan.game.ui.splash.SplashScreen
 import com.estemshan.game.ui.splash.SplashViewModel
 import com.estemshan.game.ui.standings.FinalStandingsScreen
@@ -34,10 +36,10 @@ import com.estemshan.game.ui.standings.buildStandings
 import com.estemshan.game.ui.theme.EstemshanTheme
 
 /**
- * App shell: Splash gate → Login → Lobby. The remaining spec-01 routes
- * (Room, Bidding, Table, Profile, Settings) land here as their screens
- * are built; Standings is registered but unlinked until the Table screen
- * feeds it real results — no dead buttons.
+ * App shell: Splash gate → Login → Lobby → Profile / Settings. The
+ * remaining spec-01 routes (Room, Bidding, Table) land here as their
+ * screens are built; Standings is registered but unlinked until the
+ * Table screen feeds it real results — no dead buttons.
  */
 @Composable
 fun EstemshanNav() {
@@ -77,11 +79,27 @@ fun EstemshanNav() {
             vm.signOut()
             nav.navigate(Routes.LOGIN) { popUpTo(Routes.LOBBY) { inclusive = true } }
           },
+          onProfile = { nav.navigate(Routes.PROFILE) },
+          onSettings = { nav.navigate(Routes.SETTINGS) },
         )
       }
       composable(Routes.STANDINGS) {
         // Unlinked until the Table screen supplies real match results.
         FinalStandingsScreen(buildStandings(emptyMap()))
+      }
+      composable(Routes.PROFILE) {
+        ProfileScreen(
+          uid = (authState as? AuthUiState.SignedIn)?.uid ?: "",
+        )
+      }
+      composable(Routes.SETTINGS) {
+        SettingsRoute(
+          uid = (authState as? AuthUiState.SignedIn)?.uid ?: "",
+          onSignOut = {
+            vm.signOut()
+            nav.navigate(Routes.LOGIN) { popUpTo(Routes.SETTINGS) { inclusive = true } }
+          },
+        )
       }
     }
   }
@@ -137,7 +155,12 @@ private fun LoginScreen(
 }
 
 @Composable
-private fun LobbyPlaceholder(state: AuthUiState, onSignOut: () -> Unit) {
+private fun LobbyPlaceholder(
+  state: AuthUiState,
+  onSignOut: () -> Unit,
+  onProfile: () -> Unit,
+  onSettings: () -> Unit,
+) {
   Column(
     modifier = Modifier.fillMaxSize().padding(24.dp),
     verticalArrangement = Arrangement.Center,
@@ -152,6 +175,10 @@ private fun LobbyPlaceholder(state: AuthUiState, onSignOut: () -> Unit) {
       },
     )
     Spacer(Modifier.height(16.dp))
+    Button(onClick = onProfile) { Text("Profile") }
+    Spacer(Modifier.height(8.dp))
+    Button(onClick = onSettings) { Text("Settings") }
+    Spacer(Modifier.height(8.dp))
     Button(onClick = onSignOut) { Text("Sign out") }
   }
 }
