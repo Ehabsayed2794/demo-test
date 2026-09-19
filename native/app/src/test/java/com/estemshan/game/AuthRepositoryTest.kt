@@ -12,6 +12,7 @@ import org.junit.Test
 private class FakeBackend(
   var anonymousResult: Result<String> = Result.success("uid-anon"),
   var emailResult: Result<String> = Result.success("uid-mail"),
+  var persistedUid: String? = null,
   var signOutCalls: Int = 0,
 ) : AuthBackend {
   var lastEmail: String? = null
@@ -22,6 +23,8 @@ private class FakeBackend(
     lastEmail = email
     return emailResult
   }
+
+  override fun currentUid(): String? = persistedUid
 
   override fun signOut() {
     signOutCalls++
@@ -69,5 +72,19 @@ class AuthRepositoryTest {
     repo.signOut()
     assertEquals(AuthUiState.SignedOut, repo.state.value)
     assertEquals(1, backend.signOutCalls)
+  }
+
+  @Test
+  fun checkSessionRestoresPersistedUid() = runTest {
+    val repo = AuthRepository(FakeBackend(persistedUid = "uid-kept"))
+    repo.checkSession()
+    assertEquals(AuthUiState.SignedIn("uid-kept"), repo.state.value)
+  }
+
+  @Test
+  fun checkSessionWithoutPersistedUidStaysSignedOut() = runTest {
+    val repo = AuthRepository(FakeBackend(persistedUid = null))
+    repo.checkSession()
+    assertEquals(AuthUiState.SignedOut, repo.state.value)
   }
 }

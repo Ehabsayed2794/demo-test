@@ -11,6 +11,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -26,10 +27,17 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.estemshan.game.data.AuthUiState
 import com.estemshan.game.ui.login.LoginViewModel
+import com.estemshan.game.ui.splash.SplashScreen
+import com.estemshan.game.ui.splash.SplashViewModel
+import com.estemshan.game.ui.standings.FinalStandingsScreen
+import com.estemshan.game.ui.standings.buildStandings
+import com.estemshan.game.ui.theme.EstemshanTheme
 
 /**
- * Phase 1 navigation: Login → Lobby (placeholder showing the signed-in
- * uid). Screens from docs/specs/01-screens.md land here in Phase 4.
+ * App shell: Splash gate → Login → Lobby. The remaining spec-01 routes
+ * (Room, Bidding, Table, Profile, Settings) land here as their screens
+ * are built; Standings is registered but unlinked until the Table screen
+ * feeds it real results — no dead buttons.
  */
 @Composable
 fun EstemshanNav() {
@@ -37,24 +45,43 @@ fun EstemshanNav() {
   val vm: LoginViewModel = viewModel()
   val authState by vm.state.collectAsStateWithLifecycle()
 
-  MaterialTheme {
-    NavHost(navController = nav, startDestination = "login") {
-      composable("login") {
+  EstemshanTheme {
+    NavHost(navController = nav, startDestination = Routes.SPLASH) {
+      composable(Routes.SPLASH) {
+        val splashVm: SplashViewModel = viewModel()
+        val ready by splashVm.ready.collectAsStateWithLifecycle()
+        SplashScreen()
+        val target = ready
+        if (target != null) {
+          LaunchedEffect(target) {
+            if (target is AuthUiState.SignedIn) {
+              nav.navigate(Routes.LOBBY) { popUpTo(Routes.SPLASH) { inclusive = true } }
+            } else {
+              nav.navigate(Routes.LOGIN) { popUpTo(Routes.SPLASH) { inclusive = true } }
+            }
+          }
+        }
+      }
+      composable(Routes.LOGIN) {
         LoginScreen(
           state = authState,
           onAnonymous = vm::signInAnonymously,
           onEmail = vm::signInWithEmail,
-          onEnter = { nav.navigate("lobby") { popUpTo("login") { inclusive = true } } },
+          onEnter = { nav.navigate(Routes.LOBBY) { popUpTo(Routes.LOGIN) { inclusive = true } } },
         )
       }
-      composable("lobby") {
+      composable(Routes.LOBBY) {
         LobbyPlaceholder(
           state = authState,
           onSignOut = {
             vm.signOut()
-            nav.navigate("login") { popUpTo("lobby") { inclusive = true } }
+            nav.navigate(Routes.LOGIN) { popUpTo(Routes.LOBBY) { inclusive = true } }
           },
         )
+      }
+      composable(Routes.STANDINGS) {
+        // Unlinked until the Table screen supplies real match results.
+        FinalStandingsScreen(buildStandings(emptyMap()))
       }
     }
   }
