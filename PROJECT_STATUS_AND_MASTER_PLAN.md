@@ -431,3 +431,56 @@ This section records what changed since the 2026-08-12 audit **without rewriting
 ### Re-plan pointer
 
 Audit-roadmap P0/P1/P2-2 are complete; remaining roadmap items are explicit defers (P2-1 review screen, P2-3 SHA automation, P2-4 presence). The next program is master-plan Phases 2→4 in order: **build/deployment integration → core-loop UI completion → trust hardening**, with the legacy `src/` decision tracked separately and never blocking `design-ui/`.
+
+---
+
+## 24. Status update — 2026-09-19 (main @ `87e5d17`)
+
+Delta since §23, same convention: what changed, with evidence. The
+program pivoted 2026-09-17 — **native Android (Kotlin) is the ship
+target** (`ANDROID_MIGRATION_PLAN.md`, owner D1–D4); the web roadmap
+above (§§17–18) is reference-only for the frozen `design-ui/` client,
+not the ship plan. Two agents work in parallel (native + web
+verification).
+
+### Resolved / shipped since §23
+
+- **[SHIPPED] Native specs (migration Phase 0).** `docs/specs/01-04.md`
+  (PRs #32, #33).
+- **[SHIPPED] Native skeleton + CI (migration Phase 1).** PR #34.
+- **[SHIPPED] Native pure engines (migration Phase 2, minus session).**
+  PRs #35 (Cards/Deck/Scoring), #36 (Bidding), #37 (Table), #38
+  (RoundScore/Sa'ayda/Risk-ladder/Classic). R10 triplication debt is
+  resolved in the port (single `Cards.kt` table).
+- **[SHIPPED] First native UI (migration Phase 4, partial).** PRs #40
+  (shell/theme/splash/standings), #41 (bidding), #42 (table), #43
+  (profile/settings). Offline quick-match OPEN as PR #44.
+- **[RESOLVED] `src/` scoring divergence (§5/R2).** Owner-confirmed
+  numbers landed via legacy PRs #28–31 (bid², dash tables, flat sole,
+  single Caller/With); Classic untouched.
+- **[RESOLVED] `design-ui/` build/deployment integration (§5/R1).**
+  Verified already-satisfied (T-002): the `hosting-dist/` pipeline was
+  correct, smoke 21/21 + 51/51 with zero code changes. Mid-task the
+  harness wrote test data to production; the owner cleaned it
+  2026-09-19.
+- **[RESOLVED] Emulator-test categorization (T-001).** PR #39 rename,
+  green on the emulator, no rules change (SHA pin untouched).
+
+### Still open (verified 2026-09-19)
+
+- **[STILL OPEN] Session + online layer.** GameSession/RemoteStore not
+  started (delegated, `android/phase6-session` unpushed); Phase 3
+  services (transactions vs emulator) untouched — the critical path.
+- **[STILL OPEN] Lobby rooms + Room screen.** Wait for session/backend;
+  no mock lists will be built.
+- **[STILL OPEN] Signup 409 race (T-003).** Double bootstrap at web
+  signup, 409s observed; repro-first task open with the second agent.
+- **[STILL OPEN] Presence (P4), billing (D3), Play tracks, web shrink.**
+  Unchanged; presence is to be built native from day one per the
+  migration plan.
+- **[STILL OPEN] Trust boundary (P3).** Same accepted MVP gaps face the
+  Kotlin client; re-accept explicitly before release.
+- **[STALE — DO NOT QUOTE] §§20–22 percentages and web roadmap.** The
+  44% / 35–40% figures and the §§17–18 web phase plan predate the
+  native pivot. Native v1 snapshot 2026-09-19: **~45%** (engine 100%,
+  screens ~65%, session ~5%, integration/billing/launch 0).
