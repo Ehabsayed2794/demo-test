@@ -3,8 +3,10 @@
 **Decision:** the product ships as a native Android game (Kotlin), not a
 web/WebView app. Owner decision 2026-09-17 — driven by Google Play
 publishing and monetization (ads + in-app purchases).
-**Status:** planning — no Kotlin code exists yet; all paths below are
-relative to repo root. Web code is frozen as reference except critical fixes.
+**Status:** in progress — Phase 0 specs, Phase 1 skeleton, and the pure
+engines + first UI screens below all merged to `main` (see §9, updated
+2026-09-19); all paths below are relative to repo root. Web code is
+frozen as reference except critical fixes.
 
 ---
 
@@ -112,3 +114,39 @@ D1–D4 answered 2026-09-17 — Phase 0 is unblocked. Next: kick off
 Phase 0 (spec freeze & extraction) + owner starts Play Console ($25)
 and AdMob signup in parallel (activation and Google's 14-day
 closed-testing clock run on their side).
+
+## 9. Status update — 2026-09-19 (main @ `87e5d17`)
+
+Delta since §8, same convention as the status doc's §23: what shipped,
+with PR evidence. Two agents work in parallel (native + web
+verification); branches below are all merged unless marked OPEN.
+
+- **Phase 0 DONE.** Spec catalog `docs/specs/01-screens.md`,
+  `02-engine-api.md`, `03-transactions.md`, `04-scoring.md` (PRs #32, #33).
+- **Phase 1 DONE.** Skeleton + login + CI (PR #34; AGP 8.7.3 + Kotlin
+  1.9.25 + Compose 1.5.15 + compile/target 34, proven matrix in §9 of
+  the handoff notes).
+- **Phase 2 PARTIAL — pure engines DONE, session OPEN.** Cards/Deck/
+  Scoring + JUnit (PR #35, incl. half-up fix `9a6a6e8`), BiddingEngine
+  (PR #36), TableEngine (PR #37), RoundScore wrapper with Sa'ayda
+  ladder, multiplier arming, Classic mode, and the graduated Risk
+  ladder per D2 (PR #38). Zero Android imports; every JS-pinned case
+  re-expressed as JUnit. GameSession/RemoteStore NOT started —
+  delegated to the second agent (`android/phase6-session`, unpushed).
+- **Phase 4 UI PARTIAL (ahead of order).** Shell + routes + gold-dark
+  theme + splash + standings (PR #40), bidding screen (PR #41), table
+  screen (PR #42), profile + persisted settings (PR #43). Real Lobby
+  rooms + Room screen wait for the session/backend. Offline
+  quick-match flow (Bidding→Table→Standings, hot-seat) OPEN as PR #44
+  (CI red at last check — fixes pushed, re-run pending).
+- **Web verification (second agent).** T-001 DONE (PR #39 rename, green
+  on emulator, no logic bug). T-002 VERIFIED already-satisfied: the
+  `hosting-dist/` pipeline was correct, smoke 21/21 + 51/51 regression
+  with zero code changes (harness incident hit production mid-task;
+  owner cleaned it 2026-09-19). T-003 OPEN (signup 409
+  double-bootstrap race, repro-first, with second agent).
+- **Still open, unchanged:** Phase 3 services (room/match/transactions
+  vs emulator), presence (P4), billing (D3), Play tracks (Phase 5),
+  web shrink (D4/Phase 6).
+- **Snapshot estimate: ~45% of native v1** (engine 100%, screens ~65%,
+  session ~5%, integration/billing/launch 0).
