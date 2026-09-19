@@ -36,8 +36,8 @@ class BiddingViewModel : ViewModel() {
   private val _generalPass = MutableStateFlow<Int?>(null)
   val generalPass: StateFlow<Int?> = _generalPass.asStateFlow()
 
-  fun startNormalRound(round: Int, dealer: String, seats: List<String>) {
-    _state.value = initNormalRound(round, dealer, seats)
+  fun startNormalRound(round: Int, dealer: String, seats: List<String>, multiplier: Int = 1) {
+    _state.value = initNormalRound(round, dealer, seats, multiplier)
     _rejection.value = null
     _outcome.value = null
     _generalPass.value = null

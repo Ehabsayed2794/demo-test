@@ -86,7 +86,7 @@ class QuickMatchViewModel : ViewModel() {
       estimates = outcome.estimates,
       dashCallers = outcome.dashCallers,
       leaderId = outcome.leaderId,
-      riskPlayerId = outcome.riskPlayerId,
+      riskId = outcome.riskPlayerId,
       multiplier = scoreMultiplier,
       hands = hands,
     )
