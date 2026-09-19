@@ -71,12 +71,29 @@ class ScoringTest {
   }
 
   // ── Standard roles: single Caller/With bonus, flat sole ──
+  // Round total 15 (diff 2 → ladder 10), so the owner pins hold: WIZZ 25,
+  // WIZZ_RISK 35, CALLER 25, RISK 25.
   @Test
   fun wizzWinTakesSingleBonus() {
-    assertEquals(25, normal(Role.WIZZ, 5, 5))
-    assertEquals(35, normal(Role.WIZZ_RISK, 5, 5))
-    assertEquals(25, normal(Role.CALLER, 5, 5))
-    assertEquals(25, normal(Role.RISK, 5, 5))
+    assertEquals(25, normal(Role.WIZZ, 5, 5, totalBids = 15))
+    assertEquals(35, normal(Role.WIZZ_RISK, 5, 5, totalBids = 15))
+    assertEquals(25, normal(Role.CALLER, 5, 5, totalBids = 15))
+    assertEquals(25, normal(Role.RISK, 5, 5, totalBids = 15))
+  }
+
+  // ── Owner D2: the Risk component is the graduated ladder, not flat 10 ──
+  @Test
+  fun riskBonusIsGraduatedLadder() {
+    // RISK win 5: 10 + 5 + ladder(total).
+    assertEquals(15, normal(Role.RISK, 5, 5, totalBids = 12)) // diff 1 → 0
+    assertEquals(25, normal(Role.RISK, 5, 5, totalBids = 15)) // diff 2 → 10
+    assertEquals(35, normal(Role.RISK, 5, 5, totalBids = 9)) // diff 4 → 20
+    assertEquals(45, normal(Role.RISK, 5, 5, totalBids = 7)) // diff 6 → 30
+    // RISK loss: -(miss + ladder).
+    assertEquals(-11, normal(Role.RISK, 5, 4, totalBids = 15))
+    assertEquals(-31, normal(Role.RISK, 5, 4, totalBids = 7))
+    // Non-risk seats never see the ladder, however far the total drifts.
+    assertEquals(15, normal(Role.NORMAL, 5, 5, totalBids = 7))
   }
 
   @Test

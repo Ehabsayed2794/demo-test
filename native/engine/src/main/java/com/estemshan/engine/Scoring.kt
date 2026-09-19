@@ -76,15 +76,17 @@ fun calculateNormalScore(
       if (success) 10 else -(10 + won)
     else -> {
       val miss = abs(bid - won)
+      // Owner D2 + spec 04 §1: the Risk player's component is the graduated
+      // ladder (riskValue(totalBids)), not a flat 10. Dash Call never
+      // receives Risk; Normal Dash follows the 04 §4 table below as-is.
+      val riskBonus = if (isRisk(role)) riskValue(totalBids) else 0
       if (success) {
         // Single Caller/With bonus ("Caller OR With", never both).
         10 + bid +
-          (if (isCallerOrWith(role)) 10 else 0) +
-          (if (isRisk(role)) 10 else 0)
+          (if (isCallerOrWith(role)) 10 else 0) + riskBonus
       } else {
         -(miss +
-          (if (isCallerOrWith(role)) 10 else 0) +
-          (if (isRisk(role)) 10 else 0))
+          (if (isCallerOrWith(role)) 10 else 0) + riskBonus)
       }
     }
   }
