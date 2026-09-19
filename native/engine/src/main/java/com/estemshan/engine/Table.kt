@@ -126,9 +126,11 @@ fun trickWinner(trump: Suit, ledSuit: Suit, plays: List<Play>): String {
   return best.playerId
 }
 
-fun currentWinnerId(state: TableState): String? =
-  if (state.plays.isEmpty()) null
-  else trickWinner(state.cfg.trump, state.ledSuit ?: return null, state.plays)
+fun currentWinnerId(state: TableState): String? {
+  if (state.plays.isEmpty()) return null
+  val led = state.ledSuit ?: return null
+  return trickWinner(state.cfg.trump, led, state.plays)
+}
 
 // ── canPlayCard / previewPlay: pure, read-only projections of emitPlay ──
 
