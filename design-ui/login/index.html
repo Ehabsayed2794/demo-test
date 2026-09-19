@@ -157,15 +157,43 @@
   // player from reaching the Lobby — a missing profile sync is recoverable
   // next time; getting stuck on the Login screen is not. See
   // docs/implementation/FirebasePlayerFoundation.md.
-  function bootstrapProfile(user){
+  // Sprint T-003 (signup double-bootstrap race): creating an account signs
+  // the user in IMMEDIATELY, so this screen's own create/signin handlers
+  // and the onAuthStateChanged listener below BOTH call bootstrapProfile()
+  // for the same brand-new uid. Two concurrent ensurePlayerProfile()
+  // transactions each read players/{uid} as missing, so each tx.set()
+  // carries an exists:false precondition — the loser commits into
+  // 409 ALREADY_EXISTS. Worse, when the auth-state path wins outright it
+  // derives the profile before updateProfile() has landed and persists
+  // displayName "Player" permanently (the doc then exists, so the form's
+  // own transaction only touches lastSeenAt and never corrects it).
+  //
+  // The form handlers set formFlowInFlight SYNCHRONOUSLY, before the
+  // first await, so it is already true by the time the auth-state event
+  // fires — that ordering is what makes this deterministic rather than
+  // racy. onAuthStateChanged then defers, and the form — which has the
+  // typed name and awaits updateProfile() before bootstrapping — is the
+  // sole bootstrap caller. bootstrapInFlight is a second, independent
+  // guard: even a future third caller cannot start a second transaction
+  // for a uid already in flight.
+  var formFlowInFlight = false;
+  var bootstrapInFlight = {};
+  function bootstrapProfile(user, build){
     if (!window.PlayerService) {
       console.error("[Login] PlayerService not loaded — continuing without a synced profile.");
       return Promise.resolve(null);
     }
-    return window.PlayerService.ensurePlayerProfile(user).catch(function(err){
+    var uid = user.uid;
+    if (bootstrapInFlight[uid]) return bootstrapInFlight[uid];
+    var fn = build || function(){ return window.PlayerService.ensurePlayerProfile(user); };
+    var p = Promise.resolve().then(fn).catch(function(err){
       console.error("[Login] ensurePlayerProfile failed (continuing offline):", err);
       return null;
     });
+    bootstrapInFlight[uid] = p;
+    var clear=function(){ if (bootstrapInFlight[uid] === p) delete bootstrapInFlight[uid]; };
+    p.then(clear, clear);
+    return p;
   }
 
   if (!requireAuth()) {
@@ -178,6 +206,13 @@
     try {
       auth.onAuthStateChanged(function(user){
         if (user) {
+          // A form submit owns this sign-in (it set formFlowInFlight
+          // synchronously before its first await, so this branch is
+          // reached with it already true). Let the form do the bootstrap
+          // AND the navigation: it has the typed display name and awaits
+          // updateProfile() before bootstrapping, so a bootstrap started
+          // here would both race it (the 409) and persist "Player".
+          if (formFlowInFlight) return;
           bootstrapProfile(user).then(function(profile){
             var storedName=((GameState.getData() || {}).player || {}).name;
             var name=(profile && profile.displayName) || user.displayName || storedName || "Player";
@@ -260,6 +295,10 @@
     if(!validEmail(email)){ UI.setFieldError(fieldOf(emailEl), "Enter a valid email."); ok=false; } else UI.setFieldError(fieldOf(emailEl), null);
     if(pass.length<8){ UI.setFieldError(fieldOf(passEl), "At least 8 characters."); ok=false; } else UI.setFieldError(fieldOf(passEl), null);
     if(!ok) return;
+    // Set synchronously — before the first await — so the auth-state event
+    // that fires the instant the credential resolves finds it already true
+    // and defers. See bootstrapProfile's comment for why ordering matters.
+    formFlowInFlight = true;
     try {
       var cred = await auth.createUserWithEmailAndPassword(email, pass);
       await cred.user.updateProfile({ displayName: name });
@@ -267,6 +306,8 @@
       proceedToLobby((profile && profile.displayName) || name, { type: "full", email: cred.user.email, uid: cred.user.uid });
     } catch (err) {
       UI.setFieldError(fieldOf(emailEl), friendlyAuthError(err));
+    } finally {
+      formFlowInFlight = false;
     }
   }));
 
@@ -279,12 +320,15 @@
     if(!validEmail(email)){ UI.setFieldError(fieldOf(emailEl), "Enter a valid email."); ok=false; } else UI.setFieldError(fieldOf(emailEl), null);
     if(!pass){ UI.setFieldError(fieldOf(passEl), "Enter your password."); ok=false; } else UI.setFieldError(fieldOf(passEl), null);
     if(!ok) return;
+    formFlowInFlight = true; // same deferral as the create handler
     try {
       var cred = await auth.signInWithEmailAndPassword(email, pass);
       var profile = await bootstrapProfile(cred.user);
       proceedToLobby((profile && profile.displayName) || cred.user.displayName || name, { type: "full", email: cred.user.email, uid: cred.user.uid });
     } catch (err) {
       UI.setFieldError(fieldOf(passEl), friendlyAuthError(err));
+    } finally {
+      formFlowInFlight = false;
     }
   }));
 
