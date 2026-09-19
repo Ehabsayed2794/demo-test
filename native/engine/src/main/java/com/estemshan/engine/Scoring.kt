@@ -3,7 +3,6 @@ package com.estemshan.engine
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.round
 
 /**
  * Scoring ported from src/utils.ts (legacy-exact, owner-confirmed) for
@@ -59,8 +58,10 @@ fun calculateNormalScore(
   val success = won == bid
   var score = when (role) {
     // Amendment A1: win = bid²; loss = half rounded half-up, flat by bid.
+    // NOTE: kotlin.math.round ties to even (40.5→40) but owner/spec + JS
+    // require half-up (40.5→41), so use integer math (n+1)/2.
     Role.SUPER_CALL ->
-      if (success) bid * bid else -round(bid * bid / 2.0).toInt()
+      if (success) bid * bid else -((bid * bid + 1) / 2)
     // Canonical §4 flat table (Under = total ≤13).
     Role.DASH_CALL -> {
       val under = totalBids <= 13
