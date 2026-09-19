@@ -69,6 +69,10 @@ dependencies {
   implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.6")
   implementation("androidx.navigation:navigation-compose:2.7.7")
 
+  // Pure-JVM game engine (Cards/Deck/Bidding/Table/Scoring). The app is a
+  // thin UI shell: all rules live in :engine and are unit-tested there.
+  implementation(project(":engine"))
+
   testImplementation("junit:junit:4.13.2")
   testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
 }
