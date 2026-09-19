@@ -28,6 +28,9 @@ import androidx.navigation.compose.rememberNavController
 import com.estemshan.game.data.AuthUiState
 import com.estemshan.game.ui.login.LoginViewModel
 import com.estemshan.game.ui.profile.ProfileScreen
+import com.estemshan.game.ui.quickmatch.QUICKMATCH_GRAPH
+import com.estemshan.game.ui.quickmatch.QuickMatchViewModel
+import com.estemshan.game.ui.quickmatch.quickMatchGraph
 import com.estemshan.game.ui.settings.SettingsRoute
 import com.estemshan.game.ui.splash.SplashScreen
 import com.estemshan.game.ui.splash.SplashViewModel
@@ -46,6 +49,7 @@ fun EstemshanNav() {
   val nav = rememberNavController()
   val vm: LoginViewModel = viewModel()
   val authState by vm.state.collectAsStateWithLifecycle()
+  val qvm: QuickMatchViewModel = viewModel()
 
   EstemshanTheme {
     NavHost(navController = nav, startDestination = Routes.SPLASH) {
@@ -81,8 +85,13 @@ fun EstemshanNav() {
           },
           onProfile = { nav.navigate(Routes.PROFILE) },
           onSettings = { nav.navigate(Routes.SETTINGS) },
+          onQuickMatch = {
+            qvm.startMatch()
+            nav.navigate(QUICKMATCH_GRAPH)
+          },
         )
       }
+      quickMatchGraph(nav, qvm)
       composable(Routes.STANDINGS) {
         // Unlinked until the Table screen supplies real match results.
         FinalStandingsScreen(buildStandings(emptyMap()))
@@ -160,6 +169,7 @@ private fun LobbyPlaceholder(
   onSignOut: () -> Unit,
   onProfile: () -> Unit,
   onSettings: () -> Unit,
+  onQuickMatch: () -> Unit,
 ) {
   Column(
     modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -175,6 +185,8 @@ private fun LobbyPlaceholder(
       },
     )
     Spacer(Modifier.height(16.dp))
+    Button(onClick = onQuickMatch) { Text("Quick Match (offline)") }
+    Spacer(Modifier.height(8.dp))
     Button(onClick = onProfile) { Text("Profile") }
     Spacer(Modifier.height(8.dp))
     Button(onClick = onSettings) { Text("Settings") }
