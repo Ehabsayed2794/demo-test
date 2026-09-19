@@ -115,6 +115,9 @@ private fun bidWon(bid: Bid?, won: Int): Boolean {
   return when (bid.type) {
     BidType.DASHCALL, BidType.DASH -> won == 0
     BidType.TRICKS -> won == bid.amount
+    // A PASS marker never survives to scoring (cleared at DASH close);
+    // defensively a non-winning bid, never silent.
+    BidType.PASS -> false
   }
 }
 
