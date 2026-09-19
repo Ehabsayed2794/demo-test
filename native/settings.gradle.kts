@@ -14,3 +14,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "Estemshan"
 include(":app")
+include(":engine")
