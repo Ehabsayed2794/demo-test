@@ -147,7 +147,7 @@ class GameSessionTest {
     assertEquals("p1", session.rotateDealer())
     assertEquals("p2", session.rotateDealer())
     session.setDealer("p4")
-    assertEquals("p1", session.getDealer())
+    assertEquals("p4", session.getDealer())
     session.setDealer(null)
     assertNull(session.getDealer())
   }
