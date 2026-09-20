@@ -1,6 +1,7 @@
 package com.estemshan.services
 
 import com.estemshan.engine.Suit
+import com.estemshan.services.model.BiddingActionInput
 import com.estemshan.services.model.BiddingLogEntry
 import com.estemshan.services.model.CardLogEntry
 import com.estemshan.services.model.DEFAULT_MAX_ROUNDS
@@ -171,9 +172,11 @@ fun isValidGenericCardValue(card: StoredCard?): Boolean {
  * Generic bidding-action SHAPE validation — never legality. Checks the
  * right fields are present and well-typed for the action type; whether
  * the action is legal for this seat right now is BiddingEngine's job
- * (match-service.js:1209).
+ * (match-service.js:1209). Takes the caller-side [BiddingActionInput]
+ * directly: the round is stamped later from the fresh document, so it is
+ * not part of this check.
  */
-fun isValidGenericBiddingAction(action: BiddingLogEntry?): Boolean {
+fun isValidGenericBiddingAction(action: BiddingActionInput?): Boolean {
   if (action == null) return false
   if (action.actionType !in BiddingLogEntry.VALID_ACTION_TYPES) return false
   if (action.declaredDashCall != null && action.actionType != BiddingLogEntry.ACTION_DASH_CALL) return false
@@ -196,6 +199,14 @@ fun isValidGenericBiddingAction(action: BiddingLogEntry?): Boolean {
  * maxRounds, whatever the current ceiling has grown to.
  */
 fun isRapidRound(round: Int): Boolean = round in RAPID_ROUND_MIN..RAPID_ROUND_MAX
+
+/**
+ * The two values extendMatchRounds() accepts as a qualifying reason
+ * (match-service.js:1691). Structural only — neither this service nor
+ * firestore.rules can verify the event actually occurred; the caller
+ * derives it from the same engine facts every client computes.
+ */
+val VALID_EXTENSION_REASONS: List<String> = listOf("SUPER_CALL", "SAAYDA")
 
 /** Round-completion threshold: 13 tricks * 4 seats. */
 const val ROUND_CARD_TOTAL = 52

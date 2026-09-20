@@ -207,7 +207,13 @@ data class DealResult(
   }
 }
 
-data class VoteCreateResult(val created: Boolean, val matchId: String)
+data class VoteCreateResult(
+  val created: Boolean,
+  val matchId: String,
+  /** The vote document as it now exists (created here, or the pre-existing
+   *  one for the idempotent path). */
+  val vote: VoteDoc? = null,
+)
 
 data class VoteSubmitResult(
   val accepted: Boolean,

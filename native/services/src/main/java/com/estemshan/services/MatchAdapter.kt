@@ -1,0 +1,496 @@
+package com.estemshan.services
+
+import com.estemshan.engine.BiddingIntent
+import com.estemshan.engine.EmitResult
+import com.estemshan.engine.PlayCard
+import com.estemshan.engine.PlayEmit
+import com.estemshan.engine.canSubmit
+import com.estemshan.engine.emit
+import com.estemshan.engine.emitPlay
+import com.estemshan.services.model.BiddingLogEntry
+import com.estemshan.services.model.MatchDoc
+import com.estemshan.services.session.GameSessionPort
+import com.estemshan.services.session.MatchAdapterPort
+import com.estemshan.services.session.NotLocalTurn
+
+/**
+ * MatchAdapter — port of design-ui/match-adapter.js's read-side
+ * interpreter. ONE direction only: a Firestore match document becomes
+ * local engine state, always THROUGH the pure :engine reducers. This
+ * class never touches Firestore, never calls MatchService, and never
+ * mutates the input document.
+ *
+ * Three independent gates per log, mirroring the JS registries exactly:
+ *  1. a per-log VERSION registry — strict greater-than, so a duplicate or
+ *     rolled-back delivery is ignored, never re-applied;
+ *  2. a per-log COUNT registry — how many entries have been replayed,
+ *     rebased to 0 when a delivery's window is SHORTER than the count
+ *     (a new round's window has begun: advanceToNextRound() reset the
+ *     parent log to [], never deleted history);
+ *  3. a per-entry ROUND-TAG guard — an entry for a round AHEAD of the
+ *     local engine stops the loop WITHOUT touching either registry
+ *     (AWAITING_ROUND_TRANSITION), so a client that hasn't yet
+ *     re-initialized its engines for Round N+1 re-attempts that exact
+ *     index on a later delivery instead of permanently losing it.
+ *
+ * A desync (MALFORMED_ENTRY / ENGINE_REJECTED / LOCAL_ECHO_MISMATCH /
+ * ENGINE_THREW) stops the loop, advances the count only UP TO the failing
+ * index, and leaves the version registry untouched — that is what lets a
+ * future delivery re-attempt the same stuck index rather than silently
+ * declaring the version handled while the log and the engine disagree.
+ *
+ * Pure bookkeeping + engine calls; no Android imports.
+ */
+class MatchAdapter(private val session: GameSessionPort) : MatchAdapterPort {
+
+  private val bidVersion = mutableMapOf<String, Int>()
+  private val biddingActionVersion = mutableMapOf<String, Int>()
+  private val biddingActionCount = mutableMapOf<String, Int>()
+  private val cardVersion = mutableMapOf<String, Int>()
+  private val cardCount = mutableMapOf<String, Int>()
+
+  // ── MatchAdapterPort: identity + authority ──────────────────────────
+
+  override fun uidToSeat(match: MatchDoc, uid: String): String? = match.uidToSeat(uid)
+
+  override fun seatToUid(match: MatchDoc, seatId: String): String? = match.seatToUid(seatId)
+
+  /**
+   * The client-side half of "neither layer trusts the other alone": the
+   * doc's own `turn` (a uid) is resolved to a seat and compared, with a
+   * fallback to the session's own turn id (a SEAT id, per session.js's
+   * setTurn(leaderId/callerId)) when the doc's turn is still null.
+   */
+  override fun assertLocalTurn(match: MatchDoc, seatId: String) {
+    if (!isLocalSeatsTurn(match, seatId)) {
+      throw NotLocalTurn("assertLocalTurn: it is not seat '$seatId's turn right now.")
+    }
+  }
+
+  private fun isLocalSeatsTurn(match: MatchDoc, seatId: String): Boolean {
+    val turnSeat = match.uidToSeat(match.turn) ?: session.getTurn()
+    return turnSeat != null && turnSeat == seatId
+  }
+
+  // ── Remote bid application (Final Estimate only) ───────────────────
+
+  /**
+   * applyRemoteBid — the newest accepted bid on the document becomes
+   * exactly one BiddingIntent.FinalEstimate into the local engine, and
+   * nothing else. bids/ holds exactly one opaque integer per seat — the
+   * final-estimate shape and ONLY that shape; translating a bare integer
+   * into a Dash/Auction/Confirm action would mean guessing what it means,
+   * which is a gameplay rule this layer must never encode. The Dash/
+   * Auction/Confirm sync path is [applyRemoteBiddingAction].
+   */
+  fun applyRemoteBid(matchId: String, matchDoc: MatchDoc?): ApplyOutcome {
+    if (matchId.isEmpty() || matchDoc == null) return malformed()
+    val version = matchDoc.version
+
+    bidVersion[matchId]?.let { last ->
+      if (version <= last) {
+        return ApplyOutcome.notApplied(if (version == last) DUPLICATE_VERSION else STALE_VERSION)
+      }
+    }
+
+    val seatId = matchDoc.lastBidSeat
+    if (seatId.isEmpty()) {
+      // A valid-but-empty snapshot (fresh doc, no bid yet): record the
+      // version so an identical future delivery is a duplicate, not
+      // re-evaluated forever.
+      bidVersion[matchId] = version
+      return ApplyOutcome.notApplied(NO_BID_TO_APPLY)
+    }
+    val bidValue = matchDoc.bids[seatId]
+    if (bidValue == null) return malformed()
+
+    val state = session.getBiddingState() ?: return ApplyOutcome.notApplied(ENGINE_UNAVAILABLE)
+    if (state.subPhase != com.estemshan.engine.BiddingPhase.ESTIMATES) {
+      bidVersion[matchId] = version
+      return ApplyOutcome.notApplied(PHASE_MISMATCH)
+    }
+    if (state.waitingFor != seatId) {
+      bidVersion[matchId] = version
+      return ApplyOutcome.notApplied(NOT_THIS_SEATS_TURN)
+    }
+    // The local-engine echo case: this client's own bid already landed via
+    // its own emit() and is now echoing back through Firestore — never
+    // re-emit, even though this version is genuinely newer.
+    if (state.bids[seatId] != null) {
+      bidVersion[matchId] = version
+      return ApplyOutcome.notApplied(ALREADY_APPLIED_LOCALLY)
+    }
+
+    val result = emit(state, BiddingIntent.FinalEstimate(seatId, bidValue))
+    bidVersion[matchId] = version
+    return when (result) {
+      is EmitResult.Rejected ->
+        ApplyOutcome(applied = false, reason = ENGINE_REJECTED, desync = true, version = version)
+      is EmitResult.Applied, is EmitResult.Completed, is EmitResult.GeneralPass -> {
+        session.updateBiddingState(result.state())
+        ApplyOutcome(applied = true, reason = REASON_APPLIED, seatId = seatId, version = version)
+      }
+    }
+  }
+
+  // ── Remote bidding-action application (Dash / Auction / Confirm) ────
+
+  /**
+   * applyRemoteBiddingAction — replays the document's biddingLog tail into
+   * the local engine, entry by entry. Legality is asked BEFORE every emit
+   * via canSubmit(): a rejection that is a phase/turn guard means the
+   * engine has already moved past this entry (this client's own echo, or
+   * a late delivery) and is skipped as benign; any other rejection is a
+   * real desync and stops the loop.
+   */
+  fun applyRemoteBiddingAction(matchId: String, matchDoc: MatchDoc?): ApplyOutcome {
+    if (matchId.isEmpty() || matchDoc == null) return malformed()
+    val version = matchDoc.version
+
+    biddingActionVersion[matchId]?.let { last ->
+      if (version <= last) {
+        return ApplyOutcome.notApplied(if (version == last) DUPLICATE_VERSION else STALE_VERSION)
+      }
+    }
+
+    var lastCount = biddingActionCount[matchId] ?: 0
+    if (matchDoc.biddingLog.size < lastCount) {
+      lastCount = 0
+      biddingActionCount[matchId] = 0
+    }
+    if (matchDoc.biddingLog.size <= lastCount) {
+      biddingActionVersion[matchId] = version
+      return ApplyOutcome.notApplied(NO_NEW_BIDDING_ACTIONS)
+    }
+
+    val results = ArrayList<EntryOutcome>()
+    var i = lastCount
+    while (i < matchDoc.biddingLog.size) {
+      val entry = matchDoc.biddingLog[i]
+      val intent = entryToIntent(entry)
+      if (intent == null) {
+        results.add(EntryOutcome(i, false, MALFORMED_ENTRY, entry.seatId))
+        biddingActionCount[matchId] = i
+        return desync(MALFORMED_ENTRY, matchId, i, version, results)
+      }
+
+      // Round-tag guard — see the class header for why an entry whose
+      // round is AHEAD of the local engine must stop WITHOUT advancing
+      // either registry.
+      val localRound = session.getBiddingState()?.round
+      if (localRound != null && entry.round > localRound) {
+        results.add(EntryOutcome(i, false, AWAITING_ROUND_TRANSITION, entry.seatId))
+        return ApplyOutcome(
+          applied = false, reason = AWAITING_ROUND_TRANSITION, index = i,
+          version = version, results = results,
+        )
+      }
+      if (localRound != null && entry.round < localRound) {
+        results.add(EntryOutcome(i, false, STALE_ROUND, entry.seatId))
+        i++
+        continue
+      }
+
+      val state = session.getBiddingState()
+      if (state == null) {
+        results.add(EntryOutcome(i, false, ENGINE_UNAVAILABLE, entry.seatId))
+        return desync(ENGINE_UNAVAILABLE, matchId, i, version, results)
+      }
+      val verdict = runCatching { canSubmit(state, intent) }
+        .getOrElse { err ->
+          results.add(EntryOutcome(i, false, ENGINE_THREW, entry.seatId))
+          biddingActionCount[matchId] = i
+          return desync(ENGINE_THREW, matchId, i, version, results)
+        }
+      if (!verdict.legal) {
+        if (isPhaseOrTurnMismatchReason(verdict.reason)) {
+          results.add(EntryOutcome(i, false, ALREADY_APPLIED_LOCALLY, entry.seatId))
+          i++
+          continue
+        }
+        results.add(EntryOutcome(i, false, ENGINE_REJECTED, entry.seatId))
+        biddingActionCount[matchId] = i
+        return desync(ENGINE_REJECTED, matchId, i, version, results)
+      }
+
+      val result = runCatching { emit(state, intent) }
+        .getOrElse {
+          results.add(EntryOutcome(i, false, ENGINE_THREW, entry.seatId))
+          biddingActionCount[matchId] = i
+          return desync(ENGINE_THREW, matchId, i, version, results)
+        }
+      if (result is EmitResult.Rejected) {
+        results.add(EntryOutcome(i, false, ENGINE_REJECTED, entry.seatId))
+        biddingActionCount[matchId] = i
+        return desync(ENGINE_REJECTED, matchId, i, version, results)
+      }
+      session.updateBiddingState(result.state())
+      results.add(EntryOutcome(i, true, REASON_APPLIED, entry.seatId))
+      i++
+    }
+
+    biddingActionCount[matchId] = matchDoc.biddingLog.size
+    biddingActionVersion[matchId] = version
+    return ApplyOutcome(
+      applied = results.any { it.applied },
+      reason = if (results.any { it.applied }) REASON_APPLIED else NO_NEW_BIDDING_ACTIONS,
+      appliedCount = results.count { it.applied },
+      version = version,
+      results = results,
+    )
+  }
+
+  // ── Remote card application ────────────────────────────────────────
+
+  /**
+   * applyRemoteCard — replays the document's cardLog tail into the local
+   * table engine. An echo is only an echo if the local engine's recorded
+   * play for this seat matches BOTH suit and rank; a same-seat different-
+   * card is a LOCAL_ECHO_MISMATCH desync, never a silent skip. An
+   * opponent's private hand is unknowable, so that one observed card is
+   * seeded into a throwaway state copy for the reducer and restored on
+   * the committed result — it never becomes a persisted hand.
+   */
+  fun applyRemoteCard(matchId: String, matchDoc: MatchDoc?, localSeatId: String?): ApplyOutcome {
+    if (matchId.isEmpty() || matchDoc == null) return malformed()
+    val version = matchDoc.version
+
+    cardVersion[matchId]?.let { last ->
+      if (version <= last) {
+        return ApplyOutcome.notApplied(if (version == last) DUPLICATE_VERSION else STALE_VERSION)
+      }
+    }
+
+    var lastCount = cardCount[matchId] ?: 0
+    if (matchDoc.cardLog.size < lastCount) {
+      lastCount = 0
+      cardCount[matchId] = 0
+    }
+    if (matchDoc.cardLog.size <= lastCount) {
+      cardVersion[matchId] = version
+      return ApplyOutcome.notApplied(NO_NEW_CARDS)
+    }
+
+    val results = ArrayList<EntryOutcome>()
+    var i = lastCount
+    while (i < matchDoc.cardLog.size) {
+      val entry = matchDoc.cardLog[i]
+      val card = entry.card.toEngineCard()
+      if (card == null) {
+        results.add(EntryOutcome(i, false, MALFORMED_ENTRY, entry.seatId))
+        cardCount[matchId] = i
+        return desync(MALFORMED_ENTRY, matchId, i, version, results)
+      }
+
+      val localRound = session.getPlayState()?.cfg?.round
+      if (localRound != null && entry.round > localRound) {
+        results.add(EntryOutcome(i, false, AWAITING_ROUND_TRANSITION, entry.seatId))
+        return ApplyOutcome(
+          applied = false, reason = AWAITING_ROUND_TRANSITION, index = i,
+          version = version, results = results,
+        )
+      }
+      if (localRound != null && entry.round < localRound) {
+        results.add(EntryOutcome(i, false, STALE_ROUND, entry.seatId))
+        i++
+        continue
+      }
+
+      val state = session.getPlayState()
+      if (state == null) {
+        results.add(EntryOutcome(i, false, ENGINE_UNAVAILABLE, entry.seatId))
+        return desync(ENGINE_UNAVAILABLE, matchId, i, version, results)
+      }
+
+      // Echo check: the seat's already-recorded play in this trick must
+      // match the remote card exactly, or this is a divergence.
+      val localPlay = state.plays.firstOrNull { it.playerId == entry.seatId }
+      if (localPlay != null) {
+        if (localPlay.card.suit == card.suit && localPlay.card.rank.v == card.rank.v) {
+          results.add(EntryOutcome(i, false, ALREADY_APPLIED_LOCALLY, entry.seatId))
+          i++
+          continue
+        }
+        results.add(EntryOutcome(i, false, LOCAL_ECHO_MISMATCH, entry.seatId))
+        cardCount[matchId] = i
+        return desync(LOCAL_ECHO_MISMATCH, matchId, i, version, results)
+      }
+
+      val isObservedOpponentPlay = localSeatId != null && entry.seatId != localSeatId
+      val priorHand = state.cfg.hands[entry.seatId]
+      val working = if (isObservedOpponentPlay) {
+        state.copy(cfg = state.cfg.copy(hands = state.cfg.hands + (entry.seatId to listOf(card))))
+      } else state
+
+      val result = emitPlay(working, PlayCard(entry.seatId, card))
+      val applied = when (result) {
+        is PlayEmit.Rejected -> {
+          results.add(EntryOutcome(i, false, ENGINE_REJECTED, entry.seatId))
+          cardCount[matchId] = i
+          return desync(ENGINE_REJECTED, matchId, i, version, results)
+        }
+        is PlayEmit.Applied -> result.state
+      }
+      // Restore the opponent's unknowable hand: the observed card is
+      // committed as a played card, never as a held one. A seat with no
+      // prior hand must end up with no hand again, not with a null one.
+      session.updatePlayState(
+        if (!isObservedOpponentPlay) {
+          applied
+        } else if (priorHand != null) {
+          applied.copy(cfg = applied.cfg.copy(hands = applied.cfg.hands + (entry.seatId to priorHand)))
+        } else {
+          applied.copy(cfg = applied.cfg.copy(hands = applied.cfg.hands - entry.seatId))
+        },
+      )
+      results.add(EntryOutcome(i, true, REASON_APPLIED, entry.seatId))
+      i++
+    }
+
+    cardCount[matchId] = matchDoc.cardLog.size
+    cardVersion[matchId] = version
+    return ApplyOutcome(
+      applied = results.any { it.applied },
+      reason = if (results.any { it.applied }) REASON_APPLIED else NO_NEW_CARDS,
+      appliedCount = results.count { it.applied },
+      version = version,
+      results = results,
+    )
+  }
+
+  /** Clears this adapter's bookkeeping for one match, or all of them. */
+  fun resetSyncState(matchId: String? = null) {
+    if (matchId == null) {
+      bidVersion.clear()
+      biddingActionVersion.clear()
+      biddingActionCount.clear()
+      cardVersion.clear()
+      cardCount.clear()
+      return
+    }
+    bidVersion.remove(matchId)
+    biddingActionVersion.remove(matchId)
+    biddingActionCount.remove(matchId)
+    cardVersion.remove(matchId)
+    cardCount.remove(matchId)
+  }
+
+  // Test/diagnostic-only observability of the internal gates.
+  fun lastAppliedBidVersion(matchId: String): Int? = bidVersion[matchId]
+  fun lastAppliedBiddingActionVersion(matchId: String): Int? = biddingActionVersion[matchId]
+  fun lastAppliedBiddingActionCount(matchId: String): Int = biddingActionCount[matchId] ?: 0
+  fun lastAppliedCardVersion(matchId: String): Int? = cardVersion[matchId]
+  fun lastAppliedCardCount(matchId: String): Int = cardCount[matchId] ?: 0
+
+  // ── helpers ────────────────────────────────────────────────────────
+
+  private fun malformed() = ApplyOutcome.notApplied(MALFORMED_SNAPSHOT)
+
+  private fun desync(
+    reason: String,
+    matchId: String,
+    index: Int,
+    version: Int,
+    results: List<EntryOutcome>,
+  ) = ApplyOutcome(
+    applied = false, reason = reason, desync = true, index = index,
+    appliedCount = results.count { it.applied }, version = version, results = results,
+  )
+
+  /**
+   * The SAME translation MatchService performs in the opposite direction
+   * (its own biddingActionToIntent()) — actionType IS the engine's own
+   * intent type string, so this is a field passthrough, never a
+   * re-derivation. null when the entry cannot yield a well-formed intent.
+   */
+  private fun entryToIntent(entry: BiddingLogEntry): BiddingIntent? = when (entry.actionType) {
+    BiddingLogEntry.ACTION_DASH_CALL -> {
+      val declared = entry.declaredDashCall ?: return null
+      BiddingIntent.DashCallDecision(entry.seatId, declared)
+    }
+    BiddingLogEntry.ACTION_AUCTION_BID -> {
+      if (entry.isPass == true) {
+        BiddingIntent.AuctionBid(entry.seatId, isPass = true)
+      } else {
+        BiddingIntent.AuctionBid(
+          entry.seatId, isPass = false,
+          tricks = entry.tricks ?: return null,
+          suit = parseSuit(entry.suit) ?: return null,
+        )
+      }
+    }
+    BiddingLogEntry.ACTION_CONFIRM_CALL -> BiddingIntent.ConfirmCall(
+      entry.seatId,
+      entry.tricks ?: return null,
+      parseSuit(entry.suit) ?: return null,
+    )
+    else -> null
+  }
+
+  private fun parseSuit(name: String?) =
+    if (name == null) null else runCatching { com.estemshan.engine.Suit.valueOf(name) }.getOrNull()
+
+  /**
+   * The 5 phase/turn-guard reasons canSubmit() returns for every intent's
+   * first two checks — matched against the literal strings the Kotlin
+   * engine actually emits, never a substring guess. A rejection for any
+   * OTHER reason is a content-rule disagreement, i.e. a real desync.
+   */
+  private fun isPhaseOrTurnMismatchReason(reason: String?): Boolean = when (reason) {
+    "Not this seat's turn",
+    "Not the Dash-Call phase",
+    "Not the Auction phase",
+    "Not the Confirmation phase",
+    "Not the Final Estimates phase",
+    "Bidding is already complete" -> true
+    else -> false
+  }
+
+  private fun EmitResult.state() = when (this) {
+    is EmitResult.Applied -> state
+    is EmitResult.Completed -> state
+    is EmitResult.GeneralPass -> state
+    is EmitResult.Rejected -> error("unreachable: Rejected handled by the caller")
+  }
+}
+
+/** One applyRemote*() call's outcome — every path returns one, none throws. */
+data class ApplyOutcome(
+  val applied: Boolean,
+  val reason: String,
+  val desync: Boolean = false,
+  val appliedCount: Int = 0,
+  val index: Int? = null,
+  val seatId: String? = null,
+  val version: Int? = null,
+  val results: List<EntryOutcome> = emptyList(),
+) {
+  companion object {
+    fun notApplied(reason: String) = ApplyOutcome(applied = false, reason = reason)
+  }
+}
+
+data class EntryOutcome(
+  val index: Int,
+  val applied: Boolean,
+  val reason: String,
+  val seatId: String? = null,
+)
+
+private const val REASON_APPLIED = "APPLIED"
+private const val MALFORMED_SNAPSHOT = "MALFORMED_SNAPSHOT"
+private const val DUPLICATE_VERSION = "DUPLICATE_VERSION"
+private const val STALE_VERSION = "STALE_VERSION"
+private const val NO_BID_TO_APPLY = "NO_BID_TO_APPLY"
+private const val PHASE_MISMATCH = "PHASE_MISMATCH"
+private const val NOT_THIS_SEATS_TURN = "NOT_THIS_SEATS_TURN"
+private const val ALREADY_APPLIED_LOCALLY = "ALREADY_APPLIED_LOCALLY"
+private const val ENGINE_UNAVAILABLE = "ENGINE_UNAVAILABLE"
+private const val ENGINE_REJECTED = "ENGINE_REJECTED"
+private const val ENGINE_THREW = "ENGINE_THREW"
+private const val NO_NEW_BIDDING_ACTIONS = "NO_NEW_BIDDING_ACTIONS"
+private const val NO_NEW_CARDS = "NO_NEW_CARDS"
+private const val AWAITING_ROUND_TRANSITION = "AWAITING_ROUND_TRANSITION"
+private const val STALE_ROUND = "STALE_ROUND"
+private const val MALFORMED_ENTRY = "MALFORMED_ENTRY"
+private const val LOCAL_ECHO_MISMATCH = "LOCAL_ECHO_MISMATCH"

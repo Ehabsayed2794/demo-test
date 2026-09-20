@@ -70,6 +70,35 @@ data class CardLogEntry(val seatId: String, val card: StoredCard, val round: Int
 }
 
 /**
+ * The CALLER's action shape — what submitBiddingAction(matchId, action)
+ * receives. Deliberately has NO `round`: the round is stamped from the
+ * FRESH in-transaction document's own currentRound (never the caller's
+ * local, possibly-stale round number) when [toLogEntry] builds the
+ * persisted entry. Mirrors match-service.js's own split between the raw
+ * `action` parameter and buildBiddingLogEntry().
+ */
+data class BiddingActionInput(
+  val actionType: String,
+  val declaredDashCall: Boolean? = null,
+  val isPass: Boolean? = null,
+  val tricks: Int? = null,
+  val suit: String? = null,
+) {
+
+  /** Stamps the authoritative round and drops nothing the type omits. */
+  fun toLogEntry(seatId: String, round: Int): BiddingLogEntry =
+    BiddingLogEntry(
+      seatId = seatId,
+      actionType = actionType,
+      declaredDashCall = declaredDashCall,
+      isPass = isPass,
+      tricks = tricks,
+      suit = suit,
+      round = round,
+    )
+}
+
+/**
  * One entry of the per-round biddingLog: { seatId, actionType, ...,
  * round }. actionType IS the engine's own intent type string, reused
  * verbatim (match-service.js:1275). Only the fields the action type
@@ -193,6 +222,19 @@ data class MatchDoc(
 
   /** The match is over, terminal: status never moves complete → anything. */
   val isComplete: Boolean get() = status == STATUS_COMPLETE
+
+  /**
+   * The Round-1 opening window (Sprint L): a fresh match is created with
+   * turn=dealer, and the rules' isValidOpeningTurnPublication() lets the
+   * engine-selected opening leader publish itself exactly once from this
+   * shape — round 1, dealer-held placeholder turn, no cards played yet,
+   * bidding already underway. submitCard() skips assertLocalTurn() here
+   * because the placeholder turn is not a real turn; the local engine's
+   * preview remains the gameplay authority for who actually opens.
+   */
+  val isRoundOneOpeningWindow: Boolean
+    get() = currentRound == 1 && cardPhase == null && turn != null && turn == dealer &&
+      cardLog.isEmpty() && biddingLog.isNotEmpty()
 
   fun uidToSeat(uid: String): String? =
     seats.entries.firstOrNull { it.value == uid }?.key
@@ -322,6 +364,13 @@ data class VoteDoc(
   val status: String,
   val newMatchId: String?,
   val version: Int,
+  /** The server timestamp the deadline is derived from. Null while the
+   *  serverTimestamp() sentinel is still pending on a local cache — a
+   *  deadline is never guessed from a missing value. */
+  val createdAtMillis: Long? = null,
+  /** The serverTimestamp() sentinel at create time; null on later writes
+   *  (firestore.rules' deadline check reads only the stored value). */
+  val createdAt: Any? = null,
 ) {
 
   fun toFields(): Map<String, Any?> = mapOf(
@@ -331,6 +380,10 @@ data class VoteDoc(
     "status" to status,
     "newMatchId" to newMatchId,
     "version" to version,
+    // firestore.rules derives the 30s deadline from createdAt +
+    // duration.value(30,'s'); the sentinel is written at create time and
+    // read back as a real Timestamp on every subsequent read.
+    "createdAt" to createdAt,
   )
 
   /** The acting uid's own seat, resolved from this vote's own parent-
@@ -366,6 +419,9 @@ data class VoteDoc(
         status = fields["status"] as? String ?: STATUS_OPEN,
         newMatchId = fields["newMatchId"] as? String,
         version = (fields["version"] as? Long)?.toInt() ?: 0,
+        createdAt = fields["createdAt"],
+        createdAtMillis = (fields["createdAt"] as? com.google.firebase.firestore.Timestamp)
+          ?.toDate()?.time,
       )
     }
   }
