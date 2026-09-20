@@ -71,15 +71,17 @@ class MatchAdapterReloadReplayTest {
   private class FakeGameSession : GameSessionPort {
     var bidding: BiddingState? = null
     var table: TableState? = null
-    var turn: String? = null
+    // Backs getTurn()/setTurn() — a public `var turn` would generate JVM
+    // accessors with the same signatures as the overrides below.
+    private var _turn: String? = null
 
     override fun getPlayers(): List<String> = SEAT_IDS
     override fun getRoundNumber(): Int = 1
     override fun getMaxRounds(): Int = 18
     override fun getDealer(): String? = SEAT_IDS.first()
     override fun setDealer(uid: String?) {}
-    override fun getTurn(): String? = turn
-    override fun setTurn(seatId: String?) { turn = seatId }
+    override fun getTurn(): String? = _turn
+    override fun setTurn(seatId: String?) { _turn = seatId }
     override fun nextRound(): Int = 2
     override fun getPlayState(): TableState? = table
     override fun updatePlayState(state: TableState) { table = state }
@@ -199,7 +201,7 @@ class MatchAdapterReloadReplayTest {
 
     val setup = Setup(outcome, riggedHands(outcome.trump, outcome.callerId!!), ReplayDoc())
     session.table = initTable(roundOneCfg(setup), seats)
-    session.turn = setup.callerSeat
+    session.setTurn(setup.callerSeat)
 
     val st0 = session.table!!
     assertEquals("$tag engine opens at trick 1", 1, st0.trickNo)
@@ -368,7 +370,7 @@ class MatchAdapterReloadReplayTest {
     // The same round config, reseeded from the authoritative hand source —
     // nothing about the deal is reinvented, only the engine state is fresh.
     session.table = initTable(roundOneCfg(b), seats)
-    session.turn = b.callerSeat
+    session.setTurn(b.callerSeat)
 
     val fresh = session.table!!
     assertEquals("B post-clear engine restarts at trick 1", 1, fresh.trickNo)
