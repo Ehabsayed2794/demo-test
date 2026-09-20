@@ -172,6 +172,52 @@
   .seat.seat-p2{right:4px;top:50%;transform:translateY(-50%);}
   .seat.seat-p3{left:50%;top:2px;transform:translateX(-50%);}
   .seat.seat-p4{left:4px;top:50%;transform:translateY(-50%);}
+  .seat .seat-tricks{font-family:var(--mono);font-size:8px;font-weight:600;color:var(--ink-faint);letter-spacing:.04em;min-height:10px;}
+
+  /* Table Render Layer (table-render.js): CSS-only cards + trick pile +
+     escalation banner + round-done overlay. Same token system as every
+     other rule in this file (--accent/--panel/--ink/--mono); the only
+     "new" color is the existing shared error-hint red (#e0836a) already
+     used by .card-chip.is-red/.bd-hint.is-illegal above — reused here
+     for red suits, never redefined. Design-system notes (ui-ux-pro-max):
+     150-300ms micro-transitions, 44px touch hit-areas via the same
+     invisible ::before technique .bd-btn already uses, visible focus
+     rings, and prefers-reduced-motion fallbacks for every animation. */
+  #escalationBanner{display:flex;align-items:center;gap:8px;justify-content:center;background:rgba(232,163,61,.14);border:1px solid var(--accent-dim);border-radius:10px;padding:7px 12px;margin-bottom:8px;font-family:var(--mono);opacity:0;transform:translateY(-4px);transition:opacity .22s ease,transform .22s ease;cursor:pointer;}
+  #escalationBanner.show{opacity:1;transform:none;}
+  #escalationBanner[hidden]{display:none;}
+  #escalationBanner .esc-icon{font-size:14px;color:var(--accent);line-height:1;}
+  #escalationBanner .esc-text{display:flex;flex-direction:column;gap:1px;text-align:left;}
+  #escalationBanner .esc-title{font-size:10.5px;font-weight:700;color:var(--accent);letter-spacing:.03em;}
+  #escalationBanner .esc-sub{font-size:9px;color:var(--ink-dim);}
+  .tcard{background:var(--panel-hi);border:1px solid var(--panel-line);border-radius:8px;padding:5px 8px;font-family:var(--mono);font-size:11px;font-weight:700;color:var(--ink);min-width:30px;text-align:center;line-height:1.3;}
+  .tcard.is-red{color:#e0836a;}
+  .tcard.is-empty{color:var(--ink-faint);font-weight:500;background:transparent;border-style:dashed;}
+  button.tcard{cursor:pointer;position:relative;transition:border-color .18s ease,transform .18s ease,opacity .18s ease,box-shadow .18s ease;}
+  button.tcard:hover:not(:disabled){border-color:var(--accent);transform:translateY(-2px);}
+  button.tcard:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
+  button.tcard::before{content:"";position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:max(100%,44px);height:max(100%,44px);}
+  button.tcard.is-illegal{opacity:.38;cursor:not-allowed;transform:none;border-style:dashed;background:transparent;color:var(--ink-faint);}
+  button.tcard.is-illegal.is-red{color:#e0836a;opacity:.45;}
+  button.tcard:disabled{cursor:not-allowed;}
+  #trickPanel.is-sweeping .tcard:not(.is-empty){opacity:0;transform:translateY(10px) scale(.92);transition:opacity .45s ease,transform .45s ease;}
+  #handPanel.is-reject{animation:tcard-shake .3s ease;}
+  @keyframes tcard-shake{0%,100%{transform:translateX(0);}25%{transform:translateX(-4px);}50%{transform:translateX(4px);}75%{transform:translateX(-2px);}}
+  .round-done{position:absolute;inset:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;background:color-mix(in oklch, var(--panel) 94%, transparent);border:1px solid var(--panel-line);border-radius:12px;padding:12px;opacity:0;transition:opacity .25s ease;z-index:5;}
+  .round-done.show{opacity:1;}
+  .round-done[hidden]{display:none;}
+  .round-done .rd-title{font-family:"Marcellus",serif;font-size:14px;color:var(--accent);letter-spacing:.04em;text-align:center;}
+  .round-done .rd-rows{display:flex;flex-direction:column;gap:4px;width:100%;max-width:230px;}
+  .round-done .rd-row{display:flex;align-items:center;justify-content:space-between;font-family:var(--mono);font-size:10px;color:var(--ink-dim);background:var(--pill);border:1px solid var(--panel-line);border-radius:8px;padding:5px 10px;}
+  .round-done .rd-row.is-last-winner{border-color:var(--accent-dim);}
+  .round-done .rd-row.is-last-winner .rd-name{color:var(--accent);font-weight:700;}
+  .round-done .rd-won{color:var(--ink);font-weight:700;}
+  .round-done .rd-close{border:1px solid var(--panel-line);background:var(--pill);color:var(--ink);border-radius:9px;padding:7px 18px;font-family:"Saira",sans-serif;font-size:11.5px;font-weight:600;cursor:pointer;}
+  .round-done .rd-close:hover{border-color:var(--accent-dim);}
+  @media (prefers-reduced-motion: reduce){
+    #escalationBanner,.tcard,button.tcard,#trickPanel.is-sweeping .tcard:not(.is-empty),.round-done{transition:none;}
+    #handPanel.is-reject{animation:none;}
+  }
 
   .future-note{font-family:var(--mono);font-size:9.5px;color:var(--ink-faint);letter-spacing:.02em;text-align:center;line-height:1.5;}
 
@@ -442,6 +488,16 @@
 <script src="../engine/table-engine.js"></script>
 <script src="../engine/scoring-engine.js"></script>
 <script src="../match-adapter.js"></script>
+<!-- Table Render Layer (table-render.js): defines the 6 UI hooks
+     table-engine.js's own advance()/playFromHand()/restart() call as
+     bare globals (render/bindStatic/showEscalationBanner/showRoundDone/
+     sweepThenResolve/flashReject). Local-engine-driven only — never
+     calls Firestore/MatchService and never starts any MatchAdapter
+     start*Sync() pipeline. Loads before the inline screen script so the
+     hooks exist before any engine turn loop could call them; with a real
+     match handoff its auto-boot stays out of the way and the screen's
+     own subscribe → maybeEnterPlayPhase flow keeps owning initState(). -->
+<script src="table-render.js"></script>
 <script>
 (function () {
   var screen = document.getElementById("screen");
@@ -2048,6 +2104,23 @@
     });
   }
 
+  // Placeholder-copy follow-up: #matchTodoNote ("Bidding, dealing, and
+  // gameplay are not implemented yet...") and #matchEngineDiag's initial
+  // "Engine: not yet bootstrapped" text both predate the Table render
+  // layer and now visually contradict it once real table state is on
+  // screen. Hide the note ONLY when the table engine has genuinely
+  // started for a round (tableEngineStartedForRound, set solely by
+  // maybeEnterPlayPhase() on real bidding-DONE → initState()). Before
+  // that — no match handoff, bidding phase, or a genuine boot failure —
+  // every word stays exactly as it was, including all diagnostic/error
+  // text bootstrapEngineOnce() writes into #matchEngineDiag and the
+  // "No match to show" status pill.
+  function updateStaleCopyVisibility() {
+    if (tableEngineStartedForRound == null) return;
+    var note = document.getElementById("matchTodoNote");
+    if (note) note.hidden = true;
+  }
+
   // Sprint 3.4: matchId arrives via GameState's own data-passing
   // mechanism (opts.data on the goTo() call that brought us here from
   // Lobby) — the same pattern already used for every other cross-screen
@@ -2200,6 +2273,12 @@
       // number or local guess — see renderMatchCompletion()'s own
       // comment for why this is a pure renderer.
       renderMatchCompletion(data);
+      // Placeholder-copy follow-up: the table is genuinely live once
+      // maybeEnterPlayPhase() above has started TableEngine (checked
+      // inside updateStaleCopyVisibility) — only then is the old
+      // "not implemented yet" note hidden. Every other delivery leaves
+      // it exactly as it was.
+      updateStaleCopyVisibility();
       // Sprint 5 discovery: startTrickSync()/startTurnSync() (started
       // by maybeEnterPlayPhase() above, the first time bidding reaches
       // DONE) register their OWN MatchService.subscribeToMatch()
@@ -2230,6 +2309,29 @@
   document.getElementById("backBtn").addEventListener("click", function () {
     GameState.goTo(GameState.STATES.LOBBY, { force: true });
   });
+
+  // Placeholder-copy follow-up, local-engine mode (no match handoff —
+  // direct open / validation): the subscribe callback above never runs,
+  // so updateStaleCopyVisibility() never fires on this path;
+  // table-render.js's own localBoot owns initState() instead. This
+  // listener is registered AFTER table-render.js's own DOMContentLoaded
+  // listener (its <script> tag precedes this inline script), so it
+  // observes the post-boot state, never the pre-boot one. Copy changes
+  // ONLY on proof of a live table (getState() non-null with a real
+  // phase); a failed or missing engine keeps the original "not yet
+  // bootstrapped" text, and the "No match to show" status pill above is
+  // never touched — it stays for the genuinely-not-loaded case.
+  if (!matchId) {
+    document.addEventListener("DOMContentLoaded", function () {
+      var st = null;
+      try { st = window.TableEngine && window.TableEngine.getState(); } catch (e) { st = null; }
+      if (!st || !st.phase) return;
+      var note = document.getElementById("matchTodoNote");
+      if (note) note.hidden = true;
+      var diag = document.getElementById("matchEngineDiag");
+      if (diag) diag.textContent = "Engine: local table render active (no live match)";
+    });
+  }
 
   // Match Completion sprint: "Return to Lobby" reuses the EXACT same
   // existing navigation call as backBtn above — no new routing system.

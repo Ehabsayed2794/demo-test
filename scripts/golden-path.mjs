@@ -105,6 +105,131 @@ async function waitFor(page, fn, timeoutMs, arg) {
 }
 function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
+// ── Emulator-anomaly hardening (harness-only, see INVESTIGATION_CLOSEOUT.md).
+// Two CONFIRMED emulator-only anomalies get bounded, condition-based retry:
+//   (a) STALE_GAME_STATE version races (emulator read-path lag up to ~5s;
+//       0ms on real Firestore), and
+//   (b) extendMatchRounds()-style permission-denied where the emulator's
+//       transaction retry-on-conflict fails to engage before Rules
+//       evaluation (0 denials on real Firestore across 12/12 attempts).
+// Every OTHER rejection fails immediately, exactly as before — no blanket
+// catch-and-continue, no production-code change.
+var STALE_WAIT_TIMEOUT_MS = Number(process.env.GOLDEN_STALE_TIMEOUT_MS || 6000);
+var STALE_WAIT_INTERVAL_MS = 200;
+var STALE_MAX_RETRIES = 3;
+var EXTEND_DENIED_MAX_RETRIES = 3;
+
+function parseStaleVersions(errorText) {
+  var m = String(errorText || "").match(/expected version (\d+), found (\d+)/);
+  if (!m) return null;
+  return { expected: Number(m[1]), found: Number(m[2]) };
+}
+function isStaleError(res) {
+  if (!res || (!res.error && !res.reason)) return false;
+  // Production bidError() sets .reason (not .code); the Firestore SDK sets
+  // .code. Check all three shapes — message text is the common fallback.
+  return res.code === "STALE_GAME_STATE" || res.reason === "STALE_GAME_STATE" ||
+    String(res.error).indexOf("STALE_GAME_STATE") !== -1 ||
+    String(res.error).indexOf("match document changed since") !== -1;
+}
+function isExtendPermissionDenied(err) {
+  if (!err) return false;
+  var code = String(err.code || "");
+  var reason = String(err.reason || "");
+  var msg = String(err.error || err.message || "");
+  return code === "PERMISSION_DENIED" || code === "permission-denied" ||
+    reason === "PERMISSION_DENIED" || reason === "permission-denied" ||
+    msg.indexOf("permission-denied") !== -1 || msg.indexOf("PERMISSION_DENIED") !== -1;
+}
+// Force a SERVER read (bypass the emulator-lagged local cache) and return
+// the authoritative match version, or null if unreadable. Uses the page's
+// already-available window.Db compat SDK ({source:"server"}); falls back to
+// the cached window.MatchService.loadMatch() so a missing server-read path
+// degrades to today's behavior instead of throwing.
+async function readServerVersion(page, matchId) {
+  return page.evaluate(async (id) => {
+    try {
+      if (window.Db && window.Db.collection) {
+        var snap = await window.Db.collection("matches").doc(id).get({ source: "server" });
+        var data = snap && snap.exists ? snap.data() : null;
+        if (data && typeof data.version === "number") return data.version;
+      }
+    } catch (e) { /* fall through to cached read */ }
+    try {
+      var doc = await window.MatchService.loadMatch(id);
+      return doc && typeof doc.version === "number" ? doc.version : null;
+    } catch (e2) { return null; }
+  }, matchId).catch(() => null);
+}
+// Bounded condition-based wait: poll the SERVER version until it reaches or
+// exceeds targetVersion, or the timeout elapses. Returns
+// {converged:true, observed} or {converged:false, observed} — never loops
+// forever, never a single blind sleep.
+async function waitForServerVersion(pages, matchId, targetVersion, timeoutMs, label) {
+  var deadline = Date.now() + (timeoutMs || STALE_WAIT_TIMEOUT_MS);
+  var observed = null;
+  while (Date.now() < deadline) {
+    observed = await readServerVersion(pages[0], matchId);
+    if (observed !== null && observed >= targetVersion) {
+      logEvent("SERVER_VERSION_CONVERGED", { label: label, targetVersion: targetVersion, observed: observed });
+      return { converged: true, observed: observed };
+    }
+    await sleep(STALE_WAIT_INTERVAL_MS);
+  }
+  logEvent("SERVER_VERSION_TIMEOUT", { label: label, targetVersion: targetVersion, observed: observed, note: "condition-based wait insufficient" });
+  return { converged: false, observed: observed };
+}
+// Bounded retry for an extendMatchRounds()-style permission-denied observed
+// during natural round-advancement/extension progression. Only
+// permission-denied (the characterized emulator anomaly) is retried, and
+// only when the local engine says an extension actually applies to
+// completedRound (rounds 14-18, SUPER_CALL/SAAYDA); any other outcome
+// (ALREADY_EXTENDED, MATCH_ALREADY_COMPLETE, INVALID_ARGUMENT, genuine
+// denial) is returned as-is with no further retry.
+async function retryExtendOnDenied(pages, matchId, completedRound) {
+  var probe = await pages[0].evaluate(() => {
+    try {
+      var last = (window.GameSession && typeof window.GameSession.getLastRoundResult === "function")
+        ? window.GameSession.getLastRoundResult() : null;
+      var ext = last && last.roundExtension ? last.roundExtension : null;
+      return { round: last && last.round, extend: !!(ext && ext.extend), reason: ext && ext.reason };
+    } catch (e) { return { error: String((e && e.message) || e) }; }
+  }).catch((e) => ({ error: String((e && e.message) || e) }));
+  if (!probe || !probe.extend || typeof completedRound !== "number" || completedRound < 14 || completedRound > 18) {
+    return { attempted: false, probe: probe };
+  }
+  // Mirror production's own gate (match-adapter.js maybeExtendOrCompleteMatch:
+  // lastResult.round === completedRound): never extend for a round other than
+  // the one whose local result actually qualified — an extend write for the
+  // wrong round would bump maxRounds without a qualifying event.
+  if (probe.round !== completedRound) {
+    return { attempted: false, probe: probe, reason: "PROBE_ROUND_MISMATCH" };
+  }
+  var reason = probe.reason === "SUPER_CALL" || probe.reason === "SAAYDA" ? probe.reason : null;
+  if (!reason) return { attempted: false, probe: probe, reason: "NO_VALID_REASON" };
+  for (var attempt = 1; attempt <= EXTEND_DENIED_MAX_RETRIES; attempt++) {
+    var res = await pages[0].evaluate(async (args) => {
+      try {
+        var r = await window.MatchService.extendMatchRounds(args.matchId, args.completedRound, args.reason);
+        return { ok: true, result: r };
+      } catch (e) {
+        return { ok: false, error: e.message, code: e.code, reason: e.reason };
+      }
+    }, { matchId: matchId, completedRound: completedRound, reason: reason }).catch((e) => ({ ok: false, error: String((e && e.message) || e) }));
+    logEvent("EXTEND_RETRY_ATTEMPT", { completedRound: completedRound, reason: reason, attempt: attempt, res: res });
+    if (res.ok) return { attempted: true, ok: true, res: res };
+    if (!isExtendPermissionDenied(res)) return { attempted: true, ok: false, res: res, reason: "NON_DENIED_ERROR_NOT_RETRIED" };
+    if (attempt < EXTEND_DENIED_MAX_RETRIES) {
+      // Condition-based wait between attempts: let the emulator's
+      // settlement catch up (server-forced poll, bounded), then retry.
+      await waitForServerVersion(pages, matchId, 0, STALE_WAIT_TIMEOUT_MS, "extend-" + completedRound + "-attempt-" + attempt);
+    } else {
+      return { attempted: true, ok: false, res: res, reason: "EXTEND_DENIED_RETRIES_EXHAUSTED" };
+    }
+  }
+  return { attempted: true, ok: false, reason: "UNREACHABLE" };
+}
+
 async function screenshotAll(pages, label) {
   fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
   await Promise.all(pages.map((page, i) => page.screenshot({
@@ -271,7 +396,7 @@ async function attemptOneBiddingAction(page, matchId, seatId) {
           }
           return { submitted: c, result: result };
         } catch (e) {
-          return { submitted: c, error: e.message, code: e.code };
+          return { submitted: c, error: e.message, code: e.code, reason: e.reason };
         }
       }
     }
@@ -288,7 +413,7 @@ async function attemptOneBiddingAction(page, matchId, seatId) {
 // progress for too many iterations) -- never silently loops forever.
 async function driveBidding(pages, matchId, maxIterations) {
   var log = [];
-  var lastWaitingFor = null, stall = 0;
+  var lastWaitingFor = null, stall = 0, biddingStaleRetries = 0;
   for (var iter = 0; iter < (maxIterations || 250); iter++) {
     var states = await Promise.all(pages.map((p) => p.evaluate(() => window.BiddingEngine ? window.BiddingEngine.getState() : null).catch(() => null)));
     if (states.some((s) => !s)) { await sleep(200); continue; }
@@ -307,7 +432,34 @@ async function driveBidding(pages, matchId, maxIterations) {
     var res = await attemptOneBiddingAction(pages[idx], matchId, waitingFor);
     log.push({ iter: iter, seat: waitingFor, subPhase: ref.subPhase, res: res });
     if (res.noLegalCandidate) return { ok: false, reason: "NO_LEGAL_BIDDING_CANDIDATE", log: log };
-    if (res.error) {
+    if (res.error && isStaleError(res) && biddingStaleRetries < STALE_MAX_RETRIES) {
+      // Emulator-only STALE_GAME_STATE (INVESTIGATION_CLOSEOUT.md track 1):
+      // condition-based wait for the SERVER version to reach the version
+      // named in the rejection, then resubmit as a genuinely new attempt.
+      // Any OTHER bidding error keeps today's behavior (benign-race
+      // tolerance via the stall detector below, never a blind retry).
+      biddingStaleRetries++;
+      var bidParsed = parseStaleVersions(res.error);
+      var bidTarget = bidParsed ? bidParsed.found : null;
+      logEvent("STALE_GAME_STATE_RETRY", { phase: "bidding", seat: waitingFor, subPhase: ref.subPhase, iter: iter, retry: biddingStaleRetries, errorCode: res.code || "STALE_GAME_STATE", targetVersion: bidTarget });
+      if (bidTarget === null) {
+        findings.push({ label: `bidding-write-${ref.round}-${iter}`, note: res });
+        return { ok: false, reason: "BIDDING_WRITE_REJECTED", log: log, seat: waitingFor, error: res };
+      }
+      var bidWaited = await waitForServerVersion(pages, matchId, bidTarget, STALE_WAIT_TIMEOUT_MS, "bidding-" + ref.round + "-" + iter);
+      if (!bidWaited.converged) {
+        findings.push({ label: `bidding-write-${ref.round}-${iter}`, note: { error: res, observed: bidWaited.observed, note: "condition-based wait insufficient" } });
+        return { ok: false, reason: "STALE_CONVERGENCE_TIMEOUT", log: log, seat: waitingFor, error: res, observed: bidWaited.observed };
+      }
+      await sleep(120);
+      continue;
+    }
+    if (!res.error) biddingStaleRetries = 0;
+    if (res.error && isStaleError(res) && biddingStaleRetries >= STALE_MAX_RETRIES) {
+      findings.push({ label: `bidding-write-${ref.round}-${iter}`, note: { error: res, note: "STALE retries exhausted (bounded, not extended)" } });
+      return { ok: false, reason: "BIDDING_WRITE_REJECTED", log: log, seat: waitingFor, error: res };
+    }
+    if (res.error && !isStaleError(res)) {
       // A single rejected attempt can be a benign race (this page's
       // own cached state one delivery behind) -- only a genuine stall
       // (same waitingFor, no progress, many iterations) is reported
@@ -337,7 +489,7 @@ async function attemptOneCardPlay(page, matchId, seatId) {
           var result = await window.MatchService.submitCard(args.matchId, { suit: card.suit, rank: card.rank });
           return { submitted: { suit: card.suit, rank: card.rank }, result: result };
         } catch (e) {
-          return { error: e.message, code: e.code, attempted: { suit: card.suit, rank: card.rank } };
+          return { error: e.message, code: e.code, reason: e.reason, attempted: { suit: card.suit, rank: card.rank } };
         }
       }
     }
@@ -412,11 +564,28 @@ async function driveRoundCardPlay(pages, matchId, roundNumber, maxIterations) {
     log.push({ iter, seat: turn, res });
     if (res.noLegalCard) return { ok: false, reason: "NO_LEGAL_CARD", log, seat: turn };
     if (res.error) {
-      var isStale = res.code === "STALE_GAME_STATE" || (res.error && res.error.indexOf("STALE_GAME_STATE") !== -1) || (res.error && res.error.indexOf("match document changed since this card was validated") !== -1);
-      if (isStale && staleRetries < 1) {
+      if (isStaleError(res) && staleRetries < STALE_MAX_RETRIES) {
+        // Emulator-only STALE_GAME_STATE (INVESTIGATION_CLOSEOUT.md track 1):
+        // the emulator's read paths can lag the committed version by up to
+        // ~5s (0ms on real Firestore), so a fixed 250ms sleep resubmits
+        // against still-stale local state. Instead, force a SERVER read and
+        // poll (bounded timeout + interval) until the observed version
+        // reaches the version named in the rejection, THEN resubmit the
+        // same logical action as a genuinely new attempt on the next loop
+        // iteration. Timeout without convergence fails loudly below.
         staleRetries++;
-        logEvent('STALE_GAME_STATE_RETRY', { round: roundNumber, seat: turn, iter: iter, retry: staleRetries, errorCode: res.code || "STALE_GAME_STATE", attempted: res.attempted || null });
-        await sleep(250);
+        var staleParsed = parseStaleVersions(res.error);
+        var staleTarget = staleParsed ? staleParsed.found : null;
+        logEvent('STALE_GAME_STATE_RETRY', { round: roundNumber, seat: turn, iter: iter, retry: staleRetries, errorCode: res.code || "STALE_GAME_STATE", attempted: res.attempted || null, targetVersion: staleTarget });
+        if (staleTarget === null) {
+          findings.push({ label: `card-write-${roundNumber}-${iter}`, note: res });
+          return { ok: false, reason: "CARD_WRITE_REJECTED", log, seat: turn, error: res };
+        }
+        var staleWaited = await waitForServerVersion(pages, matchId, staleTarget, STALE_WAIT_TIMEOUT_MS, "card-" + roundNumber + "-" + iter);
+        if (!staleWaited.converged) {
+          findings.push({ label: `card-write-${roundNumber}-${iter}`, note: { error: res, observed: staleWaited.observed, note: "condition-based wait insufficient" } });
+          return { ok: false, reason: "STALE_CONVERGENCE_TIMEOUT", log, seat: turn, error: res, observed: staleWaited.observed };
+        }
         continue;
       }
       staleRetries = 0;
@@ -791,7 +960,31 @@ async function main() {
         roundViewsN.every((v) => v.round === roundViewsN[0].round);
       check("Round " + pad2(rn) + " -> Round " + pad2(rn + 1) + " convergence (all 4 clients agree on round number, live maxRounds=" + liveMaxRounds + ")",
         roundConverged, JSON.stringify(roundViewsN));
-      if (!roundConverged) { stoppedAtRound = rn; break; }
+      if (!roundConverged) {
+        // Emulator-only extend anomaly (INVESTIGATION_CLOSEOUT.md track 2):
+        // if round rn qualified for a maxRounds extension, the emulator may
+        // have denied every client's extendMatchRounds() attempt without
+        // engaging transaction retry (real Firestore retries and succeeds).
+        // Give the extension one bounded, explicit retry — permission-denied
+        // only — then re-wait once for convergence before giving up.
+        var extendRetry = await retryExtendOnDenied(pages, matchId, rn);
+        if (extendRetry.attempted) {
+          logEvent("EXTEND_BOUNDARY_RETRY", { round: rn, extendRetry: extendRetry });
+          var roundViewsRetry = [];
+          for (var ri = 0; ri < 4; ri++) {
+            var rvN = await waitFor(pages[ri], (expected) => {
+              var r = window.GameSession && window.GameSession.getRound();
+              return r && r.number >= expected ? { round: r.number } : null;
+            }, 20000, rn + 1);
+            roundViewsRetry.push(rvN);
+          }
+          var retryConverged = roundViewsRetry.every(Boolean) && roundViewsRetry.every((v) => v.round === roundViewsRetry[0].round);
+          check("Round " + pad2(rn) + " -> Round " + pad2(rn + 1) + " convergence after bounded extend retry",
+            retryConverged, JSON.stringify(roundViewsRetry));
+          if (retryConverged) continue;
+        }
+        stoppedAtRound = rn; break;
+      }
     }
   } else {
     stoppedAtRound = 1;

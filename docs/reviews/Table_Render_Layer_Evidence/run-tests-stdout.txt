@@ -1,0 +1,1735 @@
+[run-tests] Running 40 test files from tests/
+
+ΓöÇΓöÇΓöÇΓöÇ bid-sync.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+PASS  MOCKED ΓÇö Task 1: startBidSync() delivers the initial (pre-bid) snapshot without applying anything (no bid yet)
+PASS  MOCKED ΓÇö remote bid: submitBid() itself succeeds (Sprint 3.8, unchanged)
+PASS  MOCKED ΓÇö Acceptance: the REAL bidding-engine.js executed exactly once ΓÇö p2's estimate is now recorded
+PASS  MOCKED ΓÇö Acceptance: the engine correctly advanced to the next seat (p3), proving the real reducer ran, not a stub
+PASS  MOCKED ΓÇö Acceptance: no Firestore write happened outside MatchService ΓÇö the mocked document's version is exactly what submitBid() itself produced (2), nothing else touched it
+PASS  MOCKED ΓÇö duplicate snapshot: re-delivering the same snapshot does not change the recorded estimate
+PASS  MOCKED ΓÇö duplicate snapshot: re-delivering the same snapshot does not move the engine's turn pointer (no replayed state)
+PASS  MOCKED ΓÇö version rollback: a stale, lower-version snapshot never overwrites the already-applied estimate
+PASS  MOCKED ΓÇö version rollback: the engine's turn pointer is unaffected by the stale delivery
+PASS  MOCKED ΓÇö multiple sequential bids: the engine is waiting for p2 before this submission
+PASS  MOCKED ΓÇö multiple sequential bids: p2's estimate (1) is recorded immediately after its own submission
+PASS  MOCKED ΓÇö multiple sequential bids: the engine is waiting for p3 before this submission
+PASS  MOCKED ΓÇö multiple sequential bids: p3's estimate (2) is recorded immediately after its own submission
+PASS  MOCKED ΓÇö multiple sequential bids: the engine is waiting for p4 before this submission
+PASS  MOCKED ΓÇö multiple sequential bids: p4's estimate (1) is recorded immediately after its own submission
+PASS  MOCKED ΓÇö GameSession consistency: bidding is now complete ΓÇö every real seat has a recorded estimate
+PASS  MOCKED ΓÇö GameSession consistency: GameSession.getRound() reflects the committed caller/trump/withPlayers from the real engine
+PASS  MOCKED ΓÇö Firestore-side consistency: the mocked document's own bids map matches GameSession's estimates exactly (same values, correctly attributed per seat)
+PASS  MOCKED ΓÇö local bid: the local, direct engine call succeeds and is recorded
+PASS  MOCKED ΓÇö local bid: the echo of the client's OWN bid does not re-execute the engine ΓÇö estimate is unchanged (still 3, not double-applied)
+PASS  MOCKED ΓÇö local bid: the engine's turn pointer, already advanced by the local call, is not moved again by the echo
+PASS  MOCKED ΓÇö late subscriber: joining after bids were already applied does not change any already-recorded estimate
+PASS  MOCKED ΓÇö late subscriber: joining does not move the engine's turn pointer
+PASS  MOCKED ΓÇö late subscriber: no duplicated listener was created ΓÇö MatchService's own ref-counted registry is reused (Sprint 3.7, unchanged)
+PASS  MOCKED ΓÇö listener restart setup: p2's bid applied before any disconnect
+PASS  MOCKED ΓÇö listener restart: after reconnecting, the previously-applied estimate is still correct (not reset, not reapplied)
+PASS  MOCKED ΓÇö listener restart: a NEW bid submitted after reconnect is correctly applied through the restarted listener
+PASS  MOCKED ΓÇö listener duplicate event: three redundant re-deliveries of the current snapshot cause zero additional engine changes
+PASS  MOCKED ΓÇö regression: MatchService.submitDashCall() is still an unimplemented stub, unchanged by this sprint
+PASS  MOCKED ΓÇö regression: MatchService.submitPass() is still an unimplemented stub, unchanged by this sprint
+PASS  MOCKED ΓÇö regression: MatchService.declareTrump() is still an unimplemented stub, unchanged by this sprint
+PASS  MOCKED ΓÇö regression: MatchService.submitEstimate() is still an unimplemented stub, unchanged by this sprint
+PASS  MOCKED ΓÇö regression: MatchService.playCard() is still an unimplemented stub, unchanged by this sprint
+PASS  MOCKED ΓÇö regression: MatchService.resolveTrick() is still an unimplemented stub, unchanged by this sprint
+PASS  MOCKED ΓÇö regression: MatchService.completeRound() is still an unimplemented stub, unchanged by this sprint
+PASS  MOCKED ΓÇö regression: MatchAdapter.bootstrapGameSession (Sprint 3.9) is still present and unchanged in shape
+PASS  MOCKED ΓÇö regression: MatchAdapter.matchDocToEngineSnapshot (Sprint 3.9) is still present and unchanged in shape
+
+37 passed, 0 failed
+PASS  bid-sync.test.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ bidding-action-sync.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+PASS  A. Dash sync: submitBiddingAction() succeeds and appends exactly 1 entry
+PASS  A. Dash sync: the REAL bidding-engine.js executed ΓÇö p1's dash decision is recorded
+PASS  A. Dash sync: engine correctly advanced to p2
+PASS  B. setup: reached AUCTION locally
+PASS  B. Auction sync: submitBiddingAction() succeeds
+PASS  B. Auction sync: the REAL engine applied the raise ΓÇö auctionTop is now 5 Spades
+PASS  C. setup: reached CONFIRM locally with p1 as caller
+PASS  C. Confirm sync: submitBiddingAction() succeeds
+PASS  C. Confirm sync: the REAL engine locked the trump and moved to ESTIMATES
+PASS  D. Boundary: submitBiddingAction() rejects a SubmitFinalEstimate actionType ΓÇö that remains submitBid()'s exclusive job
+PASS  E. Malformed action: every malformed shape is rejected INVALID_BIDDING_ACTION_VALUE, before any Firestore access
+PASS  E. Malformed action: zero writes were attempted for any malformed case ΓÇö version unchanged
+PASS  F. Wrong player (unseated uid): rejected PERMISSION_DENIED, zero writes
+PASS  F. Wrong player (real seat, wrong turn): rejected ILLEGAL_BIDDING_ACTION ("Not this seat's turn"), zero writes
+PASS  G. Wrong phase: an AUCTION-shaped action during DASH is rejected ILLEGAL_BIDDING_ACTION ("Not the Auction phase"), zero writes
+PASS  H. Duplicate: re-delivering the SAME (already-applied) snapshot is recognized as a no-op
+PASS  H. Duplicate: the engine's turn did NOT advance again
+PASS  I. Stale: a version-2 snapshot delivered after version-3 was already applied is rejected STALE_VERSION
+PASS  I. Stale: the engine's already-advanced turn is NOT rolled back
+PASS  J. Reload/resume: a fresh subscribe replays the FULL existing log ΓÇö engine correctly waiting on p4
+PASS  J. Reload/resume: all 3 prior decisions are reflected in the resumed engine state
+PASS  K. Listener duplication: starting 3 different sync pipelines for the SAME matchId creates exactly ONE real onSnapshot registration
+PASS  L. Concurrent submission: EXACTLY ONE of the two simultaneous calls succeeds
+PASS  L. Concurrent submission: the other is rejected (STALE_GAME_STATE or a legality mismatch caused by the race) ΓÇö never silently double-applied
+PASS  L. Concurrent submission: the document's log grew by exactly 1 entry, not 2 ΓÇö no duplicate/lost write
+PASS  M. Local vs remote: the self-echo is recognized as ALREADY_APPLIED_LOCALLY (benign), not a desync
+PASS  M. Local vs remote: the engine's turn was NOT advanced a second time by the echo
+PASS  N. Convergence: after 4 remote Dash decisions, engine reached AUCTION exactly as the direct-emit() equivalent would
+PASS  N. Convergence: remote auction bid produced the identical auctionTop/Suit a direct emit() call would
+PASS  O. Malformed remote SubmitConfirmCall (missing tricks/suit): applyRemoteBiddingAction() does NOT throw
+PASS  O. Malformed remote SubmitConfirmCall: returns a structured desync result, not a fabricated success
+PASS  O. Malformed remote SubmitConfirmCall: reason is ENGINE_REJECTED (canSubmit() caught it as "Malformed intent" before emit() ever ran)
+PASS  O. Malformed remote SubmitConfirmCall: the engine's turn/state was NOT mutated by the rejected replay
+
+33 passed, 0 failed
+PASS  bidding-action-sync.test.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ bidding-contract.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+PASS  canSubmit() never mutates engine state, across every intent shape and malformed input
+PASS  canSubmit(null) is illegal with a clear reason
+PASS  canSubmit({}) (no type) is illegal ΓÇö malformed intent
+PASS  canSubmit() of an unknown intent type is illegal
+PASS  DASH: canSubmit is legal for the waiting seat
+PASS  DASH: canSubmit is illegal for a seat that isn't waiting
+PASS  DASH: an AUCTION-phase intent is illegal ΓÇö wrong phase
+PASS  HARDENING A: SubmitDashCallDecision missing declaredDashCall is illegal ("Malformed intent")
+PASS  DASH step 0: canSubmit says legal before emit()
+PASS  DASH step 0: emit() actually accepted it (not rejected), matching canSubmit()'s verdict
+PASS  DASH step 1: canSubmit says legal before emit()
+PASS  DASH step 1: emit() actually accepted it (not rejected), matching canSubmit()'s verdict
+PASS  DASH step 2: canSubmit says legal before emit()
+PASS  DASH step 2: emit() actually accepted it (not rejected), matching canSubmit()'s verdict
+PASS  DASH step 3: canSubmit says legal before emit()
+PASS  DASH step 3: emit() actually accepted it (not rejected), matching canSubmit()'s verdict
+PASS  Reached AUCTION after all 4 decline
+PASS  AUCTION: a bid below 4 tricks is illegal (out of range)
+PASS  HARDENING B: SubmitAuctionBid missing suit (non-pass) is illegal ("Malformed intent")
+PASS  HARDENING C: SubmitAuctionBid missing tricks (non-pass) is illegal ("Malformed intent")
+PASS  HARDENING: a genuine pass (no tricks/suit) remains legal ΓÇö the malformed-intent check does not over-reject
+PASS  AUCTION: opening bid of 4 Spades (beats top of 0) is legal
+PASS  AUCTION: opener's bid was actually accepted, matching canSubmit()'s verdict
+PASS  AUCTION: matching the top bid's number+suit (With) is legal
+PASS  AUCTION: the With match was actually granted, matching canSubmit()'s verdict
+PASS  AUCTION: same number, weaker suit (Hearts < Spades) does not beat the top ΓÇö illegal
+PASS  AUCTION: emit() reinterpreted the same illegal-raise bid as a forced pass (seat eliminated), not a raise
+PASS  Auction concludes in CONFIRM
+PASS  HARDENING D: SubmitConfirmCall missing tricks/suit is illegal ("Malformed intent")
+PASS  CONFIRM: lowering the winning call is illegal
+PASS  CONFIRM: same number with a weaker suit (Clubs < Spades) is illegal
+PASS  CONFIRM: keeping the exact winning call is legal
+PASS  Confirmed call actually moved bidding to ESTIMATES, matching canSubmit()'s verdict
+PASS  ESTIMATES: exceeding the Caller's cap is illegal
+PASS  HARDENING E: SubmitFinalEstimate missing tricks is illegal ("Malformed intent")
+PASS  ESTIMATES: firstLegalEstimate() found a value canSubmit() calls legal for p2
+PASS  ESTIMATES: re-checking that same value with canSubmit() still says legal
+PASS  ESTIMATES: emit() actually accepts the value canSubmit() called legal, for p2
+PASS  ESTIMATES: firstLegalEstimate() found a value canSubmit() calls legal for p3
+PASS  ESTIMATES: re-checking that same value with canSubmit() still says legal
+PASS  ESTIMATES: emit() actually accepts the value canSubmit() called legal, for p3
+PASS  ESTIMATES: firstLegalEstimate() found a value canSubmit() calls legal for p4
+PASS  ESTIMATES: re-checking that same value with canSubmit() still says legal
+PASS  ESTIMATES: emit() actually accepts the value canSubmit() called legal, for p4
+PASS  Bidding reaches DONE
+PASS  Second deterministic pass also reaches ESTIMATES with a cap of 4
+PASS  Forbidden-13 value for the deterministic pass is reachable and matches the expected formula (13 - 12 = 1)
+PASS  ESTIMATES: the Forbidden-13 value is illegal per canSubmit()
+PASS  ESTIMATES: emit() actually rejects that same Forbidden-13 value, matching canSubmit()'s verdict
+PASS  ESTIMATES: a non-forbidden value for the same seat is legal per canSubmit()
+PASS  ESTIMATES: emit() accepts that non-forbidden value, matching canSubmit()'s verdict
+PASS  Deterministic pass reaches DONE
+PASS  Once DONE, canSubmit() reports illegal with the completion reason for any intent
+PASS  DASH LIMIT: 1st Dash Call is legal
+PASS  DASH LIMIT: emit() accepts the 1st Dash Call, matching canSubmit()
+PASS  DASH LIMIT: 2nd Dash Call (reaching the limit) is legal
+PASS  DASH LIMIT: emit() accepts the 2nd Dash Call, matching canSubmit()
+PASS  DASH LIMIT: a 3rd attempt past the limit is STILL legal per canSubmit() (emit() never rejects this intent ΓÇö it auto-converts to PASS)
+PASS  DASH LIMIT: emit() actually accepts it too (rejected:false), matching canSubmit()'s verdict ΓÇö it is recorded as PASS, not DASHCALL, but not rejected
+PASS  DASH LIMIT: the 3rd seat was recorded as PASS, not DASHCALL, confirming the limit was enforced at the OUTCOME level, not the acceptance level
+PASS  AUCTION BOUNDARY: exactly 4 tricks (the minimum) is legal
+PASS  AUCTION BOUNDARY: exactly 13 tricks (the maximum) is legal
+PASS  AUCTION BOUNDARY: 14 tricks (above maximum) is illegal
+PASS  AUCTION: a bid from a seat that isn't waiting is illegal
+PASS  AUCTION: a DASH-phase intent submitted during AUCTION is illegal ΓÇö wrong phase (converse of the earlier DASH-phase check)
+PASS  AUCTION BOUNDARY: emit() actually accepted the maximum legal bid (13), matching canSubmit()'s verdict
+PASS  CONFIRM setup: auction concluded with Clubs (the weakest suit) as the winning suit
+PASS  CONFIRM BOUNDARY: same number, EQUAL suit strength is legal
+PASS  CONFIRM BOUNDARY: same number, a STRICTLY STRONGER suit (Spades > Clubs) is legal
+PASS  CONFIRM BOUNDARY: emit() actually accepted the stronger-suit switch, matching canSubmit()'s verdict
+PASS  CONFIRM: a confirm from a non-waiting seat is illegal
+PASS  CONFIRM: an AUCTION-phase intent submitted during ESTIMATES/CONFIRM transition is illegal ΓÇö wrong phase
+PASS  FAST ROUND setup: round 14 skips Dash/Auction straight to ESTIMATES with SANS forced
+PASS  FAST ROUND: a Super Call (8+) sends bidding back to CONFIRM with the exemption flag set
+PASS  SUPER CALL EXEMPTION: same number with the WEAKEST suit (Clubs, weaker than the forced SANS trump) is legal ONLY because noSuitConstraint bypasses the check
+PASS  SUPER CALL EXEMPTION: emit() actually accepts the weak-suit lock under the exemption, matching canSubmit()'s verdict
+PASS  WITH-FLOOR setup: reached ESTIMATES with the With seat's floor established at 6
+PASS  WITH-FLOOR BOUNDARY: one below the floor (5 < 6) is illegal
+PASS  WITH-FLOOR BOUNDARY: exactly the floor (6) is legal
+PASS  WITH-FLOOR BOUNDARY: emit() actually accepts exactly the floor value, matching canSubmit()'s verdict
+PASS  canSubmit(undefined) is illegal
+PASS  canSubmit({type: undefined}) is illegal ΓÇö missing type
+PASS  canSubmit() with a missing playerId is illegal (matches nobody's turn)
+PASS  canSubmit("a string") (non-object intent) is illegal
+PASS  canSubmit(42) (non-object intent) is illegal
+PASS  READ-ONLY: canSubmit() left BiddingEngine.getState() byte-for-byte unchanged across every action family, mid-match
+PASS  READ-ONLY: canSubmit() left GameSession.getBiddingState() (the persisted record) byte-for-byte unchanged
+PASS  READ-ONLY: canSubmit() never mutated any of the caller's own intent objects
+PASS  STRUCTURAL: canSubmit()'s source is present and findable
+PASS  STRUCTURAL: canSubmit()'s body never calls emit(
+PASS  STRUCTURAL: canSubmit()'s body never calls pushLog(
+PASS  STRUCTURAL: canSubmit()'s body never references GameSession
+PASS  initState/emit/getState are all still functions on the export object
+PASS  canSubmit is now also present on the export object
+
+94 passed, 0 failed
+PASS  bidding-contract.test.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ card-sync.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+PASS  MOCKED ΓÇö Task 1: startCardSync() delivers the initial (pre-play) snapshot without applying anything (no card yet)
+PASS  MOCKED ΓÇö remote card: submitCard() itself succeeds
+PASS  MOCKED ΓÇö Acceptance: the REAL table-engine.js executed exactly once ΓÇö the card is now recorded in the engine's current trick
+PASS  MOCKED ΓÇö Acceptance: the engine correctly advanced to the next seat, proving the real reducer ran, not a stub
+PASS  MOCKED ΓÇö Acceptance: no Firestore write happened outside MatchService ΓÇö the mocked document's version is exactly what submitCard() itself produced (2)
+PASS  MOCKED ΓÇö duplicate snapshot: re-delivering the same snapshot does not add another play
+PASS  MOCKED ΓÇö duplicate snapshot: re-delivering the same snapshot does not move the engine's turn pointer (no replayed state / no double turn advance)
+PASS  MOCKED ΓÇö version rollback: a stale, lower-version snapshot never rolls back the already-applied play
+PASS  MOCKED ΓÇö version rollback: the engine's turn pointer is unaffected by the stale delivery
+PASS  MOCKED ΓÇö multiple sequential cards: p2's card is recorded immediately after its own submission
+PASS  MOCKED ΓÇö multiple sequential cards: p3's card is recorded immediately after its own submission
+PASS  MOCKED ΓÇö multiple sequential cards: p4's card is recorded immediately after its own submission
+PASS  MOCKED ΓÇö multiple sequential cards: p1's card is recorded immediately after its own submission
+PASS  MOCKED ΓÇö multiple sequential cards: all 4 real seats each contributed exactly one play to this trick
+PASS  MOCKED ΓÇö GameSession consistency: table-engine.js's own persisted play state (GameSession.getPlayState()) matches what the engine actually did
+PASS  MOCKED ΓÇö Firestore-side consistency: the mocked document's own cardLog has exactly 4 entries, matching the 4 real submissions
+PASS  MOCKED ΓÇö local echo: this client's own submission is applied to the engine EXACTLY ONCE, via its own subscription's echo, not via any separate direct call
+PASS  MOCKED ΓÇö local echo: a redundant re-delivery of this client's OWN echo does not re-execute the engine ΓÇö play count unchanged (not double-applied)
+PASS  MOCKED ΓÇö late subscriber: joining after a card was already applied does not add another play
+PASS  MOCKED ΓÇö late subscriber: joining does not move the engine's turn pointer
+PASS  MOCKED ΓÇö late subscriber: no duplicated listener was created ΓÇö MatchService's own ref-counted registry is reused
+PASS  MOCKED ΓÇö listener restart setup: a card applied before any disconnect
+PASS  MOCKED ΓÇö listener restart: after reconnecting, the previously-applied plays are still correct (not reset, not reapplied)
+PASS  MOCKED ΓÇö listener restart: a NEW card submitted after reconnect is correctly applied through the restarted listener
+PASS  MOCKED ΓÇö listener duplicate event: three redundant re-deliveries of the current snapshot cause zero additional engine changes
+PASS  MOCKED ΓÇö wrong turn rejection: assertLocalTurn() throws NOT_LOCAL_TURN when matches/{matchId}.turn names a DIFFERENT seat than the local caller ΓÇö 'reject locally, do not send writes'
+PASS  MOCKED ΓÇö correct player accepted: assertLocalTurn() does not throw when the local seat DOES match matches/{matchId}.turn
+PASS  MOCKED ΓÇö adapter corruption (end-to-end): a malformed live delivery (cardLog not an array) never throws/crashes the pipeline
+PASS  MOCKED ΓÇö adapter corruption (end-to-end): the malformed delivery caused no engine change
+PASS  MOCKED ΓÇö observed opponent replay: a real card absent from the local fake hand is applied
+PASS  MOCKED ΓÇö observed opponent replay: the local fake hand remains without the opponent card after replay
+PASS  MOCKED ΓÇö regression: MatchService.submitDashCall() is still an unimplemented stub, unchanged by this sprint
+PASS  MOCKED ΓÇö regression: MatchService.submitPass() is still an unimplemented stub, unchanged by this sprint
+PASS  MOCKED ΓÇö regression: MatchService.declareTrump() is still an unimplemented stub, unchanged by this sprint
+PASS  MOCKED ΓÇö regression: MatchService.submitEstimate() is still an unimplemented stub, unchanged by this sprint
+PASS  MOCKED ΓÇö regression: MatchService.playCard() is still an unimplemented stub, unchanged by this sprint
+PASS  MOCKED ΓÇö regression: MatchService.resolveTrick() is still an unimplemented stub, unchanged by this sprint
+PASS  MOCKED ΓÇö regression: MatchService.completeRound() is still an unimplemented stub, unchanged by this sprint
+PASS  MOCKED ΓÇö regression: MatchAdapter.applyRemoteBid (Sprint 4.0) is still present and unchanged in shape
+PASS  MOCKED ΓÇö regression: MatchAdapter.applyRemoteTurn (Sprint 4.1) is still present and unchanged in shape
+PASS  MOCKED ΓÇö regression: MatchAdapter.assertLocalTurn (Sprint 4.1) is still present and unchanged in shape ΓÇö REUSED, not reimplemented, this sprint
+
+41 passed, 0 failed
+PASS  card-sync.test.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ deal-path-gating.p0-fix.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+ΓöÇΓöÇ F1-1 dealer-seat gate on the adapter attempt path ΓöÇΓöÇ
+PASS  A1 non-dealer p4 snapshot -> dealRound NEVER called (0 calls)
+PASS  A2 dealer p1 snapshot -> dealRound called exactly once
+PASS  A3 repeat snapshot, same round -> still exactly one call
+PASS  A4 null dealer -> no attempt
+PASS  A5 unseated dealer -> no attempt
+
+ΓöÇΓöÇ F1-3 full denial-body logging on swallowed rejection ΓöÇΓöÇ
+PASS  E1 rejection logged with code+message (not silent)
+
+ΓöÇΓöÇ F1-2 authority switch clears cached local fallback hands ΓöÇΓöÇ
+PASS  B1 precondition: local fallback shuffle present before switch
+PASS  B2 getHands() empty after switch
+PASS  B3 getHand('p1') can never surface the private shuffle
+PASS  B4 hasDealtHands() false after switch
+PASS  B5 setAuthoritativeHand() populates post-switch
+PASS  B6 re-declaring firestore does NOT wipe authoritative data
+PASS  B7 local->local re-declaration never wipes local hands
+
+=== RESULTS ===
+13 passed, 0 failed
+PASS  deal-path-gating.p0-fix.test.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ dealer-rotation-rules.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+RULES_PATH C:\Users\EXPRESS\OneDrive\Desktop\demo-test\firestore.rules
+RULES_SHA256 c88b61a137d5b2efe74a9b9f4c295bdce3adfe31e61ea83fea3e7328ab7b1d57
+STATUS BLOCKED ΓÇö REAL EMULATOR UNAVAILABLE: fetch failed
+FAIL  dealer-rotation-rules.test.cjs  (exit 2)
+
+ΓöÇΓöÇΓöÇΓöÇ deck-verification.cjs ΓöÇΓöÇΓöÇΓöÇ
+PASS  1. New Deck has exactly 52 cards
+PASS  2. All 52 cards are unique (no duplicates)
+PASS  3. shuffle() reorders the deck in place (order changed)
+PASS  4. shuffle() does not change the card count
+PASS  5. Drew 52 cards, none null/undefined
+PASS  6. Deck is empty after drawing all 52
+PASS  7. Each of 4 hands has exactly 13 cards
+PASS  8. No cards remain in the deck after dealing 4x13
+PASS  9. Dealer.dealHands() returns exactly 4 seats
+PASS  10. Dealer.dealHands() gives each seat exactly 13 cards
+PASS  11. Dealer.dealHands() output is 52 unique cards total
+
+=== RESULTS ===
+
+11 passed, 0 failed
+PASS  deck-verification.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ deck.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+PASS  Deck creates exactly 52 cards
+PASS  Deck creates 52 UNIQUE cards (no (suit,rank) combo repeated)
+PASS  Deck's 52 combos are EXACTLY the 4 suits x 13 ranks ΓÇö none missing, none extra
+PASS  Every card Deck builds goes through Cards.createCard()'s real shape (id/suit/rank/displayName/value/owner/played)
+PASS  shuffle() preserves the exact same 52 unique cards (multiset unchanged)
+PASS  shuffle() changes the order (not a no-op)
+PASS  shuffle(rng) with an injected deterministic RNG produces EXACTLY the expected FisherΓÇôYates permutation
+PASS  draw() returns a real card object (has suit/rank/id)
+PASS  draw() removes exactly one card ΓÇö remaining() decreases by 1
+PASS  draw() #2: never returns a card already drawn from this deck
+PASS  draw() #3: never returns a card already drawn from this deck
+PASS  draw() #4: never returns a card already drawn from this deck
+PASS  draw() #5: never returns a card already drawn from this deck
+PASS  draw() #6: never returns a card already drawn from this deck
+PASS  draw() #7: never returns a card already drawn from this deck
+PASS  draw() #8: never returns a card already drawn from this deck
+PASS  draw() #9: never returns a card already drawn from this deck
+PASS  draw() #10: never returns a card already drawn from this deck
+PASS  draw() #11: never returns a card already drawn from this deck
+PASS  remaining count decreases correctly across multiple draws (41 left after 11 total draws)
+PASS  remaining() reaches exactly 0 after drawing all 52 cards
+PASS  draw() on an empty deck throws a clear error (fail loud, not a silent undefined)
+PASS  before reset: remaining reflects the 3 draws (49 left)
+PASS  reset() restores exactly 52 cards
+PASS  reset() rebuilds a full, correct 52-combo deck (all 4 suits x 13 ranks present)
+PASS  reset() builds brand-new card objects, not reused references from before the reset
+PASS  Deck exposes ONLY deck state/behavior (constructor + shuffle/draw/remaining/reset) ΓÇö no bidding/scoring/trump surface
+PASS  dealHands() produces exactly 4 hands
+PASS  dealHands(): seat p1 received exactly 13 cards
+PASS  dealHands(): seat p4 received exactly 13 cards
+PASS  dealHands(): seat p3 received exactly 13 cards
+PASS  dealHands(): seat p2 received exactly 13 cards
+PASS  dealHands(): 52 cards consumed in total (13 x 4)
+PASS  dealHands(): no duplicate cards across all four hands
+PASS  dealHands(): no missing cards ΓÇö the union of all four hands is EXACTLY the 52 real combos, each exactly once
+PASS  dealHands(): every dealt card's owner matches the hand it was placed into
+PASS  dealHands(): each hand is pre-sorted for display (Cards.compareForSort order)
+PASS  dealHands() can be called again immediately without error (fresh Deck instance per call, not a shared exhausted singleton)
+PASS  dealHands(seatOrder) still respects an explicit seat order override (unchanged, pre-existing behavior)
+
+39 passed, 0 failed
+PASS  deck.test.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ fast-round-caller-with-d2.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+PASS  D-2 fast-round Caller/With, Super Call reset, and extension suit sequence
+PASS  fast-round-caller-with-d2.test.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ hand-sync.rules-emulator-mvp-deal-authority.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+EMULATOR NOT REACHABLE ΓÇö fetch failed
+
+=== RESULTS ===
+
+0 passed, 0 failed (SKIPPED ΓÇö no emulator connection)
+FAIL  hand-sync.rules-emulator-mvp-deal-authority.test.cjs  (exit 2, contains SKIPPED marker)
+
+ΓöÇΓöÇΓöÇΓöÇ hand-sync.rules-emulator-p02-dispatch.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+EMULATOR NOT REACHABLE ΓÇö fetch failed
+
+=== RESULTS ===
+
+0 passed, 0 failed (SKIPPED ΓÇö no emulator connection)
+FAIL  hand-sync.rules-emulator-p02-dispatch.test.cjs  (exit 2, contains SKIPPED marker)
+
+ΓöÇΓöÇΓöÇΓöÇ hand-sync.rules-emulator-rematch-fix.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+EMULATOR NOT REACHABLE ΓÇö fetch failed
+
+=== RESULTS ===
+
+0 passed, 0 failed (SKIPPED ΓÇö no emulator connection)
+FAIL  hand-sync.rules-emulator-rematch-fix.test.cjs  (exit 2, contains SKIPPED marker)
+
+ΓöÇΓöÇΓöÇΓöÇ hand-sync.rules-emulator.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+EMULATOR NOT REACHABLE ΓÇö fetch failed
+
+=== RESULTS ===
+
+0 passed, 0 failed (SKIPPED ΓÇö no emulator connection)
+FAIL  hand-sync.rules-emulator.test.cjs  (exit 2, contains SKIPPED marker)
+
+ΓöÇΓöÇΓöÇΓöÇ hand-sync.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+PASS  1. dealRound(): a well-formed first deal is applied ΓÇö dealt:true
+PASS  1. all 4 seats' hand docs exist after one deal
+PASS  1. each hand doc has exactly 13 cards
+PASS  1. all 52 cards across the 4 hands are unique (no duplicate deal)
+PASS  1. gameState.dealtRound is now 1
+PASS  1. gameState.initialized is now true
+PASS  1. PUBLIC match doc is otherwise unchanged (still only gameState/updatedAt diff)
+PASS  2. no `hands` field exists on the match document itself
+PASS  2. each hand doc's own seatId/round match its content
+PASS  3. a second dealRound() for the SAME round is idempotent ΓÇö dealt:false, reason:ALREADY_DEALT
+PASS  3. the already-dealt hand is byte-for-byte unchanged (no second shuffle overwrote it)
+PASS  4. three concurrent dealRound() attempts for the SAME round resolve to exactly ONE committed deal
+PASS  4. every seat still has exactly 13 cards despite the race (no seat got 2 different hands from 2 winners)
+PASS  5. Round 2's deal commits once currentRound has advanced
+PASS  5. Round 2's hand is a FRESH shuffle, not a copy of Round 1's
+PASS  5. Round 2's hand doc's own `round` field correctly reads 2
+PASS  5. current-hand-only storage: Round 1's hand is no longer retrievable under this seat's doc (overwritten, per Decision 4)
+PASS  6. a rematch's new match gets its OWN independent Round-1 deal
+PASS  6. the rematch's hand is independent of the old match's hand (never copied/reused)
+PASS  7. dealRound() by a non-player is rejected ΓÇö PERMISSION_DENIED
+PASS  7. no hand docs were written by the rejected attempt
+PASS  7. dealRound() with a missing roundNumber rejects ΓÇö INVALID_ARGUMENT
+PASS  7. dealRound() for a nonexistent match rejects ΓÇö MATCH_NOT_FOUND
+PASS  8. subscribeToHand() delivers null (not an error) before any deal exists
+PASS  8. subscribeToHand() delivers the committed hand the instant dealRound() commits
+PASS  8. the delivered hand is for the subscribed seat only
+PASS  8. unsubscribe() stops further delivery ΓÇö clean teardown, no leak
+PASS  9. late-join/reconnect: a fresh subscription attaching after the deal exists receives it on first delivery, no catch-up loop needed
+PASS  10. getHandAuthorityMode() reflects the mode just set
+PASS  10. ensureHandsDealt() in firestore mode never calls Dealer.dealHands() when no hand is cached yet
+PASS  10. hasDealtHands() is still false ΓÇö nothing was dealt, nothing faked
+PASS  10. even opts.force cannot make firestore mode locally re-deal
+PASS  11. setAuthoritativeHand() populates getHand(seatId)
+PASS  11. hasDealtHands() now reports true for the CURRENT round
+PASS  11. ensureHandsDealt() now returns the cached authoritative hand, still without ever calling Dealer
+PASS  12. default/local mode still deals via the real Dealer/Deck/Math.random() chain, unchanged
+PASS  12. local mode's ensureHandsDealt() DOES deal (backward compatible with every prior sprint)
+PASS  13. applyRemoteHand() reports applied:true for a well-formed hand doc
+PASS  13. reconstructed cards carry the SAME shape Dealer.dealHands() produces (id/suit/rank/displayName/value/owner/played)
+PASS  13. reconstructed hand's suits/ranks exactly match the raw Firestore doc's opaque {suit,rank} entries
+PASS  13. applyRemoteHand() never touches any OTHER seat's cached hand
+PASS  13. applyRemoteHand() rejects a malformed hand doc ΓÇö applied:false, reason:MALFORMED_HAND
+PASS  13. applyRemoteHand() reports NO_HAND_YET for a null doc (the pre-deal state) rather than throwing
+PASS  14. startHandSync() flips GameSession into firestore hand-authority mode
+PASS  14. startHandSync() alone (no separate dealRound() call) causes Round 1 to get dealt
+PASS  14. startHandSync() alone populates THIS client's own seat's hand via the live subscription
+
+=== RESULTS ===
+
+46 passed, 0 failed
+PASS  hand-sync.test.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ i18n-strings.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+PASS official dictionary terms (17)
+PASS dictionary contains all required official keys
+PASS Arabic query/localStorage flag logic
+PASS RTL direction and rendered text-node replacement
+4 passed, 0 failed
+PASS  i18n-strings.test.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ integration-match-flow.cjs ΓöÇΓöÇΓöÇΓöÇ
+=== SPRINT-3.6: End-to-End Match Flow (Room -> Ready -> Match -> Deal) ===
+
+PASS  1. Client A creates a room
+PASS  1a. Room starts in 'waiting' status
+    roomId = rooms-auto1
+PASS  2. Client B joins the room
+PASS  2a. Room now has exactly 2 players
+PASS  3a. Client B ready ΓÇö match not yet started (creator not ready)
+PASS  4. Last ready-up automatically triggers MatchService.startMatch
+PASS  4a. Room status changes to 'in_game'
+PASS  4b. Room has a real matchId, and the match document exists
+PASS  4c. Match document's players match the room's players
+PASS  4d. Match starts undealt (gameState.dealtRound === 0)
+PASS  5. dealRound() reports a successful deal for round 1
+PASS  5a. gameState.dealtRound advances to 1 on the match document
+PASS  5b. Every occupied seat got a hand document written
+PASS  5c. Every hand has exactly 13 cards
+PASS  5d. All cards dealt across both hands are unique (no duplicates)
+PASS  6. Client A's own hand read is stable/consistent across repeated reads (same distribution, not re-randomized)
+PASS  6a. Client B's own hand read is stable/consistent across repeated reads
+PASS  6b. Client A and Client B were dealt from the SAME 26-card pool (no overlap, no gaps) ΓÇö the single deal both clients are part of
+PASS  7. Re-dealing the same already-dealt round is a safe no-op
+PASS  7a. Re-deal attempt did not change Client A's hand
+
+=== RESULTS ===
+
+20 passed, 0 failed
+PASS  integration-match-flow.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ match-adapter.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+PASS  MOCKED ΓÇö uid -> seat: resolves a real seat owner correctly
+PASS  MOCKED ΓÇö seat -> uid: resolves the correct uid for a real seat
+PASS  MOCKED ΓÇö seat -> player object: returns a minimal {seatId, uid} descriptor
+PASS  MOCKED ΓÇö player object -> seat: accepts a {uid} object
+PASS  MOCKED ΓÇö player object -> seat: also accepts a {id} object (mirrors seatToPlayer's own output shape... except seatToPlayer uses seatId/uid, not id ΓÇö this covers callers passing an id-shaped object instead)
+PASS  MOCKED ΓÇö player object -> seat: also accepts a raw uid string directly
+PASS  MOCKED ΓÇö seat resolution is symmetric for every real seat in a full 4-player match
+PASS  MOCKED ΓÇö missing seat: seatToUid('p3') on a 2-player match returns null, not a fabricated uid
+PASS  MOCKED ΓÇö missing seat: seatToPlayer('p4') on a 2-player match returns null
+PASS  MOCKED ΓÇö missing seat: uidToSeat for a real player in the partial match still resolves correctly
+PASS  MOCKED ΓÇö duplicate seat: uidToSeat resolves to the canonically-first matching seat (p1, not p2)
+PASS  MOCKED ΓÇö duplicate seat: the resolution is deterministic ΓÇö repeated calls return the identical answer
+PASS  MOCKED ΓÇö unknown uid: a uid that owns no seat in this match resolves to null
+PASS  MOCKED ΓÇö unknown uid: playerToSeat for an unknown uid resolves to null
+PASS  MOCKED ΓÇö unknown uid: null/undefined uid input never throws, resolves to null
+PASS  MOCKED ΓÇö unknown seat: a seat name outside p1..p4 resolves to null
+PASS  MOCKED ΓÇö unknown seat: seatToPlayer for an unknown seat name resolves to null
+PASS  MOCKED ΓÇö unknown seat: empty-string/null seat input never throws, resolves to null
+PASS  MOCKED ΓÇö round-trip: players[] survives unchanged
+PASS  MOCKED ΓÇö round-trip: seats survives unchanged
+PASS  MOCKED ΓÇö round-trip: dealer (uid) survives exactly, via seat translation and back
+PASS  MOCKED ΓÇö round-trip: turn (uid) survives exactly, via seat translation and back
+PASS  MOCKED ΓÇö round-trip: currentRound survives unchanged
+PASS  MOCKED ΓÇö round-trip: version survives unchanged
+PASS  MOCKED ΓÇö round-trip: biddingOpen survives unchanged
+PASS  MOCKED ΓÇö round-trip: bids (including a real null slot) survives unchanged
+PASS  MOCKED ΓÇö round-trip: lastBidSeat survives unchanged
+PASS  MOCKED ΓÇö round-trip (partial match): dealer/turn still survive exactly with only 2 real seats
+PASS  MOCKED ΓÇö determinism: matchDocToEngineSnapshot() called twice on the same input produces identical output
+PASS  MOCKED ΓÇö no mutation: the original matchDoc object is completely untouched by translation
+PASS  MOCKED ΓÇö bootstrap success: returns the full translated snapshot
+PASS  MOCKED ΓÇö bootstrap success: GameSession.getDealer() reflects the translated SEAT id, not the raw uid
+PASS  MOCKED ΓÇö bootstrap success: GameSession.getTurn() reflects the translated seat id
+PASS  MOCKED ΓÇö bootstrap success: GameSession.getRound().number reflects the translated round metadata
+PASS  MOCKED ΓÇö bootstrap success: GameSession's own EXISTING players field is left completely untouched (no fabricated profile data written)
+PASS  MOCKED ΓÇö bootstrap success: GameSession's own EXISTING biddingState field is left completely untouched (no shape-mismatched raw Firestore bids written into it)
+PASS  MOCKED ΓÇö bootstrap with invalid data: a null matchDoc throws INVALID_MATCH_DOC
+PASS  MOCKED ΓÇö bootstrap with invalid data: a non-object matchDoc throws INVALID_MATCH_DOC
+PASS  MOCKED ΓÇö bootstrap with invalid data: a matchDoc with NO seats degrades gracefully (null resolutions), does not throw
+PASS  MOCKED ΓÇö bootstrap with invalid data: when a seat can't be resolved, GameSession's dealer/turn are left UNCHANGED, never overwritten with null/garbage
+PASS  MOCKED ΓÇö bootstrap with invalid data: GameSession unavailable throws GAME_SESSION_UNAVAILABLE, never silently no-ops
+PASS  MOCKED ΓÇö isolation: match-adapter.js contains no require()/import of match-service.js or session.js ΓÇö it only references global.GameSession lazily, inside function bodies, exactly like every other soft cross-file reference in this codebase
+PASS  MOCKED ΓÇö applyRemoteBid: engine unavailable is reported cleanly, never throws
+PASS  MOCKED ΓÇö applyRemoteBid: a well-formed remote bid for the correct waiting seat is applied
+PASS  MOCKED ΓÇö applyRemoteBid: exactly one emit() call was made to the engine ΓÇö no duplicated execution
+PASS  MOCKED ΓÇö applyRemoteBid: the adapter's own version gate now tracks this match at version 2
+PASS  MOCKED ΓÇö Task 4 (duplicate snapshot): the identical version delivered again is rejected DUPLICATE_VERSION
+PASS  MOCKED ΓÇö Task 4: the duplicate delivery did NOT call emit() again ΓÇö no replayed engine state
+PASS  MOCKED ΓÇö Task 3 (version rollback): a LOWER version than already applied is rejected STALE_VERSION, never applied
+PASS  MOCKED ΓÇö Task 3: no equality acceptance and no rollback ever reach emit()
+PASS  MOCKED ΓÇö applyRemoteBid: a bid arriving while the engine is in a non-ESTIMATES phase is not applied (documented scope boundary, not an error)
+PASS  MOCKED ΓÇö applyRemoteBid: a bid for a seat whose turn it is NOT is not applied
+PASS  MOCKED ΓÇö Task 4 ("local bid" case): the engine already has ANY bid recorded for this seat (e.g. applied locally moments earlier) ΓÇö the echo is not re-applied
+PASS  MOCKED ΓÇö applyRemoteBid: if the REAL engine itself rejects the action (its own legality decision, not this adapter's), that rejection is surfaced faithfully, not silently swallowed
+PASS  MOCKED ΓÇö adapter corruption: a matchDoc missing `bids` entirely (but with a lastBidSeat) is rejected as malformed (or recognized as nothing-to-apply ΓÇö either way, never applied)
+PASS  MOCKED ΓÇö adapter corruption: a non-object matchDoc (a string) is rejected, never throws
+PASS  MOCKED ΓÇö adapter corruption: a matchDoc with version as a string (not a number) is rejected, never throws
+PASS  MOCKED ΓÇö adapter corruption: a matchDoc where bids[seat] is null (present but empty) is rejected, never crashes
+PASS  MOCKED ΓÇö adapter corruption: no test above ever left a partially-applied engine state ΓÇö every rejection path is all-or-nothing
+PASS  MOCKED ΓÇö applyRemoteTurn: new snapshot: a well-formed turn update is applied and translated uid->seat
+PASS  MOCKED ΓÇö applyRemoteTurn: new snapshot: GameSession's top-level turn mirror reflects the translated seat
+PASS  MOCKED ΓÇö applyRemoteTurn: the adapter's own turn version gate now tracks this match at version 2
+PASS  MOCKED ΓÇö Task 4 (duplicate snapshot): the identical turn version delivered again is rejected DUPLICATE_VERSION, GameSession unchanged
+PASS  MOCKED ΓÇö Task 3 (version rollback): a LOWER turn version is rejected STALE_VERSION, never applied, GameSession unchanged
+PASS  MOCKED ΓÇö turn advance: a genuinely newer version with a different seat correctly advances GameSession's turn mirror
+PASS  MOCKED ΓÇö applyRemoteTurn: content-level idempotency ΓÇö a newer version whose seat already matches GameSession's current turn is not re-applied (no re-render)
+PASS  MOCKED ΓÇö applyRemoteTurn: a structurally valid snapshot with no turn established yet is NO_TURN_TO_APPLY, not an error
+PASS  MOCKED ΓÇö adapter corruption: a non-object matchDoc (a string) is rejected, never throws
+PASS  MOCKED ΓÇö adapter corruption: a matchDoc with version as a string (not a number) is rejected, never throws
+PASS  MOCKED ΓÇö adapter corruption: a missing matchId is rejected, never throws
+PASS  MOCKED ΓÇö adapter corruption: a turn uid that resolves to no seat in this match's own seats map is rejected UNKNOWN_TURN_SEAT, never crashes
+PASS  MOCKED ΓÇö adapter corruption: no test above ever left GameSession's turn mirror partially updated ΓÇö every rejection path is all-or-nothing
+PASS  MOCKED ΓÇö applyRemoteTurn: GameSession unavailable is reported cleanly, never throws
+PASS  MOCKED ΓÇö Local Authority: correct player accepted ΓÇö isLocalSeatsTurn() is true for the seat whose turn it actually is
+PASS  MOCKED ΓÇö Local Authority: wrong player attempts action ΓÇö isLocalSeatsTurn() is false for every other seat
+PASS  MOCKED ΓÇö Local Authority: a null/empty localSeat is never treated as anyone's turn
+PASS  MOCKED ΓÇö Local Authority: falls back to GameSession's own turn mirror when no matchDoc.turn is available
+PASS  MOCKED ΓÇö Local Authority: assertLocalTurn() for the correct player does not throw ΓÇö the future gameplay write would proceed
+PASS  MOCKED ΓÇö Local Authority: assertLocalTurn() for the WRONG player throws NOT_LOCAL_TURN ΓÇö 'reject locally, do not send writes'
+PASS  MOCKED ΓÇö resetSyncState(): clears the turn registry globally (no matchId argument)
+PASS  MOCKED ΓÇö independent registries: applyRemoteBid()'s and applyRemoteTurn()'s version gates for the SAME matchId/version do not interfere with each other
+PASS  MOCKED ΓÇö resetSyncState(matchId): clears BOTH registries for a single matchId
+PASS  MOCKED ΓÇö applyRemoteCard: engine unavailable is reported cleanly, never throws
+PASS  MOCKED ΓÇö applyRemoteCard: a well-formed remote card is applied
+PASS  MOCKED ΓÇö applyRemoteCard: exactly one emit() call was made to the engine ΓÇö no duplicated execution
+PASS  MOCKED ΓÇö applyRemoteCard: the adapter's own card version gate now tracks this match at version 1
+PASS  MOCKED ΓÇö applyRemoteCard: the adapter's own entry-count registry now tracks 1 applied entry
+PASS  MOCKED ΓÇö Task 4 (duplicate snapshot): the identical version delivered again is rejected DUPLICATE_VERSION
+PASS  MOCKED ΓÇö Task 4: the duplicate delivery did NOT call emit() again ΓÇö no replayed engine state
+PASS  MOCKED ΓÇö Task 5 (version rollback): a LOWER version than already applied is rejected STALE_VERSION, never applied
+PASS  MOCKED ΓÇö multiple sequential cards: only the ONE genuinely new entry is applied, the already-applied first entry is not re-emitted
+PASS  MOCKED ΓÇö Task 4 ("local card" case): the engine's CURRENT trick already has a play recorded for this seat (applied locally moments earlier) ΓÇö the echo is not re-applied
+PASS  MOCKED ΓÇö applyRemoteCard: if the REAL engine itself rejects the play (its own legality decision, not this adapter's), that rejection is surfaced faithfully, not silently swallowed
+PASS  MOCKED ΓÇö adapter corruption: a non-object matchDoc (a string) is rejected, never throws
+PASS  MOCKED ΓÇö adapter corruption: a matchDoc with version as a string (not a number) is rejected, never throws
+PASS  MOCKED ΓÇö adapter corruption: a matchDoc where cardLog is not an array is rejected, never throws
+PASS  MOCKED ΓÇö adapter corruption: a missing matchId is rejected, never throws
+PASS  MOCKED ΓÇö Sprint 4.2.2, Task 4: a cardLog entry missing its own `card` field is a DESYNC (MALFORMED_ENTRY), not a skip-and-continue ΓÇö stops immediately, index 0
+PASS  MOCKED ΓÇö Task 4: the count does NOT advance past the malformed index ΓÇö stuck at 0, not 1
+PASS  MOCKED ΓÇö Task 4: the version registry is NOT marked as applied after a malformed entry
+PASS  MOCKED ΓÇö adapter corruption: no test above ever left a partially-applied engine state ΓÇö every rejection path is all-or-nothing per entry
+PASS  MOCKED ΓÇö Task 4 req #8/#9: the FIRST (well-formed) entry is applied, the SECOND (malformed) desyncs, and the THIRD (well-formed) is never even looked at
+PASS  MOCKED ΓÇö Task 4: the processed count is stuck at 1 (past the genuinely-applied first entry, not past the malformed second one)
+PASS  MOCKED ΓÇö Task 5 req #10: same-seat + SAME card is a benign echo (ALREADY_APPLIED_LOCALLY), not a desync ΓÇö processing continues normally
+PASS  MOCKED ΓÇö Task 5 req #10: a genuine echo still advances the registries past it (it's resolved, not stuck)
+PASS  MOCKED ΓÇö Task 5 req #11: same-seat + DIFFERENT card produces a structured LOCAL_ECHO_MISMATCH desync, not a silent skip
+PASS  MOCKED ΓÇö Task 5 req #11: the mismatch result exposes BOTH the local and remote card values for diagnosis
+PASS  MOCKED ΓÇö Task 5: does not advance past the mismatch, does not mark the version applied
+PASS  MOCKED ΓÇö Task 5 req #12: entries AFTER a LOCAL_ECHO_MISMATCH are never processed ΓÇö the engine is never asked about the third-seat entry
+PASS  MOCKED ΓÇö applyRemoteCard: a version bump with an EMPTY/unchanged cardLog (e.g. caused by a concurrent bid write on the same document) is NO_NEW_CARDS, not an error
+PASS  MOCKED ΓÇö Task 5 req #7 (ENGINE_REJECTED does not advance processed count past the rejected entry): getLastAppliedCardCount stops at index 1, not 2 or 3
+PASS  MOCKED ΓÇö Task 5 req #8 (later entries are not processed after a rejected entry): the engine was asked exactly twice ΓÇö index 0 (applied) and index 1 (rejected) ΓÇö index 2 was NEVER emitted
+PASS  MOCKED ΓÇö Task 5 req #9 (version is not marked applied after a rejected entry): getLastAppliedCardVersion is still null ΓÇö this version is NOT considered fully synchronized
+PASS  MOCKED ΓÇö Task 3: the result is a structured DESYNC, not a silent success ΓÇö desync:true, reason:ENGINE_REJECTED, with matchId/index/seatId/engineReason diagnostics
+PASS  MOCKED ΓÇö Task 3: appliedCount correctly reports ONLY the one entry that genuinely succeeded before the rejection (index 0), not the two entries attempted
+PASS  MOCKED ΓÇö Task 3: a redelivery of the SAME still-stuck snapshot re-attempts from the SAME rejected index, rather than being silently treated as a duplicate ΓÇö the desync is durable, not transient
+PASS  MOCKED ΓÇö Task 3: once the engine accepts the previously-stuck entry, processing resumes normally and the registries advance past it, including the final (third) entry
+PASS  MOCKED ΓÇö Task 5 req #10: match-adapter.js contains no follow-suit (`ledSuit`) logic of its own anywhere in the file
+PASS  MOCKED ΓÇö Task 5 req #10: match-adapter.js's only calls into TableEngine are emit()/getState() ΓÇö it never accesses `.hands` to compute legality itself
+PASS  MOCKED ΓÇö Task 1: table-engine.js already exports getState()/resolveTrick() (Sprint 3.6) ΓÇö no new engine export was required for trick sync
+PASS  MOCKED ΓÇö trick resolution: applied === true once the engine has reached phase RESOLVING
+PASS  MOCKED ΓÇö trick resolution: resolveTrick() was called exactly once ΓÇö never twice, never zero times
+PASS  MOCKED ΓÇö trick resolution: the returned winnerId is read back from TableEngine.getState().lastTrick ΓÇö never computed independently by this function
+PASS  MOCKED ΓÇö trick resolution: nextLeaderId/nextTurnSeat/nextPhase are read back from the engine's own post-resolution state
+PASS  MOCKED ΓÇö trick resolution: tricksWon is a snapshot of the engine's own updated tally, not recomputed
+PASS  MOCKED ΓÇö duplicate snapshot ignored: calling again with the SAME (now-resolved) engine trickNo does nothing ΓÇö NOT_RESOLVING, since phase already moved to PLAY
+PASS  MOCKED ΓÇö duplicate snapshot ignored: resolveTrick() was NOT called a second time
+PASS  MOCKED ΓÇö stale snapshot ignored: a redundant pass at the SAME trickNo (already resolved) is rejected ALREADY_RESOLVED, not re-resolved
+PASS  MOCKED ΓÇö stale snapshot ignored: resolveTrick() is still called only once total, even after the redundant pass
+PASS  MOCKED ΓÇö trick not complete: NOT_RESOLVING is an ordinary no-op (not a desync) while phase is still PLAY
+PASS  MOCKED ΓÇö trick not complete: resolveTrick() is never called while the trick isn't done
+PASS  MOCKED ΓÇö multiple consecutive tricks: trick 1 resolves correctly
+PASS  MOCKED ΓÇö multiple consecutive tricks: trick 2 resolves correctly, distinct from trick 1
+PASS  MOCKED ΓÇö multiple consecutive tricks: BOTH tricks were genuinely resolved via the engine (resolveTrick() called exactly twice)
+PASS  MOCKED ΓÇö multiple consecutive tricks: m-trick1's own registry (from the earlier test block) is untouched by m-multi's activity ΓÇö independent per matchId
+PASS  MOCKED ΓÇö malformed trick: a missing matchId is rejected MALFORMED_SNAPSHOT, zero engine calls
+PASS  MOCKED ΓÇö malformed trick: a non-object matchDoc is rejected MALFORMED_SNAPSHOT
+PASS  MOCKED ΓÇö malformed trick: an array matchDoc is rejected MALFORMED_SNAPSHOT
+PASS  MOCKED ΓÇö ENGINE_UNAVAILABLE: TableEngine missing entirely ΓÇö refuses to guess, never crashes
+PASS  MOCKED ΓÇö ENGINE_UNAVAILABLE: TableEngine present but missing resolveTrick() ΓÇö refuses to guess
+PASS  MOCKED ΓÇö ENGINE_UNAVAILABLE: TableEngine.getState() itself returns null (not yet initialized) ΓÇö refuses to guess
+PASS  MOCKED ΓÇö ENGINE_REJECTED / desync reporting: when the underlying card genuinely applies (this fake never rejects), the trick correctly stays NOT_RESOLVING because phase is still PLAY
+PASS  MOCKED ΓÇö ENGINE_REJECTED / desync reporting: applyRemoteTrick() never calls resolveTrick() when the engine hasn't reached the trick-complete boundary ΓÇö it never masks or re-derives applyRemoteCard()'s own desync detection
+PASS  MOCKED ΓÇö no duplicated gameplay rule: match-adapter.js contains no follow-suit/trump-comparison logic of its own anywhere (`ledSuit`, `cardValue(`, `SUITS[`) ΓÇö applyRemoteTrick()'s only engine call is resolveTrick()
+PASS  MOCKED ΓÇö no duplicated gameplay rule: applyRemoteTrick() calls TableEngine.resolveTrick() and nothing else into any engine file
+PASS  MOCKED ΓÇö resetSyncState(matchId): clears applyRemoteTrick()'s own registry for a single matchId
+PASS  MOCKED ΓÇö resetSyncState() (no argument): clears applyRemoteTrick()'s own registry for EVERY matchId
+
+147 passed, 0 failed
+PASS  match-adapter.test.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ match-completion.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+PASS  B (PURE). computeRoundExtension() never extends a round below the Rapid Rounds window (round 5)
+PASS  C (PURE). Successful Super Call with a DIFFERENT trump than round 15's mandatory trump -> extend:true, reason:SUPER_CALL
+PASS  D (PURE). Successful Super Call with the SAME trump as round 15's mandatory trump -> extend:false
+PASS  E (PURE). Failed Super Call (breakdown.succeeded:false) -> extend:false regardless of trump mismatch
+PASS  F (PURE). A qualifying-shaped Super Call at round 19 (already-extended territory, outside the 14-18 window) -> extend:false
+PASS  G (PURE). Two independent qualifying rounds (15 and 17) EACH independently qualify for +1
+PASS  PURE. Sa'ayda (all players lose) inside Rapid Rounds -> extend:true, reason:SAAYDA, regardless of callerId
+PASS  PURE. Sa'ayda OUTSIDE the Rapid Rounds window (round 5) does NOT extend (extension is Rapid-Rounds-only)
+PASS  I (PURE). Single winner: computeWinner() returns exactly the one highest-score seat
+PASS  J (PURE). Two tied Kings: computeWinner() returns BOTH tied seats, no tie-breaker applied
+PASS  K (PURE). Three tied Kings: computeWinner() returns all three
+PASS  L (PURE). Four tied Kings: computeWinner() returns all four seats
+PASS  PURE. computeWinner() with negative scores still picks the (least-negative) maximum correctly
+PASS  A (PURE). isMatchComplete() is false before round 18 with the default maxRounds:18
+PASS  A (PURE). isMatchComplete() is true once currentRound reaches maxRounds:18 (normal, un-extended match)
+PASS  H (PURE). An EXTENDED match (maxRounds:19) is NOT complete at round 18 ΓÇö the old hardcoded ceiling never applies
+PASS  H (PURE). An EXTENDED match (maxRounds:19) IS complete once round 19 is reached
+PASS  C. extendMatchRounds(): a well-formed extension is applied ΓÇö extended:true, maxRounds 18 -> 19
+PASS  C. extendMatchRounds(): the round is recorded in extendedRounds
+PASS  M. extendMatchRounds(): a duplicate attempt for the SAME round is idempotent ΓÇö extended:false, reason:ALREADY_EXTENDED, no double-increment
+PASS  G. extendMatchRounds(): a SECOND independent qualifying round (17) accumulates another +1 ΓÇö maxRounds 19 -> 20
+PASS  P. extendMatchRounds(): a round OUTSIDE the Rapid Rounds window (10) is REJECTED ΓÇö INVALID_ARGUMENT
+PASS  P. extendMatchRounds(): an invalid `reason` value is REJECTED ΓÇö INVALID_ARGUMENT
+PASS  N. extendMatchRounds(): two concurrent attempts for the SAME round converge ΓÇö exactly ONE actually extends, the other is a safe no-op
+PASS  N. extendMatchRounds(): maxRounds increased by exactly 1 total, not 2, despite two concurrent callers
+PASS  A. endMatch(): a well-formed completion at currentRound==maxRounds is applied ΓÇö complete:true, status:'complete'
+PASS  A. endMatch(): finalScores/winnerIds/completedRound are persisted verbatim
+PASS  M. endMatch(): a duplicate attempt on an already-complete match is idempotent ΓÇö complete:false, reason:ALREADY_COMPLETE, original result UNCHANGED
+PASS  Q. status never regresses: match-end-1's status is still 'complete' after every subsequent (idempotent) attempt
+PASS  H. endMatch(): round 18 does NOT complete an EXTENDED match (maxRounds:19) ΓÇö complete:false, reason:MATCH_NOT_OVER
+PASS  H. endMatch(): the SAME match completes correctly once round 19 (the EXTENDED ceiling) is reached ΓÇö complete:true
+PASS  K. endMatch(): all-four-tied result correctly persists FOUR winnerIds
+PASS  O. endMatch(): winnerIds NOT matching the actual highest score in finalScores is REJECTED ΓÇö INVALID_RESULT
+PASS  O. endMatch(): winnerIds missing a TIED seat (only p1, not p1+p2) is REJECTED ΓÇö INVALID_RESULT
+PASS  endMatch(): ROUND_NOT_COMPLETE is rejected when fewer than 52 round-tagged card entries exist
+PASS  N. endMatch(): two concurrent completion attempts converge ΓÇö exactly ONE actually completes, the other is a safe no-op
+PASS  N. endMatch(): status is 'complete' exactly once regardless of the race
+PASS  Regression. advanceToNextRound() called AFTER endMatch() already completed the SAME round is a safe no-op ΓÇö advanced:false, reason:MATCH_ALREADY_COMPLETE
+PASS  Regression. currentRound was NOT bumped past the completed match ΓÇö still 18, not 19
+PASS  Regression. status remains 'complete', untouched by the rejected advance attempt
+PASS  Regression (concurrent). endMatch() racing advanceToNextRound() for the SAME round converges on completion, never a corrupted currentRound bump
+PASS  Regression (concurrent). The racing advanceToNextRound() attempt correctly reports it did NOT advance (either ALREADY_ADVANCED or MATCH_ALREADY_COMPLETE, never advanced:true)
+PASS  Regression. extendMatchRounds() called on an ALREADY-complete match is a safe no-op ΓÇö extended:false, reason:MATCH_ALREADY_COMPLETE
+PASS  Regression. maxRounds was NOT bumped on the completed match
+PASS  MatchAdapter.applyRemoteMatchCompletion(): a client that did NOT run endMatch() itself still receives winnerIds via sync
+PASS  MatchAdapter: startMatchCompletionSync() + startRoundSync() for the SAME matchId share ONE Firestore listener
+PASS  MatchAdapter.applyRemoteRoundTransition(): syncs an AHEAD maxRounds down to the local session even when currentRound itself didn't move
+
+47 passed, 0 failed
+PASS  match-completion.test.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ match-flow-integration.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+PASS  Bidding starts in DASH sub-phase for round 1 (not a fast round)
+PASS  Bidding waits on the dealer first
+PASS  Exactly 52 cards were dealt for this round (13 x 4 seats)
+PASS  All 52 dealt cards are unique (no duplicate card ids)
+PASS  The 52 dealt cards are EXACTLY the 4-suit x 13-rank deck ΓÇö none missing, none extra
+PASS  After all 4 decline, bidding moves to AUCTION with all 4 still active
+PASS  Auction concludes in CONFIRM with the opener as Caller
+PASS  Winning bid recorded correctly (4 Spades)
+PASS  Trump is locked to the confirmed suit
+PASS  Bidding moves to ESTIMATES after trump is confirmed
+PASS  Final estimate for p2 (0) is accepted, not rejected
+PASS  Final estimate for p3 (1) is accepted, not rejected
+PASS  Final estimate for p4 (1) is accepted, not rejected
+PASS  Bidding completes (DONE) after all three remaining seats estimate
+PASS  Exactly 3 seats submitted an explicit final estimate (Caller's confirm counts as their own bid)
+PASS  GameSession.round.trump committed correctly
+PASS  GameSession.round.callerId committed correctly
+PASS  GameSession.getTurn() is stamped to the Caller (leads trick 1)
+PASS  Sprint 3.6.1 fix: this round DOES include a Normal Dash (0) estimate, and it SURVIVED into GameSession.round.estimates (all 4 seats present, including the 0) ΓÇö the exact path Sprint 3.6 had to avoid
+PASS  Table phase seeds trump from the real bidding outcome (not a mock fallback)
+PASS  Table phase seeds the Caller from the real bidding outcome
+PASS  Trick 1's leader is the Caller (Estimation convention: Caller leads)
+PASS  Table phase reuses the SAME 52-card deal bidding already saw (Card Engine centralization) ΓÇö same hand sizes
+PASS  Trick 1: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p1 is accepted, never rejected
+PASS  Trick 1: turn order is CCW from the leader for each play within the trick
+PASS  Deliberate illegal play (holding the led suit, attempting to play off-suit) is REJECTED by the engine
+PASS  A rejected illegal play leaves the player's hand size unchanged
+PASS  Legal play for p2 is accepted, never rejected
+PASS  Trick 1: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p3 is accepted, never rejected
+PASS  Trick 1: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p4 is accepted, never rejected
+PASS  Trick 1: engine's recorded winner matches an independent recomputation from the actual recorded plays
+PASS  Trick 2: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p4 is accepted, never rejected
+PASS  Trick 2: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p1 is accepted, never rejected
+PASS  Trick 2: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p2 is accepted, never rejected
+PASS  Trick 2: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p3 is accepted, never rejected
+PASS  Trick 2: engine's recorded winner matches an independent recomputation from the actual recorded plays
+PASS  Trick 3: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p4 is accepted, never rejected
+PASS  Trick 3: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p1 is accepted, never rejected
+PASS  Trick 3: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p2 is accepted, never rejected
+PASS  Trick 3: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p3 is accepted, never rejected
+PASS  Trick 3: engine's recorded winner matches an independent recomputation from the actual recorded plays
+PASS  Trick 4: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p2 is accepted, never rejected
+PASS  Trick 4: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p3 is accepted, never rejected
+PASS  Trick 4: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p4 is accepted, never rejected
+PASS  Trick 4: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p1 is accepted, never rejected
+PASS  Trick 4: engine's recorded winner matches an independent recomputation from the actual recorded plays
+PASS  Trick 5: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p2 is accepted, never rejected
+PASS  Trick 5: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p3 is accepted, never rejected
+PASS  Trick 5: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p4 is accepted, never rejected
+PASS  Trick 5: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p1 is accepted, never rejected
+PASS  Trick 5: engine's recorded winner matches an independent recomputation from the actual recorded plays
+PASS  Trick 6: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p3 is accepted, never rejected
+PASS  Trick 6: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p4 is accepted, never rejected
+PASS  Trick 6: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p1 is accepted, never rejected
+PASS  Trick 6: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p2 is accepted, never rejected
+PASS  Trick 6: engine's recorded winner matches an independent recomputation from the actual recorded plays
+PASS  Trick 7: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p4 is accepted, never rejected
+PASS  Trick 7: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p1 is accepted, never rejected
+PASS  Trick 7: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p2 is accepted, never rejected
+PASS  Trick 7: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p3 is accepted, never rejected
+PASS  Trick 7: engine's recorded winner matches an independent recomputation from the actual recorded plays
+PASS  Trick 8: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p4 is accepted, never rejected
+PASS  Trick 8: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p1 is accepted, never rejected
+PASS  Trick 8: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p2 is accepted, never rejected
+PASS  Trick 8: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p3 is accepted, never rejected
+PASS  Trick 8: engine's recorded winner matches an independent recomputation from the actual recorded plays
+PASS  Trick 9: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p4 is accepted, never rejected
+PASS  Trick 9: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p1 is accepted, never rejected
+PASS  Trick 9: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p2 is accepted, never rejected
+PASS  Trick 9: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p3 is accepted, never rejected
+PASS  Trick 9: engine's recorded winner matches an independent recomputation from the actual recorded plays
+PASS  Trick 10: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p4 is accepted, never rejected
+PASS  Trick 10: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p1 is accepted, never rejected
+PASS  Trick 10: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p2 is accepted, never rejected
+PASS  Trick 10: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p3 is accepted, never rejected
+PASS  Trick 10: engine's recorded winner matches an independent recomputation from the actual recorded plays
+PASS  Trick 11: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p4 is accepted, never rejected
+PASS  Trick 11: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p1 is accepted, never rejected
+PASS  Trick 11: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p2 is accepted, never rejected
+PASS  Trick 11: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p3 is accepted, never rejected
+PASS  Trick 11: engine's recorded winner matches an independent recomputation from the actual recorded plays
+PASS  Trick 12: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p2 is accepted, never rejected
+PASS  Trick 12: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p3 is accepted, never rejected
+PASS  Trick 12: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p4 is accepted, never rejected
+PASS  Trick 12: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p1 is accepted, never rejected
+PASS  Trick 12: engine's recorded winner matches an independent recomputation from the actual recorded plays
+PASS  Trick 13: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p2 is accepted, never rejected
+PASS  Trick 13: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p3 is accepted, never rejected
+PASS  Trick 13: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p4 is accepted, never rejected
+PASS  Trick 13: turn order is CCW from the leader for each play within the trick
+PASS  Legal play for p1 is accepted, never rejected
+PASS  Trick 13: engine's recorded winner matches an independent recomputation from the actual recorded plays
+PASS  Illegal-play enforcement was actually exercised at least once during this test run
+PASS  Exactly 13 tricks were resolved
+PASS  Every resolved trick's winner was independently cross-checked
+PASS  Exactly 52 cards were played across the whole round (13 tricks x 4 plays)
+PASS  No card was played twice across the whole round
+PASS  All four hands are empty after 13 tricks
+PASS  tricksWon across all four seats sums to exactly 13
+PASS  Round phase reaches DONE
+PASS  resolveTrick()'s 13th call computed a real ScoringEngine result as a side effect (no separate scoring call needed)
+PASS  Every seat received a finite score delta, INCLUDING the Normal Dash seat (proves the 3.6.1 fix live, in a Mixed round)
+PASS  GameSession.getMatchScores() reflects the applied round deltas for every seat
+PASS  GameSession.getLastRoundResult() recorded this round (round 1)
+PASS  The recorded round result's trump/callerId match what was actually played
+PASS  Re-deriving the score from the same inputs produces IDENTICAL deltas to what was actually applied
+
+156 passed, 0 failed
+PASS  match-flow-integration.test.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ match-flow-normal-dash-scoring-fix.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+PASS  Final estimate for p2 (0) is accepted ΓÇö a Normal Dash is a legal estimate
+PASS  Final estimate for p3 (1) is accepted ΓÇö a Normal Dash is a legal estimate
+PASS  Final estimate for p4 (1) is accepted ΓÇö a Normal Dash is a legal estimate
+PASS  Bidding completes
+PASS  The affected player's bid is recorded as a real Normal Dash inside bidding-engine.js's own state
+PASS  FIXED: the affected player's Normal Dash (0 tricks) now SURVIVES extraction ΓÇö present in GameSession.round.estimates
+PASS  FIXED: the surviving value is exactly 0 (a real number, not undefined/null/false/a string)
+PASS  Every OTHER seat's real TRICKS estimate is still present and correct, AND now all 4 seats have an entry (the fix didn't disturb unrelated seats, and no seat is spuriously absent anymore)
+PASS  FIX VERIFICATION #2 (estimate lookup): table-engine.js's own state.estimates ALSO carries the surviving 0 (the value's survival propagates all the way through to card-play state, not just bidding state)
+PASS  The round completes structurally ΓÇö 13 tricks resolve, hands empty
+PASS  FIXED: the affected player's score delta is a real, finite number ΓÇö NOT NaN
+PASS  Every seat's delta is finite (no NaN anywhere in the result)
+PASS  FIXED: the actual, engine-produced score EXACTLY matches an independent re-derivation from the CORRECT (type:DASH, amount:0) bid ΓÇö proving the fix produces the officially-correct score, not just 'a' finite number
+PASS  The affected player's DASH-branch delta is computed using the real DASH formula (10 on success, -(10+tricksWon) on failure, plus Caller/With/Risk/sole-winner-or-loser adjustments) ΓÇö never the TRICKS formula
+PASS  FIXED: GameSession.getMatchScores() reflects the REAL delta for the affected player, never silently masked to 0
+PASS  Every seat's running total matches its round delta exactly (starting from a fresh 0 baseline)
+
+16 passed, 0 failed
+PASS  match-flow-normal-dash-scoring-fix.test.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ match-flow-scoring-scenarios.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+
+=== scenario: saayda ===
+PASS  [saayda] Auction concludes with p1 as Caller
+PASS  [saayda] Bidding reaches ESTIMATES
+PASS  [saayda] Final estimate for p2 (1) is accepted
+PASS  [saayda] Final estimate for p3 (1) is accepted
+PASS  [saayda] Final estimate for p4 (2) is accepted
+PASS  [saayda] Bidding completes
+PASS  [saayda] Round completes structurally ΓÇö 13 tricks resolve, hands empty
+PASS  [saayda] Actual tricksWon matches the known, hand-verified distribution for this seed (p1:0, p2:8, p3:4, p4:1)
+PASS  [saayda] No NaN anywhere in the score result (the hotfix holds for this scenario too)
+PASS  [saayda] SA'AYDA: successCount is 0 ΓÇö every seat genuinely failed
+PASS  [saayda] SA'AYDA: isSaayda flag is set
+PASS  [saayda] SA'AYDA: every seat's delta is exactly 0 (round zeroed for everyone, per rules ┬º4)
+PASS  [saayda] SA'AYDA: nextMultiplier escalates to x2
+PASS  [saayda] SA'AYDA: GameSession.getMatchScores() is unaffected (every delta was 0) ΓÇö and NOT silently masked, genuinely computed as 0
+
+14 passed, 0 failed
+
+=== scenario: with ===
+PASS  [with] p2's matching bid grants With status
+PASS  [with] Auction concludes with p1 as Caller
+PASS  [with] Bidding reaches ESTIMATES
+PASS  [with] Final estimate for p2 (4) is accepted
+PASS  [with] Final estimate for p3 (4) is accepted
+PASS  [with] Final estimate for p4 (3) is accepted
+PASS  [with] Bidding completes
+PASS  [with] Round completes structurally ΓÇö 13 tricks resolve, hands empty
+PASS  [with] Actual tricksWon matches the known, hand-verified distribution for this seed (p1:0, p2:8, p3:4, p4:1)
+PASS  [with] No NaN anywhere in the score result (the hotfix holds for this scenario too)
+PASS  [with] WITH: p2 is recorded as With for this round
+PASS  [with] WITH: not a Sa'ayda round ΓÇö p3 (Normal) genuinely succeeded
+PASS  [with] WITH: p3 is the sole winner and receives the +10 sole-winner bonus
+PASS  [with] WITH: p1 (failing Caller) receives the Caller failure adjustment
+PASS  [with] WITH: p2 (failing With) receives the With failure adjustment, not the Caller one
+PASS  [with] WITH: p4 correctly carries the Risk role (last bidder) with a nonzero risk adjustment
+PASS  [with] WITH: GameSession.getMatchScores() reflects the real, non-Sa'ayda deltas for every seat (none silently zeroed)
+
+17 passed, 0 failed
+
+31 passed, 0 failed
+PASS  match-flow-scoring-scenarios.test.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ match-service.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+PASS  createMatch is no longer part of the public MatchService API ΓÇö RoomService/UI must use startMatch() only
+PASS  startMatch resolves a matchId
+PASS  startMatch: match document created
+PASS  startMatch: roomId set correctly
+PASS  startMatch: players copied from room
+PASS  startMatch: status is 'starting'
+PASS  startMatch: currentRound is 1
+PASS  startMatch: dealer defaults to room.creator
+PASS  startMatch: turn defaults to dealer
+PASS  startMatch: gameState starts undealt (dealtRound:0), not fabricated dealt hands
+PASS  startMatch: room status becomes 'in_game'
+PASS  startMatch: room.matchId set to the new matchId
+PASS  startMatch (Sprint 3.8, Task 1): seats assigned positionally from room.players ΓÇö p1->"p1", p2->"p2"
+PASS  startMatch (Sprint 3.8, Task 1): only real seats exist ΓÇö no fabricated p3/p4 for a 2-player match
+PASS  startMatch (Sprint 3.8, Task 2): version starts at 1
+PASS  startMatch (Sprint 3.8, Task 3): biddingOpen starts true
+PASS  startMatch (Sprint 3.8, Task 3): bids starts with one null slot per real seat, no more
+PASS  startMatch (Sprint 3.8, Task 3): lastBidSeat starts null
+PASS  startMatch (Sprint 4.2): cardLog starts as an empty array
+PASS  startMatch (Sprint 4.2): lastCardSeat starts null
+PASS  startMatch: self-syncs currentMatchId via SessionService.setCurrentMatchId(matchId) ΓÇö SELF ONLY
+PASS  startMatch: never attempts to write currentMatchId via PlayerService.updatePlayerProfile at all (the Sprint 3.4 bug's exact write path) ΓÇö only ever via SessionService.setCurrentMatchId, checked above
+PASS  startMatch rejects when not everyone is ready (defense in depth)
+PASS  startMatch: rejecting for not-ready leaves room untouched
+PASS  startMatch rejects for a nonexistent room
+PASS  startMatch called twice for the same room is idempotent: same matchId returned
+PASS  startMatch called twice for the same room: no second match document created
+PASS  startMatch: idempotent (already-existing) return still self-syncs the caller's own profile
+PASS  two concurrent startMatch calls resolve to the SAME matchId
+PASS  two concurrent startMatch calls create exactly ONE match document for the room
+PASS  loadMatch resolves the match document
+PASS  loadMatch resolves null (not an error) for a nonexistent match
+PASS  subscribeToMatch delivers an immediate snapshot with the current data
+PASS  subscribeToMatch delivers a second snapshot on change
+PASS  subscribeToMatch's unsubscribe function actually stops delivery
+PASS  subscribeToMatch delivers (null, null-ish exists:false) for a nonexistent match, not a thrown error
+PASS  startMatch surfaces a clear rejection when Firestore is unavailable
+PASS  subscribeToMatch delivers (null, err) when Firestore is unavailable, rather than throwing
+PASS  MatchService.submitDashCall() still throws Not implemented (bidding/estimation/card-play out of scope this sprint)
+PASS  MatchService.submitPass() still throws Not implemented (bidding/estimation/card-play out of scope this sprint)
+PASS  MatchService.declareTrump() still throws Not implemented (bidding/estimation/card-play out of scope this sprint)
+PASS  MatchService.submitEstimate() still throws Not implemented (bidding/estimation/card-play out of scope this sprint)
+PASS  MatchService.playCard() still throws Not implemented (bidding/estimation/card-play out of scope this sprint)
+PASS  MatchService.resolveTrick() still throws Not implemented (bidding/estimation/card-play out of scope this sprint)
+PASS  MatchService.completeRound() still throws Not implemented (bidding/estimation/card-play out of scope this sprint)
+PASS  MatchService.submitBid() with no arguments rejects with a structured INVALID_ARGUMENT error (not a synchronous throw, not silently resolved)
+PASS  integration: room not yet all-ready after only one player readies ΓÇö no match yet
+PASS  integration: matchStart.allReady is false while not everyone is ready
+PASS  integration: RoomService.setReady (last player ready) triggers MatchService.startMatch automatically
+PASS  integration: room status becomes 'in_game' via the triggered startMatch
+PASS  integration: setReady()'s OWN resolved room.matchStart reports started:true with the real matchId
+PASS  integration: the triggered match document actually exists
+PASS  integration: the triggered match's players match the room's players
+PASS  integration: the triggering client's own profile was self-synced via SessionService.setCurrentMatchId
+PASS  integration: two players calling setReady concurrently (real trigger path) still produce exactly ONE match
+PASS  integration: the room ends up with a consistent matchId matching the one match document
+PASS  integration: any concurrent setReady call that reports a matchId reports the correct, single one (never a mismatch)
+PASS  integration: exactly one of the two concurrent setReady calls actually started the match
+PASS  integration: partial-ready room (not everyone ready) never triggers startMatch
+PASS  integration: partial-ready room's matchStart correctly reports allReady:false
+PASS  Task 4: a failed match-start attempt is OBSERVABLE via room.matchStart.error, not silently swallowed
+PASS  Task 4: setReady() itself still resolves (never rejects) even when the match-start attempt failed
+PASS  Task 4: a failed attempt leaves the room genuinely retryable ΓÇö status still 'waiting', no matchId
+PASS  Task 4: retrying via the same idempotent setReady(true) call succeeds once the failure clears
+PASS  Requirement #2 (whole run): across EVERY startMatch/setReady call in this entire test file, PlayerService.updatePlayerProfile was never once called with currentMatchId
+
+65 passed, 0 failed
+[MatchService] subscribeToMatch(matches-1): unrecognized error (code: none) ΓÇö reconnect attempts stopped permanently for this subscription.
+[RoomService] MatchService.startMatch failed (non-fatal to setReady itself ΓÇö see room.matchStart.error): Error: simulated transient failure
+    at MatchService.startMatch (C:\Users\EXPRESS\OneDrive\Desktop\demo-test\tests\match-service.test.cjs:425:65)
+    at maybeStartMatch (file:///C:/Users/EXPRESS/OneDrive/Desktop/demo-test/design-ui/room-service.js:261:32)
+    at file:///C:/Users/EXPRESS/OneDrive/Desktop/demo-test/design-ui/room-service.js:221:14
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async C:\Users\EXPRESS\OneDrive\Desktop\demo-test\tests\match-service.test.cjs:426:30
+PASS  match-service.test.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ match-sync.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+PASS  Two independent subscribers (simulating two tabs, against a MOCKED Firestore) each get an immediate snapshot
+PASS  Duplicate listeners are impossible: two subscribeToMatch() calls for the same matchId create exactly ONE real Firestore listener
+PASS  Simulated two-tab synchronization: BOTH subscribers observe the same change (turn changes synchronize)
+PASS  Estimates synchronize: an estimates-shaped change to gameState is delivered to every subscriber, including a real zero
+PASS  Card play appears remotely: a lastCardPlayed-shaped change is delivered to every subscriber
+PASS  Ignore local duplicate updates: an identical re-delivery (no real change) is never re-published
+PASS  Ordering guard: the first snapshot (version 1) is delivered
+PASS  Old snapshots (version <= last applied) never overwrite newer local state
+PASS  A genuinely newer version (2 > 1) is applied
+PASS  A stale snapshot arriving AFTER a newer one was already applied is still ignored
+PASS  Ordering guard tolerates version gaps (5 after 2) ΓÇö only monotonic increase is required
+PASS  Unsubscribing ONE of two listeners leaves the shared Firestore listener attached for the other
+PASS  The remaining subscriber (tabB) still receives updates after the other unsubscribed
+PASS  The unsubscribed listener (tabA) receives nothing further
+PASS  No memory leak: once the LAST subscriber unsubscribes, the underlying Firestore listener is torn down
+PASS  A change with zero subscribers touches nothing (no dangling callback fires)
+PASS  A fresh subscribe() after full teardown creates a NEW real listener (proving the old one is genuinely gone, not just quiet)
+PASS  Reconnect scenario setup: initial snapshot received
+PASS  Simulated disconnect (retryable code): an error is delivered, but NEVER crashes (no throw reached this line)
+PASS  Keep local game alive: the last known good data is delivered ALONGSIDE the error, never replaced with null
+PASS  Retryable errors reconnect (Task 1): the listener was genuinely detached, and no new one is attached yet
+PASS  Reconnect restores synchronization automatically (simulated) ΓÇö no explicit re-subscribe call needed
+PASS  ...and a genuinely NEW listener was attached to do it (not the original, never-detached one)
+PASS  A non-retryable error is still delivered to subscribers (never silently swallowed)
+PASS  ...alongside the last known good data (fail-open, same as a retryable error)
+PASS  Non-retryable errors stop reconnecting immediately: no new listener is EVER attached afterward
+PASS  ...even if the underlying document changes in the meantime, nobody hears about it (this subscription is permanently done)
+PASS  A late joiner to a permanently-failed subscription learns about the terminal error immediately, not silently
+PASS  ...without triggering a new Firestore listener attempt (it's truly terminal, not a fresh retry)
+PASS  An error with no recognized code is treated as non-retryable (the documented safe default) ΓÇö never reconnects
+PASS  Sustained outage: the disconnect itself is reported (fail-open, no crash)
+PASS  During a sustained retryable outage, repeated reconnect attempts keep failing safely (never crash, never fabricate data)
+PASS  Once a retryable outage clears, the backoff loop eventually reconnects successfully on its own (simulated)
+PASS  Zero gameplay rule changes: MatchService.submitDashCall() is still an unimplemented stub, unchanged by this sprint
+PASS  Zero gameplay rule changes: MatchService.submitPass() is still an unimplemented stub, unchanged by this sprint
+PASS  Zero gameplay rule changes: MatchService.declareTrump() is still an unimplemented stub, unchanged by this sprint
+PASS  Zero gameplay rule changes: MatchService.submitEstimate() is still an unimplemented stub, unchanged by this sprint
+PASS  Zero gameplay rule changes: MatchService.playCard() is still an unimplemented stub, unchanged by this sprint
+PASS  Zero gameplay rule changes: MatchService.resolveTrick() is still an unimplemented stub, unchanged by this sprint
+PASS  Zero gameplay rule changes: MatchService.completeRound() is still an unimplemented stub, unchanged by this sprint
+PASS  Before subscribing, GameSession.getRemoteMatch() is null
+PASS  Before subscribing, GameSession.isSubscribedToRemoteMatch() is false
+PASS  GameSession.subscribeToRemoteMatch() immediately mirrors the current match data
+PASS  GameSession.isSubscribedToRemoteMatch() reflects the active subscription
+PASS  GameSession never touched Firestore directly to get this ΓÇö it only ever called MatchService.subscribeToMatch
+PASS  onRemoteMatchUpdate fires immediately with the current value on subscribe
+PASS  GameSession consumes MatchService updates: getRemoteMatch() reflects a live change
+PASS  GameSession's own onRemoteMatchUpdate listeners are notified of the same change
+PASS  GameSession.subscribeToRemoteMatch() is idempotent for the same matchId ΓÇö no duplicate MatchService subscription
+PASS  Switching matchId cleanly tears down the old GameSession-level subscription
+PASS  ...and attaches to the new one
+PASS  GameSession.unsubscribeFromRemoteMatch() fully tears down the underlying MatchService subscription
+PASS  ...and isSubscribedToRemoteMatch() reflects it
+PASS  ...but getRemoteMatch() still returns the last known data (not wiped) ΓÇö GameSession keeps the local game alive
+PASS  GameSession surfaces the remote error via getRemoteMatchError()
+PASS  GameSession's mirrored data survives the disconnect (fail-open, never crashes, never nulled)
+
+56 passed, 0 failed
+[MatchService] subscribeToMatch(m5): non-retryable error (code: permission-denied) ΓÇö reconnect attempts stopped permanently for this subscription.
+[MatchService] subscribeToMatch(m6): unrecognized error (code: none) ΓÇö reconnect attempts stopped permanently for this subscription.
+[MatchService] subscribeToMatch(gm3): unrecognized error (code: none) ΓÇö reconnect attempts stopped permanently for this subscription.
+PASS  match-sync.test.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ matches-update-dispatch.rules-emulator.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+EMULATOR NOT REACHABLE ΓÇö fetch failed
+
+=== RESULTS ===
+
+0 passed, 0 failed (SKIPPED ΓÇö no emulator connection)
+FAIL  matches-update-dispatch.rules-emulator.test.cjs  (exit 2, contains SKIPPED marker)
+
+ΓöÇΓöÇΓöÇΓöÇ p0-05-fourth-card.rules-emulator.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+RULES_SHA256 c88b61a137d5b2efe74a9b9f4c295bdce3adfe31e61ea83fea3e7328ab7b1d57
+STATUS BLOCKED ΓÇö REAL EMULATOR UNAVAILABLE: fetch failed
+FAIL  p0-05-fourth-card.rules-emulator.test.cjs  (exit 2)
+
+ΓöÇΓöÇΓöÇΓöÇ p1-08-r-hardening.rules-emulator.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+RULES_PATH C:\Users\EXPRESS\OneDrive\Desktop\demo-test\firestore.rules
+RULES_SHA256 c88b61a137d5b2efe74a9b9f4c295bdce3adfe31e61ea83fea3e7328ab7b1d57
+STATUS BLOCKED ΓÇö REAL EMULATOR UNAVAILABLE: fetch failed
+FAIL  p1-08-r-hardening.rules-emulator.test.cjs  (exit 2)
+
+ΓöÇΓöÇΓöÇΓöÇ rematch-vote.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+PASS  A. Vote creation: succeeds for a seated player of a completed match
+PASS  A. Vote creation: vote document actually exists in the subcollection
+PASS  A. Vote creation: status starts OPEN
+PASS  A. Vote creation: newMatchId starts null
+PASS  B. Only seated players can vote: a non-seated uid is rejected
+PASS  B. Only seated players can vote: no vote was recorded for the rejection attempt
+PASS  C. Four seats initialized: votes has exactly p1-p4, all null
+PASS  C. Four seats initialized: seats copied verbatim from the parent match
+PASS  C. 2-player match: exactly 2 seats initialized, no fabricated p3/p4
+PASS  D. YES vote: accepted and recorded
+PASS  D. YES vote: status stays OPEN (not all seats voted yet)
+PASS  E. NO vote: accepted and recorded
+PASS  F. Vote cannot be changed: a conflicting second value is rejected (not silently applied)
+PASS  F. Vote cannot be changed: the original YES is preserved
+PASS  G. Duplicate same vote: idempotent no-op, no error
+PASS  G. Duplicate same vote: version did not advance for the no-op
+PASS  H. Conflicting second vote: rejected, never applied
+PASS  H. Conflicting second vote: no version change
+PASS  I. Any NO immediately fails: status is FAILED_NO after only 2/4 responded
+PASS  J. 3 YES + 1 NO fails: status is FAILED_NO, not ALL_YES
+PASS  K. 4 YES succeeds: status becomes ALL_YES exactly on the completing vote
+PASS  L. 30-second timeout fails: resolves to FAILED_TIMEOUT
+PASS  M. (setup) the in-window YES genuinely succeeded before backdating
+PASS  M. Unvoted counts as NO: overall outcome is FAILED_TIMEOUT despite one real, valid YES
+PASS  M. Unvoted counts as NO: the unvoted seats' vote values are NOT fabricated to 'NO' ΓÇö they remain null (the OUTCOME is the fail, not the raw data)
+PASS  M. Unvoted counts as NO: the one real YES vote itself is untouched/preserved
+PASS  N. Timeout cannot happen before deadline: not resolved, vote stays OPEN
+PASS  O. Vote after deadline rejected: submitRematchVote() itself refuses (fast client-side pre-check ΓÇö see this sprint's own 'neither layer trusts the other alone' fix)
+PASS  O. Vote after deadline rejected: no vote value was recorded
+PASS  P. Simultaneous final YES race: exactly one ends OPEN write, other is idempotent no-op (ALREADY_VOTED)
+PASS  P. Simultaneous final YES race: final status is ALL_YES, never corrupted
+PASS  Q. Simultaneous NO race: status is FAILED_NO, no corruption
+PASS  R. Simultaneous timeout race: exactly one resolves=true, other is ALREADY_RESOLVED no-op
+PASS  R. Simultaneous timeout race: final status is FAILED_TIMEOUT, no corruption
+PASS  S. (setup) status is ALL_YES before the creation race
+PASS  S. Simultaneous rematch creation race: exactly one created=true, other is idempotent no-op returning the SAME newMatchId
+PASS  T. Exactly one new match created for m-s's vote
+PASS  U. Old match remains unchanged: status/winnerIds/finalScores/completedRound untouched by rematch creation
+PASS  V. New match has the SAME four players (as a set)
+PASS  W. New match has the SAME seat assignments
+PASS  W. New match links back to the old one (rematchOfMatchId)
+PASS  W. New match starts fresh (status starting, round 1, no cards/bids)
+PASS  X. Arbitrary UID injection rejected: createRematchMatch() takes no players/seats argument at all ΓÇö nothing to inject
+PASS  X. Arbitrary UID injection rejected: new match's players are EXACTLY the vote's own seats' values, never a superset
+PASS  Y. New matchId differs from old matchId
+PASS  Z. Reload during vote recovers authoritative state: a fresh subscriber immediately observes the CURRENT vote (YES already cast)
+
+=== RESULTS ===
+
+46 passed, 0 failed
+PASS  rematch-vote.test.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ room-service-creator-start.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+PASS creator-only startMatch orchestration
+3 passed, 0 failed
+PASS  room-service-creator-start.test.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ room-service.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+PASS  createRoom returns a roomId
+PASS  createRoom initializes readyPlayers to an empty array
+PASS  createRoom sets players to [creator]
+PASS  multiple players can join the same room
+PASS  setReady(true): player is added to readyPlayers
+PASS  setReady(true): return value reflects the new state
+PASS  setReady(true): players[] is untouched
+PASS  setReady(true): creator/status/name are untouched
+PASS  setReady(true) called twice does not perform a second write (Spark-conscious no-op)
+PASS  multiple players: p1 and p2 both ready, p3 not
+PASS  setReady(false): player is removed from readyPlayers
+PASS  setReady(false): other ready players are unaffected
+PASS  setReady(false) called twice does not perform a second write
+PASS  setReady rejects for a player who isn't a room member
+PASS  setReady rejects for a nonexistent room
+PASS  setReady rejects for a closed room
+PASS  concurrent setReady calls from two different players: both land, neither is lost
+PASS  concurrent identical setReady(true) calls from the same player: readyPlayers has no duplicate entry
+PASS  leaveRoom removes the departing player from readyPlayers too, not just players
+PASS  setReady surfaces a clear rejection when Firestore is unavailable (not a hang, not a silent success)
+PASS  RoomService.transferHost() still throws Not implemented (out of scope this sprint)
+PASS  RoomService.closeRoom() still throws Not implemented (out of scope this sprint)
+PASS  loadRoom resolves the room document
+PASS  loadRoom resolves a room without a matchId as matchId undefined/absent (not yet started)
+PASS  loadRoom resolves null (not an error) for a nonexistent room ΓÇö mirrors MatchService.loadMatch()'s pattern
+PASS  loadRoom rejects clearly when roomId is missing
+PASS  loadRoom surfaces a clear rejection when Firestore is unavailable
+PASS  room.matchStart is always present on setReady()'s resolved value, and correctly reports allReady:false when a member still isn't ready
+PASS  room.matchStart reports allReady:true, started:false, and a clear error when MatchService is unavailable
+PASS  room.matchStart reports started:true with the matchId MatchService.startMatch resolved, when everyone is ready
+PASS  RoomService actually called MatchService.startMatch(roomId) with the correct roomId
+
+31 passed, 0 failed
+[RoomService] All players ready, but MatchService is not available ΓÇö match was not started.
+[RoomService] All players ready, but MatchService is not available ΓÇö match was not started.
+[RoomService] All players ready, but MatchService is not available ΓÇö match was not started.
+[RoomService] All players ready, but MatchService is not available ΓÇö match was not started.
+PASS  room-service.test.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ round-advance-retry.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+PASS  failed attempt is made once
+PASS  later delivery retries the same failed round
+PASS  successful retry remains idempotent
+=== RESULTS ===
+3 passed, 0 failed
+[MatchAdapter] advanceToNextRound() attempt failed (non-fatal ΓÇö another client, or a later delivery, may still succeed): Error: temporary round failure
+    at Object.<anonymous> (C:\Users\EXPRESS\OneDrive\Desktop\demo-test\tests\round-advance-retry.test.cjs:20:32)
+    at Module._compile (node:internal/modules/cjs/loader:1830:14)
+    at Object..js (node:internal/modules/cjs/loader:1961:10)
+    at Module.load (node:internal/modules/cjs/loader:1553:32)
+    at Module._load (node:internal/modules/cjs/loader:1355:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+  code: 'ROUND_NOT_COMPLETE'
+}
+PASS  round-advance-retry.test.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ round-lifecycle.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+PASS  A. submitBiddingAction() stamps the new biddingLog entry with the document's own currentRound (1)
+PASS  B. submitCard() stamps the new cardLog entry with the document's own currentRound (1)
+PASS  C. advanceToNextRound(): rejects ROUND_NOT_COMPLETE when fewer than 52 round-tagged cards exist
+PASS  D. advanceToNextRound(): resolves {advanced:true} once 52 round-tagged cards exist
+PASS  D. advanceToNextRound(): currentRound advances from 1 to 2
+PASS  D. advanceToNextRound(): dealer rotates from p1 owner u1 to p2 owner u2
+PASS  D. advanceToNextRound(): version increments by exactly 1
+PASS  D. advanceToNextRound(): biddingOpen reset to true
+PASS  D. advanceToNextRound(): bids reset to all-null
+PASS  D. advanceToNextRound(): turn reset to null (no defined meaning until new bidding resumes)
+PASS  D. advanceToNextRound(): cardPhase reset to null
+PASS  D. advanceToNextRound(): Round 1's own 52 cardLog entries are completely untouched (append-only, never cleared)
+PASS  E. advanceToNextRound(): a second call for the SAME already-advanced round is a harmless no-op, not an error
+PASS  E. advanceToNextRound(): the no-op did NOT create a Round 3 ΓÇö currentRound is still 2
+PASS  E. advanceToNextRound(): the no-op did NOT bump version again
+PASS  F. advanceToNextRound(): a non-player uid is rejected with PERMISSION_DENIED
+PASS  G. applyRemoteRoundTransition(): applied:true when the document's currentRound is ahead of the local round
+PASS  G. applyRemoteRoundTransition(): GameSession.getRound().number advanced by exactly 1
+PASS  G. applyRemoteRoundTransition(): BiddingEngine was re-initialized for the new round (subPhase back to DASH, not stuck at DONE)
+PASS  G. applyRemoteRoundTransition(): BiddingEngine.getState().round reflects the NEW round number
+PASS  G. applyRemoteRoundTransition(): a repeat delivery of the SAME currentRound is a harmless no-op (NO_NEW_ROUND)
+PASS  H setup: BiddingEngine is now genuinely on Round 2
+PASS  H. applyRemoteBiddingAction(): a Round 2 entry is DEFERRED (not desynced, not silently consumed) while the local engine is still on Round 1
+PASS  H. applyRemoteBiddingAction(): the count registry did NOT advance past the deferred entry
+PASS  H. applyRemoteRoundTransition(): BiddingEngine is genuinely on Round 2 again after catch-up
+PASS  H. applyRemoteBiddingAction(): the SAME Round 2 entry is APPLIED once the local engine has caught up ΓÇö nothing was permanently lost
+PASS  I. applyRemoteCard(): an entry tagged for the NEXT round is DEFERRED while TableEngine is still on the current round
+PASS  I. applyRemoteCard(): the count registry did NOT advance past the deferred entry
+PASS  J. Synchronization: startRoundSync() + startBiddingActionSync() + startCardSync() for the SAME matchId still register exactly ONE Firestore listener
+
+29 passed, 0 failed
+PASS  round-lifecycle.test.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ rules-simulation-match-start.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+=== SPRINT-3.7: Room->Match Start Transaction Rules Simulation ===
+
+PASS  1. matches/{matchId} CREATE is explicitly allowed when the caller is a member of the ready room
+PASS  2. rooms/{roomId} UPDATE is explicitly allowed to set status:'in_game' as part of the SAME transaction
+PASS  3. Both writes of the SAME real transaction are allowed together (the actual acceptance criterion)
+PASS  4. matches/{matchId} CREATE is DENIED for a caller who is NOT in the room
+PASS  5. rooms/{roomId} UPDATE is DENIED for a caller who is NOT in the room
+PASS  6. matches/{matchId} CREATE is DENIED when the room is not fully ready
+PASS  7. rooms/{roomId} UPDATE is DENIED when the room is not fully ready
+PASS  8. matches/{matchId} CREATE is DENIED for a room that's already in_game (can't double-start)
+PASS  9. rooms/{roomId} UPDATE is DENIED if the paired match doc's roomId doesn't actually point back at this room
+
+=== RESULTS ===
+
+9 passed, 0 failed
+PASS  rules-simulation-match-start.test.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ rules-simulation.test.js ΓöÇΓöÇΓöÇΓöÇ
+PASS  create: User A creating a room with creator=A, players=[A], status set ΓÇö ALLOWED
+PASS  create: User A spoofing creator=userB (someone else) ΓÇö DENIED
+PASS  create: creator not included in its own players[] ΓÇö DENIED
+PASS  create: creator field is not a string (type check) ΓÇö DENIED
+PASS  create: players field is not a list (type check) ΓÇö DENIED
+PASS  create: missing status field ΓÇö DENIED
+PASS  SIMULATION PROOF ΓÇö the brief's LITERAL rule (checking only the pre-write players[]) denies a legitimate join by a brand-new user: this is the exact blocker this hotfix's deviation fixes
+PASS  update: the SHIPPED fixed rule allows that same legitimate join (userC adds themself, so they're present in the post-write players[])
+PASS  update: an existing member (userB) leaving ΓÇö still ALLOWED (present in the pre-write players[], even though absent from the post-write one)
+PASS  update: a total OUTSIDER (userX, absent from both the old AND the attempted new players[]) trying to vandalize User B's room by renaming it or changing its status ΓÇö DENIED
+PASS  update: a total OUTSIDER cannot even add an unrelated third user (userY) to someone else's room without adding themself too (they're still absent from the resulting players[])
+PASS  create v2: valid new room (creator=A, players=[A], readyPlayers=[], status=waiting) ΓÇö ALLOWED
+PASS  create v2: extra, non-whitelisted field (e.g. a fabricated 'matchId') ΓÇö DENIED (closes F6)
+PASS  create v2: players.length == 2 at creation (fabricating a second member who never joined) ΓÇö DENIED (closes F7)
+PASS  create v2: readyPlayers non-empty at creation ΓÇö DENIED
+PASS  create v2: status other than 'waiting' at creation ΓÇö DENIED
+PASS  update v2: userB marks themself ready (readyPlayers gains exactly userB) ΓÇö ALLOWED
+PASS  update v2: userB un-readies themself ΓÇö ALLOWED
+PASS  SECURITY: userC attempts to mark userB ready on userB's behalf (forging someone else's ready flag) ΓÇö DENIED
+PASS  SECURITY: userC attempts to mark BOTH themself and userB ready in one write ΓÇö DENIED (only a single self-only change is allowed, not a bulk edit)
+PASS  SECURITY (F3): an existing member tries to rename the room ('name' is not in the allowed-fields list) ΓÇö DENIED
+PASS  SECURITY (F3): an existing member tries to rewrite createdAt ΓÇö DENIED
+PASS  KNOWN, DOCUMENTED GAP (not closed by this sprint, on purpose): an existing member (userC) self-promotes to creator WITHOUT actually leaving ΓÇö this is currently ALLOWED, because rules cannot distinguish 'part of a legitimate leave-transfer' from 'a standalone write' without Cloud Functions. isValidCreatorChange() only checks that the new creator is still a real member, not that a genuine leave happened. Recorded here exactly as it's recorded in firestore.rules' own comment ΓÇö confirmed by this test, not silently left unverified.
+PASS  update v2: creator legitimately transfers to the next member when the creator leaves ΓÇö ALLOWED
+PASS  SECURITY: an outsider tries to reassign creator to a fabricated, non-member uid ΓÇö DENIED
+PASS  SECURITY: a member tries to set status to an arbitrary string ΓÇö DENIED
+PASS  SECURITY: a member tries to close the room while players[] is still non-empty ΓÇö DENIED (status may only become 'closed' when the room is actually empty, matching leaveRoom()'s real behavior)
+PASS  update v2: the last player leaving legitimately closes the room ΓÇö ALLOWED
+PASS  update v2: a non-member (absent from both old and new players[]) is denied even for a no-op-looking write
+PASS  update v3: MatchService.startMatch()'s own write ΓÇö status becomes 'in_game' and matchId is set together, by a member ΓÇö ALLOWED
+PASS  SECURITY (v3): status becomes 'in_game' WITHOUT setting matchId in the same write ΓÇö DENIED (matchId may only be set together with the in_game transition, matching startMatch()'s real single-write shape)
+PASS  SECURITY (v3): matchId is set WITHOUT status becoming 'in_game' ΓÇö DENIED (can't sneak a matchId onto a still-'waiting' room)
+PASS  SECURITY (v3): 'in_game' attempted from a room that wasn't 'waiting' (already 'closed') ΓÇö DENIED (matches startMatch()'s actual, only real transition: waiting -> in_game)
+PASS  update v3: once matchId is set, changing it again to a DIFFERENT match id ΓÇö DENIED (immutable once set)
+PASS  update v3: a write that leaves matchId completely unchanged (e.g. a hypothetical future readyPlayers tweak on an in_game room) does not re-trigger the matchId check ΓÇö ALLOWED on that basis
+PASS  SECURITY (v3): an outsider (not in players before or after) cannot start a match on someone else's room
+PASS  matches create: a valid new match document from a seated player ΓÇö ALLOWED
+PASS  SECURITY (matches create): the acting user is not even one of the match's players[] ΓÇö DENIED (can't create a match you're not seated in)
+PASS  SECURITY (matches create): an extra, non-whitelisted field ΓÇö DENIED (same field-whitelist discipline as rooms)
+PASS  matches create: status other than 'starting' ΓÇö DENIED
+PASS  matches create: currentRound other than 1 ΓÇö DENIED (a match always starts at round 1)
+PASS  SECURITY (matches create): dealer set to a uid who isn't one of players[] ΓÇö DENIED
+PASS  SECURITY (matches create): turn set to a uid who isn't one of players[] ΓÇö DENIED
+PASS  matches get: a seated player (userB) may read the match ΓÇö ALLOWED
+PASS  SECURITY (matches get): a non-seated authenticated user (userX) may NOT read the match (unlike rooms/{roomId}, match documents are not globally readable ΓÇö see FirestoreSchema.md's privacy note)
+PASS  players update: userB updating their OWN currentMatchId ΓÇö ALLOWED
+PASS  SECURITY (Requirement #1): userA attempts to update userB's players/{userB} document ΓÇö DENIED. This is the exact class of write MatchService's Sprint 3.4 syncCurrentMatchOnProfiles() used to attempt for every non-initiating room player ΓÇö it could only ever succeed for the write's own uid.
+PASS  matches create v2: fully valid ΓÇö room exists/waiting/all-ready, players match, room's post-commit matchId points back at this document ΓÇö ALLOWED
+PASS  SECURITY (Requirement #4 ΓÇö fabricated match, unrelated/nonexistent room): roomId points at a room that doesn't exist ΓÇö DENIED
+PASS  SECURITY (Requirement #5 ΓÇö non-member creates a match for a room they're not in): userX is not in the room's players[] ΓÇö DENIED
+PASS  SECURITY: room status is not 'waiting' (already in_game/closed) ΓÇö DENIED
+PASS  SECURITY (Requirement #6 ΓÇö match cannot start while any player is not ready): userC is not in readyPlayers ΓÇö DENIED
+PASS  SECURITY (Requirement #8 ΓÇö match players must match room players): match.players omits userC ΓÇö DENIED
+PASS  SECURITY (Requirement #7 ΓÇö room.matchId must equal the new match document's own id): the room's post-commit matchId points at a DIFFERENT match ΓÇö DENIED (proves the atomic-transaction requirement is rules-enforced: creating a match without its paired, same-commit room update fails here)
+PASS  update v3.1: MatchService.startMatch()'s own write ΓÇö fully valid, matching getAfter(match) ΓÇö ALLOWED
+PASS  SECURITY (Requirement #6, room side): starting transition attempted while userC is not ready ΓÇö DENIED
+PASS  SECURITY (Requirement #5, room side): the acting user is not actually a member of this room's players[] ΓÇö DENIED
+PASS  SECURITY (Requirement #7, room side): getAfter(match).roomId points at a DIFFERENT room ΓÇö DENIED
+PASS  SECURITY (Requirement #8, room side): getAfter(match).players does not match this room's players ΓÇö DENIED
+PASS  SECURITY: the match document doesn't exist post-commit at all (getAfter finds nothing) ΓÇö DENIED. Proves setting status/matchId WITHOUT actually creating the match in the SAME atomic write is rejected.
+PASS  update v3.1: a non-transition write (e.g. an ordinary future readyPlayers tweak on an in_game room) with matchId unchanged is unaffected by any of the new checks ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö matches create v3 (Sprint 3.8): a fully valid match WITH seats/version/bidding fields ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö SECURITY (Task 1): a seat is fabricated for someone who isn't actually a player ΓÇö DENIED
+PASS  SIMULATED ΓÇö SECURITY (Task 1): two seats assigned to the SAME uid ΓÇö DENIED
+PASS  SIMULATED ΓÇö SECURITY (Task 1): a real player has NO seat at all ΓÇö DENIED (seatKeys.size() != players.size())
+PASS  SIMULATED ΓÇö SECURITY (Task 1): an invalid seat name ('p5') ΓÇö DENIED
+PASS  SIMULATED ΓÇö SECURITY (Task 2): version is not exactly 1 at creation ΓÇö DENIED
+PASS  SIMULATED ΓÇö SECURITY (Task 3): biddingOpen is not true at creation ΓÇö DENIED
+PASS  SIMULATED ΓÇö SECURITY (Task 3): a bid is pre-filled (non-null) at creation ΓÇö DENIED (bidding must start genuinely empty)
+PASS  SIMULATED ΓÇö SECURITY (Task 3): lastBidSeat is not null at creation ΓÇö DENIED
+PASS  SIMULATED ΓÇö SECURITY (Task 3): bids has an extra key not in seats ΓÇö DENIED
+PASS  SIMULATED ΓÇö bid submission (normal bid): seat owner submits their own bid ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö normal bid correctly leaves biddingOpen TRUE when not every seat has bid yet
+PASS  SIMULATED ΓÇö the LAST seat's bid correctly closes bidding (biddingOpen becomes false)
+PASS  SIMULATED ΓÇö SECURITY: the last seat's bid FAILS to close bidding (client lies, leaves biddingOpen true) ΓÇö DENIED
+PASS  SIMULATED ΓÇö duplicate bid: the SAME seat tries to submit a second time ΓÇö DENIED (ALREADY_BID equivalent)
+PASS  SIMULATED ΓÇö out-of-order version: incomingVersion is not exactly currentVersion + 1 (skips ahead) ΓÇö DENIED
+PASS  SIMULATED ΓÇö stale version: incomingVersion equal to currentVersion (a replayed/stale write) ΓÇö DENIED
+PASS  SIMULATED ΓÇö wrong seat: caller names a seat that isn't theirs (lastBidSeat='p2' but seats.p2 is userC, caller is userB) ΓÇö DENIED
+PASS  SIMULATED ΓÇö wrong uid: the acting uid does not match ANY seat's owner at all ΓÇö DENIED
+PASS  SIMULATED ΓÇö PERMISSION DENIED equivalent: request.auth is null (unauthenticated) ΓÇö DENIED
+PASS  SIMULATED ΓÇö bidding closed: a write attempted after biddingOpen is already false ΓÇö DENIED
+PASS  SIMULATED ΓÇö player modifies only own bid: a write that ALSO changes another seat's bid in the same write ΓÇö DENIED
+PASS  SIMULATED ΓÇö reject every other write: a write that also tries to change `players`/`seats`/`dealer` alongside a valid bid ΓÇö DENIED
+PASS  SIMULATED ΓÇö a non-member of the match at all attempts a write ΓÇö DENIED
+PASS  SIMULATED ΓÇö generic bid validation: null is rejected
+PASS  SIMULATED ΓÇö generic bid validation: undefined is rejected
+PASS  SIMULATED ΓÇö generic bid validation: NaN is rejected
+PASS  SIMULATED ΓÇö generic bid validation: Infinity is rejected
+PASS  SIMULATED ΓÇö generic bid validation: -Infinity is rejected
+PASS  SIMULATED ΓÇö generic bid validation: a negative value (-1) is rejected
+PASS  SIMULATED ΓÇö generic bid validation: 14 (above the max trick count) is rejected
+PASS  SIMULATED ΓÇö generic bid validation: a string ("4") is rejected, never coerced
+PASS  SIMULATED ΓÇö generic bid validation: an object ({}) is rejected
+PASS  SIMULATED ΓÇö generic bid validation: a non-integer (4.5) is rejected
+PASS  SIMULATED ΓÇö generic bid validation: 0 (a valid trick count) is ALLOWED
+PASS  SIMULATED ΓÇö generic bid validation: 1 (a valid trick count) is ALLOWED
+PASS  SIMULATED ΓÇö generic bid validation: 2 (a valid trick count) is ALLOWED
+PASS  SIMULATED ΓÇö generic bid validation: 3 (a valid trick count) is ALLOWED
+PASS  SIMULATED ΓÇö generic bid validation: 4 (a valid trick count) is ALLOWED
+PASS  SIMULATED ΓÇö generic bid validation: 5 (a valid trick count) is ALLOWED
+PASS  SIMULATED ΓÇö generic bid validation: 6 (a valid trick count) is ALLOWED
+PASS  SIMULATED ΓÇö generic bid validation: 7 (a valid trick count) is ALLOWED
+PASS  SIMULATED ΓÇö generic bid validation: 8 (a valid trick count) is ALLOWED
+PASS  SIMULATED ΓÇö generic bid validation: 9 (a valid trick count) is ALLOWED
+PASS  SIMULATED ΓÇö generic bid validation: 10 (a valid trick count) is ALLOWED
+PASS  SIMULATED ΓÇö generic bid validation: 11 (a valid trick count) is ALLOWED
+PASS  SIMULATED ΓÇö generic bid validation: 12 (a valid trick count) is ALLOWED
+PASS  SIMULATED ΓÇö generic bid validation: 13 (a valid trick count) is ALLOWED
+PASS  SIMULATED ΓÇö matches create v4 (Sprint 4.2): a fully valid match WITH cardLog/lastCardSeat fields ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö matches create v4: the OLD (pre-4.2) shape without cardLog/lastCardSeat is now DENIED by V4 (extra/missing-key check both ways)
+PASS  SIMULATED ΓÇö SECURITY: cardLog is pre-filled (non-empty) at creation ΓÇö DENIED
+PASS  SIMULATED ΓÇö SECURITY: lastCardSeat is not null at creation ΓÇö DENIED
+PASS  SIMULATED ΓÇö matches create v5 (Sprint 4.2.2): a fully valid match WITH cardPhase ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö matches create v5: the OLD (pre-4.2.2) shape without cardPhase is now DENIED by V5
+PASS  SIMULATED ΓÇö SECURITY: cardPhase is not null at creation ΓÇö DENIED
+PASS  SIMULATED ΓÇö card submission (valid card): seat owner (whose turn it currently is) appends one well-formed card and the turn atomically advances ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö multiple sequential cards: a second, independent append after the first (now userC's turn) is ALSO allowed, turn advancing again
+PASS  SIMULATED ΓÇö the 4th card of a trick may set turn to null and cardPhase to RESOLVING ΓÇö ALLOWED (the resolving boundary)
+PASS  SIMULATED ΓÇö SECURITY (Sprint 4.2.2, Task 6): submitting when it is NOT the caller's turn ΓÇö DENIED, even though the caller owns a real seat
+PASS  SIMULATED ΓÇö SECURITY: the new turn is a uid that owns NO seat in this match at all ΓÇö DENIED (structurally impossible, per Task 6's own honest-limitation check)
+PASS  SIMULATED ΓÇö SECURITY: cardPhase set to an arbitrary string outside {PLAY, RESOLVING} ΓÇö DENIED
+PASS  SIMULATED ΓÇö SECURITY: submitting as a seat you don't own ΓÇö DENIED
+PASS  SIMULATED ΓÇö SECURITY: lastCardSeat claims one seat but the appended entry's own seatId says another ΓÇö DENIED
+PASS  SIMULATED ΓÇö SECURITY: out-of-order version (skips ahead) ΓÇö DENIED
+PASS  SIMULATED ΓÇö SECURITY: version rollback (equal, no increment at all) ΓÇö DENIED
+PASS  SIMULATED ΓÇö SECURITY: the log 'grows' by more than one entry in a single write (a batched multi-card submission) ΓÇö DENIED
+PASS  SIMULATED ΓÇö SECURITY: the log does not grow at all (a no-op claiming to be a real submission) ΓÇö DENIED
+PASS  SIMULATED ΓÇö SECURITY: a field outside {cardLog, lastCardSeat, version, turn, cardPhase, updatedAt} changes in the same write ΓÇö DENIED
+PASS  SIMULATED ΓÇö Sprint 4.2.3, Task 3 (#1): null turn is ALLOWED at the resolving boundary
+PASS  SIMULATED ΓÇö Sprint 4.2.3, Task 3 (#2): p1's own uid is ALLOWED as the next turn
+PASS  SIMULATED ΓÇö Sprint 4.2.3, Task 3 (#3): p2's own uid is ALLOWED as the next turn
+PASS  SIMULATED ΓÇö Sprint 4.2.3, Task 3 (#4): p3's own uid is ALLOWED as the next turn
+PASS  SIMULATED ΓÇö Sprint 4.2.3, Task 3 (#5): p4's own uid is ALLOWED as the next turn
+PASS  SIMULATED ΓÇö Sprint 4.2.3, Task 3 (#6): an unknown uid (owns no seat in this match at all) is REJECTED
+PASS  SIMULATED ΓÇö Sprint 4.2.3, Task 3 (#7): an empty string is REJECTED (not silently treated as null, not matched against a real seat)
+PASS  SIMULATED ΓÇö Sprint 4.2.3, Task 3 (#8): a PARTIAL seats map (only p1/p2 ΓÇö matchAfterCreate42's own 2-player fixture) behaves safely: p2's own uid is still ALLOWED as the next turn even with p3/p4 entirely absent
+PASS  SIMULATED ΓÇö Sprint 4.2.3, Task 3 (#8b): the SAME partial (p1/p2-only) seats map does not crash the simulated logic when checked against an unknown uid ΓÇö missing p3/p4 keys are handled the same as a genuinely absent seat, not a thrown error
+PASS  SIMULATED ΓÇö generic card validation: an unknown suit key is rejected
+PASS  SIMULATED ΓÇö generic card validation: rank.v below the minimum (1) is rejected
+PASS  SIMULATED ΓÇö generic card validation: rank.v above the maximum (15) is rejected
+PASS  SIMULATED ΓÇö generic card validation: a non-integer rank.v (10.5) is rejected
+PASS  SIMULATED ΓÇö generic card validation: a card with an extra, unlisted key is rejected
+PASS  SIMULATED ΓÇö generic card validation: a well-formed SANS-suit card is ALLOWED (SANS is a valid trump mode key even though it's not a real deck suit)
+PASS  SIMULATED ΓÇö generic card validation: SPADES 2 (a well-formed card) is ALLOWED
+PASS  SIMULATED ΓÇö generic card validation: SPADES 8 (a well-formed card) is ALLOWED
+PASS  SIMULATED ΓÇö generic card validation: SPADES 14 (a well-formed card) is ALLOWED
+PASS  SIMULATED ΓÇö generic card validation: HEARTS 2 (a well-formed card) is ALLOWED
+PASS  SIMULATED ΓÇö generic card validation: HEARTS 8 (a well-formed card) is ALLOWED
+PASS  SIMULATED ΓÇö generic card validation: HEARTS 14 (a well-formed card) is ALLOWED
+PASS  SIMULATED ΓÇö generic card validation: DIAMONDS 2 (a well-formed card) is ALLOWED
+PASS  SIMULATED ΓÇö generic card validation: DIAMONDS 8 (a well-formed card) is ALLOWED
+PASS  SIMULATED ΓÇö generic card validation: DIAMONDS 14 (a well-formed card) is ALLOWED
+PASS  SIMULATED ΓÇö generic card validation: CLUBS 2 (a well-formed card) is ALLOWED
+PASS  SIMULATED ΓÇö generic card validation: CLUBS 8 (a well-formed card) is ALLOWED
+PASS  SIMULATED ΓÇö generic card validation: CLUBS 14 (a well-formed card) is ALLOWED
+PASS  SIMULATED ΓÇö KNOWN VULNERABILITY (Task 4, documented not hidden): rewriting an EARLIER cardLog entry's card value while still appending exactly one NEW, well-formed entry currently PASSES isValidCardSubmission() ΓÇö the rule cannot see the rewrite
+PASS  SIMULATED ΓÇö KNOWN VULNERABILITY (Task 4): REORDERING two earlier entries (same multiset, different sequence ΓÇö which matters for turn/trick order) while appending one new entry ALSO currently passes ΓÇö proving `.all(x, x in newLog)` would not have helped even if it were added, since it checks membership, not position
+PASS  SIMULATED ΓÇö matches create v6 (Sprint 3.7): a fully valid match WITH biddingLog ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö matches create v6: the OLD (pre-3.7) shape without biddingLog is now DENIED by V6
+PASS  SIMULATED ΓÇö SECURITY: biddingLog is pre-filled (non-empty) at creation ΓÇö DENIED
+PASS  SIMULATED ΓÇö bidding-action submission (Dash Call): seat owner appends one well-formed entry ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö bidding-action submission (Auction Bid): a well-formed raise ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö bidding-action submission (Auction Pass): isPass alone, no tricks/suit ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö bidding-action submission (Confirm Call): a well-formed lock ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö multiple sequential bidding actions: a second, independent append after the first is ALSO allowed
+PASS  SIMULATED ΓÇö SECURITY: appending a seat this caller does NOT own ΓÇö DENIED
+PASS  SIMULATED ΓÇö SECURITY: a fabricated seatId with no owner at all ΓÇö DENIED
+PASS  SIMULATED ΓÇö malformed entry: unknown actionType ΓÇö DENIED
+PASS  SIMULATED ΓÇö malformed entry: an extra, unlisted key ΓÇö DENIED
+PASS  SIMULATED ΓÇö malformed entry: tricks out of the generic 0-13 range (99) ΓÇö DENIED
+PASS  SIMULATED ΓÇö malformed entry: an unknown suit key ΓÇö DENIED
+PASS  SIMULATED ΓÇö Trust-Boundary Hardening: SubmitDashCallDecision missing declaredDashCall ΓÇö DENIED
+PASS  SIMULATED ΓÇö Trust-Boundary Hardening: SubmitAuctionBid missing isPass entirely ΓÇö DENIED
+PASS  SIMULATED ΓÇö Trust-Boundary Hardening: SubmitAuctionBid with isPass:false but missing suit ΓÇö DENIED
+PASS  SIMULATED ΓÇö Trust-Boundary Hardening: SubmitAuctionBid with isPass:true and no tricks/suit ΓÇö still ALLOWED (a pass carries no payload)
+PASS  SIMULATED ΓÇö Trust-Boundary Hardening: SubmitConfirmCall missing both tricks and suit ΓÇö DENIED
+PASS  SIMULATED ΓÇö Trust-Boundary Hardening: SubmitConfirmCall with tricks but missing suit ΓÇö DENIED
+PASS  SIMULATED ΓÇö version must increment by exactly 1 ΓÇö a version jump of 2 is DENIED
+PASS  SIMULATED ΓÇö the log must grow by EXACTLY one entry ΓÇö zero growth (same length, version bumped anyway) is DENIED
+PASS  SIMULATED ΓÇö the log must grow by EXACTLY one entry ΓÇö growth of 2 in a single write is DENIED (no legitimate client batches bidding actions)
+PASS  SIMULATED ΓÇö 'Reject every other write': changing an unrelated field (e.g. cardLog) alongside a valid biddingLog append ΓÇö DENIED
+PASS  SIMULATED ΓÇö KNOWN, DOCUMENTED LIMITATION (not hidden ΓÇö mirrors isValidCardSubmission()'s own equivalent honesty note): this rule alone does NOT enforce turn ownership ΓÇö a seat owner may append a well-formed entry even when the real bidding-engine.js's own turn order says it is NOT their turn yet. This currently PASSES at the rules layer alone (deliberate ΓÇö see isValidBiddingActionSubmission()'s own comment for why: matches.turn is never advanced through Dash/Auction/Confirm). Real turn-order enforcement is MatchService.submitBiddingAction()'s own pre-write BiddingEngine.canSubmit() gate, and the real engine's own re-validation on every client via MatchAdapter.applyRemoteBiddingAction() ΓÇö never this rule alone.
+PASS  SIMULATED ΓÇö round tagging (bidding): an entry tagged with the CURRENT round is ALLOWED
+PASS  SIMULATED ΓÇö round tagging (bidding): an entry tagged with a round AHEAD of the current one is DENIED (would let a client fabricate a Round 2 entry inside a Round 1 document without ever going through advanceToNextRound())
+PASS  SIMULATED ΓÇö round tagging (bidding): an entry with NO round field at all is DENIED
+PASS  SIMULATED ΓÇö round tagging (card): an entry tagged with the CURRENT round is ALLOWED
+PASS  SIMULATED ΓÇö round tagging (card): an entry tagged with a round BEHIND the current one is DENIED
+PASS  SIMULATED ΓÇö round advance: a well-formed transition (currentRound+1, version+1, biddingOpen reset true, cardPhase/turn reset null) is ALLOWED for ANY seated player, not just a designated host
+PASS  SIMULATED ΓÇö round advance: currentRound jumping by 2 (skipping a round) ΓÇö DENIED
+PASS  SIMULATED ΓÇö round advance: version not incrementing alongside currentRound ΓÇö DENIED
+PASS  SIMULATED ΓÇö round advance: leaving `turn` at its stale PLAY-phase value instead of resetting to null ΓÇö DENIED
+PASS  SIMULATED ΓÇö round advance: touching an unrelated field (players) alongside an otherwise-valid transition ΓÇö DENIED
+PASS  SIMULATED ΓÇö round advance: a non-player uid attempting the transition ΓÇö DENIED
+PASS  SIMULATED ΓÇö round extension: a well-formed extension (maxRounds+1, extendedRounds append, version+1) is ALLOWED
+PASS  SIMULATED ΓÇö round extension: re-extending with the SAME round number already recorded ΓÇö DENIED (idempotency)
+PASS  SIMULATED ΓÇö round extension: maxRounds jumping by 2 instead of exactly 1 ΓÇö DENIED
+PASS  SIMULATED ΓÇö round extension: appended round number outside the Rapid Rounds window (14-18), e.g. round 20 ΓÇö DENIED
+PASS  SIMULATED ΓÇö round extension: appended round number below the window (round 10) ΓÇö DENIED
+PASS  SIMULATED ΓÇö round extension: version not incrementing ΓÇö DENIED
+PASS  SIMULATED ΓÇö round extension: touching an unrelated field (currentRound) alongside an otherwise-valid extension ΓÇö DENIED
+PASS  SIMULATED ΓÇö round extension: a non-player uid attempting the extension ΓÇö DENIED
+PASS  SIMULATED ΓÇö round extension: a SECOND qualifying extension (round 17) after the first (round 15) is ALLOWED ΓÇö multiple extensions accumulate
+PASS  SIMULATED ΓÇö match completion: a well-formed completion at currentRound == maxRounds, single winner ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö match completion: TWO tied Kings ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö match completion: THREE tied Kings ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö match completion: ALL FOUR players tied as Kings ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö match completion: completedRound less than the current authoritative maxRounds (match not actually over yet) ΓÇö DENIED
+PASS  SIMULATED ΓÇö match completion: an EXTENDED match (maxRounds 19) cannot complete at the OLD hardcoded 18 ΓÇö DENIED
+PASS  SIMULATED ΓÇö match completion: an EXTENDED match DOES complete once currentRound reaches the NEW maxRounds (19) ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö match completion: winnerIds containing a seat id that does not exist on this match ΓÇö DENIED
+PASS  SIMULATED ΓÇö match completion: empty winnerIds ΓÇö DENIED (rules ┬º'Determining the King': there is always at least one)
+PASS  SIMULATED ΓÇö match completion: finalScores missing a real seat (p4) ΓÇö DENIED
+PASS  SIMULATED ΓÇö match completion: finalScores includes an extra, non-existent seat ΓÇö DENIED
+PASS  SIMULATED ΓÇö match completion: status attempting to move FROM 'complete' back to anything else ΓÇö DENIED (this rule only ever writes status TO complete)
+PASS  SIMULATED ΓÇö match completion: attempting to complete an ALREADY-complete match a second time ΓÇö DENIED (endMatch()'s own idempotent no-op handles the safe retry path instead)
+PASS  SIMULATED ΓÇö match completion: version not incrementing ΓÇö DENIED
+PASS  SIMULATED ΓÇö match completion: a non-player uid attempting the completion ΓÇö DENIED
+PASS  SIMULATED ΓÇö match completion: touching an unrelated field (seats) alongside an otherwise-valid completion ΓÇö DENIED
+PASS  SIMULATED ΓÇö REGRESSION: round advance attempted on an ALREADY-COMPLETE match ΓÇö DENIED
+PASS  SIMULATED ΓÇö REGRESSION: round extension attempted on an ALREADY-COMPLETE match ΓÇö DENIED
+PASS  SIMULATED ΓÇö new match creation (V7): includes maxRounds:18 + extendedRounds:[] ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö new match creation (V7): maxRounds other than 18 at creation ΓÇö DENIED
+PASS  SIMULATED ΓÇö new match creation (V7): a non-empty extendedRounds at creation ΓÇö DENIED
+PASS  SIMULATED ΓÇö rematch vote creation: well-formed (seats copied verbatim, all-null votes) ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö rematch vote creation: parent match not complete ΓÇö DENIED
+PASS  SIMULATED ΓÇö rematch vote creation: caller not a seated player of the parent ΓÇö DENIED
+PASS  SIMULATED ΓÇö rematch vote creation: seats do NOT match the parent's own seats (injection attempt) ΓÇö DENIED
+PASS  SIMULATED ΓÇö rematch vote creation: a non-null starting vote ΓÇö DENIED
+PASS  SIMULATED ΓÇö rematch vote creation: newMatchId pre-set at creation ΓÇö DENIED
+PASS  SIMULATED ΓÇö vote cast: a real seated player casting their OWN null vote to YES ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö vote cast: casting for a seat the caller does NOT own ΓÇö DENIED
+PASS  SIMULATED ΓÇö vote cast: flipping an ALREADY-CAST vote (YES -> NO) ΓÇö DENIED (immutability)
+PASS  SIMULATED ΓÇö vote cast: a NO vote closes the vote to FAILED_NO in the SAME write ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö vote cast: a NO vote that does NOT also close status to FAILED_NO ΓÇö DENIED
+PASS  SIMULATED ΓÇö vote cast: the 4th YES completes ALL_YES ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö vote cast: the 4th YES that does NOT set ALL_YES ΓÇö DENIED
+PASS  SIMULATED ΓÇö vote cast: a 3-seat match's ALL_YES ignores the non-existent p4 seat correctly
+PASS  SIMULATED ΓÇö vote cast: request.time AFTER the 30s deadline ΓÇö DENIED
+PASS  SIMULATED ΓÇö vote cast: request.time exactly AT the 30s boundary ΓÇö ALLOWED (inclusive)
+PASS  SIMULATED ΓÇö vote cast: a write that ALSO touches a field outside the allow-list (e.g. seats) ΓÇö DENIED
+PASS  SIMULATED ΓÇö timeout resolution: past deadline, votes untouched, status->FAILED_TIMEOUT ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö timeout resolution: BEFORE the deadline ΓÇö DENIED
+PASS  SIMULATED ΓÇö timeout resolution: fabricating a vote value alongside the timeout ΓÇö DENIED
+PASS  SIMULATED ΓÇö timeout resolution: a non-seated uid attempting it ΓÇö DENIED
+PASS  SIMULATED ΓÇö timeout resolution: vote already terminal (e.g. FAILED_NO) ΓÇö DENIED (no re-transition)
+PASS  SIMULATED ΓÇö rematch match link: ALL_YES -> NEW_MATCH_CREATED with a real, symmetric getAfter() match ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö rematch match link: the new match's rematchOfMatchId points somewhere ELSE ΓÇö DENIED
+PASS  SIMULATED ΓÇö rematch match link: attempting it when status is NOT yet ALL_YES ΓÇö DENIED
+PASS  SIMULATED ΓÇö rematch match link: newMatchId already set (a second attempt after one already won) ΓÇö DENIED
+PASS  SIMULATED ΓÇö new rematch match: well-formed, seats copied verbatim from the ALL_YES vote ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö new rematch match: seats DIFFER from the vote's own seats (injection attempt) ΓÇö DENIED
+PASS  SIMULATED ΓÇö new rematch match: old match not actually complete ΓÇö DENIED
+PASS  SIMULATED ΓÇö new rematch match: vote not actually ALL_YES ΓÇö DENIED
+PASS  SIMULATED ΓÇö new rematch match: vote already has a newMatchId (duplicate-creation attempt) ΓÇö DENIED
+PASS  SIMULATED ΓÇö new rematch match: a 3-player rematch (no p4) is still a valid bijection via isValidSeatMap() reuse
+PASS  SIMULATED ΓÇö hand create: owner deals well-formed 13-card hand for the CURRENT round ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö unauthorized hand read: ownsSeat() denies a uid that does not occupy the seat
+PASS  SIMULATED ΓÇö unauthorized hand write: a non-owning uid attempting seat p1's create ΓÇö DENIED
+PASS  SIMULATED ΓÇö tampered hand: an extra, unlisted key (e.g. a fabricated `owner` field) ΓÇö DENIED
+PASS  SIMULATED ΓÇö tampered hand: wrong seatId inside the doc vs. the path's own seatId ΓÇö DENIED
+PASS  SIMULATED ΓÇö incomplete/invalid hand: only 12 cards instead of 13 ΓÇö DENIED
+PASS  SIMULATED ΓÇö incomplete/invalid hand: a malformed card (bad suit) among the 13 ΓÇö DENIED
+PASS  SIMULATED ΓÇö stale-round hand: `round` doesn't match the parent's currentRound ΓÇö DENIED
+PASS  SIMULATED ΓÇö seat/doc-id mismatch: an out-of-range seatId (e.g. 'p5') ΓÇö DENIED
+PASS  SIMULATED ΓÇö hand redeal: Round 2 legitimately overwrites Round 1's doc for the SAME owning seat ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö hand redeal: an attempt to rewrite the SAME round (no forward progress) ΓÇö DENIED
+PASS  SIMULATED ΓÇö hand redeal: a non-owning uid attempting the overwrite ΓÇö DENIED
+PASS  SIMULATED ΓÇö hand deal commit: gameState flips initialized:true, dealtRound:1 for the current round ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö hand deal commit: attempting to also touch an unrelated field (e.g. status) in the same write ΓÇö DENIED
+PASS  SIMULATED ΓÇö hand deal commit: dealtRound regressing/repeating instead of advancing ΓÇö DENIED
+PASS  SIMULATED ΓÇö hand deal commit: a non-player attempting the commit ΓÇö DENIED
+PASS  SIMULATED ΓÇö hand deal commit: an already-complete match can never have gameState re-flipped ΓÇö DENIED
+PASS  SIMULATED ΓÇö new match creation (V8): gameState:{initialized:false, dealtRound:0} ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö new match creation (V8): the OLD placeholder shape {initialized:false, todo:'...'} is now DENIED ΓÇö the exact gap this sprint's Architecture Gate found
+PASS  SIMULATED ΓÇö new match creation (V8): dealtRound other than 0 at creation ΓÇö DENIED
+PASS  SIMULATED ΓÇö new rematch match (V2): gameState:{initialized:false, dealtRound:0} ΓÇö ALLOWED
+PASS  SIMULATED ΓÇö new rematch match (V2): the OLD placeholder shape is now DENIED
+
+278 passed, 0 failed
+PASS  rules-simulation.test.js  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ sprint-a-write-paths.rules-emulator.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+EMULATOR NOT REACHABLE ΓÇö fetch failed
+
+=== RESULTS ===
+
+0 passed, 0 failed (SKIPPED ΓÇö no emulator connection)
+FAIL  sprint-a-write-paths.rules-emulator.test.cjs  (exit 2, contains SKIPPED marker)
+
+ΓöÇΓöÇΓöÇΓöÇ sprint-l-opening-turn.rules-emulator.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+Rules SHA256=c88b61a137d5b2efe74a9b9f4c295bdce3adfe31e61ea83fea3e7328ab7b1d57
+EMULATOR NOT REACHABLE ΓÇö fetch failed
+0 passed, 0 failed (SKIPPED ΓÇö no emulator connection)
+FAIL  sprint-l-opening-turn.rules-emulator.test.cjs  (exit 2, contains SKIPPED marker)
+
+ΓöÇΓöÇΓöÇΓöÇ submit-bid.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+PASS  MOCKED ΓÇö normal bid: submitBid() resolves with the expected result shape
+PASS  MOCKED ΓÇö normal bid: version incremented by exactly 1 (Task 2)
+PASS  MOCKED ΓÇö normal bid: the bid is recorded under the correct seat
+PASS  MOCKED ΓÇö normal bid: the OTHER seat's bid is untouched
+PASS  MOCKED ΓÇö normal bid: biddingOpen stays true ΓÇö not every seat has bid yet
+PASS  MOCKED ΓÇö normal bid: lastBidSeat records which seat just bid
+PASS  MOCKED ΓÇö normal bid: the SECOND (last) seat's bid closes bidding
+PASS  MOCKED ΓÇö normal bid: version reflects both accepted writes (1 -> 3)
+PASS  MOCKED ΓÇö duplicate bid: the SAME seat submitting twice is rejected
+PASS  MOCKED ΓÇö duplicate bid: the original bid value is preserved, not overwritten by the rejected duplicate
+PASS  MOCKED ΓÇö duplicate bid: version did not advance for the rejected attempt
+PASS  MOCKED ΓÇö generic bid validation: null is rejected with INVALID_BID_VALUE
+PASS  MOCKED ΓÇö generic bid validation: undefined is rejected with INVALID_BID_VALUE
+PASS  MOCKED ΓÇö generic bid validation: NaN is rejected with INVALID_BID_VALUE
+PASS  MOCKED ΓÇö generic bid validation: Infinity is rejected with INVALID_BID_VALUE
+PASS  MOCKED ΓÇö generic bid validation: -Infinity is rejected with INVALID_BID_VALUE
+PASS  MOCKED ΓÇö generic bid validation: a negative value (-1) is rejected with INVALID_BID_VALUE
+PASS  MOCKED ΓÇö generic bid validation: 14 (above the max trick count) is rejected with INVALID_BID_VALUE
+PASS  MOCKED ΓÇö generic bid validation: a string ("4") is rejected with INVALID_BID_VALUE
+PASS  MOCKED ΓÇö generic bid validation: an object ({}) is rejected with INVALID_BID_VALUE
+PASS  MOCKED ΓÇö generic bid validation: a non-integer (4.5) is rejected with INVALID_BID_VALUE
+PASS  MOCKED ΓÇö generic bid validation: none of the rejected values reached Firestore at all ΓÇö the document is untouched
+PASS  MOCKED ΓÇö generic bid validation: 0 (a valid trick count) is ACCEPTED
+PASS  MOCKED ΓÇö generic bid validation: 1 (a valid trick count) is ACCEPTED
+PASS  MOCKED ΓÇö generic bid validation: 2 (a valid trick count) is ACCEPTED
+PASS  MOCKED ΓÇö generic bid validation: 3 (a valid trick count) is ACCEPTED
+PASS  MOCKED ΓÇö generic bid validation: 4 (a valid trick count) is ACCEPTED
+PASS  MOCKED ΓÇö generic bid validation: 5 (a valid trick count) is ACCEPTED
+PASS  MOCKED ΓÇö generic bid validation: 6 (a valid trick count) is ACCEPTED
+PASS  MOCKED ΓÇö generic bid validation: 7 (a valid trick count) is ACCEPTED
+PASS  MOCKED ΓÇö generic bid validation: 8 (a valid trick count) is ACCEPTED
+PASS  MOCKED ΓÇö generic bid validation: 9 (a valid trick count) is ACCEPTED
+PASS  MOCKED ΓÇö generic bid validation: 10 (a valid trick count) is ACCEPTED
+PASS  MOCKED ΓÇö generic bid validation: 11 (a valid trick count) is ACCEPTED
+PASS  MOCKED ΓÇö generic bid validation: 12 (a valid trick count) is ACCEPTED
+PASS  MOCKED ΓÇö generic bid validation: 13 (a valid trick count) is ACCEPTED
+PASS  MOCKED ΓÇö out-of-order version: submitBid() always computes version = (fresh read) + 1, never a cached/stale number
+PASS  MOCKED ΓÇö wrong seat: a real seated player submitting for a DIFFERENT seat they don't own is rejected
+PASS  MOCKED ΓÇö wrong seat: no write occurred at all
+PASS  MOCKED ΓÇö wrong uid: a non-seated user attempting to submit for any seat is rejected
+PASS  MOCKED ΓÇö permission denied: the rejection carries a machine-checkable `.reason`, not just free text (Task 7's "structured error")
+PASS  MOCKED ΓÇö permission denied: nobody signed in at all is rejected BEFORE even attempting a transaction (UNAUTHENTICATED)
+PASS  MOCKED ΓÇö offline retry: a write attempted while offline rejects cleanly (never silently succeeds, never crashes)
+PASS  MOCKED ΓÇö failure recovery: local state was not corrupted ΓÇö the stored document is completely untouched
+PASS  MOCKED ΓÇö failure recovery: submitBid() does not silently retry forever on its own ΓÇö exactly one rejected promise for exactly one call, no repeated attempts observed
+PASS  MOCKED ΓÇö reconnect: the CALLER retrying the same submitBid() call once Firestore is available again succeeds
+PASS  MOCKED ΓÇö two simultaneous bidders (DIFFERENT seats): BOTH succeed ΓÇö no conflict, since they touch different seats
+PASS  MOCKED ΓÇö two simultaneous bidders: version correctly reflects BOTH writes serialized in order (1 -> 3), none lost
+PASS  MOCKED ΓÇö two simultaneous bidders: bidding correctly closes once both (the only two real) seats have bid
+PASS  MOCKED ΓÇö two simultaneous bidders (SAME seat, a double-submit race): exactly ONE succeeds
+PASS  MOCKED ΓÇö ...and the second is correctly ignored/rejected as a duplicate, not silently accepted or corrupting state
+PASS  MOCKED ΓÇö the seat's final bid is exactly whichever one actually won the race ΓÇö no partial/mixed state
+PASS  MOCKED ΓÇö realtime sync setup: the subscriber gets the initial (pre-bid) state
+PASS  MOCKED ΓÇö realtime sync: the ALREADY-SUBSCRIBED client receives the update automatically
+PASS  MOCKED ΓÇö realtime sync: the update carries the new version too
+PASS  MOCKED ΓÇö Task 4: no new listener was created to deliver this ΓÇö the SAME, already-active one carried it
+PASS  MOCKED ΓÇö late subscriber: a NEW subscriber joining AFTER a bid was already submitted immediately sees the current (post-bid) state, not stale/empty data
+PASS  MOCKED ΓÇö late subscriber: joining did not create a second real listener (still ref-counted, unchanged from Sprint 3.7)
+PASS  MOCKED ΓÇö stale snapshot: a re-delivery at the SAME version as a real bid write is ignored (ordering guard, now live)
+PASS  MOCKED ΓÇö duplicate snapshot: an identical re-delivery of the same real state is ignored (duplicate-content guard)
+PASS  MOCKED ΓÇö a genuinely newer version (the real next bid) is delivered normally
+PASS  MOCKED ΓÇö listener cleanup: unsubscribing ONE of two subscribers leaves the shared listener attached for the other
+PASS  MOCKED ΓÇö memory leak: after the LAST local subscriber unsubscribes, the underlying real listener is torn down
+PASS  MOCKED ΓÇö memory leak: a write AFTER full unsubscribe reaches EITHER old (unsubscribed) callback zero times
+PASS  MOCKED ΓÇö reconnect: a retryable disconnect delivers an error without crashing
+PASS  MOCKED ΓÇö reconnect: once the listener re-attaches, it correctly observes the real bid that was written in the meantime
+
+66 passed, 0 failed
+PASS  submit-bid.test.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ submit-card.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+PASS  MOCKED ΓÇö Task 7 req #1: p1 submits a valid card and Firestore's own turn field becomes p2's uid ΓÇö no test helper involved
+PASS  MOCKED ΓÇö Task 7 req #2: p2 can submit IMMEDIATELY, with zero test-only setTurn() call, because submitCard() itself already advanced the turn
+PASS  MOCKED ΓÇö Task 7 req #3: p3 can submit immediately afterward, same automatic mechanism
+PASS  MOCKED ΓÇö Task J1/J2: p4 submits the FOURTH card and Firestore persists the resolved winner as turn with cardPhase RESOLVING
+PASS  MOCKED ΓÇö Task 7 req #13: the full four-card sequence produced exactly 4 cardLog entries, one per real seat, with ZERO manual Firestore turn edits anywhere in this test
+PASS  MOCKED ΓÇö Task 7 req #5: wrong-turn submission rejects NOT_YOUR_TURN with zero writes
+PASS  MOCKED ΓÇö Task 7 req #5: the engine's previewPlay() was never even called for a wrong-turn attempt
+PASS  MOCKED ΓÇö Task 7 req #6: a stale preview (document changed underneath) rejects STALE_GAME_STATE, not a silently-recomputed answer
+PASS  MOCKED ΓÇö Task 7 req #6: zero writes occurred for the stale attempt ΓÇö cardLog completely untouched
+PASS  MOCKED ΓÇö Task 7 req #7: this function never automatically recomputed a new preview against the changed state and proceeded ΓÇö it stopped, full stop, on the FIRST detection of drift
+PASS  MOCKED ΓÇö Task 2: the result object reports both the new turn seat and the new phase
+PASS  MOCKED ΓÇö Task 2: cardLog, lastCardSeat, turn, cardPhase, and version ALL changed in the SAME write ΓÇö no separate turn-write request exists anywhere in this codebase
+PASS  MOCKED ΓÇö fresh-round opening bridge: the local opening actor publishes PLAY, then its first card advances the turn
+PASS  MOCKED ΓÇö fresh-round opening bridge: a non-opening actor is rejected before any bridge/card write
+PASS  MOCKED ΓÇö Sprint L service bridge: a Round-1 caller may publish over the initial dealer placeholder, then the normal card write advances again
+PASS  MOCKED ΓÇö defensive: an engine-named next seat this match's own seats map doesn't recognize is rejected UNKNOWN_NEXT_SEAT, never written
+PASS  MOCKED ΓÇö illegal card still rejected before persistence via previewPlay()'s own legal:false answer
+PASS  MOCKED ΓÇö SECURITY: a uid owning no seat in this match is rejected PERMISSION_DENIED
+PASS  MOCKED ΓÇö generic card validation: null is rejected
+PASS  MOCKED ΓÇö generic card validation: a string is rejected, never coerced
+PASS  MOCKED ΓÇö generic card validation: an unknown suit key is rejected
+PASS  MOCKED ΓÇö generic card validation: every rejected attempt left cardLog completely untouched
+PASS  MOCKED ΓÇö generic card validation: a genuinely valid card AFTER several rejections still succeeds normally
+PASS  MOCKED ΓÇö failure: missing matchId rejects INVALID_ARGUMENT
+PASS  MOCKED ΓÇö failure: no signed-in user rejects UNAUTHENTICATED
+PASS  MOCKED ΓÇö failure: a non-existent match rejects MATCH_NOT_FOUND
+PASS  MOCKED ΓÇö failure: a write attempted while Firestore is unavailable rejects cleanly, never crashes
+PASS  MOCKED ΓÇö failure recovery: the stored document is completely untouched by the failed attempt
+PASS  MOCKED ΓÇö failure: MatchAdapter unavailable rejects MATCH_ADAPTER_UNAVAILABLE
+PASS  MOCKED ΓÇö failure: TableEngine unavailable (no previewPlay()) rejects ENGINE_UNAVAILABLE ΓÇö submitCard() refuses to write blind
+PASS  MOCKED ΓÇö an engine exposing only the OLD canPlayCard() (no previewPlay()) is treated as unavailable, not silently degraded
+PASS  MOCKED ΓÇö realtime sync: the existing subscription observed the card write (including the new turn/cardPhase fields) live
+PASS  MOCKED ΓÇö realtime sync: no second Firestore listener was created
+PASS  MOCKED ΓÇö Task J1: match-service.js delegates fourth-card winner resolution to existing TableEngine.resolveTrick() without duplicating follow-suit/trick-winner/turn-order algorithms
+PASS  MOCKED ΓÇö Task J1: match-service.js does not call TableEngine.emit() or a GameSession turn setter; resolveTrick() is used only for winner readback
+PASS  MOCKED ΓÇö regression: MatchService.submitBid (Sprint 3.8) is still present and unchanged in shape
+PASS  MOCKED ΓÇö regression: MatchService.playCard remains the OLD, never-adopted, still-unimplemented stub
+
+37 passed, 0 failed
+PASS  submit-card.test.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ table-engine-foundation-fix.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+PASS  Scenario 1 setup: no bidding has happened yet ΓÇö GameSession's bidding state is not completed
+PASS  Scenario 1 setup: real bidding actually completed with a real outcome (trump=HEARTS, caller=p1)
+PASS  Scenario 1 (THE FIX): TableEngine.trump reflects the CURRENT round config, not the documented page-load mock default (SPADES)
+PASS  Scenario 1 (THE FIX): TableEngine.callerId reflects the CURRENT round config, not the documented page-load mock default (p4)
+PASS  Scenario 1 (THE FIX): TableEngine.withPlayers reflects the CURRENT round config
+PASS  Scenario 1 (THE FIX): TableEngine.estimates reflects the CURRENT round config
+PASS  Scenario 1 (THE FIX): TableEngine.leaderId is the real caller (p1), not the page-load mock fallback (p4)
+PASS  Scenario 1 (THE FIX): TableEngine.turn starts on the real leader (p1)
+PASS  Scenario 1 (THE FIX): TableEngine.round matches the real round number
+PASS  Scenario 2 setup: round 1 actually reached DONE via the real engine (13 tricks played)
+PASS  Scenario 2 setup: round 2's real bidding outcome genuinely differs from round 1's (trump=CLUBS vs HEARTS)
+PASS  Scenario 2 (THE FIX): round 2's TableEngine.trump is CLUBS, not round 1's stale HEARTS
+PASS  Scenario 2 (THE FIX): round 2's TableEngine.callerId matches round 2's real caller, not round 1's
+PASS  Scenario 2 (THE FIX): round 2's TableEngine.estimates matches round 2's real estimates, not round 1's
+PASS  Scenario 2 (THE FIX): round 2's TableEngine.round is the NEW round number, not round 1's
+PASS  Structural: buildRoundCfg()'s own hasBidResult/mock-fallback formula is unchanged (still present verbatim)
+PASS  Structural: ROUND_CFG is now reassigned (not merely read) inside initState()
+
+17 passed, 0 failed
+PASS  table-engine-foundation-fix.test.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ trick-sync.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+PASS  MOCKED ΓÇö trick completes after fourth card: the real engine has moved on to the NEXT trick (or DONE) ΓÇö phase is no longer RESOLVING
+PASS  MOCKED ΓÇö trick completes after fourth card: exactly one trick's worth of tricksWon was awarded, to exactly one seat
+PASS  MOCKED ΓÇö winner matches TableEngine: MatchAdapter.getLastResolvedTrickNo() confirms this trick was resolved via the sync pipeline (not a leftover from a previous scenario)
+PASS  MOCKED ΓÇö winner matches TableEngine: the seat this test independently computed as the winner (via the SAME publicly-documented trump/follow-suit rule) is the SAME seat the real engine actually credited a trick to
+PASS  MOCKED ΓÇö duplicate snapshot ignored: re-delivering the same (already-resolved) snapshot does not change tricksWon again
+PASS  MOCKED ΓÇö duplicate snapshot ignored: re-delivering the same snapshot does not advance trickNo again
+PASS  MOCKED ΓÇö duplicate snapshot ignored: applyRemoteTrick()'s own idempotency registry is unchanged by the redundant redelivery
+PASS  MOCKED ΓÇö stale snapshot ignored: a stale, lower-version delivery never re-triggers or reverses trick resolution
+PASS  MOCKED ΓÇö reconnect setup: 2 of 4 cards applied before any disconnect
+PASS  MOCKED ΓÇö reconnect: after reconnecting, the partial trick's already-applied plays are unchanged (not reset, not reapplied)
+PASS  MOCKED ΓÇö reconnect: the trick completes and resolves correctly through the RESTARTED listener ΓÇö tricksWon advanced by exactly 1
+PASS  MOCKED ΓÇö late subscriber setup: the trick genuinely completed (4 real cards applied) but remains UNRESOLVED ΓÇö no trick-sync subscriber has ever run
+PASS  MOCKED ΓÇö late subscriber: joining late resolves the REAL, already-completed backlog on its very first delivery
+PASS  MOCKED ΓÇö late subscriber: exactly one trick's worth of tricksWon was awarded by the late catch-up, not zero, not more than one
+PASS  MOCKED ΓÇö late subscriber: no duplicated Firestore listener was created for the late subscription ΓÇö MatchService's own ref-counted registry is reused
+PASS  MOCKED ΓÇö late subscriber: a SECOND late subscription for the same, already-resolved match changes nothing
+PASS  MOCKED ΓÇö malformed trick: a malformed live delivery (cardLog not an array) never throws/crashes the trick-sync pipeline
+PASS  MOCKED ΓÇö malformed trick: the malformed delivery caused no trick resolution
+PASS  MOCKED ΓÇö malformed trick: applyRemoteTrick() itself reports MALFORMED_SNAPSHOT for a non-object matchDoc, called directly
+PASS  MOCKED ΓÇö ENGINE_REJECTED: the real engine genuinely refuses the wrong-seat card ΓÇö no play was recorded
+PASS  MOCKED ΓÇö ENGINE_REJECTED: no trick resolution occurred as a result of the rejected card
+PASS  MOCKED ΓÇö desync reporting: the underlying applyRemoteCard() call reports a structured desync ΓÇö desync:true, reason:ENGINE_REJECTED
+PASS  MOCKED ΓÇö desync reporting: the desync result carries matchId/index/seatId diagnostics, not a bare boolean
+PASS  MOCKED ΓÇö desync reporting: applyRemoteTrick() correctly stays NOT_RESOLVING ΓÇö it never masks the upstream desync by attempting a resolution anyway
+PASS  MOCKED ΓÇö multiple consecutive tricks: trick 1 resolved immediately after its own 4th card ΓÇö the engine has moved past RESOLVING
+PASS  MOCKED ΓÇö multiple consecutive tricks: trick 2 resolved immediately after its own 4th card ΓÇö the engine has moved past RESOLVING
+PASS  MOCKED ΓÇö multiple consecutive tricks: exactly 2 tricks' worth of tricksWon were awarded across the 2 played tricks, none skipped, none double-counted
+PASS  MOCKED ΓÇö multiple consecutive tricks: trickNo advanced by exactly 2
+PASS  MOCKED ΓÇö Task 1: table-engine.js's own export object is UNCHANGED by this sprint ΓÇö still exactly initState/emit/resolveTrick/getState/canPlayCard/previewPlay
+PASS  MOCKED ΓÇö Task 4: MatchService.submitCard()'s own transaction patch is UNCHANGED by this sprint ΓÇö still exactly {cardLog, lastCardSeat, turn, cardPhase, version, updatedAt}, no new trick-related field
+PASS  MOCKED ΓÇö Task 5: firestore.rules' isValidCardSubmission() affectedKeys allowlist is UNCHANGED by this sprint ΓÇö still exactly ['cardLog', 'lastCardSeat', 'version', 'turn', 'cardPhase', 'updatedAt'], no new trick-related field permitted
+PASS  MOCKED ΓÇö no regression: MatchService.submitDashCall() is still an unimplemented stub, unchanged by this sprint
+PASS  MOCKED ΓÇö no regression: MatchService.submitPass() is still an unimplemented stub, unchanged by this sprint
+PASS  MOCKED ΓÇö no regression: MatchService.declareTrump() is still an unimplemented stub, unchanged by this sprint
+PASS  MOCKED ΓÇö no regression: MatchService.submitEstimate() is still an unimplemented stub, unchanged by this sprint
+PASS  MOCKED ΓÇö no regression: MatchService.playCard() is still an unimplemented stub, unchanged by this sprint
+PASS  MOCKED ΓÇö no regression: MatchService.resolveTrick() is still an unimplemented stub, unchanged by this sprint
+PASS  MOCKED ΓÇö no regression: MatchService.completeRound() is still an unimplemented stub, unchanged by this sprint
+PASS  MOCKED ΓÇö no regression: MatchAdapter.applyRemoteBid (Sprint 4.0) is still present and unchanged in shape
+PASS  MOCKED ΓÇö no regression: MatchAdapter.applyRemoteTurn (Sprint 4.1) is still present and unchanged in shape
+PASS  MOCKED ΓÇö no regression: MatchAdapter.applyRemoteCard (Sprint 4.2) is still present and unchanged in shape
+PASS  MOCKED ΓÇö no regression: MatchAdapter.startCardSync (Sprint 4.2) is still present and unchanged in shape
+PASS  MOCKED ΓÇö no regression: MatchAdapter.assertLocalTurn (Sprint 4.1) is still present and unchanged in shape ΓÇö REUSED, not reimplemented, this sprint
+
+43 passed, 0 failed
+[MatchAdapter] advanceToNextRound() attempt failed (non-fatal ΓÇö another client, or a later delivery, may still succeed): Error: advanceToNextRound: round 1 has only 8/52 recorded card plays ΓÇö not advancing.
+    at bidError (file:///C:/Users/EXPRESS/OneDrive/Desktop/demo-test/design-ui/match-service.js:613:15)
+    at file:///C:/Users/EXPRESS/OneDrive/Desktop/demo-test/design-ui/match-service.js:1521:17 {
+  reason: 'ROUND_NOT_COMPLETE'
+}
+PASS  trick-sync.test.cjs  (exit 0)
+
+ΓöÇΓöÇΓöÇΓöÇ turn-sync.test.cjs ΓöÇΓöÇΓöÇΓöÇ
+PASS  MOCKED ΓÇö Task 1: startTurnSync() delivers the initial snapshot and correctly applies the seeded turn owner
+PASS  MOCKED ΓÇö Task 1: no gameplay logic inside MatchService ΓÇö startTurnSync() reuses subscribeToMatch() verbatim, no second listener
+PASS  MOCKED ΓÇö new snapshot: a new turn owner (p3) delivered through Firestore sync is correctly applied to GameSession's turn mirror
+PASS  MOCKED ΓÇö turn advance: GameSession's turn mirror correctly advances to p2
+PASS  MOCKED ΓÇö turn advance: GameSession's turn mirror correctly advances to p3
+PASS  MOCKED ΓÇö turn advance: GameSession's turn mirror correctly advances to p4
+PASS  MOCKED ΓÇö turn advance: GameSession's turn mirror correctly advances to p1
+PASS  MOCKED ΓÇö Task 4 (duplicate snapshot): re-delivering the same snapshot does not change GameSession's turn mirror
+PASS  MOCKED ΓÇö Task 4: re-delivering the same snapshot does not advance the adapter's own turn version gate
+PASS  MOCKED ΓÇö version rollback: a stale, lower-version snapshot never overwrites the already-applied turn
+PASS  MOCKED ΓÇö late subscriber: joining after a turn change was already applied does not change GameSession's turn mirror
+PASS  MOCKED ΓÇö late subscriber: no duplicated listener was created ΓÇö MatchService's own ref-counted registry is reused
+PASS  MOCKED ΓÇö listener restart setup: turn applied before any disconnect
+PASS  MOCKED ΓÇö listener restart: after reconnecting, the previously-applied turn is still correct (not reset, not reapplied)
+PASS  MOCKED ΓÇö listener restart: a NEW turn change delivered after reconnect is correctly applied through the restarted listener
+PASS  MOCKED ΓÇö listener duplicate event: three redundant re-deliveries of the current snapshot cause zero additional changes
+PASS  MOCKED ΓÇö correct player accepted: isLocalSeatsTurn() is true for p3, the seat whose turn it now is
+PASS  MOCKED ΓÇö wrong player attempts action: isLocalSeatsTurn() is false for every other seat
+PASS  MOCKED ΓÇö wrong player attempts action: assertLocalTurn() throws NOT_LOCAL_TURN for the wrong seat ΓÇö 'reject locally, do not send writes'
+PASS  MOCKED ΓÇö correct player accepted: assertLocalTurn() does not throw for the correct seat
+PASS  MOCKED ΓÇö GameSession consistency: after a full sequence of turn changes, GameSession's turn mirror matches the mocked document's own turn field exactly
+PASS  MOCKED ΓÇö GameSession consistency: the adapter's own version gate matches the document's final version exactly
+PASS  MOCKED ΓÇö J1 boundary: match-service.js may use existing resolveTrick() and restore its snapshot, but has no direct turn setter or engine emit
+PASS  MOCKED ΓÇö regression: MatchAdapter.applyRemoteBid (Sprint 4.0) is still present and unchanged in shape
+PASS  MOCKED ΓÇö regression: MatchAdapter.startBidSync (Sprint 4.0) is still present and unchanged in shape
+PASS  MOCKED ΓÇö regression: MatchAdapter.getLastAppliedVersion (Sprint 4.0) is still present and unchanged in shape
+
+26 passed, 0 failed
+PASS  turn-sync.test.cjs  (exit 0)
+
+=== SUMMARY ===
+30/40 test files passed cleanly.
+
+FAILED:
+  - dealer-rotation-rules.test.cjs (exit 2)
+  - hand-sync.rules-emulator-mvp-deal-authority.test.cjs (exit 2, SKIPPED marker present -- zero tolerance for silent skips)
+  - hand-sync.rules-emulator-p02-dispatch.test.cjs (exit 2, SKIPPED marker present -- zero tolerance for silent skips)
+  - hand-sync.rules-emulator-rematch-fix.test.cjs (exit 2, SKIPPED marker present -- zero tolerance for silent skips)
+  - hand-sync.rules-emulator.test.cjs (exit 2, SKIPPED marker present -- zero tolerance for silent skips)
+  - matches-update-dispatch.rules-emulator.test.cjs (exit 2, SKIPPED marker present -- zero tolerance for silent skips)
+  - p0-05-fourth-card.rules-emulator.test.cjs (exit 2)
+  - p1-08-r-hardening.rules-emulator.test.cjs (exit 2)
+  - sprint-a-write-paths.rules-emulator.test.cjs (exit 2, SKIPPED marker present -- zero tolerance for silent skips)
+  - sprint-l-opening-turn.rules-emulator.test.cjs (exit 2, SKIPPED marker present -- zero tolerance for silent skips)
