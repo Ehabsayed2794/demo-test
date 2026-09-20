@@ -21,14 +21,16 @@ import com.estemshan.services.model.RoundResultEntry
  * (players/round/dealer/scores/winners) is carried through verbatim for
  * the UI and completion paths that consume this seam next.
  *
- * SEAM NOTE — getDealer()/setDealer(): the port's parameter is named
- * `uid`, but the engine's dealer is a SEAT id (engine/session.js's own
- * setDealer, and the seat space the dealer rotation walks), and the
- * rules' uid-space dealer is validated against the match document, not
- * this seam. This bridge therefore carries the value through unchanged
- * in the engine's seat space, exactly as the seam's own test double does
- * — translating uid→seat here would require a roster this seam does not
- * own, and a wrong translation would corrupt [GameSession.rotateDealer].
+ * SEAM NOTE — getDealer()/setDealer(): the dealer space is SEAT ids
+ * (p1..p4), by owner decision 2026-09-20. Evidence: (1) the engine's
+ * rotateDealer walks nextCCW, which is only meaningful over seats — a
+ * uid there would corrupt the rotation; (2) the sole JS caller passes
+ * snapshot.dealerSeat (design-ui/match-adapter.js:517); (3) this seam had
+ * no Kotlin production callers when the decision was made, so the
+ * rename was safe. A uid→seat translation layer here is explicitly
+ * FORBIDDEN — it would be the real bug. MatchDoc.dealer remains uid-
+ * keyed; that translation belongs to the adapter, which already owns
+ * uidToSeat/seatToUid, not this pass-through.
  */
 class GameSessionBridge(private val session: GameSession) : GameSessionPort {
 
@@ -43,8 +45,8 @@ class GameSessionBridge(private val session: GameSession) : GameSessionPort {
 
   override fun getDealer(): String? = session.getDealer()
 
-  override fun setDealer(uid: String?) {
-    session.setDealer(uid)
+  override fun setDealer(seatId: String?) {
+    session.setDealer(seatId)
   }
 
   override fun getTurn(): String? = session.getTurn()
