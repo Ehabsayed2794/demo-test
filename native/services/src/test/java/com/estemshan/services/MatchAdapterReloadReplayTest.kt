@@ -95,7 +95,7 @@ class MatchAdapterReloadReplayTest {
   }
 
   /** The mutable authoritative document the replay reads from. */
-  private class ReplayDoc {
+  private inner class ReplayDoc {
     var version: Int = 1
     val cardLog: MutableList<CardLogEntry> = mutableListOf()
     fun snapshot(): MatchDoc = MatchDoc(
@@ -367,8 +367,8 @@ class MatchAdapterReloadReplayTest {
     session.bidding = null
     // The same round config, reseeded from the authoritative hand source —
     // nothing about the deal is reinvented, only the engine state is fresh.
-    session.table = initTable(roundOneCfg(a), seats)
-    session.turn = a.callerSeat
+    session.table = initTable(roundOneCfg(b), seats)
+    session.turn = b.callerSeat
 
     val fresh = session.table!!
     assertEquals("B post-clear engine restarts at trick 1", 1, fresh.trickNo)
@@ -381,7 +381,7 @@ class MatchAdapterReloadReplayTest {
     assertEquals("B replay converges to trick 7", 7, post.trickNo)
     assertEquals("B replay counts exactly 6 tricks", 6, tricksWonSum(post))
     assertEquals("B replay ends in PLAY", TablePhase.PLAY, post.phase)
-    assertEquals("B replay's turn is the caller's", a.callerSeat, post.turn)
+    assertEquals("B replay's turn is the caller's", b.callerSeat, post.turn)
     assertEquals("B adapter count is 24", 24, redB.count)
     assertEquals("B resolve registry is 6", 6, redB.resolved)
 
