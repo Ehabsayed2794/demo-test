@@ -282,7 +282,7 @@ data class MatchDoc(
         maxRounds = (fields["maxRounds"] as? Long)?.toInt() ?: DEFAULT_MAX_ROUNDS,
         extendedRounds = (fields["extendedRounds"] as? List<*>)
           ?.mapNotNull { (it as? Long)?.toInt() } ?: emptyList(),
-        dealer = fields["dealer"] as? String ?: players.firstOrNull(),
+        dealer = fields["dealer"] as? String ?: return null,
         turn = fields["turn"] as? String,
         seats = seats,
         version = (fields["version"] as? Long)?.toInt() ?: 0,
@@ -420,7 +420,7 @@ data class VoteDoc(
         newMatchId = fields["newMatchId"] as? String,
         version = (fields["version"] as? Long)?.toInt() ?: 0,
         createdAt = fields["createdAt"],
-        createdAtMillis = (fields["createdAt"] as? com.google.firebase.firestore.Timestamp)
+        createdAtMillis = (fields["createdAt"] as? com.google.firebase.Timestamp)
           ?.toDate()?.time,
       )
     }

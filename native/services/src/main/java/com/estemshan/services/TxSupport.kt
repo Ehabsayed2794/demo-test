@@ -23,7 +23,9 @@ import kotlinx.coroutines.tasks.await
  */
 sealed class TxOutcome<out T> {
   data class Ok<T>(val value: T) : TxOutcome<T>()
-  data class Err(val error: ServiceException) : TxOutcome<T>()
+  // Nothing is a subtype of every T, so a valueless Err is a valid
+  // TxOutcome<T> for whichever T a given call site needs.
+  data class Err(val error: ServiceException) : TxOutcome<Nothing>()
 }
 
 fun <T> TxOutcome<T>.unwrap(): T = when (this) {
@@ -65,9 +67,10 @@ internal fun Throwable.toServiceException(): ServiceException = when {
 
 /** Blocking read inside a transaction callback (always off the main
  *  thread). The SDK re-invokes the callback with a fresh read on
- *  contention, so every guard is re-evaluated against current state. */
-internal fun Transaction.getBlocking(ref: DocumentReference): DocumentSnapshot =
-  Tasks.await(get(ref))
+ *  contention, so every guard is re-evaluated against current state.
+ *  Transaction.get is itself blocking in this SDK version — it returns
+ *  the snapshot, not a Task. */
+internal fun Transaction.getBlocking(ref: DocumentReference): DocumentSnapshot = get(ref)
 
 /** Non-transactional blocking read for the pre-check passes that must see
  *  committed state before deciding whether to open a transaction at all. */

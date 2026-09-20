@@ -356,10 +356,13 @@ class MatchService(
         "submitCard: the table engine rejected this card (${preview.reason}) — not written.")
     }
     var nextTurnUid: String? = null
-    if (preview.nextTurnSeat != null) {
-      nextTurnUid = adapter.seatToUid(match, preview.nextTurnSeat)
+    // Local capture: preview comes from the engine module, so its public
+    // property can't be smart-cast across the module boundary.
+    val nextSeat = preview.nextTurnSeat
+    if (nextSeat != null) {
+      nextTurnUid = adapter.seatToUid(match, nextSeat)
         ?: throw ServiceException(UNKNOWN_NEXT_SEAT,
-          "submitCard: the table engine's next seat ('${preview.nextTurnSeat}') is not a real seat in this match.")
+          "submitCard: the table engine's next seat ('$nextSeat') is not a real seat in this match.")
     }
 
     // ── opening-turn publication (P1-08): a separate atomic write ─────
@@ -929,7 +932,8 @@ class MatchService(
       }
       if (vote.status != VoteDoc.STATUS_ALL_YES) {
         return@runTx TxOutcome.Ok(RematchCreateResult(
-          created = false, matchId = matchId, reason = NOT_ALL_YES, status = vote.status,
+          created = false, matchId = matchId, newMatchId = null,
+          reason = NOT_ALL_YES, status = vote.status,
         ))
       }
       val oldMatchSnap = tx.getBlocking(oldMatchRef)
@@ -999,8 +1003,8 @@ class MatchService(
    * type string, reused verbatim, not a parallel vocabulary to keep in
    * sync. null when the generic shape check should already have caught it.
    */
-  private fun biddingActionToIntent(seatId: String, action: BiddingActionInput): BiddingIntent? =
-    when (action.actionType) {
+  private fun biddingActionToIntent(seatId: String, action: BiddingActionInput): BiddingIntent? {
+    return when (action.actionType) {
       BiddingLogEntry.ACTION_DASH_CALL -> {
         val declared = action.declaredDashCall ?: return null
         BiddingIntent.DashCallDecision(seatId, declared)
@@ -1024,6 +1028,7 @@ class MatchService(
       )
       else -> null
     }
+  }
 
   private fun parseSuit(name: String?): Suit? =
     if (name == null) null else runCatching { Suit.valueOf(name) }.getOrNull()

@@ -90,7 +90,7 @@ class MatchAdapter(
   }
 
   private fun isLocalSeatsTurn(match: MatchDoc, seatId: String): Boolean {
-    val turnSeat = match.uidToSeat(match.turn) ?: session.getTurn()
+    val turnSeat = match.turn?.let { match.uidToSeat(it) } ?: session.getTurn()
     return turnSeat != null && turnSeat == seatId
   }
 
@@ -115,7 +115,7 @@ class MatchAdapter(
       }
     }
 
-    val seatId = matchDoc.lastBidSeat
+    val seatId: String = matchDoc.lastBidSeat ?: ""
     if (seatId.isEmpty()) {
       // A valid-but-empty snapshot (fresh doc, no bid yet): record the
       // version so an identical future delivery is a duplicate, not
@@ -444,7 +444,7 @@ class MatchAdapter(
     localSeatId: String? = null,
   ): MatchSubscriptionHandle {
     if (matchId.isEmpty()) {
-      safeInvoke(listener) { it.onSnapshot(MatchSnapshot(match = null, error = EMPTY_MATCH_ID)) }
+      safeInvoke(listener) { it.onSnapshot(MatchSnapshot(match = null, error = FirestoreError(EMPTY_MATCH_ID, "subscribeToMatch: matchId is empty."))) }
       return MatchSubscriptionHandle.Noop
     }
     val entry = subscriptions.getOrPut(matchId) { Subscription(matchId).also { attach(it) } }
@@ -562,7 +562,7 @@ class MatchAdapter(
     if (entry.listeners.isEmpty()) return
     val delay = minOf(RECONNECT_BASE_MS shl entry.reconnectAttempt, RECONNECT_MAX_MS)
     entry.reconnectAttempt += 1
-    entry.pendingReconnect = scheduler.schedule(delay) {
+    entry.pendingReconnect = scheduler.schedule(delay.toLong()) {
       entry.pendingReconnect = null
       if (entry.listeners.isNotEmpty()) {
         entry.registration?.cancel()
@@ -656,6 +656,7 @@ class MatchAdapter(
 
     return TrickOutcome(
       applied = true,
+      reason = REASON_APPLIED,
       trickNo = trickNo,
       winnerId = after.lastTrick?.winnerId,
       nextLeaderId = after.leaderId,
@@ -686,28 +687,30 @@ class MatchAdapter(
    * intent type string, so this is a field passthrough, never a
    * re-derivation. null when the entry cannot yield a well-formed intent.
    */
-  private fun entryToIntent(entry: BiddingLogEntry): BiddingIntent? = when (entry.actionType) {
-    BiddingLogEntry.ACTION_DASH_CALL -> {
-      val declared = entry.declaredDashCall ?: return null
-      BiddingIntent.DashCallDecision(entry.seatId, declared)
-    }
-    BiddingLogEntry.ACTION_AUCTION_BID -> {
-      if (entry.isPass == true) {
-        BiddingIntent.AuctionBid(entry.seatId, isPass = true)
-      } else {
-        BiddingIntent.AuctionBid(
-          entry.seatId, isPass = false,
-          tricks = entry.tricks ?: return null,
-          suit = parseSuit(entry.suit) ?: return null,
-        )
+  private fun entryToIntent(entry: BiddingLogEntry): BiddingIntent? {
+    return when (entry.actionType) {
+      BiddingLogEntry.ACTION_DASH_CALL -> {
+        val declared = entry.declaredDashCall ?: return null
+        BiddingIntent.DashCallDecision(entry.seatId, declared)
       }
+      BiddingLogEntry.ACTION_AUCTION_BID -> {
+        if (entry.isPass == true) {
+          BiddingIntent.AuctionBid(entry.seatId, isPass = true)
+        } else {
+          BiddingIntent.AuctionBid(
+            entry.seatId, isPass = false,
+            tricks = entry.tricks ?: return null,
+            suit = parseSuit(entry.suit) ?: return null,
+          )
+        }
+      }
+      BiddingLogEntry.ACTION_CONFIRM_CALL -> BiddingIntent.ConfirmCall(
+        entry.seatId,
+        entry.tricks ?: return null,
+        parseSuit(entry.suit) ?: return null,
+      )
+      else -> null
     }
-    BiddingLogEntry.ACTION_CONFIRM_CALL -> BiddingIntent.ConfirmCall(
-      entry.seatId,
-      entry.tricks ?: return null,
-      parseSuit(entry.suit) ?: return null,
-    )
-    else -> null
   }
 
   private fun parseSuit(name: String?) =
