@@ -12,6 +12,8 @@ import com.estemshan.services.model.MatchDoc
 import com.estemshan.services.session.GameSessionPort
 import com.estemshan.services.session.MatchAdapterPort
 import com.estemshan.services.session.NotLocalTurn
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreException
 
 /**
  * MatchAdapter — port of design-ui/match-adapter.js's read-side
@@ -41,7 +43,25 @@ import com.estemshan.services.session.NotLocalTurn
  *
  * Pure bookkeeping + engine calls; no Android imports.
  */
-class MatchAdapter(private val session: GameSessionPort) : MatchAdapterPort {
+/**
+ * The subscription half — ONE real listener per matchId no matter how many
+ * local callers subscribe, reconnect-with-backoff on retryable errors, and
+ * an immediate delivery of the current known state (or the terminal error)
+ * to every late joiner. Every delivered document is pushed through the
+ * applyRemote*() interpreters above BEFORE the listeners are told, so a
+ * listener always observes engine state consistent with the document it was
+ * handed.
+ *
+ * The infrastructural pieces are injected seams, which is what keeps this
+ * whole class JVM-testable without a device: [listen] produces a parsed
+ * [MatchDoc] (or a [FirestoreError]) and [scheduler] delays a reconnect.
+ * Neither touches the ordering decisions, which are the actual logic.
+ */
+class MatchAdapter(
+  private val session: GameSessionPort,
+  private val listen: MatchListenerFactory = MatchListenerFactory.Unavailable,
+  private val scheduler: MatchScheduler = MatchScheduler.Immediate,
+) : MatchAdapterPort {
 
   private val bidVersion = mutableMapOf<String, Int>()
   private val biddingActionVersion = mutableMapOf<String, Int>()
@@ -382,6 +402,180 @@ class MatchAdapter(private val session: GameSessionPort) : MatchAdapterPort {
   fun lastAppliedCardVersion(matchId: String): Int? = cardVersion[matchId]
   fun lastAppliedCardCount(matchId: String): Int = cardCount[matchId] ?: 0
 
+  // ── ONE ref-counted listener per matchId ───────────────────────────
+
+  private val subscriptions = mutableMapOf<String, Subscription>()
+
+  /** The last exception a snapshot listener threw, surfaced instead of
+   *  swallowed — one bad callback must never kill the listener loop. */
+  @Volatile var lastListenerError: Throwable? = null
+    private set
+
+  private inner class Subscription(val matchId: String) {
+    val listeners = mutableListOf<MatchSnapshotListener>()
+    var registration: MatchListenerRegistration? = null
+    var hasPublished = false
+    var lastPublished: MatchDoc? = null
+    var lastVersion: Int? = null
+    var reconnectAttempt = 0
+    var pendingReconnect: MatchSchedulerTask? = null
+    var terminalError: FirestoreError? = null
+    /** The local seat for this device — needed only by applyRemoteCard's
+     *  opponent-hand seeding; null while unknown. */
+    var localSeatId: String? = null
+  }
+
+  /**
+   * subscribeToMatch — registers [listener] against the ONE real listener
+   * for [matchId], creating it only if it does not already exist. A second
+   * caller for the same matchId never opens a second Firestore listener;
+   * it gets the current known state delivered immediately instead. The
+   * returned handle removes exactly this caller; the LAST one out tears the
+   * real listener down.
+   */
+  fun subscribeToMatch(
+    matchId: String,
+    listener: MatchSnapshotListener,
+    localSeatId: String? = null,
+  ): MatchSubscriptionHandle {
+    if (matchId.isEmpty()) {
+      safeInvoke(listener) { it.onSnapshot(MatchSnapshot(match = null, error = EMPTY_MATCH_ID)) }
+      return MatchSubscriptionHandle.Noop
+    }
+    val entry = subscriptions.getOrPut(matchId) { Subscription(matchId).also { attach(it) } }
+    if (localSeatId != null) entry.localSeatId = localSeatId
+    entry.listeners.add(listener)
+
+    // A late joiner (a second local caller, or the SAME caller subscribing
+    // again) gets the current known state immediately instead of waiting on
+    // a Firestore round trip it doesn't need — and if this subscription
+    // already hit a non-retryable error, it learns that immediately too,
+    // instead of silently waiting on a reconnect that will never run.
+    val terminal = entry.terminalError
+    when {
+      terminal != null -> safeInvoke(listener) {
+        it.onSnapshot(MatchSnapshot(if (entry.hasPublished) entry.lastPublished else null, terminal))
+      }
+      entry.hasPublished -> safeInvoke(listener) { it.onSnapshot(MatchSnapshot(entry.lastPublished, null)) }
+    }
+    return MatchSubscriptionHandle {
+      val idx = entry.listeners.indexOf(listener)
+      if (idx != -1) entry.listeners.removeAt(idx)
+      if (entry.listeners.isEmpty()) close(entry)
+    }
+  }
+
+  /** (Re)attaches the one real listener, reusing the SAME entry and the
+   *  SAME listener list — never a second registration — on every backoff
+   *  tick after a disconnect. */
+  private fun attach(entry: Subscription) {
+    entry.registration = listen.listen(
+      matchId = entry.matchId,
+      onSnapshot = { doc -> onSnapshot(entry, doc) },
+      onError = { err -> onError(entry, err) },
+    )
+  }
+
+  private fun onSnapshot(entry: Subscription, doc: MatchDoc?) {
+    entry.reconnectAttempt = 0 // a successful snapshot means we're connected again
+    // Ordering guard: a stale or duplicate version is ignored, never
+    // re-published (a rolled-back delivery must never go backwards).
+    val version = doc?.version
+    if (version != null) {
+      val last = entry.lastVersion
+      if (last != null && version <= last) return
+      entry.lastVersion = version
+    }
+    // Duplicate-content guard: an identical re-delivery (a benign
+    // metadata-only refresh) is never re-published — this is what stops a
+    // publish-react loop from becoming an infinite one.
+    if (entry.hasPublished && doc == entry.lastPublished) return
+
+    entry.hasPublished = true
+    entry.lastPublished = doc
+
+    // The document becomes engine state BEFORE any listener sees it, so a
+    // listener always observes engines consistent with the snapshot it was
+    // handed. Each interpreter is independently version-gated; a phase the
+    // local engines haven't reached yet is left untouched by that gate.
+    val bid = applyRemoteBid(entry.matchId, doc)
+    val action = applyRemoteBiddingAction(entry.matchId, doc)
+    val card = applyRemoteCard(entry.matchId, doc, entry.localSeatId)
+
+    val snapshot = MatchSnapshot(doc, null, bid, action, card)
+    entry.listeners.toList().forEach { safeInvoke(it) { l -> l.onSnapshot(snapshot) } }
+  }
+
+  private fun onError(entry: Subscription, err: FirestoreError) {
+    // Fail-open: the last known good data (if any) is delivered ALONGSIDE
+    // the error, never replaced by it — the local game keeps what it has.
+    val delivered = if (entry.hasPublished) entry.lastPublished else null
+    entry.listeners.toList().forEach {
+      safeInvoke(it) { l -> l.onSnapshot(MatchSnapshot(delivered, err)) }
+    }
+    when (classify(err)) {
+      ErrorClass.RETRYABLE -> scheduleReconnect(entry)
+      else -> entry.terminalError = err
+    }
+  }
+
+  /** Exactly one pending resubscribe attempt (never stacks a second), with
+   *  exponential backoff that resets to the base delay the moment a
+   *  snapshot succeeds again. Never resubscribes a matchId nobody is
+   *  listening to anymore. */
+  private fun scheduleReconnect(entry: Subscription) {
+    if (entry.pendingReconnect != null) return
+    if (entry.listeners.isEmpty()) return
+    val delay = minOf(RECONNECT_BASE_MS shl entry.reconnectAttempt, RECONNECT_MAX_MS)
+    entry.reconnectAttempt += 1
+    entry.pendingReconnect = scheduler.schedule(delay) {
+      entry.pendingReconnect = null
+      if (entry.listeners.isNotEmpty()) {
+        entry.registration?.cancel()
+        attach(entry)
+      }
+    }
+  }
+
+  private fun close(entry: Subscription) {
+    entry.pendingReconnect?.cancel()
+    entry.pendingReconnect = null
+    entry.registration?.cancel()
+    entry.registration = null
+    subscriptions.remove(entry.matchId)
+    // DELIBERATELY does NOT call resetSyncState(matchId). The per-log count
+    // registries stay put so a same-session resubscribe continues from the
+    // last applied index, instead of re-replaying a log the engines already
+    // absorbed (which the echo guards would correctly flag as a desync). A
+    // real reload constructs a fresh MatchAdapter alongside fresh engines —
+    // "a real page load simply starts with a fresh, empty registry already"
+    // (design-ui/match/index.html:922). resetSyncState() stays exported for
+    // that boot path and for diagnostics.
+  }
+
+  private inline fun <T> safeInvoke(target: T, block: (T) -> Unit) {
+    try {
+      block(target)
+    } catch (t: Throwable) {
+      lastListenerError = t
+    }
+  }
+
+  private enum class ErrorClass { RETRYABLE, NON_RETRYABLE, UNRECOGNIZED }
+
+  /**
+   * Per docs/architecture/MatchSynchronization.md's Task 1: a code in
+   * NEITHER list — including a missing one, which is what every non-
+   * Firestore failure looks like — is NON-retryable. Retrying something we
+   * cannot positively confirm transient is exactly the "retry forever" this
+   * classification exists to remove.
+   */
+  private fun classify(err: FirestoreError): ErrorClass = when (err.code) {
+    in RETRYABLE_CODES -> ErrorClass.RETRYABLE
+    in NON_RETRYABLE_CODES -> ErrorClass.NON_RETRYABLE
+    else -> ErrorClass.UNRECOGNIZED
+  }
+
   // ── helpers ────────────────────────────────────────────────────────
 
   private fun malformed() = ApplyOutcome.notApplied(MALFORMED_SNAPSHOT)
@@ -494,3 +688,121 @@ private const val AWAITING_ROUND_TRANSITION = "AWAITING_ROUND_TRANSITION"
 private const val STALE_ROUND = "STALE_ROUND"
 private const val MALFORMED_ENTRY = "MALFORMED_ENTRY"
 private const val LOCAL_ECHO_MISMATCH = "LOCAL_ECHO_MISMATCH"
+
+private const val EMPTY_MATCH_ID = "EMPTY_MATCH_ID"
+private const val RECONNECT_BASE_MS = 250
+private const val RECONNECT_MAX_MS = 4000
+
+/** gRPC codes Firestore treats as transient — retried with backoff. */
+private val RETRYABLE_CODES = setOf(
+  "unavailable", "deadline-exceeded", "internal", "unknown", "resource-exhausted",
+)
+
+/** Codes that will never succeed by retrying — recorded as terminal. */
+private val NON_RETRYABLE_CODES = setOf(
+  "permission-denied", "unauthenticated", "invalid-argument", "failed-precondition", "not-found",
+)
+
+/**
+ * A Firestore snapshot error, carrying only the gRPC-style code string and
+ * message. Existing as its own (SDK-free) type is what lets [classify] and
+ * the whole reconnect policy be unit-tested without a device or a network.
+ */
+data class FirestoreError(val code: String?, val message: String?)
+
+/** One real addSnapshotListener for matches/{matchId}, behind a seam. */
+fun interface MatchListenerFactory {
+
+  fun listen(
+    matchId: String,
+    onSnapshot: (MatchDoc?) -> Unit,
+    onError: (FirestoreError) -> Unit,
+  ): MatchListenerRegistration
+
+  companion object {
+    /** match-service.js's `if (!db())` — no Firestore means an immediate,
+     *  non-retryable error and a no-op registration, never a silent no-op. */
+    val Unavailable: MatchListenerFactory = MatchListenerFactory { _, _, onError ->
+      onError(FirestoreError(null, "MatchService: Firestore is not initialized."))
+      MatchListenerRegistration.Noop
+    }
+
+    /** The production registration against a real [FirebaseFirestore]. */
+    fun firestore(db: FirebaseFirestore): MatchListenerFactory =
+      MatchListenerFactory { matchId, onSnapshot, onError ->
+        val reg = db.collection("matches").document(matchId).addSnapshotListener { snap, err ->
+          if (err != null) {
+            onError(err.toFirestoreError())
+            return@addSnapshotListener
+          }
+          onSnapshot(snap?.takeIf { it.exists() }?.data?.let { MatchDoc.fromFields(it) })
+        }
+        MatchListenerRegistration { reg.remove() }
+      }
+  }
+}
+
+/** What [MatchListenerFactory.listen] hands back — cancel() is idempotent. */
+fun interface MatchListenerRegistration {
+  fun cancel()
+
+  companion object {
+    val Noop = MatchListenerRegistration {}
+  }
+}
+
+/** A delayed one-shot — the backoff timer, behind a seam. */
+fun interface MatchScheduler {
+  fun schedule(delayMillis: Long, action: () -> Unit): MatchSchedulerTask
+
+  companion object {
+    /** Runs the action immediately and ignores the delay. Deterministic by
+     *  construction, so it is the test default — and a safe production
+     *  default only because [MatchListenerFactory.Unavailable]'s errors are
+     *  non-retryable; wire a deferred scheduler in production to get the
+     *  real exponential backoff rather than an instant reconnect. */
+    val Immediate = MatchScheduler { _, action ->
+      action()
+      MatchSchedulerTask.Noop
+    }
+  }
+}
+
+fun interface MatchSchedulerTask {
+  fun cancel()
+
+  companion object {
+    val Noop = MatchSchedulerTask {}
+  }
+}
+
+/**
+ * One delivery to one subscriber: the parsed document (or null when the
+ * match was deleted), the error when the listener failed (delivered
+ * alongside the last known good document, never instead of it), and the
+ * three interpreters' own outcomes — surfaced so a desync is observable by
+ * the UI instead of silently halting the replay.
+ */
+data class MatchSnapshot(
+  val match: MatchDoc?,
+  val error: FirestoreError?,
+  val bidSync: ApplyOutcome? = null,
+  val biddingActionSync: ApplyOutcome? = null,
+  val cardSync: ApplyOutcome? = null,
+)
+
+fun interface MatchSnapshotListener {
+  fun onSnapshot(snapshot: MatchSnapshot)
+}
+
+/** Returned by subscribeToMatch(); unsubscribe() is idempotent. */
+fun interface MatchSubscriptionHandle {
+  fun unsubscribe()
+
+  companion object {
+    val Noop = MatchSubscriptionHandle {}
+  }
+}
+
+private fun FirebaseFirestoreException.toFirestoreError(): FirestoreError =
+  FirestoreError(code.name.lowercase().replace('_', '-'), message)
