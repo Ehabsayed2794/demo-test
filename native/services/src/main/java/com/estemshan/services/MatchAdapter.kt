@@ -7,6 +7,7 @@ import com.estemshan.engine.PlayEmit
 import com.estemshan.engine.canSubmit
 import com.estemshan.engine.emit
 import com.estemshan.engine.emitPlay
+import com.estemshan.engine.resolveTrick
 import com.estemshan.services.model.BiddingLogEntry
 import com.estemshan.services.model.MatchDoc
 import com.estemshan.services.session.GameSessionPort
@@ -68,6 +69,7 @@ class MatchAdapter(
   private val biddingActionCount = mutableMapOf<String, Int>()
   private val cardVersion = mutableMapOf<String, Int>()
   private val cardCount = mutableMapOf<String, Int>()
+  private val resolvedTrickNo = mutableMapOf<String, Int>()
 
   // ── MatchAdapterPort: identity + authority ──────────────────────────
 
@@ -386,6 +388,7 @@ class MatchAdapter(
       biddingActionCount.clear()
       cardVersion.clear()
       cardCount.clear()
+      resolvedTrickNo.clear()
       return
     }
     bidVersion.remove(matchId)
@@ -393,6 +396,7 @@ class MatchAdapter(
     biddingActionCount.remove(matchId)
     cardVersion.remove(matchId)
     cardCount.remove(matchId)
+    resolvedTrickNo.remove(matchId)
   }
 
   // Test/diagnostic-only observability of the internal gates.
@@ -401,6 +405,7 @@ class MatchAdapter(
   fun lastAppliedBiddingActionCount(matchId: String): Int = biddingActionCount[matchId] ?: 0
   fun lastAppliedCardVersion(matchId: String): Int? = cardVersion[matchId]
   fun lastAppliedCardCount(matchId: String): Int = cardCount[matchId] ?: 0
+  fun lastResolvedTrickNo(matchId: String): Int? = resolvedTrickNo[matchId]
 
   // ── ONE ref-counted listener per matchId ───────────────────────────
 
@@ -494,14 +499,43 @@ class MatchAdapter(
     entry.hasPublished = true
     entry.lastPublished = doc
 
-    // The document becomes engine state BEFORE any listener sees it, so a
+    // The card pipeline alternates: emitPlay() refuses a new card while
+    // the engine is RESOLVING, and cardLog is append-only within a round,
+    // so ONE delivery (a late subscriber, or a reconnect that missed
+    // several) can legitimately carry MULTIPLE completed-but-not-yet-
+    // locally-resolved tricks. Catching up on N of them takes N alternating
+    // replay/resolve steps, each individually idempotent and registry-
+    // gated, stopping the instant a full pass advances nothing. 13 is the
+    // most tricks one round can hold; +2 bounds a final no-op pass.
+    val cards = doc?.cardLog?.size ?: 0
+    val bound = if (cards in 1..80) cards + 2 else 14
+    var card: ApplyOutcome = ApplyOutcome.notApplied(NO_NEW_CARDS)
+    for (pass in 0 until bound) {
+      val countBefore = lastAppliedCardCount(entry.matchId)
+      val trickBefore = lastResolvedTrickNo(entry.matchId)
+      card = applyRemoteCard(entry.matchId, doc, entry.localSeatId)
+      val trick = applyRemoteTrick(entry.matchId, doc)
+      // The ONLY stop condition: a full pass advanced neither the replayed
+      // count nor a resolved trick. A card ENGINE_REJECTED at a trick
+      // boundary is the ordinary mid-catch-up state (the engine is
+      // RESOLVING and refuses a new card until the trick is collected) —
+      // the resolve in THIS same pass is what unblocks the next one, so a
+      // desync here must NOT break the loop. A real desync stalls both
+      // counters and this same check catches it on the very next pass.
+      if (
+        lastAppliedCardCount(entry.matchId) == countBefore &&
+        lastResolvedTrickNo(entry.matchId) == trickBefore &&
+        !trick.applied
+      ) break
+    }
+
+    val bid = applyRemoteBid(entry.matchId, doc)
+    val action = applyRemoteBiddingAction(entry.matchId, doc)
+
+    // The document became engine state BEFORE any listener saw it, so a
     // listener always observes engines consistent with the snapshot it was
     // handed. Each interpreter is independently version-gated; a phase the
     // local engines haven't reached yet is left untouched by that gate.
-    val bid = applyRemoteBid(entry.matchId, doc)
-    val action = applyRemoteBiddingAction(entry.matchId, doc)
-    val card = applyRemoteCard(entry.matchId, doc, entry.localSeatId)
-
     val snapshot = MatchSnapshot(doc, null, bid, action, card)
     entry.listeners.toList().forEach { safeInvoke(it) { l -> l.onSnapshot(snapshot) } }
   }
@@ -574,6 +608,61 @@ class MatchAdapter(
     in RETRYABLE_CODES -> ErrorClass.RETRYABLE
     in NON_RETRYABLE_CODES -> ErrorClass.NON_RETRYABLE
     else -> ErrorClass.UNRECOGNIZED
+  }
+
+  // ── Remote trick resolution ────────────────────────────────────────
+
+  /**
+   * applyRemoteTrick — collects the trick the local engine has just
+   * completed emitting (its own phase is RESOLVING) via the pure
+   * resolveTrick(), and records which trickNo was resolved so a repeat
+   * pass is an idempotent no-op rather than a double resolution. This is
+   * the second half of the card pipeline: emitPlay() refuses a new card
+   * while the engine is RESOLVING, so catching up on N backlogged tricks
+   * needs N alternating applyRemoteCard()/applyRemoteTrick() steps.
+   *
+   * A call when the engine is not at the boundary is an ordinary no-op
+   * (NOT_RESOLVING), exactly like every other applyRemote*()'s "no new X"
+   * case — it never second-guesses an ENGINE_REJECTED that an earlier
+   * applyRemoteCard() in the same pass already reported as a real desync.
+   */
+  fun applyRemoteTrick(matchId: String, matchDoc: MatchDoc?): TrickOutcome {
+    if (matchId.isEmpty() || matchDoc == null) return TrickOutcome.notApplied(MALFORMED_SNAPSHOT)
+    val state = session.getPlayState() ?: return TrickOutcome.notApplied(ENGINE_UNAVAILABLE)
+    if (state.phase != com.estemshan.engine.TablePhase.RESOLVING) {
+      return TrickOutcome.notApplied(NOT_RESOLVING)
+    }
+
+    val trickNo = state.trickNo
+    if (resolvedTrickNo[matchId] == trickNo) {
+      return TrickOutcome.notApplied(ALREADY_RESOLVED, trickNo)
+    }
+
+    val after = resolveTrick(state)
+    session.updatePlayState(after)
+    resolvedTrickNo[matchId] = trickNo
+
+    // NECESSARY COMPLETION: the match document's `turn` is null at the
+    // resolving boundary and nothing writes the real next leader back into
+    // it (no Firestore field carries it). Without mirroring the engine's
+    // own decision into the session's turn, the stale value would keep
+    // reporting the seat that played the 3rd card as the turn holder,
+    // blocking the next trick's first submission. Only when there genuinely
+    // IS a next trick to lead — at trick 13 resolveTrick() itself leaves
+    // the round DONE with no turn to mirror.
+    if (after.phase == com.estemshan.engine.TablePhase.PLAY && after.turn != null) {
+      session.setTurn(after.turn)
+    }
+
+    return TrickOutcome(
+      applied = true,
+      trickNo = trickNo,
+      winnerId = after.lastTrick?.winnerId,
+      nextLeaderId = after.leaderId,
+      nextTurnSeat = after.turn,
+      nextPhase = after.phase.name,
+      tricksWon = after.tricksWon,
+    )
   }
 
   // ── helpers ────────────────────────────────────────────────────────
@@ -671,6 +760,22 @@ data class EntryOutcome(
   val seatId: String? = null,
 )
 
+/** One applyRemoteTrick() call's outcome — every path returns one. */
+data class TrickOutcome(
+  val applied: Boolean,
+  val reason: String,
+  val trickNo: Int? = null,
+  val winnerId: String? = null,
+  val nextLeaderId: String? = null,
+  val nextTurnSeat: String? = null,
+  val nextPhase: String? = null,
+  val tricksWon: Map<String, Int> = emptyMap(),
+) {
+  companion object {
+    fun notApplied(reason: String, trickNo: Int? = null) = TrickOutcome(applied = false, reason = reason, trickNo = trickNo)
+  }
+}
+
 private const val REASON_APPLIED = "APPLIED"
 private const val MALFORMED_SNAPSHOT = "MALFORMED_SNAPSHOT"
 private const val DUPLICATE_VERSION = "DUPLICATE_VERSION"
@@ -688,6 +793,8 @@ private const val AWAITING_ROUND_TRANSITION = "AWAITING_ROUND_TRANSITION"
 private const val STALE_ROUND = "STALE_ROUND"
 private const val MALFORMED_ENTRY = "MALFORMED_ENTRY"
 private const val LOCAL_ECHO_MISMATCH = "LOCAL_ECHO_MISMATCH"
+private const val NOT_RESOLVING = "NOT_RESOLVING"
+private const val ALREADY_RESOLVED = "ALREADY_RESOLVED"
 
 private const val EMPTY_MATCH_ID = "EMPTY_MATCH_ID"
 private const val RECONNECT_BASE_MS = 250

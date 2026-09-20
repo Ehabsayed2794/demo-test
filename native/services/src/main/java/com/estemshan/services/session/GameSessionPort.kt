@@ -32,8 +32,14 @@ interface GameSessionPort {
   fun getDealer(): String?
   fun setDealer(uid: String?)
 
+  /**
+   * The current turn holder as a SEAT id (engine seats p1..p4 — matches
+   * engine/session.js's own setTurn(leaderId/callerId)), or null while
+   * between turns. MatchAdapter's resolve mirror writes seat ids here;
+   * MatchService resolves a uid to a seat before comparing against it.
+   */
   fun getTurn(): String?
-  fun setTurn(uid: String?)
+  fun setTurn(seatId: String?)
 
   /** Advance to the next round; returns the new round number. */
   fun nextRound(): Int
