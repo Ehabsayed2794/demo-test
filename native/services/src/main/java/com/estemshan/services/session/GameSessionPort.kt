@@ -30,7 +30,7 @@ interface GameSessionPort {
 
   // ── round-scoped primitives (bootstrap writes these only) ───────────
   fun getDealer(): String?
-  fun setDealer(uid: String?)
+  fun setDealer(seatId: String?)
 
   /**
    * The current turn holder as a SEAT id (engine seats p1..p4 — matches

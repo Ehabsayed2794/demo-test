@@ -79,7 +79,7 @@ class MatchAdapterReloadReplayTest {
     override fun getRoundNumber(): Int = 1
     override fun getMaxRounds(): Int = 18
     override fun getDealer(): String? = SEAT_IDS.first()
-    override fun setDealer(uid: String?) {}
+    override fun setDealer(seatId: String?) {}
     override fun getTurn(): String? = _turn
     override fun setTurn(seatId: String?) { _turn = seatId }
     override fun nextRound(): Int = 2
