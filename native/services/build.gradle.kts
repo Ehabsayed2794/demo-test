@@ -24,6 +24,12 @@ android {
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
+  // The debug/release BuildConfig fields below need the feature on —
+  // AGP 8.7 defaults it off for library modules. Same as :app.
+  buildFeatures {
+    buildConfig = true
+  }
+
   buildTypes {
     debug {
       // 10.0.2.2 is the host loopback as seen from the Android emulator,
