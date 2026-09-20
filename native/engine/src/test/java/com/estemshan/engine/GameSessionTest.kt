@@ -226,7 +226,7 @@ class GameSessionTest {
   @Test
   fun hands_localAuthorityDealsFourUniqueHandsAndIsIdempotent() {
     val session = newSession()
-    assertEquals(LOCAL, session.getHandAuthorityMode())
+    assertEquals(HandAuthority.LOCAL, session.getHandAuthorityMode())
     assertFalse(session.hasDealtHands())
 
     val dealt = session.ensureHandsDealt()
@@ -269,8 +269,8 @@ class GameSessionTest {
   fun authority_firestoreNeverSynthesizesCardsLocally() {
     val session = newSession()
     assertFalse(session.hasDealtHands())
-    session.setHandAuthorityMode(FIRESTORE)
-    assertEquals(FIRESTORE, session.getHandAuthorityMode())
+    session.setHandAuthorityMode(HandAuthority.FIRESTORE)
+    assertEquals(HandAuthority.FIRESTORE, session.getHandAuthorityMode())
 
     // No authoritative hand has arrived: nothing is invented.
     assertTrue(session.ensureHandsDealt().isEmpty())
@@ -288,19 +288,19 @@ class GameSessionTest {
     session.ensureHandsDealt()
     assertTrue(session.hasDealtHands())
 
-    session.setHandAuthorityMode(FIRESTORE)
+    session.setHandAuthorityMode(HandAuthority.FIRESTORE)
 
     assertTrue(session.getHands().isEmpty())
     assertFalse(session.hasDealtHands())
     // Re-entering firestore mode is not a re-clear (nothing to clear).
-    session.setHandAuthorityMode(FIRESTORE)
+    session.setHandAuthorityMode(HandAuthority.FIRESTORE)
     assertTrue(session.getHands().isEmpty())
   }
 
   @Test
   fun authority_authoritativeHandWritesOneSeatOnly() {
     val session = newSession()
-    session.setHandAuthorityMode(FIRESTORE)
+    session.setHandAuthorityMode(HandAuthority.FIRESTORE)
     val cards = listOf(Card(Suit.HEARTS, RANKS.first()), Card(Suit.CLUBS, RANKS.last()))
 
     val hands = session.setAuthoritativeHand("p2", cards, roundNumber = 1)
