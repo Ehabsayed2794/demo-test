@@ -9,12 +9,16 @@ on:
       - main
     paths:
       - native/**
+      - tests/native-phase3-*.test.cjs
+      - firestore.rules
       - .github/workflows/android.yml
   push:
     branches:
       - main
     paths:
       - native/**
+      - tests/native-phase3-*.test.cjs
+      - firestore.rules
       - .github/workflows/android.yml
 
 permissions:
@@ -59,8 +63,8 @@ jobs:
         with:
           gradle-version: '8.10'
 
-      - name: Assemble debug + run unit tests (app + pure engine)
-        run: gradle -p native :app:assembleDebug :app:testDebugUnitTest :engine:test --stacktrace
+      - name: Assemble debug + run unit tests (app + engine + services)
+        run: gradle -p native :app:assembleDebug :app:testDebugUnitTest :engine:test :services:test --stacktrace
 
       - name: Upload unit test reports
         if: always()
@@ -70,4 +74,47 @@ jobs:
           path: |
             native/app/build/reports/tests/
             native/engine/build/reports/tests/
+            native/services/build/reports/tests/
           if-no-files-found: warn
+
+  # Phase 3 — the rules layer the Kotlin services write against, proven
+  # against the REAL, UNCHANGED firestore.rules. The services themselves
+  # are unit-tested above; this job compiles the actual rules and proves
+  # every transaction shape the services emit is ACCEPTED while every
+  # malformed variant is DENIED (a wrong shape is a rules denial, not a
+  # style issue). Headless: `emulators:exec` starts the Firestore
+  # emulator, runs the suite, tears it down in a finally, and propagates
+  # the real exit code — the same pattern r1-golden-verification.yml
+  # already proves. The full JS suite stays in test.yml; this job runs
+  # only the Phase 3 files.
+  rules-emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Java 17 for the Firebase Emulator
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Phase 3 rules + integration suites against the Firestore Emulator
+        # --only firestore: these suites need no Auth/browser emulator.
+        # Each file is its own process — one crash cannot mask another's
+        # results, exactly like scripts/run-tests.mjs's own per-file model.
+        run: |
+          npx firebase emulators:exec --project demo-test-ci --only firestore "node tests/native-phase3-rules-negative.test.cjs"
+          npx firebase emulators:exec --project demo-test-ci --only firestore "node tests/native-phase3-integration.test.cjs"
+        # No continue-on-error: an unreachable emulator, a rules denial of
+        # a legitimate shape, or an ACCEPTED malformed shape all fail here.
