@@ -144,7 +144,11 @@ async function main() {
   for (var s = 0; s < 4; s++) {
     var seat = SEAT_ORDER[s];
     var ctx = [A, B, C, D][s];
-    var bids = {};
+    // Every unseen seat must stay an explicit null: the rules diff the
+    // whole bids sub-map, and a key the old document had that the new
+    // one omits still counts as affected, so `{ p1: 5 }` alone would
+    // look like a write touching all four seats and be denied.
+    var bids = { p1: null, p2: null, p3: null, p4: null };
     for (var t = 0; t <= s; t++) bids[SEAT_ORDER[t]] = bidValues[SEAT_ORDER[t]];
     version++;
     await okSucceeds("1.2." + (s + 1) + " submitBid: seat " + seat + " estimates " + bidValues[seat] +
@@ -206,7 +210,7 @@ async function main() {
     Array.isArray(settledMatch.cardLog) && settledMatch.cardLog.length === 0);
   check("1.5c convergence: the live biddingLog window is empty after the advance",
     Array.isArray(settledMatch.biddingLog) && settledMatch.biddingLog.length === 0);
-  check("1.5d convergence: the version counter advanced once per write (56 -> " + settledMatch.version + ")",
+  check("1.5d convergence: the version counter advanced once per write (58 -> " + settledMatch.version + ")",
     settledMatch.version === 1 + 4 + 52 + 1, "got " + settledMatch.version);
 
   var archived = await A.firestore().collection("matches").doc("m-full")
@@ -311,12 +315,21 @@ async function main() {
       baseMatch({ currentRound: 18, cardLog: finalPlayed }));
   });
 
+  // Same atomic archive+parent pair as advanceToNextRound above —
+  // MatchService.endMatch() commits roundArchive/{completedRound} in
+  // the SAME transaction as the terminal transition, so the completed
+  // round is archived exactly once and the live window empties.
   function endMatch(client) {
-    return client.firestore().collection("matches").doc("m-final").update({
-      status: "complete", winnerIds: ["p2"],
-      finalScores: { p1: 90, p2: 120, p3: 70, p4: 80 },
-      completedRound: 18, version: 2, cardLog: [], biddingLog: []
-    });
+    return client.firestore().batch()
+      .set(client.firestore().collection("matches").doc("m-final")
+        .collection("roundArchive").doc("18"),
+        { round: 18, matchId: "m-final", cardLog: finalPlayed, biddingLog: [] })
+      .update(client.firestore().collection("matches").doc("m-final"), {
+        status: "complete", winnerIds: ["p2"],
+        finalScores: { p1: 90, p2: 120, p3: 70, p4: 80 },
+        completedRound: 18, version: 2, cardLog: [], biddingLog: []
+      })
+      .commit();
   }
   var finalResults = await fourWayRace([endMatch(A), endMatch(B), endMatch(C), endMatch(D)]);
   var finalWinners = finalResults.filter(function (r) { return r.committed; });
