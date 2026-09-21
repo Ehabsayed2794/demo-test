@@ -156,10 +156,15 @@ jobs:
           # 2. Carries the REAL project id, not the dummy demo-test-ci one.
           #    (demo-test-ci still appears in the emulator branch of the same
           #    compiled class, so its ABSENCE cannot be asserted — the real
-          #    id's PRESENCE is the meaningful check.)
-          unzip -p "$APK" classes.dex | grep -a -q "made---estimation-card-game" \
-            || { echo "release APK missing the real Firebase project id"; exit 1; }
+          #    id's PRESENCE is the meaningful check.) BuildConfig string
+          #    constants may land in ANY of the classes*.dex files, not just
+          #    classes.dex, so scan them all.
+          DEX_DIR="$(mktemp -d)"
+          unzip -o -q "$APK" 'classes*.dex' -d "$DEX_DIR"
+          grep -a -q "made---estimation-card-game" "$DEX_DIR"/classes*.dex \
+            || { echo "release APK missing the real Firebase project id"; ls -la "$DEX_DIR"; exit 1; }
           echo "Release APK signed and targets made---estimation-card-game."
+          rm -rf "$DEX_DIR"
 
       - name: Upload release APK
         uses: actions/upload-artifact@v4
