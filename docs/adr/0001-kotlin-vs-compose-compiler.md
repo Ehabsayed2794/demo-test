@@ -54,12 +54,22 @@ Each claim below was checked against a primary source rather than assumed.
    JDK 17, SDK Build Tools 35.0.0, and max API 36.1.
    — [AGP 8.13.0 release notes](https://developer.android.com/build/releases/agp-8-13-0-release-notes)
 
-4. **The flagship monetization SDK does not force Kotlin 2.x.** Google
-   Mobile Ads SDK **1.4.0** (released 2026-08-20) *lowered* its minimum
-   Kotlin from 2.1 **to 1.9** and its minimum AGP from 8.2.0 to 7.3.1. This
-   is the single most load-bearing input to the decision, and it points at
-   staying.
+4. **The flagship monetization SDK does not force Kotlin 2.x.** The GMA
+   Next-Gen SDK *lowered* its minimum required Kotlin from 2.1 **to 1.9** in
+   version **0.15.1-alpha01** (2025-04-28), and also lowered its minimum AGP
+   from 8.2.0 to 7.3.1. This is the single most load-bearing input to the
+   decision, and it points at staying.
    — [Google Mobile Ads SDK release notes](https://developers.google.com/admob/android/next-gen/rel-notes)
+
+   **That floor has not been re-raised.** Checked against every later entry
+   on the same page: the line went 0.15.1-alpha01 → 0.24.x betas → the 1.x
+   stable line, and **no version after 0.15.1-alpha01 states an increased
+   minimum Kotlin version.** The current **1.4.0** (2026-08-20) notes cover
+   only Picture-in-Picture ads and mediation-initialization error reporting
+   (`onInitializationFailed(AdError)`), with no Kotlin requirement stated at
+   all. So the reduction has held for ~17 months and across the 0.x→1.x
+   version-scheme break — it is the SDK line's settled position, not an
+   alpha-era footnote.
 
 5. **Billing is not a forcing function either.** Play Billing Library 8's
    2026 breaking changes are **API removals**
