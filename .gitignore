@@ -11,6 +11,12 @@ lerna-debug.log*
 local.properties
 native/.gradle/
 native/**/build/
+# S3: real release Firebase values; template is committed, values are not
+native/firebase-release.properties
+# S4: release keystore + its credentials, never committed
+native/keystore-release.properties
+native/*.jks
+native/*.keystore
 *.hprof
 
 node_modules

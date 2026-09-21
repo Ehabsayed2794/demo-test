@@ -1,0 +1,19 @@
+# Copy to native/firebase-release.properties (gitignored) and fill in the
+# REAL Android app values from the Firebase console:
+#   Project settings → Your apps → the Android app (com.estemshan.game)
+#                     → App ID, and Project settings → Web API Key.
+#
+# This file is the S3 override for the release build's FirebaseOptions.
+# app/build.gradle.kts resolves each value in this order:
+#   1. this file (native/firebase-release.properties)
+#   2. environment variable (CI secrets: FIREBASE_PROJECT_ID,
+#      FIREBASE_API_KEY, FIREBASE_APP_ID)
+#   3. the committed defaults (already public via design-ui/firebase-init.js)
+#
+# Only the applicationId has no committed source — without this file the
+# release build keeps its all-zeros PLACEHOLDER and FirebaseModule logs a
+# warning. The apiKey and projectId defaults are the project's own values.
+
+firebase.projectId=made---estimation-card-game
+firebase.apiKey=AIzaSyAOX64y02461r7oJomYavmOowi9Eyze7KU
+firebase.applicationId=1:261597513798:android:00000000000000000000000000000000
