@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
   id("com.android.application")
   id("org.jetbrains.kotlin.android")
@@ -19,7 +21,7 @@ plugins {
 // stays a clearly-marked placeholder the owner must supply — FirebaseModule
 // logs a warning rather than silently hitting the wrong project, which is
 // the exact bug this story fixes.
-val firebaseProps = java.util.Properties().apply {
+val firebaseProps = Properties().apply {
   rootProject.file("firebase-release.properties").takeIf { it.exists() }
     ?.inputStream()?.use { load(it) }
 }
@@ -77,7 +79,7 @@ android {
   // happens in CI from secrets (see the release job in
   // .github/workflows/android.yml). NOTE: this block must precede
   // buildTypes, which resolves the config at configuration time.
-  val keystoreProps = java.util.Properties().apply {
+  val keystoreProps = Properties().apply {
     rootProject.file("keystore-release.properties").takeIf { it.exists() }
       ?.inputStream()?.use { load(it) }
   }
