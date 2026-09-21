@@ -150,3 +150,25 @@ verification); branches below are all merged unless marked OPEN.
   web shrink (D4/Phase 6).
 - **Snapshot estimate: ~45% of native v1** (engine 100%, screens ~65%,
   session ~5%, integration/billing/launch 0).
+
+## 10. Status update — 2026-09-21 (main @ `a8fc086`)
+
+§9 above is superseded for planning purposes. Two merges landed after it:
+
+- **Phase 3 services DONE.** The `:services` module (RoomService,
+  MatchService, MatchAdapter, TxSupport, models, session seam) merged as
+  PR #47, with the `rules-emulator` CI job green and the reload/resume
+  replay tests passing.
+- **Phase 2 session DONE.** The GameSession state store in `:engine` plus
+  the `GameSessionBridge` in `:services` merged as PR #48; CI now runs
+  `:services:test`. The "session ~5%" line in §9 is obsolete.
+- The offline quick-match flow referenced as CI-red in §9 is merged and
+  green (PR #44, fixed in `8dd75e1`).
+
+Remaining: AI opponents, the `:app`→`:services` wiring (the online UI
+critical path), instrumented testing, monetization, and store readiness.
+
+For hour-level estimates, phases, risks, and the toolchain/API-36
+blocker, see **`docs/NATIVE_V1_PLAN_AND_ESTIMATE.md`** — it is the
+current planning document; §5's T-shirt sizes and the "~5–8 months"
+figure are its scope, not its schedule.
