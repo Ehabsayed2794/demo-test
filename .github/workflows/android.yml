@@ -65,7 +65,8 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Assemble debug + run unit tests (app + engine + services)
-        run: ./gradlew -p native :app:assembleDebug :app:testDebugUnitTest :engine:test :services:test --stacktrace
+        # The wrapper lives at native/gradlew; -p native sets the project dir.
+        run: native/gradlew -p native :app:assembleDebug :app:testDebugUnitTest :engine:test :services:test --stacktrace
 
       - name: Upload unit test reports
         if: always()
@@ -142,7 +143,7 @@ jobs:
           EOF
 
       - name: Assemble release
-        run: ./gradlew -p native :app:assembleRelease --stacktrace
+        run: native/gradlew -p native :app:assembleRelease --stacktrace
 
       - name: Verify signed + built against the real Firebase project
         run: |
