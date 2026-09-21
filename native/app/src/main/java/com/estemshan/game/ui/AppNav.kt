@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -52,7 +53,16 @@ fun EstemshanNav() {
   val qvm: QuickMatchViewModel = viewModel()
 
   EstemshanTheme {
-    NavHost(navController = nav, startDestination = Routes.SPLASH) {
+    // Edge-to-side (targetSdk 36): keep every screen clear of the status
+    // bar, gesture nav bar, and any display cutout. Applied once at the
+    // root so individual screens stay written against the full window.
+    NavHost(
+      navController = nav,
+      startDestination = Routes.SPLASH,
+      modifier = Modifier
+        .fillMaxSize()
+        .safeDrawingPadding(),
+    ) {
       composable(Routes.SPLASH) {
         val splashVm: SplashViewModel = viewModel()
         val ready by splashVm.ready.collectAsStateWithLifecycle()
