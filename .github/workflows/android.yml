@@ -78,6 +78,95 @@ jobs:
             native/services/build/reports/tests/
           if-no-files-found: warn
 
+  # Phase 0b (S4) — the release gate. assembleRelease must build, sign, and
+  # carry the REAL Firebase project. The keystore comes from repo secrets
+  # when configured; otherwise a fresh ephemeral key signs the build so the
+  # job is never blocked on secret setup. Either way the APK must verify.
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK packages
+        run: |
+          set -euo pipefail
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;35.0.0"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Provide signing keystore
+        # RELEASE_STORE_FILE etc. are set only when the owner configures the
+        # repo secrets. Absent them, an ephemeral key signs this build — the
+        # point is that assembleRelease always produces a verifiable APK.
+        env:
+          STORE_FILE: ${{ secrets.RELEASE_STORE_FILE }}
+          STORE_BASE64: ${{ secrets.RELEASE_STORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          cd native
+          if [ -n "$STORE_FILE" ] && [ -n "$STORE_BASE64" ]; then
+            echo "Signing with the production keystore from repo secrets."
+            echo "$STORE_BASE64" | base64 -d > "$STORE_FILE"
+          else
+            echo "No production keystore secret configured — generating an ephemeral key."
+            STORE_FILE="$RUNNER_TEMP/ephemeral-release.jks"
+            keytool -genkeypair -noprompt \
+              -keystore "$STORE_FILE" -storepass android -keypass android \
+              -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Estemshan ephemeral CI, OU=CI, O=Estemshan, L=Cairo, C=EG"
+            STORE_PASSWORD=android
+            KEY_ALIAS=androiddebugkey
+            KEY_PASSWORD=android
+          fi
+          cat > keystore-release.properties <<EOF
+          storeFile=$STORE_FILE
+          storePassword=$STORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEY_PASSWORD
+          EOF
+
+      - name: Assemble release
+        run: ./gradlew -p native :app:assembleRelease --stacktrace
+
+      - name: Verify signed + built against the real Firebase project
+        run: |
+          set -euo pipefail
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          APK="native/app/build/outputs/apk/release/app-release.apk"
+          test -f "$APK" || { echo "release APK missing"; exit 1; }
+          # 1. Signed and verifiable.
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$APK"
+          # 2. Carries the REAL project id, not the dummy demo-test-ci one.
+          #    (demo-test-ci still appears in the emulator branch of the same
+          #    compiled class, so its ABSENCE cannot be asserted — the real
+          #    id's PRESENCE is the meaningful check.)
+          unzip -p "$APK" classes.dex | grep -a -q "made---estimation-card-game" \
+            || { echo "release APK missing the real Firebase project id"; exit 1; }
+          echo "Release APK signed and targets made---estimation-card-game."
+
+      - name: Upload release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: estemshan-release-apk
+          path: native/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
   # Phase 3 — the rules layer the Kotlin services write against, proven
   # against the REAL, UNCHANGED firestore.rules. The services themselves
   # are unit-tested above; this job compiles the actual rules and proves

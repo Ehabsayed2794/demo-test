@@ -68,6 +68,32 @@ android {
     )
   }
 
+  // S4: release signing. The keystore and its credentials are NEVER
+  // committed — they resolve from native/keystore-release.properties
+  // (gitignored, owner-supplied) or CI secrets. With no keystore
+  // configured, release signs with AGP's own debug key, which AGP
+  // generates on demand — so ./gradlew :app:assembleRelease produces a
+  // signed, installable APK even on a clean clone. Production signing
+  // happens in CI from secrets (see the release job in
+  // .github/workflows/android.yml). NOTE: this block must precede
+  // buildTypes, which resolves the config at configuration time.
+  val keystoreProps = java.util.Properties().apply {
+    rootProject.file("keystore-release.properties").takeIf { it.exists() }
+      ?.inputStream()?.use { load(it) }
+  }
+  val releaseStoreFile = keystoreProps.getProperty("storeFile")
+
+  if (releaseStoreFile != null) {
+    signingConfigs {
+      create("release") {
+        storeFile = file(releaseStoreFile)
+        storePassword = keystoreProps.getProperty("storePassword")
+        keyAlias = keystoreProps.getProperty("keyAlias")
+        keyPassword = keystoreProps.getProperty("keyPassword")
+      }
+    }
+  }
+
   buildTypes {
     debug {
       // Emulator Suite (10.0.2.2 = host loopback from the emulator).
@@ -78,6 +104,12 @@ android {
     release {
       buildConfigField("boolean", "USE_EMULATOR", "false")
       isMinifyEnabled = false
+      signingConfig = if (releaseStoreFile != null) {
+        signingConfigs.getByName("release")
+      } else {
+        // No production keystore: AGP's debug key, generated on demand.
+        signingConfigs.getByName("debug")
+      }
     }
   }
 
