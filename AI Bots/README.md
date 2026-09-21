@@ -30,6 +30,16 @@ note here if the two must diverge.
    already owns these rules natively (`Table.kt`: `legalCards`, `isLegal`,
    `canPlayCard`), and S7/S8 port against those. Porting a duplicate rules
    module would create the exact divergence the frozen rules exist to prevent.
+   **`./utils` is missing too.** `App.tsx` imports `isBidStronger`,
+   `validateBidding`, `getSuitStrength`, `generateLegalBids` and more from
+   `./utils`, which is absent from this directory (it lives at repo-root
+   `src/utils.ts`, outside the drop). Every one already has a native
+   equivalent in `:engine`: `isBidStronger` → `auctionBidBeatsTop` /
+   `auctionBidIsWith`; `validateBidding` → `canSubmit`, which S6 treats as the
+   authority it emits against rather than the TS retry-until-valid loop;
+   `getSuitStrength` → `Suit.strength`. **S6 consequence:** the port is a
+   re-expression against `canSubmit`, not a line-by-line translation of
+   `App.tsx`'s four separate `setTimeout` blocks.
 2. **`types.ts` ↔ `botPersonality.ts` is circular.** `PlayerModel` imports
    `Personality` from `botPersonality.ts`, which imports `botSimulation.ts`.
    Harmless in TS modules; in Kotlin the seam is an explicit constructor
