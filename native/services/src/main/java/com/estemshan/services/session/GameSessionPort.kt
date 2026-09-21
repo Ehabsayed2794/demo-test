@@ -6,13 +6,11 @@ import com.estemshan.services.model.RoundResultEntry
 
 /**
  * The GameSession seam. Phase 3 owns services + sync and CONSUMES this
- * surface; the authoritative implementation lives elsewhere (engine/
- * session.js's Kotlin successor — see ANDROID_MIGRATION_PLAN.md §9:
- * GameSession/RemoteStore was delegated to a second agent and was
- * unpushed when this module was written). Everything here is what
- * MatchAdapter's read-side interpreter needs to mirror remote state into
- * local engines — deliberately narrow, so an implementation cannot be
- * accidentally coupled to service internals.
+ * surface; the authoritative implementation lives in :engine's
+ * GameSession, reached through GameSessionBridge in this package.
+ * Everything here is what MatchAdapter's read-side interpreter needs to
+ * mirror remote state into local engines — deliberately narrow, so an
+ * implementation cannot be accidentally coupled to service internals.
  *
  * Layering (docs/specs/02-engine-api.md §6):
  *   Engine → GameSession → MatchAdapter → MatchService → UI
