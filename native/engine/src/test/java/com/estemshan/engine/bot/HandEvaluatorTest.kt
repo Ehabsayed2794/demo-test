@@ -155,9 +155,9 @@ class HandEvaluatorTest {
     val b = eval.evaluateHand(handA(), HEARTS, 1.0).breakdown.bySuit()
 
     assertEquals(0.5, b[CLUBS]!!.ruffTricks, 1e-9)
-    assertEquals(0.15, b[HEARTS]!!.ruffTricks, 1e-9)  // trump suit itself: no ruff
     assertEquals(0.15, b[DIAMONDS]!!.ruffTricks, 1e-9)
-    assertEquals(0.0, b[SPADES]!!.ruffTricks, 1e-9)   // 8 cards: too long to ruff
+    assertEquals(0.0, b[HEARTS]!!.ruffTricks, 1e-9)  // trump suit itself: no ruff
+    assertEquals(0.0, b[SPADES]!!.ruffTricks, 1e-9)  // 8 cards: too long to ruff
   }
 
   // ==========================================================================
