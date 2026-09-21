@@ -9,12 +9,14 @@ plugins {
 @Suppress("UnstableApiUsage")
 android {
   namespace = "com.estemshan.game"
-  compileSdk = 34
+  compileSdk = 36
+  // AGP 8.13's paired build tools; explicit so CI installs exactly these.
+  buildToolsVersion = "35.0.0"
 
   defaultConfig {
     applicationId = "com.estemshan.game"
     minSdk = 26
-    targetSdk = 34
+    targetSdk = 36
     versionCode = 1
     versionName = "0.1.0-phase1"
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -45,7 +47,9 @@ android {
     buildConfig = true
   }
   composeOptions {
-    // Compose compiler paired with Kotlin 1.9.24 (no compose plugin needed).
+    // Legacy Compose compiler, paired with Kotlin 1.9.25 exactly. The
+    // Kotlin-2.x plugin.compose migration is deliberately NOT taken here —
+    // see docs/adr/0001-kotlin-vs-compose-compiler.md.
     kotlinCompilerExtensionVersion = "1.5.15"
   }
 }

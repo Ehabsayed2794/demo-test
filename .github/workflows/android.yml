@@ -1,8 +1,8 @@
 name: Android (Native Kotlin)
 
-# Phase 1 native app under native/. JS workflows are untouched; this job
-# covers assemble + JVM unit tests. No wrapper is committed yet, so the
-# Gradle distribution comes from setup-gradle (pinned 8.10, matches AGP).
+# Phase 0b: toolchain is API-36 / AGP 8.13.2 / Gradle 8.14.3. The Gradle
+# wrapper is now committed under native/, so this job runs it directly and no
+# longer pins a distribution via setup-gradle. JS workflows are untouched.
 on:
   pull_request:
     branches:
@@ -47,7 +47,8 @@ jobs:
         # the obsolete `tools` package, which Google removed from the SDK
         # repository (sdkmanager exits 1: "Failed to find package 'tools'").
         # The ubuntu runner image already ships an SDK; install exactly the
-        # two packages AGP 8.7 needs and accept licenses non-interactively.
+        # packages AGP 8.13 needs (compileSdk 36 + build-tools 35.0.0) and
+        # accept licenses non-interactively.
         run: |
           set -euo pipefail
           export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
@@ -56,15 +57,15 @@ jobs:
           # not a failure (pipefail would fail the step on it). A genuinely
           # unlicensed SDK still fails loudly at --install below.
           yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager --install "platform-tools" "platforms;android-34" "build-tools;34.0.0"
+          sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;35.0.0"
 
-      - name: Setup Gradle 8.10 (no wrapper committed yet)
+      - name: Setup Gradle (wrapper is committed)
+        # No gradle-version override: the committed wrapper pins 8.14.3.
+        # setup-gradle still supplies the dependency cache.
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.10'
 
       - name: Assemble debug + run unit tests (app + engine + services)
-        run: gradle -p native :app:assembleDebug :app:testDebugUnitTest :engine:test :services:test --stacktrace
+        run: ./gradlew -p native :app:assembleDebug :app:testDebugUnitTest :engine:test :services:test --stacktrace
 
       - name: Upload unit test reports
         if: always()
