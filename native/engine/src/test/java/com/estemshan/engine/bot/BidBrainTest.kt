@@ -283,7 +283,13 @@ class BidBrainTest {
     }
 
     assertEquals(BiddingPhase.DONE, state.subPhase)
-    assertEquals("fast round must keep its fixed trump", SANS, state.declaredTrump)
+    // A Super Call (an estimate of 8+) lets the Caller replace the fixed trump,
+    // mirroring the TS source's "Super Call overrode the forced suit" — the
+    // engine's noSuitConstraint branch is the port of that rule. Without a Super
+    // Call, the round's fixed trump must survive intact.
+    if (state.auctionTop < 8) {
+      assertEquals("fast round without a Super Call keeps its fixed trump", SANS, state.declaredTrump)
+    }
   }
 
   // ==========================================================================
@@ -305,13 +311,26 @@ class BidBrainTest {
     // seatJitter is a hash of the player id, so two seats holding identical
     // hands bid differently — the property that makes four bots feel like
     // four players rather than one decision copied four times.
-    val state = skipDash(initNormalRound(round = 1, dealer = "p1"))
-    val sameHand = deal(7)
+    //
+    // EXPERT is deliberately noiseless (bidNoise 0.0, matching the TS source),
+    // so this uses HARD, the most precise tier that still jitters. strongHand()
+    // scores exactly 8.5 tricks under its own best trump (HandEvaluatorTest's
+    // handA golden), a rounding boundary: "alpha" hashes to a positive jitter
+    // and rounds up to 9, "beta" to a negative one and rounds down to 8. Same
+    // hand, two seats, different calls — deterministically, not by luck.
+    val seats = listOf("alpha", "beta", "gamma", "delta")
+    val sameHand = strongHand()
 
-    val a = brain.decide(state, sameHand, "p1", BotTier.EXPERT)
-    val b = brain.decide(state, sameHand, "p2", BotTier.EXPERT)
+    val a = brain.decide(
+      skipDash(initNormalRound(round = 1, dealer = "alpha", seats = seats)),
+      sameHand, "alpha", BotTier.HARD,
+    )
+    val b = brain.decide(
+      skipDash(initNormalRound(round = 1, dealer = "beta", seats = seats)),
+      sameHand, "beta", BotTier.HARD,
+    )
 
-    assertFalse("identical hands at different seats should usually differ", a == b)
+    assertFalse("identical hands at different seats should differ", a == b)
   }
 
   // ==========================================================================
@@ -353,11 +372,11 @@ class BidBrainTest {
 
   private fun skipDash(state: BiddingState): BiddingState {
     var s = state
-    if (s.subPhase == BiddingPhase.DASH) {
-      s = emitAndApply(s, BiddingIntent.DashCallDecision("p1", false))
-      s = emitAndApply(s, BiddingIntent.DashCallDecision("p2", false))
-      s = emitAndApply(s, BiddingIntent.DashCallDecision("p3", false))
-      s = emitAndApply(s, BiddingIntent.DashCallDecision("p4", false))
+    // Follow the state's own turn order rather than hardcoded seats, so the
+    // dash phase is skipped correctly for rounds with non-default seat ids.
+    while (s.subPhase == BiddingPhase.DASH) {
+      val seat = s.waitingFor ?: break
+      s = emitAndApply(s, BiddingIntent.DashCallDecision(seat, false))
     }
     return s
   }

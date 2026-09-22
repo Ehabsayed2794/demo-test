@@ -50,12 +50,19 @@ object BidBrain {
    * the given state, or this function throws — it never returns an intent the
    * reducer would reject.
    *
-   * @throws IllegalStateException if the brain produces an illegal intent,
-   *   which indicates a brain bug rather than a recoverable condition.
+   * @throws IllegalStateException if the round has already completed, or if the
+   *   brain produces an illegal intent — both indicate a brain/state mismatch
+   *   rather than a recoverable condition.
    * @throws IllegalArgumentException if [playerId] is not the seat the state is
    *   waiting on.
    */
   fun decide(state: BiddingState, hand: List<Card>, playerId: String, tier: BotTier): BiddingIntent {
+    // A completed round has no seat waiting, so the seat check below would
+    // report a wrong-seat error for an ask that is really an after-completion
+    // ask. Diagnose the completion first.
+    check(state.subPhase != BiddingPhase.DONE) {
+      "BidBrain asked to decide after bidding completed"
+    }
     require(state.waitingFor == playerId) {
       "BidBrain asked for $playerId but the state is waiting on ${state.waitingFor}"
     }
@@ -142,10 +149,18 @@ object BidBrain {
   ): BiddingIntent.AuctionBid {
     val eval = botBid(hand, tier, playerId, chosenTrump = null)
 
-    // The evaluator's honest ceiling under its own best trump. A call only
-    // makes sense if it both reaches the 4-trick floor and beats the current
-    // top on the engine's own strength ordering.
-    val call = eval.intendedBid.coerceIn(4, 13)
+    // Clamp to a legal trick count only. The 4-trick minimum is *not* a floor
+    // on the estimate — the source is explicit about this (`isCallPhaseLegal:
+    // isDashCall || bid >= 4`): a hand rated below 4 must PASS the auction and
+    // estimate low, never be inflated to a 4-call it cannot back. Inflating it
+    // here would make a bankrupt hand open the auction at 4.
+    val call = eval.intendedBid.coerceIn(0, 13)
+    if (call < 4) {
+      return BiddingIntent.AuctionBid(playerId = playerId, isPass = true)
+    }
+
+    // A call that clears the floor only makes sense if it also beats the
+    // current top on the engine's own strength ordering.
     val beatsTop = auctionBidBeatsTop(
       call, eval.potentialTrump, state.auctionTop, state.auctionSuit,
     )
