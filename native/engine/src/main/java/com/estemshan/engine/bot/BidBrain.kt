@@ -36,7 +36,7 @@ import com.estemshan.engine.withFloorFor
  * the intent through the same `emit()` path a human tap takes, with no
  * second-guessing layer in between.
  *
- * Determinism is preserved from the source: `seatJitter` is a hash of the
+ * Determinism is preserved from the source: `seatHash` is a hash of the
  * player id, so the same hand+seat always yields the same bid, which is what
  * makes S10's bot-vs-bot smoke test reproducible.
  */
@@ -296,7 +296,7 @@ object BidBrain {
     val rawFloat = evaluation.expectedTricks
 
     // Tier noise, deterministic per seat so a bot-vs-bot round is reproducible.
-    val noisy = rawFloat + seatJitter(playerId, tier.bidNoise)
+    val noisy = rawFloat + seatHash(playerId, tier.bidNoise)
     val intendedBid = kotlin.math.round(noisy).toInt()
 
     return BotBid(
@@ -305,22 +305,6 @@ object BidBrain {
       potentialTrump = potentialTrump,
       reasoning = evaluation.reasoning,
     )
-  }
-
-  /**
-   * Deterministic pseudo-jitter so the same hand+seat never flip-flops but
-   * different bots vary. Ported 1:1 from `botEngine.ts`'s `seatJitter`;
-   * `Math.random` is deliberately avoided for reproducibility (S10).
-   */
-  private fun seatJitter(playerId: String, magnitude: Double): Double {
-    if (playerId.isEmpty() || magnitude == 0.0) return 0.0
-    var hash = 0
-    for (char in playerId) {
-      hash = (hash * 31 + char.code)
-    }
-    // Fold to -1..1, matching the source's ((h % 1000) / 1000) * 2 - 1.
-    val unit = ((hash % 1000) / 1000.0) * 2 - 1
-    return unit * magnitude
   }
 
   private data class BotBid(
