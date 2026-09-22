@@ -54,6 +54,15 @@ data class TableState(
   val plays: List<Play>,
   val ledSuit: Suit?,
   val lastTrick: TrickResult?,
+  /**
+   * Every card played in the *resolved* tricks of this round, oldest first.
+   * `plays` holds only the in-progress trick and `resolveTrick` clears it, so
+   * without this field the round's history would be gone the moment a trick
+   * completes. Card-counting brains (`isBoss`, S7) need it to know which high
+   * cards are still outstanding; it resets with the table, at `initTable`.
+   * The current trick is NOT here — read `plays` for that.
+   */
+  val seenCards: List<Card> = emptyList(),
   val phase: TablePhase,
 )
 
@@ -91,6 +100,7 @@ fun initTable(cfg: RoundCfg, seats: List<String> = DEFAULT_SEATS): TableState = 
   plays = emptyList(),
   ledSuit = null,
   lastTrick = null,
+  seenCards = emptyList(),
   phase = TablePhase.PLAY,
 )
 
@@ -209,12 +219,16 @@ fun resolveTrick(state: TableState): TableState {
   val winner = trickWinner(state.cfg.trump, led, state.plays)
   val tricksWon = state.tricksWon + (winner to (state.tricksWon[winner] ?: 0) + 1)
   val lastTrick = TrickResult(state.plays.toList(), winner, led)
+  // The trick is leaving `plays` — keep its cards in seenCards before the
+  // clear below, so the round's played history survives the resolve.
+  val seenCards = state.seenCards + state.plays.map { it.card }
 
   if (state.trickNo >= 13) {
     return state.copy(
       tricksWon = tricksWon,
       lastTrick = lastTrick,
       plays = emptyList(),
+      seenCards = seenCards,
       phase = TablePhase.DONE,
     )
   }
@@ -226,6 +240,7 @@ fun resolveTrick(state: TableState): TableState {
     turn = winner,
     plays = emptyList(),
     ledSuit = null,
+    seenCards = seenCards,
     phase = TablePhase.PLAY,
   )
 }
