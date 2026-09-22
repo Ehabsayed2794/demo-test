@@ -318,19 +318,25 @@ class BidBrainTest {
     // handA golden), a rounding boundary: "alpha" hashes to a positive jitter
     // and rounds up to 9, "beta" to a negative one and rounds down to 8. Same
     // hand, two seats, different calls — deterministically, not by luck.
-    val seats = listOf("alpha", "beta", "gamma", "delta")
     val sameHand = strongHand()
 
-    val a = brain.decide(
-      skipDash(initNormalRound(round = 1, dealer = "alpha", seats = seats)),
-      sameHand, "alpha", BotTier.HARD,
-    )
-    val b = brain.decide(
-      skipDash(initNormalRound(round = 1, dealer = "beta", seats = seats)),
-      sameHand, "beta", BotTier.HARD,
-    )
+    val a = openAuctionFor(listOf("alpha", "beta", "gamma", "delta"), sameHand)
+    val b = openAuctionFor(listOf("beta", "gamma", "delta", "alpha"), sameHand)
 
     assertFalse("identical hands at different seats should differ", a == b)
+  }
+
+  /**
+   * Skip the dash phase and let the brain open the auction for [seats]' first
+   * seat. Nobody dashes, so the auction opens on the first *active* seat in
+   * `state.seats` order — rotating the list is how the seat under test is
+   * moved into that slot. Only the seat id feeds [seatJitter]; the rotation
+   * itself is irrelevant to the estimate.
+   */
+  private fun openAuctionFor(seats: List<String>, hand: List<Card>): BiddingIntent {
+    val seat = seats.first()
+    val state = skipDash(initNormalRound(round = 1, dealer = seat, seats = seats))
+    return brain.decide(state, hand, seat, BotTier.HARD)
   }
 
   // ==========================================================================
