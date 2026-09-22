@@ -71,6 +71,36 @@ class BiddingTest {
     return emit(s, intent)
   }
 
+  // ── The auction opens on the dealer, even when the dealer isn't seats[0] ──
+  @Test
+  fun auctionOpensOnTheDealerNotOnSeatsZero() {
+    // Session.rotateDealer advances the dealer every round, and the dash phase
+    // starts at the dealer and rotates from firstBidder. The auction handoff
+    // must follow that same order: before the fix it rebuilt the active list
+    // in state.seats order, so a round dealt by p3 opened the bidding on p1.
+    var s = normal("p3")
+    s = declineAllDash(s)
+
+    assertEquals(BiddingPhase.AUCTION, s.subPhase)
+    assertEquals("auction must open on the dealer", "p3", s.waitingFor)
+    assertEquals("active order follows the dealer", listOf("p3", "p4", "p1", "p2"), s.activeBidders)
+  }
+
+  @Test
+  fun auctionOpensOnTheFirstActiveSeatAfterADealingDash() {
+    // The dealer declared a Dash Call, so the auction opens on the next
+    // still-active seat in dealer rotation — p4 — not on seats[0] (p1).
+    var s = normal("p3")
+    s = dash(s, "p3", true)
+    s = dash(s, "p4", false)
+    s = dash(s, "p1", false)
+    s = dash(s, "p2", false)
+
+    assertEquals(BiddingPhase.AUCTION, s.subPhase)
+    assertEquals("auction must skip the dashed dealer", "p4", s.waitingFor)
+    assertEquals(listOf("p4", "p1", "p2"), s.activeBidders)
+  }
+
   // ── C1: live exact match grants With immediately; a pass never strips it ──
   @Test
   fun withLiveExactMatchAndPassKeepsIt() {

@@ -353,7 +353,13 @@ private fun emitDashCall(state: BiddingState, intent: BiddingIntent.DashCallDeci
     )
   }
 
-  val active = state.seats.filter { newBids[it]?.type != BidType.DASHCALL }
+  // Rotate from the dealer, matching biddingOrder(): the dash phase starts at
+  // firstBidder (the dealer) and rotates, so the auction must open on the
+  // dealer too — or the first still-active seat after them. Filtering
+  // state.seats directly opened on seats[0] regardless of the dealer, which
+  // mis-seated the auction opener in every round after the first, since
+  // Session.rotateDealer advances the dealer each round.
+  val active = biddingOrder(state).filter { newBids[it]?.type != BidType.DASHCALL }
   val cleared = newBids.filterValues { it.type != BidType.PASS }
   if (active.isEmpty()) {
     // All four dashed — trump SANS, every seat scores an explicit 0.
