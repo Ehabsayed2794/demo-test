@@ -35,12 +35,13 @@ import com.estemshan.engine.legalCards
  * `(seatId, round, trickNo, decisionIndex)` — the firing *probability* is
  * preserved, the outcome is not random (risk R6).
  *
- * **Gated, not ported.** The spoiler branch (`chooseSpoilerCard`, Module D)
- * is story S8 and the EXPERT Monte-Carlo branch is S9's `SimPort` seam. Both
- * are left as no-op call sites in the decision path so their shape is fixed
- * before they land. Until then EXPERT plays the heuristic path — which the
- * TS source itself describes as "currently EXPERT == HARD logic with zero
- * mistakes."
+ * **The spoiler is live, the simulation is still gated.** The spoiler branch
+ * (`chooseSpoilerCard`, Module D → [SpoilerStrategy]) engages when this seat's
+ * contract is already busted — after the mistake gate and before the need/slack
+ * computation, so a busted seat spoils instead of playing the heuristic. The
+ * EXPERT Monte-Carlo branch remains S9's `SimPort` seam; until it lands every
+ * tier plays the heuristic path below — which the TS source itself describes as
+ * "currently EXPERT == HARD logic with zero mistakes."
  *
  * Like [BidBrain.decide], the contract is stronger than "it plays well": the
  * returned card clears `canPlayCard`, and a brain that would ship an illegal
@@ -130,7 +131,8 @@ object PlayBrain {
     }
 
     // ---- S8: the spoiler strategy engages only on an already-busted
-    // contract. Not yet ported; the seam stays so the path is shaped.
+    // contract, targeting the points at stake. It answers null unless this
+    // seat has nothing left to lose, so a makeable bid is never sacrificed.
     val spoiler = spoilerCard(state, playerId, tier)
     if (spoiler != null) return spoiler
 
@@ -275,10 +277,11 @@ object PlayBrain {
    * S8 — the spoiler strategy (`botStrategy.ts`'s `chooseSpoilerCard`): engages
    * only when this seat's own contract is already busted, and targets the
    * points at stake (Caller / Super / Dash), direction-aware and tier-gated.
-   * Not yet ported; returning null means no seat spoils, which is strictly
-   * fairer than the source and is the pre-S8 behaviour.
+   * Delegates to [SpoilerStrategy]; the seam stays so the branch order above is
+   * untouched by the port. A null answer falls through to the heuristic path.
    */
-  private fun spoilerCard(state: TableState, playerId: String, tier: BotTier): CardChoice? = null
+  private fun spoilerCard(state: TableState, playerId: String, tier: BotTier): CardChoice? =
+    SpoilerStrategy.choose(state, playerId, tier)?.let { CardChoice(it.card, it.reasoning) }
 
   private data class CardChoice(val card: Card, val reasoning: String)
 }
