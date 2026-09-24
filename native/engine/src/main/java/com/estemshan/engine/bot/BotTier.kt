@@ -14,8 +14,12 @@ package com.estemshan.engine.bot
  *
  * Every field below is read by a later story: bidding (S6) reads
  * [distributionConfidence], [bidNoise] and [canDash]; card play (S7) reads
- * [countsCards] and [mistakeRate]; the spoiler (S8) reads [modelsOpponents];
- * the simulation seam (S9) reads [usesSimulation].
+ * [countsCards] and [mistakeRate]; the spoiler (S8) reads [modelsOpponents].
+ *
+ * [usesSimulation] is the exception: the S9 *bid-time* seam deliberately does
+ * **not** read it, because the source runs that simulation for HARD as well as
+ * EXPERT. It is gated in `BidBrain` (`usesBidSimulation`) instead; this flag
+ * remains the *card-play* Monte-Carlo switch alone.
  */
 enum class BotTier(
   /** Fraction of decisions deliberately made sub-optimal, so weak bots feel
@@ -37,9 +41,14 @@ enum class BotTier(
   val countsCards: Boolean,
   /** Whether this tier models opponents' likely holdings (S8). */
   val modelsOpponents: Boolean,
-  /** Whether this tier runs Monte-Carlo simulation for card play (S9). EXPERT
-   * only, and even EXPERT ships behind the heuristic `SimPort` default — see
-   * `AI Bots/README.md` for why it cannot simply be deferred. */
+  /** Whether this tier runs Monte-Carlo simulation for *card play*. EXPERT
+   * only, and still deferred post-launch — until it lands, every tier (even
+   * EXPERT) plays the heuristic path, which the TS source itself describes as
+   * "currently EXPERT == HARD logic with zero mistakes."
+   *
+   * Not to be confused with the S9 *bid-time* seam: that one also covers HARD
+   * and is gated in `BidBrain` (`usesBidSimulation`), not here. See
+   * `AI Bots/README.md` for why neither can simply be deferred. */
   val usesSimulation: Boolean,
 ) {
   EASY  (0.25, 0.30, 1.20, canDash = false, countsCards = false, modelsOpponents = false, usesSimulation = false),

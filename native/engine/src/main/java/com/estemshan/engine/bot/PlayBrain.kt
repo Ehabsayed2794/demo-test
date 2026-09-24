@@ -39,9 +39,11 @@ import com.estemshan.engine.legalCards
  * (`chooseSpoilerCard`, Module D → [SpoilerStrategy]) engages when this seat's
  * contract is already busted — after the mistake gate and before the need/slack
  * computation, so a busted seat spoils instead of playing the heuristic. The
- * EXPERT Monte-Carlo branch remains S9's `SimPort` seam; until it lands every
- * tier plays the heuristic path below — which the TS source itself describes as
- * "currently EXPERT == HARD logic with zero mistakes."
+ * EXPERT Monte-Carlo *card-play* branch remains deferred: S9 shipped only the
+ * bid-time half of the seam ([BidBrain] + [BotSimulation]), so until card
+ * play's half lands every tier plays the heuristic path below — which the TS
+ * source itself describes as "currently EXPERT == HARD logic with zero
+ * mistakes."
  *
  * Like [BidBrain.decide], the contract is stronger than "it plays well": the
  * returned card clears `canPlayCard`, and a brain that would ship an illegal
