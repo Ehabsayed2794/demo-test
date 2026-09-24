@@ -124,9 +124,16 @@ class BotDriverTest {
     fun setTable(state: TableState?) { _table.value = state }
   }
 
-  /** Launch the driver with an immediate clock and let it settle. */
+  /**
+   * Launch the driver with an immediate clock, let it settle, then stop it.
+   * The collectors run for the lifetime of a match by design — a host cancels
+   * the whole [Job] when its scope dies — so a test that returns with them
+   * still active makes `runTest` wait out its timeout for nothing.
+   */
   private fun run(provider: FakeProvider, delayMillis: (BotAction) -> Long = { 0 }) = runTest {
-    BotDriver(provider, delayMillis).launchIn(this)
+    val driverJob = BotDriver(provider, delayMillis).launchIn(this)
+    advanceUntilIdle()
+    driverJob.cancel()
     advanceUntilIdle()
   }
 
