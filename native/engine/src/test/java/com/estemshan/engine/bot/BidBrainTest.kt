@@ -22,6 +22,7 @@ import com.estemshan.engine.initFastRound
 import com.estemshan.engine.initNormalRound
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -57,6 +58,17 @@ class BidBrainTest {
     c(HEARTS, 4, 5),
     c(DIAMONDS, 6, 7),
     c(CLUBS, 8, 9, 10),
+  )
+
+  /** Nothing but honors: four aces, four kings, four queens and a jack. Worth
+   *  double-digit tricks at every tier, because confidence scales only the
+   *  distributional part (see [HandEvaluator]) and this hand has none — the
+   *  one hand shape whose value a weak tier cannot under-count. */
+  private fun powerhouseHand(): List<Card> = hand(
+    c(SPADES, 14, 13, 12, 11),
+    c(HEARTS, 14, 13, 12),
+    c(DIAMONDS, 14, 13, 12),
+    c(CLUBS, 14, 13, 12),
   )
 
   private fun c(suit: Suit, vararg ranks: Int): List<Card> =
@@ -289,6 +301,87 @@ class BidBrainTest {
     // Call, the round's fixed trump must survive intact.
     if (state.auctionTop < 8) {
       assertEquals("fast round without a Super Call keeps its fixed trump", SANS, state.declaredTrump)
+    }
+  }
+
+  // ==========================================================================
+  //  Tier goldens (S10) — one hand, all four tiers
+  // ==========================================================================
+
+  /**
+   * The per-tier bid table the plan's "golden bids per tier" asks for: one hand,
+   * one state, all four tiers. The state is a fast round — ESTIMATES under a
+   * fixed SANS trump, auctionTop sentineled at 13 so there is no caller cap in
+   * the way — so the ONLY thing moving between tiers is the tier's own config:
+   *
+   *  - EASY/MEDIUM run the heuristic evaluator at their distributionConfidence
+   *    (0.30 / 0.70). Confidence scales the length+ruff term and leaves the
+   *    honors alone, so a weak tier under-counts distribution, never cards.
+   *  - HARD/EXPERT run the [BotSimulation] seam INSTEAD of the evaluator
+   *    (`usesBidSimulation`), so with an injected fixed estimate their base is
+   *    the injected number, not the hand's — the wiring S9 added and this pins.
+   *  - Every tier then adds its own deterministic seat jitter and rounds exactly
+   *    once; BALANCED is the identity personality (no bias, appetite 0.3 < the
+   *    0.6 super-call gate), so nothing else perturbs the number.
+   *
+   * The expectations use the engine's own pure helpers ([HandEvaluator],
+   * [seatHash]) as oracles for the evaluator half — the same idiom
+   * [PlayBrainTest.aWeakTierMisleadsOnADrawABetterTierDeclines] uses to pin
+   * [decisionDraw]. What this golden actually pins is the tier plumbing: the
+   * confidence value, the jitter magnitude, and which tiers route through the
+   * seam. Change any of those and the table moves.
+   */
+  @Test
+  fun theFourTiersEstimateOneHandAtTheirDocumentedSkillLevels() {
+    val state = initFastRound(round = 14, dealer = "p1")
+    val hand = deal(seed = 7)
+    // HARD/EXPERT read this instead of the evaluator's optimistic ceiling.
+    val fixedSim = BotSimulation { _, _ -> SimBid(estimate = 6.5, confidence = 1.0, reasoning = "fixed") }
+
+    // The tier's pre-jitter base: the evaluator at the tier's own confidence for
+    // the heuristic tiers, the seam's injected count for the simulation tiers.
+    fun base(tier: BotTier): Double = when (tier) {
+      BotTier.EASY, BotTier.MEDIUM ->
+        HandEvaluator.evaluateHand(hand, state.declaredTrump!!, tier.distributionConfidence).expectedTricks
+      BotTier.HARD, BotTier.EXPERT -> 6.5
+    }
+
+    BotTier.entries.forEach { tier ->
+      val expected = kotlin.math.round(base(tier) + seatHash("p1", tier.bidNoise)).toInt()
+      val intent = brain.decide(state, hand, "p1", tier, BotPersonality.DEFAULT, fixedSim)
+      val estimate = (intent as BiddingIntent.FinalEstimate).tricks
+      assertEquals(
+        "$tier: base ${base(tier)} + jitter ${tier.bidNoise} (seatHash ${seatHash("p1", tier.bidNoise)})" +
+          " rounded once — got $estimate",
+        expected,
+        estimate,
+      )
+    }
+  }
+
+  /**
+   * The 4-trick call floor is tier-invariant: no amount of tier noise flips a
+   * bankrupt hand into a call or an honors-laden one into a pass. Both hands are
+   * high-card dominated, so distributionConfidence barely moves them and the
+   * only tier-to-tier variation is the jitter (EASY ±1.20 … EXPERT 0.00) — never
+   * wide enough to cross the floor. The per-tier table above pins each tier's
+   * number; this pins the policy that keeps all four on the same side of it.
+   *
+   * Runs against [BotSimulation.Default] rather than an injected seam, so the
+   * shipped heuristic's entry-limited estimate is covered too.
+   */
+  @Test
+  fun noTierNoiseOverturnsTheCallPolicyOnABankruptOrPowerhouseHand() {
+    val state = skipDash(initNormalRound(round = 1, dealer = "p1"))
+
+    BotTier.entries.forEach { tier ->
+      val bankrupt = brain.decide(state, dashHand(), "p1", tier) as BiddingIntent.AuctionBid
+      assertTrue("$tier must pass a hand with no tricks in it", bankrupt.isPass)
+
+      val powerhouse = brain.decide(state, powerhouseHand(), "p1", tier) as BiddingIntent.AuctionBid
+      assertFalse("$tier must call a hand full of honors", powerhouse.isPass)
+      assertNotNull("$tier's call must carry a trick count", powerhouse.tricks)
+      assertTrue("$tier's call must clear the 4-trick floor", powerhouse.tricks!! >= 4)
     }
   }
 
