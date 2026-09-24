@@ -53,7 +53,7 @@ class BotDriverTest {
    * state, then [run] the driver and inspect [submitted]/[played].
    */
   private class FakeProvider(
-    rosterConfig: BotRoster = BotRoster.HUMANS_ONLY,
+    roster: BotRoster = BotRoster.HUMANS_ONLY,
     initialBidding: BiddingState? = null,
     initialTable: TableState? = null,
   ) : RoundStateProvider {
@@ -62,7 +62,7 @@ class BotDriverTest {
     private val _table = MutableStateFlow(initialTable)
     override val table = _table.asStateFlow()
 
-    override var roster: BotRoster = rosterConfig
+    override var roster: BotRoster = roster
       private set
 
     /** Per-seat hands for the auction (BidBrain needs the raw cards). */
