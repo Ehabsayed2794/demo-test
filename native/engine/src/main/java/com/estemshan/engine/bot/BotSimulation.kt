@@ -192,7 +192,7 @@ object HeuristicBotSimulation : BotSimulation {
    * tier-uniform, and inventing a steeper EXPERT boundary would change
    * dash verdicts the S6 golden tests already pin.
    */
-  fun estimateDashSuccess(hand: List<Card>): Double {
+  override fun estimateDashSuccess(hand: List<Card>): Double {
     val aces = hand.count { it.value == ACE }
     if (aces > 0) return ACE_DASH_BLOCKER
 
