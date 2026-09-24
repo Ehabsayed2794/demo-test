@@ -92,7 +92,16 @@ class BotVsBotSmokeTest {
 
     val dealers = ArrayList<String>(18)
     var redealCount = 0
-    while (!session.isMatchComplete()) {
+
+    // Rounds 1..18. The engine's completion contract — pinned by
+    // GameSessionTest.matchComplete_atOrPastMaxRounds as "round.number has
+    // reached the ceiling" — means the check belongs AFTER a round is banked
+    // and BEFORE the advance. Testing it at the top of the loop would see
+    // round.number == 18 and skip the last round, ending the match at 17.
+    // The services layer applies the same rule through endMatch's
+    // `completedRound + 1 > maxRounds` gate: round 18 is always played.
+    val maxRounds = session.getRound().maxRounds
+    while (session.getRound().number <= maxRounds) {
       val round = session.getRound().number
       var multiplier = session.getRound().multiplier
       val dealer = session.getDealer() ?: error("no dealer in round $round")
@@ -185,7 +194,10 @@ class BotVsBotSmokeTest {
       session.completeRound(table.tricksWon, score.nextMultiplier)
       session.recordRoundResult(roundResult(cfg, table, score))
 
-      if (!session.isMatchComplete()) session.nextRound()
+      // The round just banked was the last one — stop rather than advancing
+      // into a round 19 that nothing would ever play.
+      if (session.isMatchComplete()) break
+      session.nextRound()
     }
 
     return PlayedMatch(session, dealers)
