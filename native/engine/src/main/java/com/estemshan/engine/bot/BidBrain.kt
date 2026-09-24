@@ -39,16 +39,40 @@ import com.estemshan.engine.withFloorFor
  * Determinism is preserved from the source: `seatHash` is a hash of the
  * player id, so the same hand+seat always yields the same bid, which is what
  * makes S10's bot-vs-bot smoke test reproducible.
+ *
+ * **S9 adds two orthogonal layers over that skill estimate**, both injected at
+ * [decide] with identity defaults so every pre-S9 caller keeps behaving
+ * byte-identically:
+ *
+ *  * **The [BotSimulation] seam** replaces the evaluator's optimistic ceiling
+ *    with a realistic makeable count for the tiers that need it (HARD and
+ *    EXPERT — see [usesBidSimulation]). This is the load-bearing half of the
+ *    story: without it HARD trusts the heuristic at full confidence and
+ *    over-bids, the regression the source documents in-place. Real Monte-Carlo
+ *    is post-launch; the seam ships behind a heuristic default and exists so
+ *    deferring it changes nothing.
+ *  * **The [BotPersonality] style layer** shifts the estimate (see
+ *    [applyPersonalityToBid]) and widens or tightens the dash gate (see
+ *    [dashSignal]). Personality is style *on top of* tier skill: it never
+ *    changes how well a hand is evaluated, only what the bot does with the
+ *    number.
+ *
+ * Both layers stay under the brain's existing contract: whatever they produce
+ * still has to clear `canSubmit` first try, or the brain throws.
  */
 object BidBrain {
 
   /**
    * Decide the intent [playerId] should emit in [state], holding [hand] at
-   * difficulty [tier].
+   * difficulty [tier], with [personality] as its style and [simulation] as its
+   * bid-time simulation. Both default to their identities (BALANCED / the
+   * heuristic seam), which is exactly the pre-S9 brain — every existing caller
+   * is unaffected.
    *
    * The returned intent is guaranteed to clear `canSubmit(state, intent)` for
    * the given state, or this function throws — it never returns an intent the
-   * reducer would reject.
+   * reducer would reject. Neither injected layer weakens this: personality and
+   * simulation only shape the estimate, never the legality check.
    *
    * @throws IllegalStateException if the round has already completed, or if the
    *   brain produces an illegal intent — both indicate a brain/state mismatch
@@ -56,7 +80,14 @@ object BidBrain {
    * @throws IllegalArgumentException if [playerId] is not the seat the state is
    *   waiting on.
    */
-  fun decide(state: BiddingState, hand: List<Card>, playerId: String, tier: BotTier): BiddingIntent {
+  fun decide(
+    state: BiddingState,
+    hand: List<Card>,
+    playerId: String,
+    tier: BotTier,
+    personality: BotPersonality = BotPersonality.DEFAULT,
+    simulation: BotSimulation = BotSimulation.Default,
+  ): BiddingIntent {
     // A completed round has no seat waiting, so the seat check below would
     // report a wrong-seat error for an ask that is really an after-completion
     // ask. Diagnose the completion first.
@@ -67,10 +98,10 @@ object BidBrain {
       "BidBrain asked for $playerId but the state is waiting on ${state.waitingFor}"
     }
     val intent = when (state.subPhase) {
-      BiddingPhase.DASH -> dashDecision(state, hand, playerId, tier)
-      BiddingPhase.AUCTION -> auctionBid(state, hand, playerId, tier)
-      BiddingPhase.CONFIRM -> confirmCall(state, hand, playerId, tier)
-      BiddingPhase.ESTIMATES -> finalEstimate(state, hand, playerId, tier)
+      BiddingPhase.DASH -> dashDecision(state, hand, playerId, tier, personality, simulation)
+      BiddingPhase.AUCTION -> auctionBid(state, hand, playerId, tier, personality, simulation)
+      BiddingPhase.CONFIRM -> confirmCall(state, hand, playerId, tier, personality, simulation)
+      BiddingPhase.ESTIMATES -> finalEstimate(state, hand, playerId, tier, personality, simulation)
       BiddingPhase.DONE -> error("BidBrain asked to decide after bidding completed")
     }
     val legality = canSubmit(state, intent)
@@ -106,25 +137,65 @@ object BidBrain {
     hand: List<Card>,
     playerId: String,
     tier: BotTier,
+    personality: BotPersonality,
+    simulation: BotSimulation,
   ): BiddingIntent.DashCallDecision {
-    val wantDash = tier.canDash && dashSignal(hand) && dashCallerIds(state).size < 2
+    val wantDash = tier.canDash &&
+      dashSignal(hand, personality) &&
+      dashCallerIds(state).size < 2 &&
+      dashVerified(hand, tier, simulation)
     return BiddingIntent.DashCallDecision(playerId = playerId, declaredDashCall = wantDash)
   }
 
   /**
-   * The source's dash gate: no aces, very few forced tricks, and — crucially —
-   * a low ceiling under the *best* trump. A pre-bid Dash does not control the
-   * trump, so the danger case is the trump under which this hand wins the most
-   * tricks. Dashing a no-ace hand with trump length would bust, which is the
-   * documented bug the ceiling check exists to prevent ("a Dash won 5").
+   * The source's dash gate, now modulated by [personality]'s dashEagerness:
+   * no aces, very few forced tricks, and — crucially — a low ceiling under the
+   * *best* trump. A pre-bid Dash does not control the trump, so the danger case
+   * is the trump under which this hand wins the most tricks. Dashing a no-ace
+   * hand with trump length would bust, which is the documented bug the ceiling
+   * check exists to prevent ("a Dash won 5").
+   *
+   * **Divergence from the source, making an inert field real.** The source's
+   * `dashEagerness` never changes any decision: the only branch that reads it
+   * cancels a dash when `rawFloat * (1 / eagerness) >= 3`, which for the one
+   * profile below 1.0 (AGGRESSIVE, 0.6) requires `rawFloat >= 1.8` — but the
+   * dash gate already capped the ceiling at 1.5, and the chosen-trump estimate
+   * is always ≤ that ceiling. The cancel condition is unreachable, so in the
+   * source all four personalities dash identically.
+   *
+   * The port instead scales the ceiling a personality will accept by its
+   * eagerness. That is what the field's own documentation promises (">1 =
+   * dashes more often") and what the source's blurbs already claim ("loves a
+   * clean Dash"), and it separates all four profiles: BALANCED keeps the
+   * historical 1.5, AGGRESSIVE tightens to 0.9, TRICKSTER widens to 2.1,
+   * CONSERVATIVE to 2.4. The forced-trick and no-ace gates stay fixed — they
+   * guard unduckable honors, not voluntary tricks. Widening is bounded for
+   * HARD/EXPERT by the seam's own dash verification ([dashVerified]).
    */
-  private fun dashSignal(hand: List<Card>): Boolean {
+  private fun dashSignal(hand: List<Card>, personality: BotPersonality): Boolean {
     val aces = hand.count { it.value == ACE }
     val kings = hand.count { it.value == KING }
     val forced = aces * 1.0 + kings * 0.4
     val ceiling = HandEvaluator.evaluateAllTrumps(hand, confidence = 1.0)
       .maxOf { it.expectedTricks }
-    return aces == 0 && forced < 0.75 && ceiling <= 1.5
+    val ceilingLimit = DASH_CEILING_LIMIT * personality.dashEagerness
+    return aces == 0 && forced < DASH_FORCED_LIMIT && ceiling <= ceilingLimit
+  }
+
+  /**
+   * The seam's veto on a heuristic dash. The tiers that run bid-time
+   * simulation must show the hand can really win zero tricks — expected tricks
+   * is only a proxy, and a hand rated ~0.5 can still be forced to win a couple.
+   * MEDIUM/EASY have no simulator and trust the gate alone, as in the source.
+   *
+   * The acceptance line is flat across tiers. The source grades EXPERT harder
+   * (0.85 vs 0.80), but S6's dash gate is already tier-uniform and a steeper
+   * EXPERT boundary would change verdicts its goldens pin; the heuristic
+   * ramp was calibrated to land today's decisions on this exact line.
+   */
+  private fun dashVerified(hand: List<Card>, tier: BotTier, simulation: BotSimulation): Boolean {
+    if (!usesBidSimulation(tier)) return true
+    return simulation.estimateDashSuccess(hand) >= DASH_SIM_THRESHOLD
   }
 
   // --------------------------------------------------------------------------
@@ -146,8 +217,10 @@ object BidBrain {
     hand: List<Card>,
     playerId: String,
     tier: BotTier,
+    personality: BotPersonality,
+    simulation: BotSimulation,
   ): BiddingIntent.AuctionBid {
-    val eval = botBid(hand, tier, playerId, chosenTrump = null)
+    val eval = botBid(hand, tier, playerId, chosenTrump = null, personality, simulation)
 
     // Clamp to a legal trick count only. The 4-trick minimum is *not* a floor
     // on the estimate — the source is explicit about this (`isCallPhaseLegal:
@@ -194,8 +267,10 @@ object BidBrain {
     hand: List<Card>,
     playerId: String,
     tier: BotTier,
+    personality: BotPersonality,
+    simulation: BotSimulation,
   ): BiddingIntent.ConfirmCall {
-    val eval = botBid(hand, tier, playerId, chosenTrump = null)
+    val eval = botBid(hand, tier, playerId, chosenTrump = null, personality, simulation)
     val upgrade = auctionBidBeatsTop(
       eval.intendedBid, eval.potentialTrump, state.auctionTop, state.auctionSuit,
     )
@@ -236,9 +311,11 @@ object BidBrain {
     hand: List<Card>,
     playerId: String,
     tier: BotTier,
+    personality: BotPersonality,
+    simulation: BotSimulation,
   ): BiddingIntent.FinalEstimate {
     val trump = if (state.fastRound) state.declaredTrump ?: fixedTrumpFor(state.round) else state.declaredTrump
-    val eval = botBid(hand, tier, playerId, chosenTrump = trump)
+    val eval = botBid(hand, tier, playerId, chosenTrump = trump, personality, simulation)
 
     // The Caller's cap bounds every other seat; a fast round's sentinel of 13
     // means "no cap", which coerceIn handles identically.
@@ -269,8 +346,9 @@ object BidBrain {
 
   /**
    * A tier-aware, distribution-aware trick estimate for a hand, ported from
-   * `botEngine.ts`'s `evaluateBotBid`. Returns the honest float, the rounded
-   * intent, and the trump the estimate was made under.
+   * `botEngine.ts`'s `evaluateBotBid`, composed with the S9 layers: the
+   * [BotSimulation] seam refines the tier's estimate, then the personality's
+   * style shifts it (see [applyPersonalityToBid]).
    *
    * [chosenTrump] pins the trump when the round already fixed it (final
    * estimates, fast rounds); null means the brain is free and picks its own
@@ -281,6 +359,8 @@ object BidBrain {
     tier: BotTier,
     playerId: String,
     chosenTrump: Suit?,
+    personality: BotPersonality,
+    simulation: BotSimulation,
   ): BotBid {
     val trump: Suit
     val potentialTrump: Suit
@@ -293,27 +373,77 @@ object BidBrain {
     }
 
     val evaluation = HandEvaluator.evaluateHand(hand, trump, tier.distributionConfidence)
-    val rawFloat = evaluation.expectedTricks
 
-    // Tier noise, deterministic per seat so a bot-vs-bot round is reproducible.
-    val noisy = rawFloat + seatHash(playerId, tier.bidNoise)
-    val intendedBid = kotlin.math.round(noisy).toInt()
+    // Tier skill produces the estimate. For HARD and EXPERT the SimPort seam
+    // replaces the evaluator's optimistic ceiling with a realistic makeable
+    // count — the load-bearing correction for HARD, which at full confidence
+    // trusted the heuristic and over-bid. MEDIUM/EASY keep the raw heuristic
+    // on purpose, exactly as the source keeps them on the heuristic.
+    var estimate = evaluation.expectedTricks
+    var reasoning = evaluation.reasoning
+    if (usesBidSimulation(tier)) {
+      val sim = simulation.estimateBid(hand, trump)
+      estimate = sim.estimate
+      reasoning = "$reasoning | ${tier} sim-bid=${HandEvaluator.round2(sim.estimate)} " +
+        "(confidence ${(sim.confidence * 100).toInt()}%) ${sim.reasoning}"
+    }
 
-    return BotBid(
-      rawFloat = rawFloat,
-      intendedBid = intendedBid,
+    // Tier noise, deterministic per seat so a bot-vs-bot round is reproducible
+    // and four seats still feel like four players.
+    val noisy = estimate + seatHash(playerId, tier.bidNoise)
+
+    val tierBid = BotBid(
+      rawFloat = estimate,
+      noisy = noisy,
+      intendedBid = kotlin.math.round(noisy).toInt(),
       potentialTrump = potentialTrump,
-      reasoning = evaluation.reasoning,
+      reasoning = reasoning,
     )
+    return applyPersonalityToBid(tierBid, personality)
   }
 
-  private data class BotBid(
-    val rawFloat: Double,
-    val intendedBid: Int,
-    val potentialTrump: Suit,
-    val reasoning: String,
-  )
+  /**
+   * The tiers the source's `botPersonality.ts` runs bid-time simulation for:
+   * HARD and EXPERT. Deliberately distinct from [BotTier.usesSimulation], which
+   * is the *card-play* Monte-Carlo flag (EXPERT only, deferred post-launch) —
+   * the bid seam is the load-bearing one for HARD and ships in S9 behind the
+   * heuristic [BotSimulation.Default].
+   */
+  private fun usesBidSimulation(tier: BotTier): Boolean =
+    tier == BotTier.HARD || tier == BotTier.EXPERT
 
   private const val ACE = 14
   private const val KING = 13
+  /** The dash ceiling a BALANCED personality accepts; S6's historical gate. */
+  private const val DASH_CEILING_LIMIT = 1.5
+  /** Forced tricks (aces + a fraction of a king) too many to risk a Dash. */
+  private const val DASH_FORCED_LIMIT = 0.75
+  /** A dash the seam has verified must clear this probability of winning zero. */
+  private const val DASH_SIM_THRESHOLD = 0.80
 }
+
+/**
+ * A bid estimate as the brain produces it, ported from `botEngine.ts`'s
+ * `BotBidResult`. Three stages, mirroring the source's `rawFloat` /
+ * `intendedBid` / `bid` pipeline:
+ *
+ *  * [rawFloat] — the tier-skill estimate: [HandEvaluator]'s expected tricks,
+ *    or the seam's realistic count when [BotSimulation] ran. Pre-jitter, and
+ *    the value the super-call appetite is measured against.
+ *  * [noisy] — [rawFloat] plus this seat's deterministic jitter.
+ *  * [intendedBid] — the rounded bid the brain actually bids, after the
+ *    personality's style has been applied by [applyPersonalityToBid].
+ *
+ * The port carries [noisy] explicitly because the source does not: its
+ * personality layer recomputes the bid from the *un-jittered* float, which
+ * silently discards the seat jitter and would make every same-personality
+ * seat bid identically. Keeping it lets style land on top of jitter instead of
+ * replacing it.
+ */
+internal data class BotBid(
+  val rawFloat: Double,
+  val noisy: Double,
+  val intendedBid: Int,
+  val potentialTrump: Suit,
+  val reasoning: String,
+)
