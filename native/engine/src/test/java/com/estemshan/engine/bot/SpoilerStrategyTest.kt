@@ -9,6 +9,7 @@ import com.estemshan.engine.Suit.CLUBS
 import com.estemshan.engine.Suit.DIAMONDS
 import com.estemshan.engine.Suit.HEARTS
 import com.estemshan.engine.Suit.SPADES
+import com.estemshan.engine.TableState
 import com.estemshan.engine.initTable
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
