@@ -70,22 +70,24 @@ class BotDriver(
    * human turns all fall through; a bot turn waits the cadence, re-verifies,
    * and submits.
    */
-  private suspend fun driveBidding() = provider.bidding.collect { state ->
-    val seat = state?.waitingFor ?: return@collect
-    val config = provider.roster.config(seat) ?: return@collect // a human
-    val hand = provider.handFor(seat) ?: return@collect // no deal yet
+  private suspend fun driveBidding() {
+    provider.bidding.collect { state ->
+      val seat = state?.waitingFor ?: return@collect
+      val config = provider.roster.config(seat) ?: return@collect // a human
+      val hand = provider.handFor(seat) ?: return@collect // no deal yet
 
-    delay(delayMillis(BotAction.Bid(seat, state.round, state.subPhase)))
+      delay(delayMillis(BotAction.Bid(seat, state.round, state.subPhase)))
 
-    // The auction may have moved on while we waited; re-read, not the
-    // emission we decided on. A DONE auction or a changed turn is a no-op.
-    val current = provider.bidding.value ?: return@collect
-    if (current.subPhase == BiddingPhase.DONE) return@collect
-    if (current.waitingFor != seat) return@collect
+      // The auction may have moved on while we waited; re-read, not the
+      // emission we decided on. A DONE auction or a changed turn is a no-op.
+      val current = provider.bidding.value ?: return@collect
+      if (current.subPhase == BiddingPhase.DONE) return@collect
+      if (current.waitingFor != seat) return@collect
 
-    provider.submitBidding(
-      BidBrain.decide(current, hand, seat, config.tier, config.personality),
-    )
+      provider.submitBidding(
+        BidBrain.decide(current, hand, seat, config.tier, config.personality),
+      )
+    }
   }
 
   /**
@@ -94,18 +96,20 @@ class BotDriver(
    * own highlight) and DONE is the round's end, so a bot interjecting in
    * either would race the screen.
    */
-  private suspend fun drivePlay() = provider.table.collect { state ->
-    if (state?.phase != TablePhase.PLAY) return@collect
-    val seat = state.turn ?: return@collect
-    val config = provider.roster.config(seat) ?: return@collect // a human
+  private suspend fun drivePlay() {
+    provider.table.collect { state ->
+      if (state?.phase != TablePhase.PLAY) return@collect
+      val seat = state.turn ?: return@collect
+      val config = provider.roster.config(seat) ?: return@collect // a human
 
-    delay(delayMillis(BotAction.Play(seat, state.cfg.round, state.trickNo)))
+      delay(delayMillis(BotAction.Play(seat, state.cfg.round, state.trickNo)))
 
-    val current = provider.table.value ?: return@collect
-    if (current.phase != TablePhase.PLAY) return@collect
-    if (current.turn != seat) return@collect
+      val current = provider.table.value ?: return@collect
+      if (current.phase != TablePhase.PLAY) return@collect
+      if (current.turn != seat) return@collect
 
-    provider.playCard(seat, PlayBrain.decide(current, seat, config.tier).card)
+      provider.playCard(seat, PlayBrain.decide(current, seat, config.tier).card)
+    }
   }
 
   companion object {
