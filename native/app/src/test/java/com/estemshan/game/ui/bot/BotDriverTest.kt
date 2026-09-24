@@ -130,6 +130,7 @@ class BotDriverTest {
    * the whole [Job] when its scope dies — so a test that returns with them
    * still active makes `runTest` wait out its timeout for nothing.
    */
+  @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
   private fun run(provider: FakeProvider, delayMillis: (BotAction) -> Long = { 0 }) = runTest {
     val driverJob = BotDriver(provider, delayMillis).launchIn(this)
     advanceUntilIdle()
