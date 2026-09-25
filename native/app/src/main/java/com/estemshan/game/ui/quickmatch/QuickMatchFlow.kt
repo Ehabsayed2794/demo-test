@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -59,6 +60,11 @@ fun NavGraphBuilder.quickMatchGraph(nav: NavController, qvm: QuickMatchViewModel
       LaunchedEffect(key) {
         bvm.startNormalRound(round, dealer, qvm.seats, mult)
       }
+      // Arm the bot driver for this match: it moves only for seats the roster
+      // marks as bots, and re-arms from the current state when the Table
+      // screen takes over below.
+      LaunchedEffect(Unit) { qvm.attachBots(bvm, tvm) }
+      DisposableEffect(Unit) { onDispose { qvm.detachBots() } }
       LaunchedEffect(generalPass) {
         val doubled = generalPass
         if (doubled != null) qvm.applyGeneralPass(doubled)
@@ -92,7 +98,12 @@ fun NavGraphBuilder.quickMatchGraph(nav: NavController, qvm: QuickMatchViewModel
 
     composable(Routes.TABLE) {
       val parent = remember(nav) { nav.getBackStackEntry(QUICKMATCH_GRAPH) }
+      val bvm: BiddingViewModel = viewModel(parent)
       val tvm: TableViewModel = viewModel(parent)
+      // Same driver, re-armed: the view models are graph-scoped, so this is
+      // the same BiddingViewModel/TableViewModel the Bidding screen used.
+      LaunchedEffect(Unit) { qvm.attachBots(bvm, tvm) }
+      DisposableEffect(Unit) { onDispose { qvm.detachBots() } }
       val tState by tvm.state.collectAsStateWithLifecycle()
       val tRejection by tvm.rejection.collectAsStateWithLifecycle()
 
