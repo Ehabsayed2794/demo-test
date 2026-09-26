@@ -173,4 +173,74 @@ class QuickMatchViewModelTest {
     assertEquals(2 * (10 + 2 + 10), totals.getValue("p1")) // caller win ×2
     assertEquals(2 * (10 + 2), totals.getValue("p2"))
   }
+
+  // ==========================================================================
+  //  S13 — deals are seeded, so a whole match reproduces from its match seed.
+  // ==========================================================================
+
+  private fun dealSnapshot(qvm: QuickMatchViewModel) = seats.associateWith { qvm.handFor(it)!! }
+
+  @Test
+  fun theSameSeedDealsTheSameMatchAcrossRoundsAndRedeals() {
+    val a = QuickMatchViewModel()
+    val b = QuickMatchViewModel()
+    a.startMatch(matchSeed = 111L)
+    b.startMatch(matchSeed = 111L)
+    assertEquals("round 1 deals match", dealSnapshot(a), dealSnapshot(b))
+
+    // A redeal at the same position must reproduce too — the deal seed
+    // advances per pass, it does not reset.
+    a.applyGeneralPass(2)
+    b.applyGeneralPass(2)
+    assertEquals("the redeal reproduces at both tables", dealSnapshot(a), dealSnapshot(b))
+
+    a.nextRound()
+    b.nextRound()
+    assertEquals("round 2 deals match", dealSnapshot(a), dealSnapshot(b))
+  }
+
+  @Test
+  fun differentSeedsDealDifferentHands() {
+    val a = QuickMatchViewModel().apply { startMatch(matchSeed = 111L) }
+    val b = QuickMatchViewModel().apply { startMatch(matchSeed = 222L) }
+    assertNotEquals("two seeds must not deal the same table", dealSnapshot(a), dealSnapshot(b))
+  }
+
+  @Test
+  fun aFreshMatchDealsUnpredictably() {
+    // No seed passed → a fresh random one, so no two quick matches share a deal.
+    val a = QuickMatchViewModel().apply { startMatch() }
+    val b = QuickMatchViewModel().apply { startMatch() }
+    assertNotEquals("two unsown matches dealt the same hands", dealSnapshot(a), dealSnapshot(b))
+  }
+
+  @Test
+  fun theMatchSeedIsObservableAndStableForTheMatch() {
+    val qvm = QuickMatchViewModel()
+    qvm.startMatch(matchSeed = 4242L)
+    val seed = qvm.matchSeed.value
+    assertEquals(4242L, seed)
+
+    // Rounds and redeals advance the *deal* seed, not the match seed — a
+    // replay is one number for the whole match.
+    qvm.nextRound()
+    qvm.applyGeneralPass(2)
+    assertEquals("the match seed moved mid-match", seed, qvm.matchSeed.value)
+  }
+
+  @Test
+  fun aRedealNeverLandsOnAnotherRoundsDeal() {
+    // The redeal stride (500) must clear the round stride: round 1's first
+    // redeal has to be a different hand from round 2's opening deal. A bug
+    // that collides them would silently re-deal a hand the table has seen.
+    val redeal = QuickMatchViewModel().apply {
+      startMatch(matchSeed = 111L)
+      applyGeneralPass(2) // round 1, redeal 1
+    }
+    val nextRound = QuickMatchViewModel().apply {
+      startMatch(matchSeed = 111L)
+      nextRound() // round 2, first deal
+    }
+    assertNotEquals("a redeal collided with the next round's deal", dealSnapshot(redeal), dealSnapshot(nextRound))
+  }
 }
