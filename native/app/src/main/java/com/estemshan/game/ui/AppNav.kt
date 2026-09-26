@@ -19,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -26,7 +27,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.estemshan.game.R
 import com.estemshan.game.data.AuthUiState
+import com.estemshan.game.ui.chooselevel.ChooseLevelScreen
+import com.estemshan.game.ui.chooselevel.ChooseLevelViewModel
 import com.estemshan.game.ui.login.LoginViewModel
 import com.estemshan.game.ui.profile.ProfileScreen
 import com.estemshan.game.ui.quickmatch.QUICKMATCH_GRAPH
@@ -99,7 +103,27 @@ fun EstemshanNav() {
             qvm.startMatch()
             nav.navigate(QUICKMATCH_GRAPH)
           },
+          onPlayVsAi = { nav.navigate(Routes.CHOOSE_LEVEL) },
         )
+      }
+      composable(Routes.CHOOSE_LEVEL) {
+        val chooseVm: ChooseLevelViewModel = viewModel()
+        val state by chooseVm.state.collectAsStateWithLifecycle()
+        EstemshanTheme {
+          ChooseLevelScreen(
+            state = state,
+            onPresetSelected = chooseVm::onPresetSelected,
+            onTierSelected = chooseVm::onTierSelected,
+            onPersonalitySelected = chooseVm::onPersonalitySelected,
+            // The roster the player just edited goes straight into the match:
+            // the driver is armed off it, so this is where a tuned chair
+            // becomes an opponent that actually plays that way.
+            onStartMatch = {
+              qvm.startMatch(chooseVm.roster())
+              nav.navigate(QUICKMATCH_GRAPH)
+            },
+          )
+        }
       }
       quickMatchGraph(nav, qvm)
       composable(Routes.STANDINGS) {
@@ -180,6 +204,7 @@ private fun LobbyPlaceholder(
   onProfile: () -> Unit,
   onSettings: () -> Unit,
   onQuickMatch: () -> Unit,
+  onPlayVsAi: () -> Unit,
 ) {
   Column(
     modifier = Modifier.fillMaxSize().padding(24.dp),
@@ -196,6 +221,8 @@ private fun LobbyPlaceholder(
     )
     Spacer(Modifier.height(16.dp))
     Button(onClick = onQuickMatch) { Text("Quick Match (offline)") }
+    Spacer(Modifier.height(8.dp))
+    Button(onClick = onPlayVsAi) { Text(stringResource(R.string.lobby_play_vs_ai)) }
     Spacer(Modifier.height(8.dp))
     Button(onClick = onProfile) { Text("Profile") }
     Spacer(Modifier.height(8.dp))
