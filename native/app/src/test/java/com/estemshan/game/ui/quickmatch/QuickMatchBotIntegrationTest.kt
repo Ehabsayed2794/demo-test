@@ -205,7 +205,7 @@ class QuickMatchBotIntegrationTest {
         bvm.startNormalRound(qvm.round.value, qvm.dealer.value, qvm.seats, qvm.biddingMultiplier.value)
         println(
           "closeAuction: REDEAL #$redeals applied, waitingFor=${bvm.state.value?.waitingFor} " +
-            "subPhase=${bvm.state.value?.subPhase} mult=${bvm.biddingMultiplier.value}",
+            "subPhase=${bvm.state.value?.subPhase} mult=${qvm.biddingMultiplier.value}",
         )
       } else {
         // TEMPORARY diagnostic: dumps the loop trajectory to the test report's
