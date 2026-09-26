@@ -1,8 +1,10 @@
 package com.estemshan.game.ui.quickmatch
 
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import com.estemshan.engine.Bid
 import com.estemshan.engine.BidType
+import com.estemshan.engine.BiddingIntent
 import com.estemshan.engine.BiddingOutcome
 import com.estemshan.engine.Card
 import com.estemshan.engine.DEFAULT_SEATS
@@ -12,8 +14,13 @@ import com.estemshan.engine.RoundScoreInput
 import com.estemshan.engine.accumulateMatchScores
 import com.estemshan.engine.calculateRoundScore
 import com.estemshan.engine.nextSeat
+import com.estemshan.game.ui.bot.BotDriver
+import com.estemshan.game.ui.bot.BotRoster
+import com.estemshan.game.ui.bidding.BiddingViewModel
 import com.estemshan.game.ui.standings.FinalStandingsUiState
 import com.estemshan.game.ui.standings.buildStandings
+import com.estemshan.game.ui.table.TableViewModel
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -48,16 +55,33 @@ class QuickMatchViewModel : ViewModel() {
   private val _standings = MutableStateFlow<FinalStandingsUiState?>(null)
   val standings: StateFlow<FinalStandingsUiState?> = _standings.asStateFlow()
 
+  /**
+   * Which seats a bot drives in this match. Defaults to [BotRoster.HUMANS_ONLY],
+   * so quick-match plays exactly as it did before S11 until the Choose Level
+   * screen (S12) passes a real roster into [startMatch] — the driver is
+   * launched either way, it simply has nothing to do.
+   */
+  private val _roster = MutableStateFlow(BotRoster.HUMANS_ONLY)
+  val roster: StateFlow<BotRoster> = _roster.asStateFlow()
+
   private var hands: Map<String, List<Card>> = Dealer.dealHands()
   private var scoreMultiplier: Int = 1
 
-  fun startMatch() {
+  /** The driver's lifetime job, if [attachBots] has armed one. */
+  private var botDriver: Job? = null
+
+  /**
+   * Start a match, optionally with bots in [roster]. The lobby's quick-match
+   * entry stays human-only; the Choose Level screen (S12) supplies the roster.
+   */
+  fun startMatch(roster: BotRoster = BotRoster.HUMANS_ONLY) {
     _round.value = 1
     _dealer.value = DEFAULT_SEATS[0]
     _biddingMultiplier.value = 1
     scoreMultiplier = 1
     _totals.value = DEFAULT_SEATS.associateWith { 0 }
     _standings.value = null
+    _roster.value = roster
     hands = Dealer.dealHands()
     _biddingKey.value++
   }
@@ -120,6 +144,31 @@ class QuickMatchViewModel : ViewModel() {
     _standings.value = null
     hands = Dealer.dealHands()
     _biddingKey.value++
+  }
+
+  /**
+   * The hand [seat] was dealt this round — the one input [BidBrain] needs that
+   * the bidding state does not already carry. `null` before a deal exists.
+   */
+  fun handFor(seat: String): List<Card>? = hands[seat]
+
+  /**
+   * Arm the [BotDriver] against this match's screens. Called from both the
+   * Bidding and Table composables: each disposes as the other composes, so a
+   * screen transition detaches and re-arms the driver against the *same* view
+   * models — they are scoped to the quick-match graph, not to either screen —
+   * and the driver re-collects the current state without missing a turn.
+   * Idempotent if both screens happen to call it while composed.
+   */
+  fun attachBots(bidding: BiddingViewModel, table: TableViewModel) {
+    detachBots()
+    botDriver = BotDriver(QuickMatchRoundProvider(bidding, table, this)).launchIn(viewModelScope)
+  }
+
+  /** Disarm the driver — called when a quick-match screen leaves composition. */
+  fun detachBots() {
+    botDriver?.cancel()
+    botDriver = null
   }
 }
 
