@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Native v1's first string resource (S12). Every other screen still holds
+  literals inline; this file exists so the Choose Level screen's structural
+  text has a real home, and a values-ar/ sibling can later be dropped in to
+  translate the whole app without touching Kotlin. Tier and personality
+  labels are deliberately absent here — they come from the engine enums'
+  own displayName / blurb, so a translation of the characters lands with the
+  engine, not duplicated in resources.
+-->
+<resources>
+  <string name="choose_level_title">Choose Level</string>
+  <string name="choose_level_subtitle">Seat your opponents, then sit down.</string>
+  <string name="choose_level_presets">Preset tables</string>
+  <string name="choose_level_opponents">Opponents</string>
+  <string name="choose_level_skill">Skill</string>
+  <string name="choose_level_style">Style</string>
+  <string name="choose_level_custom">Custom</string>
+  <string name="choose_level_start">Start match</string>
+  <!-- The number of the chair, 1-based: "Seat 2", "Seat 3", "Seat 4". -->
+  <string name="choose_level_seat">Seat %1$d</string>
+</resources>

@@ -188,8 +188,11 @@ class QuickMatchBotIntegrationTest {
   /**
    * Advance until the auction closes, applying the quick-match flow's general
    * pass handling (the Bidding screen does this in a `LaunchedEffect`): the
-   * round restarts at the doubled multiplier with a fresh deal. Bounded, so a
-   * pathological deal fails the test instead of hanging it.
+   * round restarts at the doubled multiplier with a fresh deal. When the turn
+   * rests on a human seat the harness plays it with an EXPERT stand-in, as the
+   * Bidding screen would surface a tap — a bot seat holding the turn is the
+   * one stall this treats as a failure. Bounded, so a pathological deal fails
+   * the test instead of hanging it.
    */
   private suspend fun TestScope.closeAuction(): BiddingOutcome {
     var redeals = 0
@@ -201,9 +204,21 @@ class QuickMatchBotIntegrationTest {
         qvm.applyGeneralPass(doubled)
         bvm.startNormalRound(qvm.round.value, qvm.dealer.value, qvm.seats, qvm.biddingMultiplier.value)
       } else {
-        // Idle with no outcome and no redeal: a human seat holds the turn.
-        return bvm.outcome.value
-          ?: error("auction stalled waiting on ${bvm.state.value?.waitingFor} (a bot seat should not stall)")
+        // advanceUntilIdle may just have closed the auction: a DONE state has
+        // no waiting seat, so return the outcome before trying to read one.
+        bvm.outcome.value?.let { return it }
+        val seat = bvm.state.value?.waitingFor
+          ?: error("the auction is idle but no seat is waiting on it")
+        if (qvm.roster.value.isBot(seat)) {
+          error("auction stalled waiting on $seat (a bot seat should not stall)")
+        }
+        // A human seat holding the turn is expected — the auction opens on the
+        // dealer, and a redeal restarts the dash round there too — so the
+        // harness plays the human's part, exactly as the test body does for
+        // the opening decision.
+        val held = bvm.state.value!!
+        bvm.submit(BidBrain.decide(held, qvm.handFor(seat)!!, seat, BotTier.EXPERT))
+        check(bvm.state.value !== held) { "the human stand-in's intent was rejected: ${bvm.rejection.value}" }
       }
     }
     return bvm.outcome.value!!
