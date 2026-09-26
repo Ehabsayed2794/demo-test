@@ -16,8 +16,14 @@ package com.estemshan.engine.bot
  * [distributionConfidence], [bidNoise] and [canDash]; card play (S7) reads
  * [countsCards] and [mistakeRate]; the spoiler (S8) reads [modelsOpponents].
  *
- * [usesSimulation] is the exception: the S9 *bid-time* seam deliberately does
- * **not** read it, because the source runs that simulation for HARD as well as
+ * [displayName] and [blurb] are the exception: they are player-facing chrome
+ * for the Choose Level lobby (S12), read by the UI exactly the way
+ * [BotPersonality.displayName] already is, and they never reach a decision.
+ * They live *here* rather than in the screen so there is one label per tier —
+ * the same single-source argument that folded `TIER_CONFIG` into this enum.
+ *
+ * [usesSimulation] is a second exception, on the behaviour side: the S9
+ * *bid-time* seam deliberately does **not** read it, because the source runs that simulation for HARD as well as
  * EXPERT. It is gated in `BidBrain` (`usesBidSimulation`) instead; this flag
  * remains the *card-play* Monte-Carlo switch alone.
  */
@@ -50,11 +56,21 @@ enum class BotTier(
    * and is gated in `BidBrain` (`usesBidSimulation`), not here. See
    * `AI Bots/README.md` for why neither can simply be deferred. */
   val usesSimulation: Boolean,
+  /** Player-facing label for the Choose Level lobby and the seat roster. */
+  val displayName: String,
+  /** One-line flavour text for the UI; no game effect. Describes what the
+   *  tier's numbers above actually do, so the blurb and the behaviour cannot
+   *  drift apart — and never claims the deferred Monte-Carlo path. */
+  val blurb: String,
 ) {
-  EASY  (0.25, 0.30, 1.20, canDash = false, countsCards = false, modelsOpponents = false, usesSimulation = false),
-  MEDIUM(0.10, 0.70, 0.60, canDash = true,  countsCards = false, modelsOpponents = false, usesSimulation = false),
-  HARD  (0.03, 1.00, 0.20, canDash = true,  countsCards = true,  modelsOpponents = true,  usesSimulation = false),
-  EXPERT(0.00, 1.00, 0.00, canDash = true,  countsCards = true,  modelsOpponents = true,  usesSimulation = true),
+  EASY  (0.25, 0.30, 1.20, canDash = false, countsCards = false, modelsOpponents = false, usesSimulation = false,
+         "Beginner", "Misplays often and under-values shape. A patient opponent."),
+  MEDIUM(0.10, 0.70, 0.60, canDash = true,  countsCards = false, modelsOpponents = false, usesSimulation = false,
+         "Regular", "Steady bidding with the occasional slip. Knows when to Dash."),
+  HARD  (0.03, 1.00, 0.20, canDash = true,  countsCards = true,  modelsOpponents = true,  usesSimulation = false,
+         "Veteran", "Counts your cards and reads the table. Punishes a mistake."),
+  EXPERT(0.00, 1.00, 0.00, canDash = true,  countsCards = true,  modelsOpponents = true,  usesSimulation = true,
+         "Master", "Near-flawless play. The toughest seat in the room."),
   ;
 
   companion object {
