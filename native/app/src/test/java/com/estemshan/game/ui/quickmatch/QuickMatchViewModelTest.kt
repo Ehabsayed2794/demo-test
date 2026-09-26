@@ -8,6 +8,7 @@ import com.estemshan.engine.Suit
 import com.estemshan.game.ui.bidding.BiddingViewModel
 import com.estemshan.game.ui.table.TableViewModel
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -121,6 +122,22 @@ class QuickMatchViewModelTest {
       mapOf("p1" to 2, "p2" to 2, "p3" to 2, "p4" to 2),
     )
     assertEquals(mapOf("p1" to 44, "p2" to 24, "p3" to 24, "p4" to 64), qvm.totals.value)
+  }
+
+  @Test
+  fun generalPassRedealsTheHands() {
+    val qvm = QuickMatchViewModel()
+    qvm.startMatch()
+    val before = seats.associateWith { qvm.handFor(it)!! }
+
+    // A general pass re-deals: the restarted auction must see fresh hands, not
+    // the same deal again — a pass-happy table otherwise replays one hand
+    // forever, and soft-locks once Choose Level can seat four bots.
+    qvm.applyGeneralPass(2)
+
+    val after = seats.associateWith { qvm.handFor(it)!! }
+    assertEquals("every seat still has a full hand after the redeal", 52, after.values.sumOf { it.size })
+    assertNotEquals("the general pass did not redeal the hands", before, after)
   }
 
   @Test

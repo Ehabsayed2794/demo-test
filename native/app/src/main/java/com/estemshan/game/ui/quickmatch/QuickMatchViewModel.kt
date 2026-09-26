@@ -87,6 +87,11 @@ class QuickMatchViewModel : ViewModel() {
   }
 
   fun applyGeneralPass(doubled: Int) {
+    // A general pass re-deals — "nobody bid, cards are redealt at the doubled
+    // multiplier" — so the restarted auction sees a fresh hand at every seat.
+    // Without this a pass-happy deal replays identical hands forever, which
+    // soft-locks a table the moment Choose Level can seat four bots.
+    hands = Dealer.dealHands()
     // The restarted round scores doubled: arm scoring now; the bidding UI
     // restarts separately from biddingMultiplier below.
     scoreMultiplier = doubled
