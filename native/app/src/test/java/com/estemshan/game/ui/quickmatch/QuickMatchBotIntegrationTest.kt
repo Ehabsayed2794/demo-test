@@ -203,14 +203,22 @@ class QuickMatchBotIntegrationTest {
         check(++redeals < 40) { "auction general-passed 40 times without closing" }
         qvm.applyGeneralPass(doubled)
         bvm.startNormalRound(qvm.round.value, qvm.dealer.value, qvm.seats, qvm.biddingMultiplier.value)
+        println(
+          "closeAuction: REDEAL #$redeals applied, waitingFor=${bvm.state.value?.waitingFor} " +
+            "subPhase=${bvm.state.value?.subPhase} mult=${bvm.biddingMultiplier.value}",
+        )
       } else {
-        // Idle with no outcome and no redeal: a seat holds the turn. A bot
-        // holding it is the failure this harness asserts; a human seat is
-        // expected — the auction opens on the dealer, and a redeal restarts
-        // the dash round there too — so the harness plays the human's part,
-        // exactly as the test body does for the opening decision.
+        // TEMPORARY diagnostic: dumps the loop trajectory to the test report's
+        // stdout so the post-redeal stall can be located without a local JDK.
+        println(
+          "closeAuction: stateNull=${bvm.state.value == null} waitingFor=${bvm.state.value?.waitingFor} " +
+            "subPhase=${bvm.state.value?.subPhase} round=${bvm.state.value?.round} " +
+            "outcome=${bvm.outcome.value != null} generalPass=${bvm.generalPass.value} " +
+            "rejection=${bvm.rejection.value} bids=${bvm.state.value?.bids?.size} " +
+            "history=${bvm.state.value?.actionHistory?.size} redeals=$redeals",
+        )
         val seat = bvm.state.value?.waitingFor
-          ?: error("the auction is idle but no seat is waiting on it")
+          ?: error("auction is idle but no seat is waiting on it (see stdout above)")
         if (qvm.roster.value.isBot(seat)) {
           error("auction stalled waiting on $seat (a bot seat should not stall)")
         }
