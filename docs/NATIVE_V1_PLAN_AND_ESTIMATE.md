@@ -43,6 +43,8 @@ Preserved verbatim from `ANDROID_MIGRATION_PLAN.md` §7, which this document sup
 
 **Voice scope placement:** Full version, **not MVP** (see §4). Voice is the lowest-priority item in v1 and the first thing an aggressive scenario defers — it is a social nicety for a room of friends, not a launch gate.
 
+**i18n decision of record (2026-09-26):** S12 ships EN `strings.xml` infrastructure only (matching the 8 existing English-only screens); full Arabic — `values-ar` for every screen + migration of the 8 hardcoded screens + native-speaker review + RTL verification — is scheduled story **S41** in the store phase (with S24), in-v1 and blocking production (not the closed track). Per-screen state is never mixed: S12 uses `stringResource` from day one; the 8 older screens migrate wholesale in S41.
+
 ---
 
 ## Correction: what's actually already built (sunk, not re-estimated)
@@ -127,13 +129,14 @@ Complexity: **S** = straightforward port/2–6h · **M** = 6–16h · **L** = 16
 | Release Firebase fix | `FirebaseModule` hardcodes `projectId "demo-test-ci"` + dummy key for **all build types** — the comment claiming "release talks to the real project" is **wrong**. Inject real `FirebaseOptions` for release | Cheapest real blocker in the plan; easiest to miss | S | 6 |
 | Signing config | Release keystore via CI secrets, never committed; `minifyEnabled` decision | | M | 8 |
 | `res/` from scratch | Adaptive launcher icon, `strings.xml` (EN + **AR**; RTL already set), proper theme | `native/app/src/main/res/` **does not exist at all**; manifest hardcodes the app name | M | 16 |
+| Full Arabic retrofit (S41) | `values-ar` for every screen + migrate the 8 hardcoded-EN screens to `stringResource` + native-speaker review + RTL verification with S21 | S12 ships EN infra only (i18n decision 2026-09-26); S41 lands in the S24 window, in-v1, blocking production | M | 12 |
 | Audio | `SoundManager` (SoundPool) honoring the existing persisted `soundEnabled` toggle; assets: card place, trick win, round score, match win, tap | Zero assets exist today; asset sourcing/licensing is the dependency | M | 14 |
 | Compose animations | Card-play transition, trick collection sweep, winner highlight | Must never gate an intent dispatch | M | 12 |
 | AdMob + UMP consent | Banner in **Lobby/Standings only — never in-play**; UMP request must complete before any ad load (EU/UK/CA) | Mis-configured consent is a **policy** problem, not just engineering | L | 20 |
 | RevenueCat + "Remove Ads" | Free tier ($2,500 MTR free, then 1% — verified); one-time non-consumable | Fits D3 (no server) exactly; add a card before crossing the threshold | M | 14 |
 | Crashlytics | Near-zero cost on existing Firebase BOM; the only way a 1-engineer launch sees field crashes | Must-have, not optional | S | 6 |
 | Store listing + policy | Privacy policy URL + hosting (the D4 web shrink provides it), IARC questionnaire, data-safety form **consistent with ad declarations**, EN+AR screenshots | Draft exists at `docs/release/play-listing.md`; content-rating must avoid a simulated-gambling flag on "bid" vocabulary | L | 18 |
-| **Platform subtotal** | | | | **138** |
+| **Platform subtotal** | | | | **150** |
 
 ### D. QA / verification
 
@@ -171,7 +174,7 @@ Verified against `origin/main` before designing this — these facts drove every
 
 **Voice total: 158 hours** (in the Full version only — excluded from MVP; see §4).
 
-**Feature total: 422 + 158 (voice) = 580 hours.** Adding the 12h voice store/policy deltas (§3) gives **592**; plus 40 PM = **632** — the number every downstream section uses.
+**Feature total: 434 + 158 (voice) = 592 hours.** Adding the 12h voice store/policy deltas (§3) gives **604**; plus 40 PM = **644** — the number every downstream section uses.
 
 ---
 
@@ -181,7 +184,7 @@ Verified against `origin/main` before designing this — these facts drove every
 |---|---|---|
 | Game development (AI bot port) | 142 | ~1,600 lines of TS across 5 files, but it is **not** a line-by-line port: `cardRules` is replaced by existing `Table.kt` functions (`legalCards`/`cardValue`/`trickWinner`) — that saves time — while the `seenCards` accumulator and intent-emission layer are genuinely new. Heaviest single item is making bidding emit `BiddingIntent` per sub-phase, because the TS returns a raw number and the engine's `canSubmit` is the real legality gate. |
 | Android development / integration | 96 + 158 = 254 | The services already exist; this is wiring + 2 screens + one ViewModel + reconnect. Priced as integration, not greenfield. The `OnlineMatchViewModel` is the hard part (callback → StateFlow, one GameSession, idempotent replay). The +158 is the voice line (§E): WebRTC engine, RTDB signaling, PTT lifecycle and UI, permission and audio-focus plumbing — all of it Android-side, none of it in the engine. |
-| Platform / release / monetization | 138 | Front-loaded by the toolchain spike (24h) because API-36 is non-negotiable and the Kotlin-version decision is genuinely uncertain. Audio/art/res are priced minimal — this is a card game, not a 3D title. Excludes the voice store/policy deltas, which are broken out below. |
+| Platform / release / monetization | 150 | Front-loaded by the toolchain spike (24h) because API-36 is non-negotiable and the Kotlin-version decision is genuinely uncertain. Audio/art/res are priced minimal — this is a card game, not a 3D title. Excludes the voice store/policy deltas, which are broken out below. Includes the full Arabic retrofit S41 (+12) — EN infra lands with S12, AR values with S41. |
 | **Voice — store & policy deltas** | **12** | Mic-permission justification copy, data-safety audio declaration (**must** say "no collection, no storage, transmitted peer-to-peer"), one privacy-policy sentence on voice, EN+AR strings. Cheap in hours, expensive in policy risk if skipped (R10/R18/R19). |
 | UI/UX | 42 + 16 = 58 | *(inside the above)* Choose Level 14 + Lobby 16 + Room 14 — reuse the existing gold-on-dark theme; no new design system. +16 for the PTT control + per-seat mic indicators (§E). |
 | Art / animation | 26 | 14 audio + 12 animation. No 2D/3D artist needed at v1 scope: cards render as glyphs today and that is acceptable for launch. |
@@ -189,7 +192,7 @@ Verified against `origin/main` before designing this — these facts drove every
 | Backend development | **0** | Deliberate. `firestore.rules` is frozen and deployed; the JS services are the reference. D3 = no own server. Any backend work would be a **rules revision** with a new SHA pin — that's a separate release, not this one. |
 | QA / testing | 46 + 16 = 62 | JVM coverage is already excellent (12 suites, incl. the P1-3 pins). The gap is exclusively the instrumented/emulator tier. The +16 is the voice QA tier (§E), which is *counted inside the Android row above* and restated here only so QA isn't misread as shortchanged — it is not double-counted. |
 | Project management | 40 | ~7% — owner/PM overhead, store-form correspondence, account activation chasing, release coordination, **voice policy correspondence** (mic-justification + data-safety answers). |
-| **Total** | **422 + 158 + 12 + 40 = 632** | |
+| **Total** | **434 + 158 + 12 + 40 = 644** | |
 
 ---
 
@@ -208,7 +211,7 @@ One engineer + AI agents, ~22 productive engineering days/month (allowing for re
 | 9 Instrumented 4-client emulator suite | 1.5 wk | 5b (design during 5b) | Release gate for online |
 | 9b Voice device matrix (incl. symmetric-NAT) | 0.5 wk | 5c, 9 | Field failure-rate estimate + echo pass |
 | 7 Monetization (AdMob + UMP + RevenueCat) | 1.5 wk | 0b, accounts active | Banner + Remove Ads, test purchases |
-| 12 Store prep (res/, strings, policy, listing, Crashlytics) | 1.5 wk | 0b | Store-ready listing, signed AAB |
+| 12 Store prep (res/, strings, policy, listing, Crashlytics) | 1.5 wk | 0b | Store-ready listing, signed AAB, full AR strings (S41) |
 | 8b Audio + animations (parallel throughout) | 1 wk | — | SFX + polish |
 | 13 Closed track → staged rollout | 1 wk | all | Production v1 |
 
@@ -220,7 +223,7 @@ Rationale: neither AI nor online depends on ads — and neither depends on voice
 
 ### Full Version Timeline — 18 weeks (~4.1 months)
 
-Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.5) + monetization (1.5) + store prep overlap + audio/polish (1) + closed-track rollout (1). Calendar time exceeds the raw hours because of the **AdMob 14-day closed-testing clock** — an immovable external dependency. Voice is the single largest week-adder after the toolchain spike, and it is sequenced *after* online works, because voice membership is derived from room membership and must never be able to drift from it.
+Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.5) + monetization (1.5) + store prep overlap + audio/polish (1) + closed-track rollout (1). Calendar time exceeds the raw hours because of the **AdMob 14-day closed-testing clock** — an immovable external dependency. Voice is the single largest week-adder after the toolchain spike, and it is sequenced *after* online works, because voice membership is derived from room membership and must never be able to drift from it. Full Arabic (S41) rides inside store prep — +12h absorbed without moving the 18-week label.
 
 ---
 
@@ -232,7 +235,7 @@ Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.
 |---|---|---|---|
 | **Lead engineer (owner)** | **Yes — full-time** | Architecture, all Kotlin, CI, store submission | 400 |
 | AI coding agents (subagents) | Yes — already in the operating model | Parallel worktrees: bot port while the toolchain spike runs | (included, not extra) |
-| QA / manual tester | **Part-time, only in the final 3 weeks** | Device matrix, RTL pass, online 4-human playthroughs, **4-device voice room incl. one symmetric-NAT case**, ad/IAP verification | 16 (folded into §592) |
+| QA / manual tester | **Part-time, only in the final 3 weeks** | Device matrix, RTL pass, online 4-human playthroughs, **4-device voice room incl. one symmetric-NAT case**, ad/IAP verification | 16 (folded into §604) |
 | 2D/3D artist, animator | **Not required for v1** | Cards render as glyphs; launcher icon from an icon generator is acceptable at v1 | 0 |
 | Sound designer | **Not required** | License 5 SFX from a royalty-free library (voice uses the WebRTC library's own AEC/NS, not custom DSP work) | 0 |
 | Backend developer | **Not required** | Frozen `firestore.rules` untouched; RTDB signaling rules are a thin declarative artifact, not a service. D3 = no server | 0 |
@@ -267,6 +270,7 @@ Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.
 | **R20** | **Voice + turn timeouts collide** — a player holding-to-talk during their turn is the exact scenario where a card game's turn clock fires | Lost turns, "the game skipped me" support load | PTT must not reset or pause the turn clock; voice is orthogonal to `turn`. Verify in the 4-device matrix, and make the turn-clock resolution the *gameplay* authority regardless of voice state |
 | **R21** | **WebRTC artifact supply chain** — `org.webrtc:google-webrtc:1.0.32006` is **no longer resolvable from Google's Maven** (the Bintray hosting sunset; "Failed to Resolve" reports recur through 2026) | Build breaks on a clean checkout, or a transitive consumer drags in a stale/mirrored binary | Use a Maven Central republish (`com.infobip:google-webrtc`, latest verified `1.0.48246t`) or GetStream's `webrtc-android` build; **pin an exact version**, audit the artifact once, and record the choice in an ADR. Do not leave it on a floating `+` |
 | **R22** | **Voice signaling needs a Firebase RTDB instance + its own `database.rules.json`** — cost $0, but it is a *new rules artifact and a console change*, i.e. exactly the kind of item the "rules release" constraint was meant to catch | Owner asked to prefer a path that avoids a rules release; **this is why we could not** | Being explicit: the **frozen `firestore.rules` is NOT touched** — no new SHA pin, no Firestore release. But RTDB signaling requires enabling Realtime Database in the console and shipping a small `database.rules.json` (auth-required, self-only writes, presence TTL). Cost **$0** on the Spark plan; effort ~2h of the 24h signaling row. Listed here as a *cost-free-but-time-cost* item so it is never mistaken for a surprise billing event |
+| **R23** | **Arabic review bottleneck.** `values-ar` needs a native-speaker review before submission, and that reviewer is an external person on no sprint clock | Store submission waits on one human's inbox | Draft `values-ar` early with AI assistance (EN infra lands with S12, so strings are reviewable long before S41 starts); book the reviewer when S24 opens, not when S41 needs sign-off |
 
 ---
 
@@ -282,7 +286,7 @@ Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.
 | **M4c — Voice failure modes are honest** | At least one **deliberate symmetric-NAT pairing** in the matrix: the affected seat shows "unreachable", the room continues, and the round completes. Also: voice is provably **gated to the casual-room path only** — a grep for any WebRTC init, `RECORD_AUDIO` prompt, or PTT button outside the room-code/room screen returns **zero**. (Ranked doesn't exist in v1, so this is verified as an *absence*, not a toggle: the gate is structural, and it must stay that way if ranked ever ships.) |
 | **M5 — Instrumented gate green** | The 4-client emulator suite asserts convergence on the archive/advance race and endMatch in CI |
 | **M6 — Monetization integrated** | UMP consent completes before any ad loads; banner shows in Lobby/Standings only; "Remove Ads" test purchase succeeds via RevenueCat |
-| **M7 — Store-ready** | Privacy policy live, IARC rating set, data-safety form submitted and consistent with ad declarations, EN+AR screenshots, signed AAB on the **closed track** |
+| **M7 — Store-ready** | Privacy policy live, IARC rating set, data-safety form submitted and consistent with ad declarations, EN+AR screenshots, full AR strings live on every screen (S41), signed AAB on the **closed track** |
 | **M8 — Production v1** | Staged rollout started; Crashlytics receiving; no P0 crashes for 72h at 5% |
 
 ---
@@ -291,9 +295,9 @@ Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.
 
 | Scenario | Hours | Timeline | Conditions |
 |---|---|---|---|
-| **Conservative** | 632 + 25% = **790** | **~21 weeks** | Toolchain spike forces Kotlin 2.x migration; AdClock slips; bot balancing needs real playtest iteration; instrumented suite reveals a rules-fidelity bug requiring a client rework; **voice exceeds its 40h XL row** (ICE debugging on real devices is the classic 2x line) |
-| **Realistic** | 632 + 15% = **727** | **18 weeks** | Spike stays on Kotlin 1.9.25; bots port cleanly with the SimPort seam; online wiring behaves as the JS reference did; voice mesh connects on the first 4-device attempt using a Maven-Central WebRTC republish. **Recommended.** |
-| **Aggressive** | 632 − 10% (skip animations, minimal audio, Crashlytics only, **defer voice to v1.1**) = **416** | **10 weeks** | Requires the toolchain spike to land clean in week 1, zero rules-fidelity surprises, and the AdMob account already activated. Voice is the cleanest single thing to cut: 170h (158 voice + 12 policy) with no gameplay dependency — cutting it maps this scenario onto the pre-voice 462h baseline exactly. Only viable if accounts are started **today** |
+| **Conservative** | 644 + 25% = **805** | **~21 weeks** | Toolchain spike forces Kotlin 2.x migration; AdClock slips; bot balancing needs real playtest iteration; instrumented suite reveals a rules-fidelity bug requiring a client rework; **voice exceeds its 40h XL row** (ICE debugging on real devices is the classic 2x line) |
+| **Realistic** | 644 + 15% = **741** | **18 weeks** | Spike stays on Kotlin 1.9.25; bots port cleanly with the SimPort seam; online wiring behaves as the JS reference did; voice mesh connects on the first 4-device attempt using a Maven-Central WebRTC republish. **Recommended.** |
+| **Aggressive** | 644 − 10% (skip animations, minimal audio, Crashlytics only, **defer voice to v1.1**) = **427** | **10 weeks** | Requires the toolchain spike to land clean in week 1, zero rules-fidelity surprises, and the AdMob account already activated. Voice is the cleanest single thing to cut: 170h (158 voice + 12 policy) with no gameplay dependency — cutting it maps this scenario onto the pre-voice 474h baseline exactly. Only viable if accounts are started **today** |
 
 > **Voice is the swing item.** It is the only scope block in this plan that is simultaneously large (170h), non-blocking for launch, and carrying two policy surfaces. The spread between Realistic and Aggressive is almost entirely "voice or not."
 
@@ -301,33 +305,33 @@ Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.
 
 # 9. Contingency
 
-| Contingency bucket | % of 632 | Hours | Why this rate |
+| Contingency bucket | % of 644 | Hours | Why this rate |
 |---|---|---|---|
-| Unknown requirements | 4% | 25 | AI-bot scope is the only genuinely undocumented area (R13); specs froze everything else. Voice requirements are pinned by V1–V5 above, which is why voice itself does not add to this bucket |
-| Bugs | 4% | 25 | Bot tier balance always needs more iterations than planned |
-| Integration problems | 4% | 25 | The `:app`↔`:services` wiring + instrumented tier is untested territory (R8), **plus a first WebRTC integration** (R15/R16/R21) |
+| Unknown requirements | 4% | 26 | AI-bot scope is the only genuinely undocumented area (R13); specs froze everything else. Voice requirements are pinned by V1–V5 above, which is why voice itself does not add to this bucket |
+| Bugs | 4% | 26 | Bot tier balance always needs more iterations than planned |
+| Integration problems | 4% | 26 | The `:app`↔`:services` wiring + instrumented tier is untested territory (R8), **plus a first WebRTC integration** (R15/R16/R21) |
 | Rework | 2% | 13 | Toolchain decision may force a Compose-compiler migration; the WebRTC artifact choice may need swapping (R21) |
 | Testing | 1% | 6 | Device-matrix surprises, especially RTL Arabic layouts and the speakerphone echo pass |
-| **Total contingency** | **15%** | **95** | **Conservative = 25% (158h) if the toolchain spike goes badly or voice ICE debugging runs long** |
+| **Total contingency** | **15%** | **97** | **Conservative = 25% (161h) if the toolchain spike goes badly or voice ICE debugging runs long** |
 
-- **Before contingency:** **632 hours**
-- **After contingency (realistic):** **727 hours ≈ 18 weeks**
-- **After contingency (conservative):** **790 hours ≈ 21 weeks**
-- **If voice is deferred to v1.1:** **632 − 170 = 462 hours ≈ 13 weeks** — the pre-voice baseline exactly
+- **Before contingency:** **644 hours**
+- **After contingency (realistic):** **741 hours ≈ 18 weeks**
+- **After contingency (conservative):** **805 hours ≈ 21 weeks**
+- **If voice is deferred to v1.1:** **644 − 170 = 474 hours ≈ 13 weeks** — the pre-voice baseline exactly
 
 ---
 
 # 10. Final Executive Summary
 
-**Project scope.** Ship "Estemshan," a 4-player Egyptian trick-taking card game, as a native Android (Kotlin/Compose) app with three modes: offline vs AI bots (4 difficulty tiers + personalities), online matches with friends via room code, and offline hot-seat — with **push-to-talk voice chat in casual rooms** (muted by default, max 4 speakers, never in ranked). Monetized with a single banner ad plus a one-time "Remove Ads" purchase.
+**Project scope.** Ship "Estemshan," a 4-player Egyptian trick-taking card game, as a native Android (Kotlin/Compose) app with three modes: offline vs AI bots (4 difficulty tiers + personalities), online matches with friends via room code, and offline hot-seat — with **push-to-talk voice chat in casual rooms** (muted by default, max 4 speakers, never in ranked), fully localized in English and Arabic (EN `strings.xml` infra from S12, full `values-ar` retrofit in S41). Monetized with a single banner ad plus a one-time "Remove Ads" purchase.
 
 **Where we're starting from.** The game engines, scoring, and online *service* layer are **already built and green on `main`** — including the hardest piece, reload-safe replay. Roughly **half the native v1 is done**. What's left is: the AI bots the owner just supplied, wiring the online services into the app, voice chat, and everything platform-facing.
 
 **MVP scope.** AI play + online multiplayer, with monetization following as a rapid v1.0.1. Neither gameplay mode depends on ads — and neither depends on voice. **Voice is Full-version scope, deliberately outside the MVP.**
 
-**Total estimated hours.** **632** before contingency (422 base + 158 voice + 12 voice-policy deltas + 40 PM), **~727 after** (15%).
+**Total estimated hours.** **644** before contingency (434 base + 158 voice + 12 voice-policy deltas + 40 PM), **~741 after** (15%).
 
-**Estimated timeline.** **18 weeks** realistic (MVP in 9.5). Conservative 21 weeks if the Android toolchain forces a Kotlin migration or voice ICE debugging runs long. **Deferring voice to v1.1 restores the 13-week / 462-hour baseline exactly.**
+**Estimated timeline.** **18 weeks** realistic (MVP in 9.5). Conservative 21 weeks if the Android toolchain forces a Kotlin migration or voice ICE debugging runs long. **Deferring voice to v1.1 restores the 13-week / 474-hour baseline exactly.**
 
 **Required team.** **One engineer (the owner) + AI coding agents**, plus part-time QA for the final 3 weeks (including a 4-physical-device voice room). No artist, animator, sound designer, or backend developer is needed at v1 scope.
 
@@ -382,16 +386,17 @@ One epic per phase; stories sized in hours; `S/M/L` from §2. Critical path mark
 | **E7 Monetization** | S22 AdMob banner + UMP consent-before-load | 20 | S4 |
 | | S23 RevenueCat + "Remove Ads" non-consumable + test purchase | 14 | S22 |
 | **E12 Store** | S24 `res/`: launcher icon, strings EN+AR, theme | 16 | S1 |
+| | S41 Full Arabic retrofit: `values-ar` + migrate 8 hardcoded screens + native-speaker review + RTL verification | 12 | S12, S24 |
 | | S25 Crashlytics | 6 | S3 |
 | | S26 Privacy policy hosted + data-safety + IARC + listing | 18 | S25 |
 | **E8b Polish** | S27 SoundManager + 5 SFX behind existing toggle | 14 | — |
 | | S28 Compose animations (card play, trick sweep, winner) | 12 | — |
 | **E13 Release** | S29 Closed track + staged rollout + 72h Crashlytics watch | 8 | all |
 | | **PM overhead** | 40 | — |
-| | **Contingency 15%** | 95 | — |
-| | **TOTAL** | **737** | |
+| | **Contingency 15%** | 97 | — |
+| | **TOTAL** | **751** | |
 
-> Story-table arithmetic, stated rather than hidden: the 29 pre-voice stories sum to **432h** against §2's 422h feature line — a +10h decomposition granularity (S7 is sized 26 vs its feature row's 24, and S13 is split out separately). The 11 voice stories sum to exactly **170h**, matching §2/§3 (158 voice + 12 policy deltas). PM (40) + 15% contingency (95) land the table at **737**, against the §9 headline of **727** — the 10h difference is precisely that story-vs-feature drift, and it is absorbed by contingency. Stories are the *execution* view; §9 is the *estimate* view. Nothing is rounded away silently.
+> Story-table arithmetic, stated rather than hidden: the 30 non-voice stories sum to **444h** (the 29 pre-voice stories at **432h** — a +10h decomposition granularity, since S7 is sized 26 vs its feature row's 24 and S13 is split out separately — plus S41 at **12h**) against §2's 434h feature line. The 11 voice stories sum to exactly **170h**, matching §2/§3 (158 voice + 12 policy deltas). PM (40) + 15% contingency (97) land the table at **751**, against the §9 headline of **741** — the 10h difference is precisely that story-vs-feature drift, and it is absorbed by contingency. Stories are the *execution* view; §9 is the *estimate* view. Nothing is rounded away silently.
 
 ---
 
@@ -462,7 +467,7 @@ Voice adds no new purchase, no new data collection, and no new server — but it
 | Privacy policy sentence (EN + AR) | "Estemshan offers optional push-to-talk voice chat in casual rooms. Voice audio is transmitted directly between players in the same room while you hold the talk button. We do not record, store, transcribe, or retain voice audio." (Ranked/competitive modes, if ever introduced, will not include voice — a policy commitment, not a description of a shipped feature, so it is stated in the plan rather than the policy.) | Privacy policy page (hosted via the D4 web shrink) |
 | Mic-disclosure posture | No foreground service, no background capture, default muted, auto-leave on background — **this is the policy defense, and it is a code property, not a claim**. If any of those four regresses, this disclosure becomes false | Verified by the voice QA matrix items (d) and (e), not by review |
 
-**The dependency to respect:** `AI Bots/` strings are EN-only today, and the app's RTL is already enabled (`supportsRtl=true`) with no `res/` at all. The PTT button label, the mic-rationale dialog, and the "unreachable"/"muted-by-default" states are **new user-facing strings that must ship in EN and AR** — they belong in the same `strings.xml` batch as the app-name fix (S24), not as hardcoded Compose text.
+**The dependency to respect:** `AI Bots/` strings are EN-only today, and the app's RTL is already enabled (`supportsRtl=true`) with no `res/` at all. The PTT button label, the mic-rationale dialog, and the "unreachable"/"muted-by-default" states are **new user-facing strings that must ship in EN and AR** — EN lands with their own stories' `strings.xml` infra (S12 pattern), AR values land with S41 — never as hardcoded Compose text.
 
 ---
 
