@@ -24,6 +24,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlin.random.Random
 
 /**
  * Offline quick-match driver (hot-seat): real engines end to end, no
@@ -64,17 +65,45 @@ class QuickMatchViewModel : ViewModel() {
   private val _roster = MutableStateFlow(BotRoster.HUMANS_ONLY)
   val roster: StateFlow<BotRoster> = _roster.asStateFlow()
 
-  private var hands: Map<String, List<Card>> = Dealer.dealHands()
+  /**
+   * The seed every hand in this match is dealt from — exposed so a match is
+   * *reproducible*: given it, the whole deal sequence replays (S13). Fresh by
+   * default, so two quick matches never see the same cards; [startMatch]
+   * accepts one when a caller wants to replay a specific table.
+   */
+  private val _matchSeed = MutableStateFlow(Random.Default.nextLong())
+  val matchSeed: StateFlow<Long> = _matchSeed.asStateFlow()
+
+  /** How many times the current round has been re-dealt (a general pass). */
+  private var redealCount: Int = 0
+
+  /**
+   * The seed for the deal in hand: the match seed offset by the round, plus
+   * 500 per redeal. Both offsets are reproducible, and 500 clears the round
+   * stride — a match caps at 18 rounds, so a redeal can never land on another
+   * round's seed. (The bot smoke test uses this same round/+500 shape; the
+   * match seed is *added* rather than scaled so a full-range seed can't
+   * overflow the deal seed.)
+   */
+  private fun dealSeed(): Long = _matchSeed.value + _round.value + redealCount * 500L
+
+  private var hands: Map<String, List<Card>> = Dealer.dealHands(dealSeed())
   private var scoreMultiplier: Int = 1
 
   /** The driver's lifetime job, if [attachBots] has armed one. */
   private var botDriver: Job? = null
 
   /**
-   * Start a match, optionally with bots in [roster]. The lobby's quick-match
+   * Start a match, optionally with bots in [roster] and dealt from [matchSeed]
+   * (fresh by default, so no two matches share a deal). The lobby's quick-match
    * entry stays human-only; the Choose Level screen (S12) supplies the roster.
    */
-  fun startMatch(roster: BotRoster = BotRoster.HUMANS_ONLY) {
+  fun startMatch(
+    roster: BotRoster = BotRoster.HUMANS_ONLY,
+    matchSeed: Long = Random.Default.nextLong(),
+  ) {
+    _matchSeed.value = matchSeed
+    redealCount = 0
     _round.value = 1
     _dealer.value = DEFAULT_SEATS[0]
     _biddingMultiplier.value = 1
@@ -82,7 +111,7 @@ class QuickMatchViewModel : ViewModel() {
     _totals.value = DEFAULT_SEATS.associateWith { 0 }
     _standings.value = null
     _roster.value = roster
-    hands = Dealer.dealHands()
+    hands = Dealer.dealHands(dealSeed())
     _biddingKey.value++
   }
 
@@ -90,8 +119,10 @@ class QuickMatchViewModel : ViewModel() {
     // A general pass re-deals — "nobody bid, cards are redealt at the doubled
     // multiplier" — so the restarted auction sees a fresh hand at every seat.
     // Without this a pass-happy deal replays identical hands forever, which
-    // soft-locks a table the moment Choose Level can seat four bots.
-    hands = Dealer.dealHands()
+    // soft-locks a table the moment Choose Level can seat four bots. The seed
+    // advances so the redeal is still a *different* hand, reproducibly.
+    redealCount++
+    hands = Dealer.dealHands(dealSeed())
     // The restarted round scores doubled: arm scoring now; the bidding UI
     // restarts separately from biddingMultiplier below.
     scoreMultiplier = doubled
@@ -144,10 +175,11 @@ class QuickMatchViewModel : ViewModel() {
 
   fun nextRound() {
     _round.value = _round.value + 1
+    redealCount = 0
     _dealer.value = nextSeat(seats, _dealer.value)
     _biddingMultiplier.value = 1
     _standings.value = null
-    hands = Dealer.dealHands()
+    hands = Dealer.dealHands(dealSeed())
     _biddingKey.value++
   }
 
