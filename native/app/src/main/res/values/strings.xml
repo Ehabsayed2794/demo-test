@@ -19,4 +19,7 @@
   <string name="choose_level_start">Start match</string>
   <!-- The number of the chair, 1-based: "Seat 2", "Seat 3", "Seat 4". -->
   <string name="choose_level_seat">Seat %1$d</string>
+
+  <!-- The lobby entry that opens the Choose Level screen — the app's AI path. -->
+  <string name="lobby_play_vs_ai">Play vs AI</string>
 </resources>

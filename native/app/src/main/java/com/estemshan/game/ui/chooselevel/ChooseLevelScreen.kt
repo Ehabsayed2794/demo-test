@@ -28,6 +28,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.estemshan.engine.DEFAULT_SEATS
 import com.estemshan.engine.bot.BotPersonality
 import com.estemshan.engine.bot.BotTier
 import com.estemshan.game.R
@@ -276,12 +277,6 @@ private const val HEADER_ASPECT = 784f / 1168f
 //  Previews — one per state the screen can hold.
 // ===========================================================================
 
-/** Seats three opponents from a preset, in chair order. */
-private fun opponentsFrom(preset: BotTablePreset): List<OpponentConfig> =
-  preset.bots.mapIndexed { i, bot ->
-    OpponentConfig(seat = "p${i + 2}", seatNumber = i + 2, tier = bot.tier, personality = bot.personality)
-  }
-
 private fun customOpponents(): List<OpponentConfig> = listOf(
   OpponentConfig("p2", 2, BotTier.MEDIUM, BotPersonality.BALANCED),
   OpponentConfig("p3", 3, BotTier.EXPERT, BotPersonality.AGGRESSIVE),
@@ -294,7 +289,7 @@ private fun ChooseLevelDefaultPreview() {
   EstemshanTheme {
     ChooseLevelScreen(
       state = ChooseLevelUiState(
-        opponents = opponentsFrom(BotTablePreset.DEFAULT),
+        opponents = opponentsFrom(BotTablePreset.DEFAULT, DEFAULT_SEATS, DEFAULT_SEATS.first()),
         appliedPreset = BotTablePreset.DEFAULT,
       ),
       onPresetSelected = {},
@@ -311,7 +306,7 @@ private fun ChooseLevelGentlePreview() {
   EstemshanTheme {
     ChooseLevelScreen(
       state = ChooseLevelUiState(
-        opponents = opponentsFrom(BotTablePreset.Gentle),
+        opponents = opponentsFrom(BotTablePreset.Gentle, DEFAULT_SEATS, DEFAULT_SEATS.first()),
         appliedPreset = BotTablePreset.Gentle,
       ),
       onPresetSelected = {},
@@ -328,7 +323,7 @@ private fun ChooseLevelSharkTankPreview() {
   EstemshanTheme {
     ChooseLevelScreen(
       state = ChooseLevelUiState(
-        opponents = opponentsFrom(BotTablePreset.SharkTank),
+        opponents = opponentsFrom(BotTablePreset.SharkTank, DEFAULT_SEATS, DEFAULT_SEATS.first()),
         appliedPreset = BotTablePreset.SharkTank,
       ),
       onPresetSelected = {},
