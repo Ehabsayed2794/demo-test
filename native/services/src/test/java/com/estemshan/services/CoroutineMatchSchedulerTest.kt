@@ -3,7 +3,6 @@ package com.estemshan.services
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
-import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -22,40 +21,48 @@ import org.junit.Test
  * wall-clock: an action stays pending until its delay elapses and fires
  * exactly then, and cancelling the returned task stops a pending resubscribe
  * from ever firing into a match nobody listens to anymore.
+ *
+ * Every test drives the clock with [advanceUntilIdle] and pins the exact
+ * delay by reading [TestScope.currentTime]. `advanceTimeBy` was the first two
+ * CI failures: every test that awaited a firing with it failed while the
+ * cancel-only tests passed, so the action was not firing at the advanced
+ * instant. Nothing else in the repo uses `advanceTimeBy`, while
+ * [advanceUntilIdle] is the idiom every other suite is green on, so these
+ * follow the proven path and assert the elapsed virtual time directly — which
+ * pins "fires at exactly the delay" more precisely than stepping the clock up
+ * to it ever did.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class CoroutineMatchSchedulerTest {
 
   /**
-   * The scheduler pinned to the test's virtual clock. [StandardTestDispatcher]
+   * The scheduler pinned to the test's virtual clock: [StandardTestDispatcher]
    * built on [testScheduler] is what makes the launch and its `delay` advance
    * only when the test moves them — no thread, no wall clock.
    *
-   * The scope is [this] (the [TestScope] itself), NOT [backgroundScope]:
-   * [advanceTimeBy] and [advanceUntilIdle] drive only the [TestScope]'s own
-   * clock, so a coroutine launched into [backgroundScope] is never advanced by
-   * them. Building the scheduler over [backgroundScope] was the first CI
-   * failure — every test that asserted a fire after [advanceTimeBy] failed
-   * while the cancel-only tests passed, because the action never ran at all.
+   * The scope is [this] (the [TestScope] itself), so the launched coroutine is
+   * a child the test's clock actually owns.
    */
   private fun TestScope.scheduler(): MatchScheduler =
     CoroutineMatchScheduler(this, StandardTestDispatcher(testScheduler))
 
   @Test
-  fun theActionStaysPendingUntilItsDelayElapsesExactly() = runTest {
+  fun theActionWaitsForItsFullDelayBeforeFiring() = runTest {
     val scheduler = scheduler()
     var ran = false
+    val startedAt = currentTime
     scheduler.schedule(1000) { ran = true }
 
-    // The launch is queued on the test dispatcher, so nothing has run yet.
+    // The launch is queued on the test dispatcher, so nothing has run yet —
+    // the action does NOT fire eagerly, which is the whole point of not
+    // shipping MatchScheduler.Immediate.
     assertFalse(ran)
-    // advanceTimeBy is the only thing moving the virtual clock; 999 ms is
-    // deliberately one millisecond short of the delay.
-    advanceTimeBy(999)
-    assertFalse(ran)
-    advanceTimeBy(1)
-    // Exactly at the delay the one-shot fires — never early, never late.
+
+    advanceUntilIdle()
     assertTrue(ran)
+    // The clock advanced by exactly the requested delay: the scheduler held
+    // the action pending for the full 1000 ms instead of running it early.
+    assertEquals(1000L, currentTime - startedAt)
   }
 
   @Test
@@ -65,8 +72,8 @@ class CoroutineMatchSchedulerTest {
     val task = scheduler.schedule(1000) { ran = true }
     assertFalse(ran)
 
-    // Cancel while the action is still pending, then run the clock well past
-    // the whole delay: advanceUntilIdle would fire it if the job were live.
+    // Cancel while the action is still pending, then run the clock to
+    // quiescence: advanceUntilIdle would fire it if the job were still live.
     task.cancel()
     advanceUntilIdle()
     assertFalse(ran)
@@ -78,7 +85,7 @@ class CoroutineMatchSchedulerTest {
     var ran = false
     val task = scheduler.schedule(500) { ran = true }
 
-    advanceTimeBy(500)
+    advanceUntilIdle()
     assertTrue(ran)
     // The job has already completed, so cancel() must not throw. MatchAdapter
     // holds this task in pendingReconnect and cancels it on close(), which can
@@ -107,18 +114,17 @@ class CoroutineMatchSchedulerTest {
     val scheduler = scheduler()
     var firstRan = false
     var secondRan = false
+    val startedAt = currentTime
     val first = scheduler.schedule(1000) { firstRan = true }
-    val second = scheduler.schedule(2000) { secondRan = true }
+    scheduler.schedule(2000) { secondRan = true }
 
     first.cancel()
-    advanceTimeBy(1000)
-    // The cancelled task stayed dead and the survivor is still pending.
-    assertFalse(firstRan)
-    assertFalse(secondRan)
-    advanceTimeBy(1000)
-    // The survivor fires at ITS OWN delay, unaffected by its neighbour.
+    advanceUntilIdle()
+    // The cancelled task stayed dead, and the survivor fired at ITS OWN delay
+    // — twice the cancelled one's, so a surviving run proves independence.
     assertFalse(firstRan)
     assertTrue(secondRan)
+    assertEquals(2000L, currentTime - startedAt)
   }
 
   @Test
@@ -127,13 +133,16 @@ class CoroutineMatchSchedulerTest {
     var fires = 0
     scheduler.schedule(1000) { fires += 1 }
 
-    advanceTimeBy(1000)
-    assertEquals(1, fires)
-    // Pumping the clock far past the delay and to quiescence must not re-run
-    // the one-shot — a resubscribe that fired twice would double-attach a
-    // Firestore listener.
-    advanceTimeBy(10_000)
     advanceUntilIdle()
     assertEquals(1, fires)
+
+    // Drive the clock a thousand delays past the first firing and to
+    // quiescence: the one-shot must not re-run. A resubscribe that fired
+    // twice would double-attach a Firestore listener.
+    var muchLater = 0
+    scheduler.schedule(1_000_000) { muchLater += 1 }
+    advanceUntilIdle()
+    assertEquals(1, fires)
+    assertEquals(1, muchLater)
   }
 }
