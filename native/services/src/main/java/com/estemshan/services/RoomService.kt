@@ -23,13 +23,14 @@ import kotlinx.coroutines.tasks.await
 class RoomService(
   private val db: FirebaseFirestore,
   private val auth: AuthPort,
+
   /** startMatch(roomId) — MatchService's atomic room↔match write. */
   private val matchStarter: suspend (roomId: String) -> String,
   /** Best-effort currentRoomId mirror onto the player's own profile;
    *  never throws (the room action already succeeded). */
   private val profileRoomSync: suspend (playerId: String, roomId: String?) -> Unit =
     { _, _ -> },
-) {
+) : RoomPort {
 
   private val rooms get() = db.collection("rooms")
 

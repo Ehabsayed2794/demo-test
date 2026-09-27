@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Native v1's first string resource (S12). Every other screen still holds
-  literals inline; this file exists so the Choose Level screen's structural
-  text has a real home, and a values-ar/ sibling can later be dropped in to
-  translate the whole app without touching Kotlin. Tier and personality
-  labels are deliberately absent here — they come from the engine enums'
-  own displayName / blurb, so a translation of the characters lands with the
-  engine, not duplicated in resources.
+  Native v1's structural string resources (S12 lobby entries + S15 Real
+  Lobby). Every other screen still holds literals inline; this file is where
+  a screen's structural text lives so a values-ar/ sibling can later be
+  dropped in to translate the whole app without touching Kotlin (S41). Tier
+  and personality labels are deliberately absent here — they come from the
+  engine enums' own displayName / blurb, so a translation of the characters
+  lands with the engine, not duplicated in resources.
 -->
 <resources>
   <string name="choose_level_title">Choose Level</string>
@@ -22,4 +22,42 @@
 
   <!-- The lobby entry that opens the Choose Level screen — the app's AI path. -->
   <string name="lobby_play_vs_ai">Play vs AI</string>
+
+  <!-- S15 — the Real Lobby: offline entries, invite-by-code rooms, account. -->
+  <string name="lobby_title">Lobby</string>
+  <!-- Shown under the title; %1$s is the Firebase uid of the signed-in player. -->
+  <string name="lobby_signed_in_as">Signed in as %1$s</string>
+  <string name="lobby_section_play">Offline</string>
+  <string name="lobby_quick_match">Quick Match (offline)</string>
+  <string name="lobby_section_rooms">Rooms</string>
+  <!-- Action: make a new private room whose code the host shares by hand. -->
+  <string name="lobby_create_room">Create Room</string>
+  <string name="lobby_create_room_hint">Make a private room and share its code.</string>
+  <!-- Action: join a room a friend has given you the code for. -->
+  <string name="lobby_join_room">Join Room</string>
+  <string name="lobby_join_room_hint">Enter a code a friend gave you.</string>
+  <!-- Shown when the player is seated at a room; %1$s is the room code. -->
+  <string name="lobby_in_room">In room %1$s</string>
+  <string name="lobby_leave_room">Leave room</string>
+
+  <!-- The join-by-code dialog (native; spec 01-screens.md forbids prompt()). -->
+  <string name="lobby_join_dialog_title">Join a room</string>
+  <string name="lobby_join_dialog_hint">Room code</string>
+  <string name="lobby_join_dialog_join">Join</string>
+  <string name="lobby_cancel">Cancel</string>
+  <!-- The four ways a join is refused, mapped off ServiceException.reason. -->
+  <string name="lobby_join_error_empty">Enter a room code.</string>
+  <string name="lobby_join_error_not_found">No room with that code.</string>
+  <string name="lobby_join_error_full">That room is full.</string>
+  <string name="lobby_join_error_closed">That room is closed.</string>
+  <string name="lobby_join_error_generic">Couldn\'t join that room. Try again.</string>
+
+  <!-- The dialog shown once after creating, so the host can read the code out. -->
+  <string name="lobby_created_title">Room created</string>
+  <string name="lobby_created_body">Share this code with your friends:</string>
+  <string name="lobby_created_done">Done</string>
+
+  <string name="lobby_profile">Profile</string>
+  <string name="lobby_settings">Settings</string>
+  <string name="lobby_sign_out">Sign out</string>
 </resources>
