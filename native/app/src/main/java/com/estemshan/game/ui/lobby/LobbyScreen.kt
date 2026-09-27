@@ -94,7 +94,7 @@ fun LobbyScreen(
     }
 
     if (state.roomCode != null) {
-      item { SeatedCard(state, onLeaveRoom) }
+      item { SeatedCard(state.roomCode, state.busy, onLeaveRoom) }
     }
 
     item { SectionLabel(stringResource(R.string.lobby_section_play)) }
@@ -167,24 +167,27 @@ fun LobbyScreen(
 
 /**
  * The room you are currently seated at, with the one action it admits:
- * leave. Ready-up and starting land with the Room screen (S16).
+ * leave. Ready-up and starting land with the Room screen (S16). [code] is
+ * non-null because the screen only composes this when [LobbyUiState.roomCode]
+ * is set; taking it as a parameter keeps the null check at the one call site
+ * instead of re-asserting it here.
  */
 @Composable
-private fun SeatedCard(state: LobbyUiState, onLeaveRoom: () -> Unit) {
+private fun SeatedCard(code: String, busy: Boolean, onLeaveRoom: () -> Unit) {
   Card(
     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
     modifier = Modifier.fillMaxWidth(),
   ) {
     Column(Modifier.padding(16.dp)) {
       Text(
-        stringResource(R.string.lobby_in_room, state.roomCode),
+        stringResource(R.string.lobby_in_room, code),
         style = MaterialTheme.typography.titleMedium,
         color = MaterialTheme.colorScheme.onSurface,
       )
       Spacer(Modifier.height(12.dp))
       OutlinedButton(
         onClick = onLeaveRoom,
-        enabled = !state.busy,
+        enabled = !busy,
         modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp),
       ) { Text(stringResource(R.string.lobby_leave_room)) }
     }
