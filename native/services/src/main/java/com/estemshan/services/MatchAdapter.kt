@@ -57,6 +57,18 @@ import com.google.firebase.firestore.FirebaseFirestoreException
  * whole class JVM-testable without a device: [listen] produces a parsed
  * [MatchDoc] (or a [FirestoreError]) and [scheduler] delays a reconnect.
  * Neither touches the ordering decisions, which are the actual logic.
+ *
+ * Thread-safety of that subscription half: [scheduler] is free to run the
+ * reconnect action on ANY thread — the production scheduler launches it on a
+ * shared coroutine dispatcher — and [listen] can deliver a snapshot on its own
+ * thread, while subscribe/unsubscribe run on the caller's. Every cell those
+ * three paths touch (the subscription map, each [Subscription]'s plain fields,
+ * and the per-log registries a delivery replays) is guarded by one monitor,
+ * with listener callbacks always invoked OUTSIDE it. An inline scheduler runs
+ * the action DURING schedule(), which is why the pending-reconnect slot is a
+ * dedupe BOOLEAN kept separate from the cancellable task HANDLE — a single
+ * field would leave the slot holding a completed task and block every later
+ * reconnect.
  */
 class MatchAdapter(
   private val session: GameSessionPort,
@@ -411,6 +423,20 @@ class MatchAdapter(
 
   private val subscriptions = mutableMapOf<String, Subscription>()
 
+  /**
+   * The one monitor for the subscription half: the [subscriptions] map, every
+   * [Subscription] field, and the per-log registries a delivery replays. All
+   * of those are plain cells, and without this a reconnect firing on the
+   * scheduler's thread would race an unsubscribe on the caller's — the losers
+   * being a second stacked registration, or a live registration re-attached to
+   * a subscription that has already been torn down and can never be torn down
+   * again. Listener callbacks are NEVER invoked under it (foreign code under
+   * the adapter's lock is a deadlock waiting to happen), and Java monitors are
+   * reentrant, so a [MatchListenerFactory] that fails synchronously inside
+   * [attach] re-enters it cleanly.
+   */
+  private val lock = Any()
+
   /** The last exception a snapshot listener threw, surfaced instead of
    *  swallowed — one bad callback must never kill the listener loop. */
   @Volatile var lastListenerError: Throwable? = null
@@ -423,7 +449,12 @@ class MatchAdapter(
     var lastPublished: MatchDoc? = null
     var lastVersion: Int? = null
     var reconnectAttempt = 0
-    var pendingReconnect: MatchSchedulerTask? = null
+    /** True while exactly one reconnect is queued and has not fired yet — the
+     *  dedupe that stops a second backoff stacking behind a first. The
+     *  CANCELLABLE handle is [reconnectTask]; the two are separate because an
+     *  inline [MatchScheduler.Immediate] runs the action DURING schedule(). */
+    var reconnectPending = false
+    var reconnectTask: MatchSchedulerTask? = null
     var terminalError: FirestoreError? = null
     /** The local seat for this device — needed only by applyRemoteCard's
      *  opponent-hand seeding; null while unknown. */
@@ -447,32 +478,49 @@ class MatchAdapter(
       safeInvoke(listener) { it.onSnapshot(MatchSnapshot(match = null, error = FirestoreError(EMPTY_MATCH_ID, "subscribeToMatch: matchId is empty."))) }
       return MatchSubscriptionHandle.Noop
     }
-    val entry = subscriptions.getOrPut(matchId) { Subscription(matchId).also { attach(it) } }
-    if (localSeatId != null) entry.localSeatId = localSeatId
-    entry.listeners.add(listener)
+    // The map lookup, the listener registration and the local-seat write are
+    // one atomic unit: two callers racing for the same matchId must not open
+    // two real listeners.
+    val entry = synchronized(lock) {
+      val created = subscriptions.getOrPut(matchId) { Subscription(matchId).also { attach(it) } }
+      if (localSeatId != null) created.localSeatId = localSeatId
+      created.listeners.add(listener)
+      created
+    }
 
     // A late joiner (a second local caller, or the SAME caller subscribing
     // again) gets the current known state immediately instead of waiting on
     // a Firestore round trip it doesn't need — and if this subscription
     // already hit a non-retryable error, it learns that immediately too,
     // instead of silently waiting on a reconnect that will never run.
-    val terminal = entry.terminalError
-    when {
-      terminal != null -> safeInvoke(listener) {
-        it.onSnapshot(MatchSnapshot(if (entry.hasPublished) entry.lastPublished else null, terminal))
+    // Snapshot under the lock; deliver outside it — a listener that
+    // unsubscribes synchronously in onSnapshot() must never run under it.
+    val (delivered, terminal) = synchronized(lock) {
+      val err = entry.terminalError
+      val doc = when {
+        err != null -> if (entry.hasPublished) entry.lastPublished else null
+        entry.hasPublished -> entry.lastPublished
+        else -> null
       }
-      entry.hasPublished -> safeInvoke(listener) { it.onSnapshot(MatchSnapshot(entry.lastPublished, null)) }
+      doc to err
+    }
+    if (terminal != null || delivered != null) {
+      safeInvoke(listener) { it.onSnapshot(MatchSnapshot(delivered, terminal)) }
     }
     return MatchSubscriptionHandle {
-      val idx = entry.listeners.indexOf(listener)
-      if (idx != -1) entry.listeners.removeAt(idx)
-      if (entry.listeners.isEmpty()) close(entry)
+      synchronized(lock) {
+        val idx = entry.listeners.indexOf(listener)
+        if (idx != -1) entry.listeners.removeAt(idx)
+        if (entry.listeners.isEmpty()) close(entry)
+      }
     }
   }
 
   /** (Re)attaches the one real listener, reusing the SAME entry and the
    *  SAME listener list — never a second registration — on every backoff
-   *  tick after a disconnect. */
+   *  tick after a disconnect. Both callers ([subscribeToMatch]'s creation and
+   *  [runScheduledReconnect]) hold [lock], so the registration slot is
+   *  published atomically with any teardown racing to cancel it. */
   private fun attach(entry: Subscription) {
     entry.registration = listen.listen(
       matchId = entry.matchId,
@@ -482,74 +530,84 @@ class MatchAdapter(
   }
 
   private fun onSnapshot(entry: Subscription, doc: MatchDoc?) {
-    entry.reconnectAttempt = 0 // a successful snapshot means we're connected again
-    // Ordering guard: a stale or duplicate version is ignored, never
-    // re-published (a rolled-back delivery must never go backwards).
-    val version = doc?.version
-    if (version != null) {
-      val last = entry.lastVersion
-      if (last != null && version <= last) return
-      entry.lastVersion = version
+    // The whole state update AND the replay run under [lock]: a reconnect
+    // fires this on the scheduler's thread while a late subscribe or an
+    // unsubscribe runs on the caller's, and every cell touched here — the
+    // ordering guards, the published snapshot, the per-log registries the
+    // replay advances, the listener list — is plain storage. Listeners are
+    // snapshotted here and invoked once the lock is released.
+    val (listeners, snapshot) = synchronized(lock) {
+      entry.reconnectAttempt = 0 // a successful snapshot means we're connected again
+      // Ordering guard: a stale or duplicate version is ignored, never
+      // re-published (a rolled-back delivery must never go backwards).
+      val version = doc?.version
+      if (version != null) {
+        val last = entry.lastVersion
+        if (last != null && version <= last) return
+        entry.lastVersion = version
+      }
+      // Duplicate-content guard: an identical re-delivery (a benign
+      // metadata-only refresh) is never re-published — this is what stops a
+      // publish-react loop from becoming an infinite one.
+      if (entry.hasPublished && doc == entry.lastPublished) return
+
+      entry.hasPublished = true
+      entry.lastPublished = doc
+
+      // The card pipeline alternates: emitPlay() refuses a new card while
+      // the engine is RESOLVING, and cardLog is append-only within a round,
+      // so ONE delivery (a late subscriber, or a reconnect that missed
+      // several) can legitimately carry MULTIPLE completed-but-not-yet-
+      // locally-resolved tricks. Catching up on N of them takes N alternating
+      // replay/resolve steps, each individually idempotent and registry-
+      // gated, stopping the instant a full pass advances nothing. 13 is the
+      // most tricks one round can hold; +2 bounds a final no-op pass.
+      val cards = doc?.cardLog?.size ?: 0
+      val bound = if (cards in 1..80) cards + 2 else 14
+      var card: ApplyOutcome = ApplyOutcome.notApplied(NO_NEW_CARDS)
+      for (pass in 0 until bound) {
+        val countBefore = lastAppliedCardCount(entry.matchId)
+        val trickBefore = lastResolvedTrickNo(entry.matchId)
+        card = applyRemoteCard(entry.matchId, doc, entry.localSeatId)
+        val trick = applyRemoteTrick(entry.matchId, doc)
+        // The ONLY stop condition: a full pass advanced neither the replayed
+        // count nor a resolved trick. A card ENGINE_REJECTED at a trick
+        // boundary is the ordinary mid-catch-up state (the engine is
+        // RESOLVING and refuses a new card until the trick is collected) —
+        // the resolve in THIS same pass is what unblocks the next one, so a
+        // desync here must NOT break the loop. A real desync stalls both
+        // counters and this same check catches it on the very next pass.
+        if (
+          lastAppliedCardCount(entry.matchId) == countBefore &&
+          lastResolvedTrickNo(entry.matchId) == trickBefore &&
+          !trick.applied
+        ) break
+      }
+
+      val bid = applyRemoteBid(entry.matchId, doc)
+      val action = applyRemoteBiddingAction(entry.matchId, doc)
+      entry.listeners.toList() to MatchSnapshot(doc, null, bid, action, card)
     }
-    // Duplicate-content guard: an identical re-delivery (a benign
-    // metadata-only refresh) is never re-published — this is what stops a
-    // publish-react loop from becoming an infinite one.
-    if (entry.hasPublished && doc == entry.lastPublished) return
-
-    entry.hasPublished = true
-    entry.lastPublished = doc
-
-    // The card pipeline alternates: emitPlay() refuses a new card while
-    // the engine is RESOLVING, and cardLog is append-only within a round,
-    // so ONE delivery (a late subscriber, or a reconnect that missed
-    // several) can legitimately carry MULTIPLE completed-but-not-yet-
-    // locally-resolved tricks. Catching up on N of them takes N alternating
-    // replay/resolve steps, each individually idempotent and registry-
-    // gated, stopping the instant a full pass advances nothing. 13 is the
-    // most tricks one round can hold; +2 bounds a final no-op pass.
-    val cards = doc?.cardLog?.size ?: 0
-    val bound = if (cards in 1..80) cards + 2 else 14
-    var card: ApplyOutcome = ApplyOutcome.notApplied(NO_NEW_CARDS)
-    for (pass in 0 until bound) {
-      val countBefore = lastAppliedCardCount(entry.matchId)
-      val trickBefore = lastResolvedTrickNo(entry.matchId)
-      card = applyRemoteCard(entry.matchId, doc, entry.localSeatId)
-      val trick = applyRemoteTrick(entry.matchId, doc)
-      // The ONLY stop condition: a full pass advanced neither the replayed
-      // count nor a resolved trick. A card ENGINE_REJECTED at a trick
-      // boundary is the ordinary mid-catch-up state (the engine is
-      // RESOLVING and refuses a new card until the trick is collected) —
-      // the resolve in THIS same pass is what unblocks the next one, so a
-      // desync here must NOT break the loop. A real desync stalls both
-      // counters and this same check catches it on the very next pass.
-      if (
-        lastAppliedCardCount(entry.matchId) == countBefore &&
-        lastResolvedTrickNo(entry.matchId) == trickBefore &&
-        !trick.applied
-      ) break
-    }
-
-    val bid = applyRemoteBid(entry.matchId, doc)
-    val action = applyRemoteBiddingAction(entry.matchId, doc)
 
     // The document became engine state BEFORE any listener saw it, so a
     // listener always observes engines consistent with the snapshot it was
     // handed. Each interpreter is independently version-gated; a phase the
     // local engines haven't reached yet is left untouched by that gate.
-    val snapshot = MatchSnapshot(doc, null, bid, action, card)
-    entry.listeners.toList().forEach { safeInvoke(it) { l -> l.onSnapshot(snapshot) } }
+    listeners.forEach { safeInvoke(it) { l -> l.onSnapshot(snapshot) } }
   }
 
   private fun onError(entry: Subscription, err: FirestoreError) {
     // Fail-open: the last known good data (if any) is delivered ALONGSIDE
     // the error, never replaced by it — the local game keeps what it has.
-    val delivered = if (entry.hasPublished) entry.lastPublished else null
-    entry.listeners.toList().forEach {
+    val (delivered, listeners) = synchronized(lock) {
+      (if (entry.hasPublished) entry.lastPublished else null) to entry.listeners.toList()
+    }
+    listeners.forEach {
       safeInvoke(it) { l -> l.onSnapshot(MatchSnapshot(delivered, err)) }
     }
     when (classify(err)) {
       ErrorClass.RETRYABLE -> scheduleReconnect(entry)
-      else -> entry.terminalError = err
+      else -> synchronized(lock) { entry.terminalError = err }
     }
   }
 
@@ -558,12 +616,25 @@ class MatchAdapter(
    *  snapshot succeeds again. Never resubscribes a matchId nobody is
    *  listening to anymore. */
   private fun scheduleReconnect(entry: Subscription) {
-    if (entry.pendingReconnect != null) return
-    if (entry.listeners.isEmpty()) return
-    val delay = minOf(RECONNECT_BASE_MS shl entry.reconnectAttempt, RECONNECT_MAX_MS)
-    entry.reconnectAttempt += 1
-    entry.pendingReconnect = scheduler.schedule(delay.toLong()) {
-      entry.pendingReconnect = null
+    synchronized(lock) {
+      if (entry.reconnectPending) return
+      if (entry.listeners.isEmpty()) return
+      val delay = minOf(RECONNECT_BASE_MS shl entry.reconnectAttempt, RECONNECT_MAX_MS)
+      entry.reconnectAttempt += 1
+      entry.reconnectPending = true
+      entry.reconnectTask = scheduler.schedule(delay.toLong()) { runScheduledReconnect(entry) }
+    }
+  }
+
+  /** The backoff tick itself: free the pending slot (so the NEXT failure can
+   *  queue again) and re-attach the one real listener while no teardown can
+   *  cut the swap in half. Runs on whatever thread [scheduler] chose — for
+   *  the production coroutine scheduler that is a shared dispatcher pool,
+   *  which is the whole reason [lock] is taken here. */
+  private fun runScheduledReconnect(entry: Subscription) {
+    synchronized(lock) {
+      entry.reconnectPending = false
+      entry.reconnectTask = null
       if (entry.listeners.isNotEmpty()) {
         entry.registration?.cancel()
         attach(entry)
@@ -572,19 +643,25 @@ class MatchAdapter(
   }
 
   private fun close(entry: Subscription) {
-    entry.pendingReconnect?.cancel()
-    entry.pendingReconnect = null
-    entry.registration?.cancel()
-    entry.registration = null
-    subscriptions.remove(entry.matchId)
-    // DELIBERATELY does NOT call resetSyncState(matchId). The per-log count
-    // registries stay put so a same-session resubscribe continues from the
-    // last applied index, instead of re-replaying a log the engines already
-    // absorbed (which the echo guards would correctly flag as a desync). A
-    // real reload constructs a fresh MatchAdapter alongside fresh engines —
-    // "a real page load simply starts with a fresh, empty registry already"
-    // (design-ui/match/index.html:922). resetSyncState() stays exported for
-    // that boot path and for diagnostics.
+    // Under [lock] so a reconnect firing on the scheduler's thread cannot
+    // re-attach AFTER — or into the middle of — this teardown, leaving a live
+    // registration behind on a matchId nobody listens to anymore.
+    synchronized(lock) {
+      entry.reconnectTask?.cancel()
+      entry.reconnectTask = null
+      entry.reconnectPending = false
+      entry.registration?.cancel()
+      entry.registration = null
+      subscriptions.remove(entry.matchId)
+      // DELIBERATELY does NOT call resetSyncState(matchId). The per-log count
+      // registries stay put so a same-session resubscribe continues from the
+      // last applied index, instead of re-replaying a log the engines already
+      // absorbed (which the echo guards would correctly flag as a desync). A
+      // real reload constructs a fresh MatchAdapter alongside fresh engines —
+      // "a real page load simply starts with a fresh, empty registry already"
+      // (design-ui/match/index.html:922). resetSyncState() stays exported for
+      // that boot path and for diagnostics.
+    }
   }
 
   private inline fun <T> safeInvoke(target: T, block: (T) -> Unit) {
