@@ -16,11 +16,12 @@ plugins {
 @Suppress("UnstableApiUsage")
 android {
   namespace = "com.estemshan.services"
-  compileSdk = 34
+  compileSdk = 36
+  buildToolsVersion = "35.0.0"
 
   defaultConfig {
     minSdk = 26
-    targetSdk = 34
+    targetSdk = 36
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
@@ -58,6 +59,7 @@ dependencies {
   // plugin — options are built in code).
   implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
   implementation("com.google.firebase:firebase-firestore-ktx")
+  implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 
   testImplementation("junit:junit:4.13.2")
