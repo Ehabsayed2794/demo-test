@@ -40,7 +40,7 @@ class RoomService(
    * Firestore auto-ID so creation never fails. readyPlayers starts empty
    * — creating a room does not imply being ready.
    */
-  suspend fun createRoom(playerId: String, roomName: String?): String {
+  override suspend fun createRoom(playerId: String, roomName: String?): String {
     require(playerId.isNotEmpty()) { "createRoom: playerId is required." }
     return tryCreateRoomWithCode(playerId, roomName, ROOM_CODE_MAX_ATTEMPTS)
   }
@@ -81,7 +81,7 @@ class RoomService(
    * transaction — the guard against two joins racing for the last slot.
    * Idempotent: joining a room you are already in is a no-op, not an error.
    */
-  suspend fun joinRoom(roomId: String, playerId: String): RoomDoc {
+  override suspend fun joinRoom(roomId: String, playerId: String): RoomDoc {
     require(roomId.isNotEmpty() && playerId.isNotEmpty()) {
       "joinRoom: roomId and playerId are both required."
     }
@@ -121,7 +121,7 @@ class RoomService(
    * (inline here — not via the unimplemented transferHost()). Idempotent:
    * leaving a room you are not in, or that no longer exists, is a no-op.
    */
-  suspend fun leaveRoom(roomId: String, playerId: String): RoomDoc? {
+  override suspend fun leaveRoom(roomId: String, playerId: String): RoomDoc? {
     require(roomId.isNotEmpty() && playerId.isNotEmpty()) {
       "leaveRoom: roomId and playerId are both required."
     }

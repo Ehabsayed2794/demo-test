@@ -7,6 +7,7 @@ import com.estemshan.services.model.ServiceException
 import com.estemshan.services.model.normalizeRoomCode
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -37,6 +38,7 @@ import java.util.concurrent.atomic.AtomicInteger
  * database), and driving a real RoomService needs one; the honest thing to
  * substitute is this interface.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class LobbyViewModelTest {
 
   private val me = "uid-me"
