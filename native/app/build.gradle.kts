@@ -157,6 +157,11 @@ dependencies {
   // thin UI shell: all rules live in :engine and are unit-tested there.
   implementation(project(":engine"))
 
+  // Online multiplayer (S14): MatchService/RoomService/MatchAdapter over
+  // Firestore. Greenfield until now — an issue here could not break the app
+  // build because nothing wired it in.
+  implementation(project(":services"))
+
   testImplementation("junit:junit:4.13.2")
   testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
 }

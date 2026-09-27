@@ -75,4 +75,8 @@ class AuthRepository(private val backend: AuthBackend) {
     val uid = backend.currentUid()
     _state.value = if (uid != null) AuthUiState.SignedIn(uid) else AuthUiState.SignedOut
   }
+
+  /** The signed-in user, or null when signed out. The source of truth
+   *  [checkSession] reads, and the services layer's view of the session. */
+  fun currentUid(): String? = backend.currentUid()
 }
