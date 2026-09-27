@@ -27,13 +27,19 @@ import org.junit.Test
 class CoroutineMatchSchedulerTest {
 
   /**
-   * The scheduler pinned to the test's virtual clock. [backgroundScope] dies
-   * with the test, and [StandardTestDispatcher] built on [testScheduler] is
-   * what makes the launch and its `delay` advance only when the test moves
-   * them — no thread, no wall clock.
+   * The scheduler pinned to the test's virtual clock. [StandardTestDispatcher]
+   * built on [testScheduler] is what makes the launch and its `delay` advance
+   * only when the test moves them — no thread, no wall clock.
+   *
+   * The scope is [this] (the [TestScope] itself), NOT [backgroundScope]:
+   * [advanceTimeBy] and [advanceUntilIdle] drive only the [TestScope]'s own
+   * clock, so a coroutine launched into [backgroundScope] is never advanced by
+   * them. Building the scheduler over [backgroundScope] was the first CI
+   * failure — every test that asserted a fire after [advanceTimeBy] failed
+   * while the cancel-only tests passed, because the action never ran at all.
    */
   private fun TestScope.scheduler(): MatchScheduler =
-    CoroutineMatchScheduler(backgroundScope, StandardTestDispatcher(testScheduler))
+    CoroutineMatchScheduler(this, StandardTestDispatcher(testScheduler))
 
   @Test
   fun theActionStaysPendingUntilItsDelayElapsesExactly() = runTest {
