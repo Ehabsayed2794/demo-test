@@ -40,11 +40,15 @@ import org.junit.Test
  * legality a tap clears), and [QuickMatchViewModel.attachBots] arms a driver
  * that closes an auction and plays a round with zero human input.
  *
- * What the tests do NOT do is script a hand. Quick-match deals unseeded (the
- * S13 fix), so every assertion is an invariant over whatever the deal happened
- * to be — an auction closes, 13 tricks are accounted for, totals equal the
- * deltas — which is the stronger claim anyway: it must hold for every deal,
- * not just a cherry-picked one.
+ * What the tests do NOT do is script a hand. The deal is seeded ([MATCH_SEED])
+ * so a run reproduces: an unseeded deal made
+ * [theStandingsReflectTheRoundThatWasActuallyPlayed] flap, because one of its
+ * assertions was a property that does NOT hold for every deal (a Sa'ayda round
+ * scores all-zero legitimately — see that test). The assertions that ARE
+ * invariants — an auction closes, 13 tricks are accounted for, the
+ * forbidden-13 rule holds — stay assertions rather than golden values, so a
+ * deal that breaks any of them still fails loudly instead of differing from an
+ * expected snapshot.
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class QuickMatchBotIntegrationTest {
@@ -64,6 +68,20 @@ class QuickMatchBotIntegrationTest {
       )
     }.toTypedArray(),
   )
+
+  companion object {
+    /**
+     * The deal every test in this class plays. BotVsBotSmokeTest deals
+     * `seed * 1_000_000 + round`, so this is its round-1 table reached through
+     * QuickMatchViewModel's `matchSeed + round` derivation (hence the offset);
+     * that test has driven these 52 cards through bot bidding and 13 tricks in
+     * CI repeatedly. Quick-match always bids a NORMAL round where the smoke
+     * test bid a fast one, so the cards are proven and the flow through them is
+     * what this class exercises. Seeded so a flake reproduces instead of
+     * re-rolling a fresh deal on the next run.
+     */
+    private const val MATCH_SEED = 42_000_000L
+  }
 
   @Before
   fun setUp() {
@@ -87,7 +105,7 @@ class QuickMatchBotIntegrationTest {
    */
   private fun TestScope.setUpMatch(roster: BotRoster) {
     Dispatchers.setMain(StandardTestDispatcher(testScheduler))
-    qvm.startMatch(roster)
+    qvm.startMatch(roster, matchSeed = MATCH_SEED)
     bvm.startNormalRound(qvm.round.value, qvm.dealer.value, qvm.seats, qvm.biddingMultiplier.value)
     qvm.attachBots(bvm, tvm)
   }
@@ -136,10 +154,20 @@ class QuickMatchBotIntegrationTest {
     val totals = qvm.totals.value
     assertEquals("every seat has a total", seats.toSet(), totals.keys)
     // The engine's forbidden-13 invariant, at match scale through the real VMs.
+    // Quick-match always bids a normal round (never a fast one), so the only
+    // path that bypasses the rule — a Super Call locked before the other seats
+    // estimate — is unreachable, and the engine rejects the last final estimate
+    // at exactly 13. The sum is provably never 13 here, not merely unlikely.
     assertFalse("the round totalled exactly 13 bids", cfg.estimates.values.sum() == 13)
-    // A real round of Estemshan is not all-zeros: somebody scored.
-    assertTrue("nobody scored — the round was scored as if nothing happened",
-      totals.values.sum() != 0 || cfg.estimates.values.all { it == 0 })
+    // An all-zero round is legitimate, not a scoring skip: Sa'ayda (every seat
+    // missed) zeroes the round for everyone, and the standings badge those
+    // seats — the outcome QuickMatchViewModelTest.saaydaZeroesAndArmsNext pins.
+    // Asserting the totals alone flaked on any deal where all four bots missed;
+    // the badge is what separates a real rules outcome from scoring that never
+    // ran.
+    val saayda = qvm.standings.value?.rows?.any { it.saaydaBadge } == true
+    assertTrue("all-zero totals without a Sa'ayda badge or an all-dash round — scoring never ran",
+      totals.values.sum() != 0 || cfg.estimates.values.all { it == 0 } || saayda)
   }
 
   // ==========================================================================
