@@ -47,7 +47,7 @@ class RoomViewModel(
    * the screen calls this on entering composition, and a recomposition must
    * not reload. The poll then calls [refresh] on its own cadence.
    */
-  fun open(code: String, playerId: String) {
+  fun open(code: String) {
     if (_state.value.roomCode == code) return
     _state.value = RoomUiState(roomCode = code)
     refresh()

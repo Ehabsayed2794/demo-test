@@ -52,7 +52,7 @@ class RoomViewModelTest {
     rooms = FakeRooms()
     rooms.preseat(code, players)
     vm = RoomViewModel(rooms)
-    vm.open(code, me)
+    vm.open(code)
   }
 
   @Test
@@ -103,7 +103,12 @@ class RoomViewModelTest {
 
       assertTrue("my own badge moved", vm.state.value.room!!.isReady(me))
       assertNull("no match started — only the creator may", vm.state.value.room!!.matchId)
-      assertEquals("no matchStart outcome attached", 0, rooms.matchStarts.size)
+      // The service is not silent on this path: maybeStartMatch runs on every
+      // return path a setReady takes, so an outcome IS attached — the claim is
+      // what it concludes. A non-host's toggle gets NOT_ALL_READY, or in a
+      // room where every seat is ready, an outcome that still did not start.
+      assertEquals("an outcome was attached", 1, rooms.matchStarts.size)
+      assertFalse("that outcome started nothing", rooms.matchStarts.last().started)
     } finally {
       Dispatchers.resetMain()
     }

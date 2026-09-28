@@ -148,7 +148,7 @@ fun EstemshanNav() {
         // poll then keys off roomCode in RoomScreen, so it lives and dies with
         // the screen rather than with this destination.
         LaunchedEffect(roomCode, uid) {
-          if (roomCode != null && uid != null) roomVm.open(roomCode, uid)
+          if (roomCode != null && uid != null) roomVm.open(roomCode)
         }
         EstemshanTheme {
           RoomScreen(
