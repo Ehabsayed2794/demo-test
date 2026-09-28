@@ -304,5 +304,20 @@ class LobbyViewModelTest {
       rooms[key] = left
       return left
     }
+
+    // The Room screen's two — unused by these lobby tests, but the seam is
+    // shared, so they stand here mirroring RoomService rather than throwing.
+
+    override suspend fun setReady(roomId: String, playerId: String, ready: Boolean): RoomDoc {
+      val key = normalizeRoomCode(roomId)
+      val room = rooms[key] ?: throw ServiceException(Reasons.ROOM_NOT_FOUND, "Room not found.")
+      if (room.isReady(playerId) == ready) return room // idempotent no-op
+      val next = if (ready) room.copy(readyPlayers = room.readyPlayers + playerId)
+      else room.copy(readyPlayers = room.readyPlayers - playerId)
+      rooms[key] = next
+      return next
+    }
+
+    override suspend fun loadRoom(roomId: String): RoomDoc? = rooms[normalizeRoomCode(roomId)]
   }
 }
