@@ -11,9 +11,10 @@ import com.estemshan.services.model.ServiceException
  *
  * Deliberately NARROWER than [RoomService]: the lobby creates, joins, and
  * leaves rooms. Ready-up, participant display, and host-start belong to the
- * Room screen (S16), so [RoomService.setReady] — and the match start it
- * triggers — stay off this seam until a screen exists to call them. An
- * interface with an unreachable member is dead surface.
+ * Room screen (S16), so those join the seam when that screen arrives —
+ * [RoomService.setReady] is here now because the Room screen is the one
+ * surface that calls it. An interface with an unreachable member is dead
+ * surface.
  *
  * Layering (docs/specs/02-engine-api.md §6):
  *   UI → RoomPort → RoomService → Firestore
@@ -45,4 +46,19 @@ interface RoomPort {
    * remaining state, or null when your departure closed it.
    */
   suspend fun leaveRoom(roomId: String, playerId: String): RoomDoc?
+
+  /**
+   * Sets (or clears) your own ready state in [roomId]. Requires membership;
+   * idempotent — the same value twice performs no second write. The returned
+   * room carries [RoomDoc.matchStart]: when this write made every seat ready,
+   * [RoomService]'s own maybeStartMatch() attempted the match start, and its
+   * outcome is attached there. Branch on [ServiceException.reason], never the
+   * message. setReady itself never rejects because a match-start failed —
+   * the ready toggle already succeeded independently of it.
+   */
+  suspend fun setReady(roomId: String, playerId: String, ready: Boolean): RoomDoc
+
+  /** Read-only fetch of the room at [roomId]; null (not an error) when it is
+   *  gone. The Room screen polls this to see seats fill and the match land. */
+  suspend fun loadRoom(roomId: String): RoomDoc?
 }
