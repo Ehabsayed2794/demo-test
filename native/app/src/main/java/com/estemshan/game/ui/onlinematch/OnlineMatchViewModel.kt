@@ -6,18 +6,23 @@ import com.estemshan.engine.BiddingIntent
 import com.estemshan.engine.BiddingOutcome
 import com.estemshan.engine.Card
 import com.estemshan.engine.DEFAULT_SEATS
+import com.estemshan.engine.EmitResult
 import com.estemshan.engine.GameSession
 import com.estemshan.engine.HandAuthority
 import com.estemshan.engine.RoundCfg
+import com.estemshan.engine.RoundResult
 import com.estemshan.engine.RoundScoreInput
 import com.estemshan.engine.RoundScoreResult
+import com.estemshan.engine.RoundState
 import com.estemshan.engine.SessionPlayer
 import com.estemshan.engine.SessionRoom
 import com.estemshan.engine.TablePhase
+import com.estemshan.engine.TableState
 import com.estemshan.engine.accumulateMatchScores
 import com.estemshan.engine.calculateRoundScore
 import com.estemshan.engine.computeRoundExtension
 import com.estemshan.engine.computeWinner
+import com.estemshan.engine.emit
 import com.estemshan.engine.forbiddenEstimateFor
 import com.estemshan.engine.initFastRound
 import com.estemshan.engine.initNormalRound
@@ -36,7 +41,6 @@ import com.estemshan.services.ROUND_CARD_TOTAL
 import com.estemshan.services.model.BiddingActionInput
 import com.estemshan.services.model.BiddingLogEntry
 import com.estemshan.services.model.MatchDoc
-import com.estemshan.services.model.RoundResultEntry
 import com.estemshan.services.session.MatchStore
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineDispatcher
@@ -484,26 +488,95 @@ class OnlineMatchViewModel(
   }
 
   /**
-   * Replay the auction. Both interpreters are re-run deliberately: the
-   * adapter's own onSnapshot pass has already applied them when the engines
-   * existed, and this call is the no-op then; on the cold-start delivery it
-   * is the only call that applies. [GameSession.completeBidding] is the
-   * single funnel that commits the outcome into the round — the adapters
-   * never call it, so without this the trick-play config has no estimates,
-   * dash callers or leader.
+   * Replay the auction: the two interpreters, then the cold-start seed.
+   *
+   * Both interpreters are re-run deliberately: the adapter's own onSnapshot
+   * pass has already applied them when the engines existed, and this call
+   * is the no-op then; on the cold-start delivery it is the only call that
+   * applies. [GameSession.completeBidding] is the single funnel that
+   * commits the outcome into the round — the adapters never call it, so
+   * without this the trick-play config has no estimates, dash callers or
+   * leader.
+   *
+   * [seedStoredEstimates] runs LAST for a reason: the engine has to reach
+   * the ESTIMATES phase before any stored estimate can be re-emitted into
+   * it, and only the biddingLog replay above gets it there. It closes an
+   * auction this client arrived after — the one engine write beyond
+   * [initAuction], and the reason a cold start resumes trick play instead
+   * of stalling in an auction the document says is over.
    */
   private fun replayBidding(snapshot: MatchSnapshot, doc: MatchDoc) {
     val id = matchId ?: return
     adapter.applyRemoteBid(id, doc)
     val reDrive = adapter.applyRemoteBiddingAction(id, doc)
-    // Either pass may be the one that closed the auction; the other then
-    // reports a duplicate with no outcome attached.
+    seedStoredEstimates(doc)
+    // Either interpreter may be the one that closed the auction; the other
+    // then reports a duplicate with no outcome attached. A seed that
+    // already closed it contributes no outcome here either, so the funnel
+    // is still hit exactly once per round.
     val outcome = snapshot.biddingActionSync?.outcome
       ?: reDrive.outcome
       ?: snapshot.bidSync?.outcome
     if (outcome != null) {
       lastOutcome = outcome
       session.completeBidding(outcome)
+    }
+  }
+
+  /**
+   * The cold-start auction reconstruction, and the one place this class
+   * drives [emit] itself. [MatchAdapter.applyRemoteBid] applies exactly
+   * ONE bid per delivery — the document's `lastBidSeat` — and is version-
+   * gated, so every estimate behind the last is behind its registry's gate
+   * and unreachable by delivery. A client that arrives after the auction
+   * closed would therefore sit in an ESTIMATES phase the document says is
+   * done, with no outcome and so no table.
+   *
+   * The document's `bids` map holds one authoritative estimate per seat,
+   * and the engine's estimate order is fully determined (each seat
+   * estimates exactly once, walking from the phase's first seat), so the
+   * seats the document has that the local engine does not are re-emitted
+   * through the REAL [emit], in the engine's own turn order. This is the
+   * "load bidding state" half of the JS reference's bootstrapGameSession()
+   * — that function's own contract leaves `bidsBySeat` on its returned
+   * snapshot for exactly this consumer — and it is a pure function of the
+   * authoritative document, never a gameplay decision of ours.
+   *
+   * The completing emit carries the outcome itself, so the seed closes the
+   * auction the same way a live delivery would. A rejection stops it cold:
+   * a stored estimate that does not replay legally means the reconstructed
+   * state disagrees with the document, and inventing state is worse than
+   * waiting for the next delivery. A live delivery never reaches the loop
+   * — the adapter's own pre-pass has already applied the one new bid, so
+   * the seat the engine is waiting on has nothing stored the engine lacks.
+   */
+  private fun seedStoredEstimates(doc: MatchDoc) {
+    var state = session.getBiddingState() ?: return
+    if (state.subPhase != com.estemshan.engine.BiddingPhase.ESTIMATES) return
+    val stored = doc.bids.mapNotNull { (seat, value) -> value?.let { seat to it } }.toMap()
+    if (stored.isEmpty()) return
+
+    // The engine stops needing the seed once its own bids catch up; the
+    // guard bounds a walk that the completion exit otherwise ends early.
+    var guard = 0
+    while (guard <= state.seats.size) {
+      guard++
+      val seat = state.waitingFor ?: return
+      val value = stored[seat] ?: return
+      when (val result = emit(state, BiddingIntent.FinalEstimate(seat, value))) {
+        is EmitResult.Rejected -> return
+        is EmitResult.GeneralPass -> return
+        is EmitResult.Applied -> {
+          session.updateBiddingState(result.state)
+          state = result.state
+        }
+        is EmitResult.Completed -> {
+          session.updateBiddingState(result.state)
+          lastOutcome = result.outcome
+          session.completeBidding(result.outcome)
+          return
+        }
+      }
     }
   }
 
@@ -651,9 +724,9 @@ class OnlineMatchViewModel(
     table: TableState,
     result: RoundScoreResult,
     extensionReason: com.estemshan.engine.ExtensionReason?,
-  ) = RoundResultEntry(
+  ) = RoundResult(
     round = cfg.round,
-    trump = cfg.trump.name,
+    trump = cfg.trump,
     callerId = cfg.callerId,
     tricksWon = table.tricksWon,
     estimates = cfg.estimates,
