@@ -19,7 +19,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -27,10 +26,11 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import com.estemshan.game.R
 import com.estemshan.game.data.AuthUiState
 import com.estemshan.game.ui.chooselevel.ChooseLevelScreen
 import com.estemshan.game.ui.chooselevel.ChooseLevelViewModel
+import com.estemshan.game.ui.lobby.LobbyScreen
+import com.estemshan.game.ui.lobby.LobbyViewModel
 import com.estemshan.game.ui.login.LoginViewModel
 import com.estemshan.game.ui.profile.ProfileScreen
 import com.estemshan.game.ui.quickmatch.QUICKMATCH_GRAPH
@@ -91,20 +91,31 @@ fun EstemshanNav() {
         )
       }
       composable(Routes.LOBBY) {
-        LobbyPlaceholder(
-          state = authState,
-          onSignOut = {
-            vm.signOut()
-            nav.navigate(Routes.LOGIN) { popUpTo(Routes.LOBBY) { inclusive = true } }
-          },
-          onProfile = { nav.navigate(Routes.PROFILE) },
-          onSettings = { nav.navigate(Routes.SETTINGS) },
-          onQuickMatch = {
-            qvm.startMatch()
-            nav.navigate(QUICKMATCH_GRAPH)
-          },
-          onPlayVsAi = { nav.navigate(Routes.CHOOSE_LEVEL) },
-        )
+        val lobbyVm: LobbyViewModel = viewModel()
+        val lobbyState by lobbyVm.state.collectAsStateWithLifecycle()
+        val uid = (authState as? AuthUiState.SignedIn)?.uid
+        EstemshanTheme {
+          LobbyScreen(
+            state = lobbyState,
+            uid = uid,
+            onCreateRoom = { uid?.let { lobbyVm.createRoom(it) } },
+            onJoinRoom = { code -> uid?.let { lobbyVm.joinRoom(it, code) } },
+            onLeaveRoom = { uid?.let { lobbyVm.leaveRoom(it) } },
+            onDismissCreatedCode = lobbyVm::dismissCreatedCode,
+            onClearJoinError = lobbyVm::clearJoinError,
+            onSignOut = {
+              vm.signOut()
+              nav.navigate(Routes.LOGIN) { popUpTo(Routes.LOBBY) { inclusive = true } }
+            },
+            onProfile = { nav.navigate(Routes.PROFILE) },
+            onSettings = { nav.navigate(Routes.SETTINGS) },
+            onQuickMatch = {
+              qvm.startMatch()
+              nav.navigate(QUICKMATCH_GRAPH)
+            },
+            onPlayVsAi = { nav.navigate(Routes.CHOOSE_LEVEL) },
+          )
+        }
       }
       composable(Routes.CHOOSE_LEVEL) {
         val chooseVm: ChooseLevelViewModel = viewModel()
@@ -194,40 +205,5 @@ private fun LoginScreen(
       is AuthUiState.Error -> Text("Error: ${state.message}")
       is AuthUiState.SignedOut -> Unit
     }
-  }
-}
-
-@Composable
-private fun LobbyPlaceholder(
-  state: AuthUiState,
-  onSignOut: () -> Unit,
-  onProfile: () -> Unit,
-  onSettings: () -> Unit,
-  onQuickMatch: () -> Unit,
-  onPlayVsAi: () -> Unit,
-) {
-  Column(
-    modifier = Modifier.fillMaxSize().padding(24.dp),
-    verticalArrangement = Arrangement.Center,
-    horizontalAlignment = Alignment.CenterHorizontally,
-  ) {
-    Text("Lobby", style = MaterialTheme.typography.headlineMedium)
-    Spacer(Modifier.height(8.dp))
-    Text(
-      when (state) {
-        is AuthUiState.SignedIn -> "uid: ${state.uid}"
-        else -> "Not signed in (room list lands in Phase 4)"
-      },
-    )
-    Spacer(Modifier.height(16.dp))
-    Button(onClick = onQuickMatch) { Text("Quick Match (offline)") }
-    Spacer(Modifier.height(8.dp))
-    Button(onClick = onPlayVsAi) { Text(stringResource(R.string.lobby_play_vs_ai)) }
-    Spacer(Modifier.height(8.dp))
-    Button(onClick = onProfile) { Text("Profile") }
-    Spacer(Modifier.height(8.dp))
-    Button(onClick = onSettings) { Text("Settings") }
-    Spacer(Modifier.height(8.dp))
-    Button(onClick = onSignOut) { Text("Sign out") }
   }
 }
