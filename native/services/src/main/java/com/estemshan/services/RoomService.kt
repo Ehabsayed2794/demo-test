@@ -157,7 +157,7 @@ class RoomService(
    * to the returned room as matchStart — setReady itself never rejects
    * because a match-start failed (the ready toggle already succeeded).
    */
-  suspend fun setReady(roomId: String, playerId: String, ready: Boolean): RoomDoc {
+  override suspend fun setReady(roomId: String, playerId: String, ready: Boolean): RoomDoc {
     require(roomId.isNotEmpty() && playerId.isNotEmpty()) {
       "setReady: roomId and playerId are both required."
     }
@@ -215,7 +215,7 @@ class RoomService(
   }
 
   /** Read-only fetch; null (not an error) when the room is gone. */
-  suspend fun loadRoom(roomId: String): RoomDoc? {
+  override suspend fun loadRoom(roomId: String): RoomDoc? {
     require(roomId.isNotEmpty()) { "loadRoom: roomId is required." }
     val snap = rooms.document(normalizeRoomCode(roomId)).getBlocking()
     return if (snap.exists()) parseRoom(snap) else null

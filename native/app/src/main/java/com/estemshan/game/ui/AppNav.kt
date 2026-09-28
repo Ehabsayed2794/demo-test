@@ -23,9 +23,11 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.estemshan.game.data.AuthUiState
 import com.estemshan.game.ui.chooselevel.ChooseLevelScreen
 import com.estemshan.game.ui.chooselevel.ChooseLevelViewModel
@@ -36,6 +38,8 @@ import com.estemshan.game.ui.profile.ProfileScreen
 import com.estemshan.game.ui.quickmatch.QUICKMATCH_GRAPH
 import com.estemshan.game.ui.quickmatch.QuickMatchViewModel
 import com.estemshan.game.ui.quickmatch.quickMatchGraph
+import com.estemshan.game.ui.room.RoomScreen
+import com.estemshan.game.ui.room.RoomViewModel
 import com.estemshan.game.ui.settings.SettingsRoute
 import com.estemshan.game.ui.splash.SplashScreen
 import com.estemshan.game.ui.splash.SplashViewModel
@@ -44,8 +48,8 @@ import com.estemshan.game.ui.standings.buildStandings
 import com.estemshan.game.ui.theme.EstemshanTheme
 
 /**
- * App shell: Splash gate → Login → Lobby → Profile / Settings. The
- * remaining spec-01 routes (Room, Bidding, Table) land here as their
+ * App shell: Splash gate → Login → Lobby → Room → Profile / Settings. The
+ * remaining spec-01 routes (Bidding, Table) land here as their
  * screens are built; Standings is registered but unlinked until the
  * Table screen feeds it real results — no dead buttons.
  */
@@ -94,6 +98,19 @@ fun EstemshanNav() {
         val lobbyVm: LobbyViewModel = viewModel()
         val lobbyState by lobbyVm.state.collectAsStateWithLifecycle()
         val uid = (authState as? AuthUiState.SignedIn)?.uid
+        // A create or join is the lobby's one trigger to open the room
+        // screen. Navigating from the state (not the callback) keeps a single
+        // owner for "which room am I in": the view model. The two keys matter:
+        // a CREATE sets roomCode AND createdCode, and the created-code dialog
+        // is the host's chance to read the code out — navigating on roomCode
+        // alone would skip it. So this fires only once createdCode is clear,
+        // which a join never sets and a create clears on the dialog's Done.
+        LaunchedEffect(lobbyState.roomCode, lobbyState.createdCode) {
+          val code = lobbyState.roomCode
+          if (code != null && lobbyState.createdCode == null) {
+            nav.navigate(Routes.roomPath(code))
+          }
+        }
         EstemshanTheme {
           LobbyScreen(
             state = lobbyState,
@@ -114,6 +131,35 @@ fun EstemshanNav() {
               nav.navigate(QUICKMATCH_GRAPH)
             },
             onPlayVsAi = { nav.navigate(Routes.CHOOSE_LEVEL) },
+          )
+        }
+      }
+      composable(
+        route = Routes.ROOM_PATH,
+        arguments = listOf(navArgument(ROOM_CODE_KEY) { type = NavType.StringType }),
+      ) {
+        val roomCode = it.arguments?.getString(ROOM_CODE_KEY)
+        val roomVm: RoomViewModel = viewModel()
+        val roomState by roomVm.state.collectAsStateWithLifecycle()
+        val uid = (authState as? AuthUiState.SignedIn)?.uid
+        // The room's code arrives as a nav arg, so this is the one place that
+        // seeds the screen: open() sets roomCode, and the view model's own
+        // guard on it makes a recomposition a no-op instead of a restart. The
+        // poll then keys off roomCode in RoomScreen, so it lives and dies with
+        // the screen rather than with this destination.
+        LaunchedEffect(roomCode, uid) {
+          if (roomCode != null && uid != null) roomVm.open(roomCode)
+        }
+        EstemshanTheme {
+          RoomScreen(
+            state = roomState,
+            uid = uid,
+            onRefresh = roomVm::refresh,
+            onToggleReady = { uid?.let { roomVm.toggleReady(it) } },
+            onLeave = {
+              uid?.let { roomVm.leave(it) }
+              nav.navigate(Routes.LOBBY) { popUpTo(Routes.ROOM_PATH) { inclusive = true } }
+            },
           )
         }
       }
@@ -160,8 +206,7 @@ fun EstemshanNav() {
 }
 
 @Composable
-private fun LoginScreen(
-  state: AuthUiState,
+private fun LoginScreen(  state: AuthUiState,
   onAnonymous: () -> Unit,
   onEmail: (String, String) -> Unit,
   onEnter: () -> Unit,
@@ -207,3 +252,6 @@ private fun LoginScreen(
     }
   }
 }
+
+/** The nav-arg key [Routes.ROOM_PATH] declares; the lobby passes the code here. */
+private const val ROOM_CODE_KEY = "roomCode"

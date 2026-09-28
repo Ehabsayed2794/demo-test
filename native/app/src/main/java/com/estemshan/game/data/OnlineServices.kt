@@ -1,10 +1,17 @@
 package com.estemshan.game.data
 
+import com.estemshan.engine.GameSession
 import com.estemshan.services.CoroutineMatchScheduler
+import com.estemshan.services.MatchAdapter
+import com.estemshan.services.MatchListenerFactory
 import com.estemshan.services.MatchScheduler
+import com.estemshan.services.MatchService
 import com.estemshan.services.RoomPort
 import com.estemshan.services.RoomService
 import com.estemshan.services.session.AuthPort
+import com.estemshan.services.session.GameSessionBridge
+import com.estemshan.services.session.GameSessionPort
+import com.estemshan.services.session.MatchAdapterPort
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -46,26 +53,59 @@ object OnlineServices {
   val auth: AuthPort by lazy { AuthPortAdapter(AuthRepository(FirebaseAuthBackend())) }
 
   /**
+   * The Room screen's match writer. Lazy for the same reason as [auth]:
+   * [MatchService] reads [FirebaseModule.db], and [MatchAdapter]'s listener
+   * factory closes over it too.
+   *
+   * [session] is the single [GameSession] this process mirrors an online
+   * match into, behind [GameSessionBridge]. It is constructed here even
+   * though the only method the Room screen reaches — [MatchService.startMatch]
+   * — uses just [FirebaseModule.db] and [auth], because the ctor requires the
+   * pair and S17's OnlineMatchViewModel consumes this same wiring rather than
+   * building a second graph.
+   *
+   * [adapter] gets the REAL [MatchListenerFactory.firestore], not
+   * [MatchListenerFactory.Unavailable]: Unavailable is the test default, and
+   * shipping it would make every room-started match a listener that never
+   * listens. [scheduler] is the deferred one, for the same reason as above.
+   */
+  private val session: GameSessionPort by lazy { GameSessionBridge(GameSession()) }
+
+  private val adapter: MatchAdapterPort by lazy {
+    MatchAdapter(
+      session = session,
+      listen = MatchListenerFactory.firestore(FirebaseModule.db),
+      scheduler = scheduler,
+    )
+  }
+
+  val matches: MatchService by lazy {
+    MatchService(
+      db = FirebaseModule.db,
+      auth = auth,
+      session = session,
+      adapter = adapter,
+    )
+  }
+
+  /**
    * The Real Lobby's room seam. Lazy for the same reason as [auth]: building
    * a [RoomService] reads [FirebaseModule.db], a computed getter over the
    * Firebase singleton that only [com.estemshan.game.MainActivity]
    * initializes from an Android Context.
    *
-   * [matchStarter] is the one piece this object cannot supply yet — a real
-   * one is MatchService.startMatch, which needs a wired GameSessionPort and
-   * MatchAdapterPort, and that wiring arrives with the Room screen (S16).
-   * The lobby only calls create/join/leave, so this is unreachable from the
-   * surface that consumes it; it carries the same not-implemented-yet marker
-   * RoomService's own transferHost/closeRoom do, so a caller that reaches it
-   * fails loudly instead of silently doing nothing.
+   * [matchStarter] is [MatchService.startMatch] — the atomic room↔match
+   * write [RoomService]'s own maybeStartMatch() reaches for once every seat
+   * is ready and the acting uid is the room's creator. S15 shipped a
+   * NotImplementedError here because the lobby only calls create/join/leave
+   * and could never reach it; the Room screen (S16) can, so this is now the
+   * real thing.
    */
   val rooms: RoomPort by lazy {
     RoomService(
       db = FirebaseModule.db,
       auth = auth,
-      matchStarter = {
-        throw NotImplementedError("Room match start is not wired until the Room screen (S16).")
-      },
+      matchStarter = matches::startMatch,
     )
   }
 }

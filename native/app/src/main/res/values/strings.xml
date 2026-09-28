@@ -1,12 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   Native v1's structural string resources (S12 lobby entries + S15 Real
-  Lobby). Every other screen still holds literals inline; this file is where
-  a screen's structural text lives so a values-ar/ sibling can later be
-  dropped in to translate the whole app without touching Kotlin (S41). Tier
-  and personality labels are deliberately absent here — they come from the
-  engine enums' own displayName / blurb, so a translation of the characters
-  lands with the engine, not duplicated in resources.
+  Lobby + S16 Room). Every other screen still holds literals inline; this
+  file is where a screen's structural text lives so a values-ar/ sibling
+  can later be dropped in to translate the whole app without touching
+  Kotlin (S41). Tier and personality labels are deliberately absent here —
+  they come from the engine enums' own displayName / blurb, so a
+  translation of the characters lands with the engine, not duplicated in
+  resources.
 -->
 <resources>
   <string name="choose_level_title">Choose Level</string>
@@ -60,4 +61,31 @@
   <string name="lobby_profile">Profile</string>
   <string name="lobby_settings">Settings</string>
   <string name="lobby_sign_out">Sign out</string>
+
+  <!-- S16 — the Room/waiting screen: the code to share, the roster, ready-up. -->
+  <string name="room_title">Room</string>
+  <!-- The shareable code, read aloud or copied by hand; %1$s is the code. -->
+  <string name="room_code">Room code: %1$s</string>
+  <string name="room_section_players">Players</string>
+  <!-- A seat that is ready to start. -->
+  <string name="room_ready">Ready</string>
+  <!-- A seat that has not readied up yet. -->
+  <string name="room_not_ready">Not ready</string>
+  <!-- The seat the local player occupies. -->
+  <string name="room_you">You</string>
+  <!-- The seat that owns the room and may start the match. -->
+  <string name="room_host">Host</string>
+  <!--
+    The local player's own ready toggle. For the host this IS the start
+    button: RoomService starts the match the moment every seat is ready and
+    the acting uid is the creator, so the label stays one action.
+  -->
+  <string name="room_toggle_ready">Ready up</string>
+  <string name="room_toggle_not_ready">Cancel ready</string>
+  <string name="room_waiting_hint">Waiting for everyone to be ready…</string>
+  <!-- Shown when every seat is ready and the host's start has been attempted. -->
+  <string name="room_starting">Starting the match…</string>
+  <string name="room_leave">Leave room</string>
+  <!-- The room vanished (last player out closed it) or the first load failed. -->
+  <string name="room_gone">This room is no longer available.</string>
 </resources>
