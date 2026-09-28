@@ -60,6 +60,7 @@ fun LobbyScreen(
   onClearJoinError: () -> Unit,
   onQuickMatch: () -> Unit,
   onPlayVsAi: () -> Unit,
+  onResumeMatch: () -> Unit,
   onProfile: () -> Unit,
   onSettings: () -> Unit,
   onSignOut: () -> Unit,
@@ -95,6 +96,20 @@ fun LobbyScreen(
 
     if (state.roomCode != null) {
       item { SeatedCard(state.roomCode, state.busy, onLeaveRoom) }
+    }
+
+    // The reconnect entry, with its own section: a live match is not offline
+    // play, and sitting it under "Offline" would say the opposite. First in
+    // the list because it is the thing the player came back for.
+    if (state.resumableMatchId != null) {
+      item { SectionLabel(stringResource(R.string.lobby_section_resume)) }
+      item {
+        OutlinedButton(
+          onClick = onResumeMatch,
+          modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+        ) { Text(stringResource(R.string.lobby_resume_match)) }
+      }
+      item { HintText(stringResource(R.string.lobby_resume_match_hint)) }
     }
 
     item { SectionLabel(stringResource(R.string.lobby_section_play)) }
@@ -327,6 +342,7 @@ private fun LobbyDefaultPreview() {
       onClearJoinError = {},
       onQuickMatch = {},
       onPlayVsAi = {},
+      onResumeMatch = {},
       onProfile = {},
       onSettings = {},
       onSignOut = {},
@@ -348,6 +364,7 @@ private fun LobbySeatedPreview() {
       onClearJoinError = {},
       onQuickMatch = {},
       onPlayVsAi = {},
+      onResumeMatch = {},
       onProfile = {},
       onSettings = {},
       onSignOut = {},
@@ -369,6 +386,7 @@ private fun LobbyCreatedPreview() {
       onClearJoinError = {},
       onQuickMatch = {},
       onPlayVsAi = {},
+      onResumeMatch = {},
       onProfile = {},
       onSettings = {},
       onSignOut = {},

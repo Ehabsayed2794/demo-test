@@ -34,6 +34,9 @@ import com.estemshan.game.ui.chooselevel.ChooseLevelViewModel
 import com.estemshan.game.ui.lobby.LobbyScreen
 import com.estemshan.game.ui.lobby.LobbyViewModel
 import com.estemshan.game.ui.login.LoginViewModel
+import com.estemshan.game.ui.onlinematch.ONLINE_MATCH_GRAPH
+import com.estemshan.game.ui.onlinematch.onlineMatchGraph
+import com.estemshan.game.ui.onlinematch.onlineMatchRoute
 import com.estemshan.game.ui.profile.ProfileScreen
 import com.estemshan.game.ui.quickmatch.QUICKMATCH_GRAPH
 import com.estemshan.game.ui.quickmatch.QuickMatchViewModel
@@ -98,6 +101,9 @@ fun EstemshanNav() {
         val lobbyVm: LobbyViewModel = viewModel()
         val lobbyState by lobbyVm.state.collectAsStateWithLifecycle()
         val uid = (authState as? AuthUiState.SignedIn)?.uid
+        // The reconnect read, seeded once per signed-in arrival: a live
+        // currentMatchId is what turns the lobby's Resume entry on.
+        LaunchedEffect(uid) { uid?.let { lobbyVm.loadResume(it) } }
         // A create or join is the lobby's one trigger to open the room
         // screen. Navigating from the state (not the callback) keeps a single
         // owner for "which room am I in": the view model. The two keys matter:
@@ -120,17 +126,25 @@ fun EstemshanNav() {
             onLeaveRoom = { uid?.let { lobbyVm.leaveRoom(it) } },
             onDismissCreatedCode = lobbyVm::dismissCreatedCode,
             onClearJoinError = lobbyVm::clearJoinError,
-            onSignOut = {
-              vm.signOut()
-              nav.navigate(Routes.LOGIN) { popUpTo(Routes.LOBBY) { inclusive = true } }
-            },
-            onProfile = { nav.navigate(Routes.PROFILE) },
-            onSettings = { nav.navigate(Routes.SETTINGS) },
             onQuickMatch = {
               qvm.startMatch()
               nav.navigate(QUICKMATCH_GRAPH)
             },
             onPlayVsAi = { nav.navigate(Routes.CHOOSE_LEVEL) },
+            // The resume entry's one navigation — the id comes from the
+            // state, and the view model forgets it so backing out of the
+            // match does not immediately re-offer it.
+            onResumeMatch = {
+              val matchId = lobbyState.resumableMatchId ?: return@LobbyScreen
+              lobbyVm.clearResume()
+              nav.navigate(onlineMatchRoute(matchId))
+            },
+            onProfile = { nav.navigate(Routes.PROFILE) },
+            onSettings = { nav.navigate(Routes.SETTINGS) },
+            onSignOut = {
+              vm.signOut()
+              nav.navigate(Routes.LOGIN) { popUpTo(Routes.LOBBY) { inclusive = true } }
+            },
           )
         }
       }
@@ -149,6 +163,17 @@ fun EstemshanNav() {
         // the screen rather than with this destination.
         LaunchedEffect(roomCode, uid) {
           if (roomCode != null && uid != null) roomVm.open(roomCode)
+        }
+        // The room↔match handoff: RoomService.setReady's atomic start lands a
+        // matchId on the room document, which every seat's poll then sees.
+        // Leaving the room behind (popUpTo inclusive) is what makes backing
+        // out of the match return to the LOBBY, not to a room whose match is
+        // already underway.
+        LaunchedEffect(roomState.room?.matchId) {
+          val matchId = roomState.room?.matchId ?: return@LaunchedEffect
+          nav.navigate(onlineMatchRoute(matchId)) {
+            popUpTo(Routes.ROOM_PATH) { inclusive = true }
+          }
         }
         EstemshanTheme {
           RoomScreen(
@@ -183,6 +208,11 @@ fun EstemshanNav() {
         }
       }
       quickMatchGraph(nav, qvm)
+      // The online match flow. Leaving it is the one way back to the lobby —
+      // the graph scopes the view model and its subscription, so both drop.
+      onlineMatchGraph {
+        nav.navigate(Routes.LOBBY) { popUpTo(ONLINE_MATCH_GRAPH) { inclusive = true } }
+      }
       composable(Routes.STANDINGS) {
         // Unlinked until the Table screen supplies real match results.
         FinalStandingsScreen(buildStandings(emptyMap()))
