@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -94,6 +95,7 @@ fun NavGraphBuilder.onlineMatchGraph(nav: NavController, onLeft: () -> Unit) {
 fun OnlineMatchScreen(vm: OnlineMatchViewModel, onLeft: () -> Unit) {
   val state by vm.state.collectAsStateWithLifecycle()
   val reconnecting by vm.reconnecting.collectAsStateWithLifecycle()
+  val opponentAway by vm.opponentAway.collectAsStateWithLifecycle()
 
   LaunchedEffect(state) {
     if (state is MatchUiState.NotInMatch) onLeft()
@@ -140,6 +142,16 @@ fun OnlineMatchScreen(vm: OnlineMatchViewModel, onLeft: () -> Unit) {
         label = stringResource(R.string.online_not_in_match),
       )
       is MatchUiState.Failed -> OnlineMatchFailed(s, onLeft)
+    }
+    // S19: a passive, non-blocking staleness hint. It marks the top of the
+    // table and covers nothing — the controls stay live, and the overlay
+    // below still draws over it when the listener is retrying.
+    if (opponentAway) {
+      OpponentAwayHint(
+        Modifier
+          .align(Alignment.TopCenter)
+          .padding(top = 16.dp),
+      )
     }
     // Fail-open: the overlay never replaces the screen under it, only marks
     // it — the local game is still playable from the last good document.
@@ -193,6 +205,32 @@ private fun OnlineMatchOverlay(label: String, body: String? = null) {
     Text(label, style = MaterialTheme.typography.headlineMedium)
     if (body != null) {
       Text(body, style = MaterialTheme.typography.bodyMedium)
+    }
+  }
+}
+
+/**
+ * S19's passive staleness hint — small, gold-on-dark and NON-BLOCKING: it
+ * marks the top of the table and never covers it, and the controls stay live
+ * the whole time. The wording is "appears away" and nothing stronger — the
+ * frozen rules make true presence impossible (players/{uid} is
+ * owner-read-only, `list: if false`), so this reports only what this client
+ * observed: the match document did not move while it was an opponent's turn.
+ */
+@Composable
+private fun OpponentAwayHint(modifier: Modifier = Modifier) {
+  EstemshanTheme {
+    Surface(
+      modifier = modifier,
+      color = MaterialTheme.colorScheme.surface,
+      shape = MaterialTheme.shapes.small,
+    ) {
+      Text(
+        stringResource(R.string.online_opponent_away),
+        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+        color = MaterialTheme.colorScheme.primary,
+        style = MaterialTheme.typography.labelMedium,
+      )
     }
   }
 }
@@ -275,23 +313,25 @@ private fun OnlineMatchBiddingPreview() {
   }
 }
 
+/** The table fixture the online previews share — our seat mid-trick. */
+private fun previewTable(): TableState = initTable(
+  RoundCfg(
+    round = 1,
+    trump = Suit.HEARTS,
+    callerId = "p2",
+    withPlayers = emptyList(),
+    estimates = mapOf("p2" to 7),
+    dashCallers = emptyList(),
+    leaderId = "p2",
+    riskId = "p1",
+    hands = mapOf("p1" to emptyList()),
+  ),
+)
+
 @Preview(showBackground = true, backgroundColor = 0xFF0D0A07)
 @Composable
 private fun OnlineMatchTablePreview() {
-  val table = initTable(
-    RoundCfg(
-      round = 1,
-      trump = Suit.HEARTS,
-      callerId = "p2",
-      withPlayers = emptyList(),
-      estimates = mapOf("p2" to 7),
-      dashCallers = emptyList(),
-      leaderId = "p2",
-      riskId = "p1",
-      hands = mapOf("p1" to emptyList()),
-    ),
-  )
-  val state = MatchUiState.Table(table, "p1", "Follow HEARTS")
+  val state = MatchUiState.Table(previewTable(), "p1", "Follow HEARTS")
   EstemshanTheme {
     TableScreen(
       state = state.state,
@@ -300,6 +340,49 @@ private fun OnlineMatchTablePreview() {
       onPlay = { _, _ -> },
       onResolve = {},
     )
+  }
+}
+
+// ── S19: the staleness hint's two states, against the same table ───────
+
+@Preview(showBackground = true, backgroundColor = 0xFF0D0A07)
+@Composable
+private fun OnlineMatchTableOpponentAwayPreview() {
+  // An opponent's turn has gone stale: the hint marks the top of the screen,
+  // covers nothing, and the controls below stay live.
+  EstemshanTheme {
+    Box(Modifier.fillMaxSize()) {
+      TableScreen(
+        state = previewTable(),
+        userSeat = "p1",
+        rejection = null,
+        onPlay = { _, _ -> },
+        onResolve = {},
+      )
+      OpponentAwayHint(
+        Modifier
+          .align(Alignment.TopCenter)
+          .padding(top = 16.dp),
+      )
+    }
+  }
+}
+
+@Preview(showBackground = true, backgroundColor = 0xFF0D0A07)
+@Composable
+private fun OnlineMatchTableOpponentActivePreview() {
+  // The same table with the hint absent — the state every fresh document
+  // renders, and the contrast "appears away" has to read against.
+  EstemshanTheme {
+    Box(Modifier.fillMaxSize()) {
+      TableScreen(
+        state = previewTable(),
+        userSeat = "p1",
+        rejection = null,
+        onPlay = { _, _ -> },
+        onResolve = {},
+      )
+    }
   }
 }
 
