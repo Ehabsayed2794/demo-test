@@ -30,6 +30,7 @@ import androidx.navigation.navigation
 import com.estemshan.engine.DEFAULT_SEATS
 import com.estemshan.engine.RoundCfg
 import com.estemshan.engine.Suit
+import com.estemshan.engine.TableState
 import com.estemshan.engine.initNormalRound
 import com.estemshan.engine.initTable
 import com.estemshan.game.R
