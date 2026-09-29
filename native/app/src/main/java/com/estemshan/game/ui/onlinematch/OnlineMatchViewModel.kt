@@ -855,7 +855,7 @@ class OnlineMatchViewModel(
   internal val awayInputs = mutableListOf<String>()
   internal val awayWrites = mutableListOf<String>()
 
-  internal fun awayDebug(): String = awayTracker.debugState()
+  internal fun awayDebug(): String = awayTracker.debugState() + " tcalls=${awayTracker.calls}"
 
   private fun refreshOpponentAway(doc: MatchDoc, ourSeat: String) {
     awayInputs.add(

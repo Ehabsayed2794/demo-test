@@ -78,7 +78,14 @@ internal class OpponentAwayTracker(
    * the caller's gate (this class stays free of engine coupling) and already
    * excludes our own seat, so a non-null value always means "an opponent".
    */
+  internal val calls = mutableListOf<String>()
+
   fun onDocument(doc: MatchDoc, actingSeat: String?): Presence {
+    val progress = progressOf(doc)
+    calls.add(
+      "acting=$actingSeat prog=$progress baseSeat=$baselineSeat base=$baseline " +
+        "baseAt=$baselineAt now=${clock()} elapsed=${clock() - baselineAt}",
+    )
     if (actingSeat == null) {
       // Our move, or nobody waiting: the wait is over, and the clock starts
       // fresh with the next opponent's turn.
@@ -86,7 +93,6 @@ internal class OpponentAwayTracker(
       baselineSeat = null
       return Presence.WaitingOnUs
     }
-    val progress = progressOf(doc)
     if (actingSeat != baselineSeat || progress != baseline) {
       // A new seat to wait on, or the document moved under the same one: the
       // baseline is (re)taken now, so staleness is measured from THIS
