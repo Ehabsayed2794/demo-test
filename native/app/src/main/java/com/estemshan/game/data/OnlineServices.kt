@@ -6,12 +6,14 @@ import com.estemshan.services.MatchAdapter
 import com.estemshan.services.MatchListenerFactory
 import com.estemshan.services.MatchScheduler
 import com.estemshan.services.MatchService
+import com.estemshan.services.PlayerPort
+import com.estemshan.services.PlayerService
 import com.estemshan.services.RoomPort
 import com.estemshan.services.RoomService
 import com.estemshan.services.session.AuthPort
 import com.estemshan.services.session.GameSessionBridge
 import com.estemshan.services.session.GameSessionPort
-import com.estemshan.services.session.MatchAdapterPort
+import com.estemshan.services.session.MatchStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -53,38 +55,51 @@ object OnlineServices {
   val auth: AuthPort by lazy { AuthPortAdapter(AuthRepository(FirebaseAuthBackend())) }
 
   /**
+   * The player-profile seam — players/{uid}.currentMatchId, the reconnect
+   * entry point S17's OnlineMatchViewModel reads on a cold start. Lazy for
+   * the same reason as [auth]: it reads [FirebaseModule.db].
+   */
+  val players: PlayerPort by lazy { PlayerService(FirebaseModule.db, auth) }
+
+  /**
    * The Room screen's match writer. Lazy for the same reason as [auth]:
    * [MatchService] reads [FirebaseModule.db], and [MatchAdapter]'s listener
    * factory closes over it too.
    *
    * [session] is the single [GameSession] this process mirrors an online
-   * match into, behind [GameSessionBridge]. It is constructed here even
-   * though the only method the Room screen reaches — [MatchService.startMatch]
-   * — uses just [FirebaseModule.db] and [auth], because the ctor requires the
-   * pair and S17's OnlineMatchViewModel consumes this same wiring rather than
-   * building a second graph.
+   * match into, reached through the [GameSessionBridge] held in
+   * [sessionPort]. It is exposed (not private) so S17's
+   * OnlineMatchViewModel drives the ONE instance the adapter replays into —
+   * a second graph would hold a second store and the two would never agree.
+   * [matches] stays a [MatchStore] rather than the concrete [MatchService]
+   * for the same reason the adapter's seams are interfaces: it is the
+   * boundary a hermetic JVM test can stand in for, since this repo ships no
+   * [com.google.firebase.firestore.FirebaseFirestore] fake by design.
    *
    * [adapter] gets the REAL [MatchListenerFactory.firestore], not
    * [MatchListenerFactory.Unavailable]: Unavailable is the test default, and
    * shipping it would make every room-started match a listener that never
    * listens. [scheduler] is the deferred one, for the same reason as above.
    */
-  private val session: GameSessionPort by lazy { GameSessionBridge(GameSession()) }
+  val session: GameSession by lazy { GameSession() }
 
-  private val adapter: MatchAdapterPort by lazy {
+  private val sessionPort: GameSessionPort by lazy { GameSessionBridge(session) }
+
+  val adapter: MatchAdapter by lazy {
     MatchAdapter(
-      session = session,
+      session = sessionPort,
       listen = MatchListenerFactory.firestore(FirebaseModule.db),
       scheduler = scheduler,
     )
   }
 
-  val matches: MatchService by lazy {
+  val matches: MatchStore by lazy {
     MatchService(
       db = FirebaseModule.db,
       auth = auth,
-      session = session,
+      session = sessionPort,
       adapter = adapter,
+      profileMatchSync = players::setCurrentMatchId,
     )
   }
 

@@ -1,6 +1,7 @@
 package com.estemshan.services
 
 import com.estemshan.engine.BiddingIntent
+import com.estemshan.engine.BiddingOutcome
 import com.estemshan.engine.EmitResult
 import com.estemshan.engine.PlayCard
 import com.estemshan.engine.PlayEmit
@@ -160,7 +161,11 @@ class MatchAdapter(
     return when (result) {
       is EmitResult.Rejected ->
         ApplyOutcome(applied = false, reason = ENGINE_REJECTED, desync = true, version = version)
-      is EmitResult.Applied, is EmitResult.Completed, is EmitResult.GeneralPass -> {
+      is EmitResult.Completed -> {
+        session.updateBiddingState(result.state())
+        ApplyOutcome(applied = true, reason = REASON_APPLIED, seatId = seatId, version = version, outcome = result.outcome)
+      }
+      is EmitResult.Applied, is EmitResult.GeneralPass -> {
         session.updateBiddingState(result.state())
         ApplyOutcome(applied = true, reason = REASON_APPLIED, seatId = seatId, version = version)
       }
@@ -198,6 +203,13 @@ class MatchAdapter(
     }
 
     val results = ArrayList<EntryOutcome>()
+    // The auction's committed outcome, carried out when the replayed entry
+    // that completes it lands. null until then, and absent for every path
+    // that does not reach a Completed emit. The table config is built from
+    // this, not from the DONE BiddingState: estimates, dashCallers,
+    // leaderId and riskPlayerId are only recoverable from the outcome the
+    // engine derived at the completing emit.
+    var outcome: BiddingOutcome? = null
     var i = lastCount
     while (i < matchDoc.biddingLog.size) {
       val entry = matchDoc.biddingLog[i]
@@ -258,6 +270,7 @@ class MatchAdapter(
         biddingActionCount[matchId] = i
         return desync(ENGINE_REJECTED, matchId, i, version, results)
       }
+      if (result is EmitResult.Completed) outcome = result.outcome
       session.updateBiddingState(result.state())
       results.add(EntryOutcome(i, true, REASON_APPLIED, entry.seatId))
       i++
@@ -271,6 +284,7 @@ class MatchAdapter(
       appliedCount = results.count { it.applied },
       version = version,
       results = results,
+      outcome = outcome,
     )
   }
 
@@ -827,6 +841,16 @@ data class ApplyOutcome(
   val seatId: String? = null,
   val version: Int? = null,
   val results: List<EntryOutcome> = emptyList(),
+  /**
+   * The auction's committed [BiddingOutcome], present only when an
+   * applyRemoteBid()/applyRemoteBiddingAction() emit reached
+   * [EmitResult.Completed] on THIS call — i.e. this delivery is the one
+   * that closed the auction. Consumers build the trick-play RoundCfg from
+   * it rather than from the DONE BiddingState, because the outcome is the
+   * only place the engine's derived estimates, dashCallers, leaderId and
+   * riskPlayerId survive. null on every non-completing path.
+   */
+  val outcome: BiddingOutcome? = null,
 ) {
   companion object {
     fun notApplied(reason: String) = ApplyOutcome(applied = false, reason = reason)

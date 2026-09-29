@@ -354,6 +354,18 @@ data class HandDoc(val seatId: String, val round: Int, val cards: List<StoredCar
     "cards" to cards.map { it.toFields() },
     "version" to round,
   )
+
+  companion object {
+    @Suppress("UNCHECKED_CAST")
+    fun fromFields(fields: Any?): HandDoc? {
+      val map = fields as? Map<String, Any?> ?: return null
+      val seatId = map["seatId"] as? String ?: return null
+      val round = roundOf(map["round"]) ?: return null
+      val cards = (map["cards"] as? List<*>)?.mapNotNull { StoredCard.fromFields(it) }
+        ?: return null
+      return HandDoc(seatId, round, cards)
+    }
+  }
 }
 
 /** matches/{id}/rematchVote/current — the post-match vote machine. */

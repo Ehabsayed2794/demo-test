@@ -24,6 +24,11 @@
   <!-- The lobby entry that opens the Choose Level screen — the app's AI path. -->
   <string name="lobby_play_vs_ai">Play vs AI</string>
 
+  <!-- S17 — the reconnect entry: a match whose currentMatchId is still set. -->
+  <string name="lobby_section_resume">Your match</string>
+  <string name="lobby_resume_match">Resume match</string>
+  <string name="lobby_resume_match_hint">You left a match in progress.</string>
+
   <!-- S15 — the Real Lobby: offline entries, invite-by-code rooms, account. -->
   <string name="lobby_title">Lobby</string>
   <!-- Shown under the title; %1$s is the Firebase uid of the signed-in player. -->
@@ -88,4 +93,24 @@
   <string name="room_leave">Leave room</string>
   <!-- The room vanished (last player out closed it) or the first load failed. -->
   <string name="room_gone">This room is no longer available.</string>
+
+  <!-- S17 — the online match flow. -->
+  <!-- Shown alone while the first snapshot has not arrived yet. -->
+  <string name="online_connecting">Connecting…</string>
+  <!--
+    The fail-open overlay: shown over a live screen while the listener is
+    retrying. The local game keeps what it has, so this never blocks play.
+  -->
+  <string name="online_reconnecting">Reconnecting…</string>
+  <string name="online_reconnecting_body">You\'re still in the match.</string>
+  <!-- The signed-in player holds no seat here, or the match was deleted. -->
+  <string name="online_not_in_match">You\'re no longer in this match.</string>
+  <string name="online_failed_title">Couldn\'t keep this match in sync.</string>
+  <!-- Action: leave the online match and go back to the lobby. -->
+  <string name="online_leave_match">Back to lobby</string>
+  <!--
+    Shown under a scored round while the document advances to the next one;
+    every seat advances the match, so this is a short wait, not a dead button.
+  -->
+  <string name="online_round_opening">Waiting for the next round…</string>
 </resources>

@@ -1,5 +1,6 @@
 package com.estemshan.game.ui.lobby
 
+import com.estemshan.services.PlayerPort
 import com.estemshan.services.RoomPort
 import com.estemshan.services.model.Reasons
 import com.estemshan.services.model.RoomDoc
@@ -47,6 +48,13 @@ class LobbyViewModelTest {
   private lateinit var rooms: FakeRooms
   private lateinit var vm: LobbyViewModel
 
+  /**
+   * Inert [PlayerPort] — the resume-match entry is not these tests' subject,
+   * and the real one is `by lazy` over Firebase, which no JVM test can build.
+   * Passed explicitly so the constructor's default never evaluates it.
+   */
+  private val players = FakePlayers
+
   @After
   fun tearDown() {
     Dispatchers.resetMain()
@@ -56,7 +64,7 @@ class LobbyViewModelTest {
   private fun TestScope.openLobby() {
     Dispatchers.setMain(StandardTestDispatcher(testScheduler))
     rooms = FakeRooms()
-    vm = LobbyViewModel(rooms)
+    vm = LobbyViewModel(rooms, players)
   }
 
   // ==========================================================================
@@ -221,6 +229,12 @@ class LobbyViewModelTest {
    * mirroring the service's documented behavior: if these two ever drift, a
    * test below fails for the right reason.
    */
+  /** players/{uid}.currentMatchId, inert — see [players]. */
+  private object FakePlayers : PlayerPort {
+    override suspend fun currentMatchId(uid: String): String? = null
+    override suspend fun setCurrentMatchId(uid: String, matchId: String?) {}
+  }
+
   private class FakeRooms : RoomPort {
     val createCalls = AtomicInteger(0)
     val joinCalls = AtomicInteger(0)

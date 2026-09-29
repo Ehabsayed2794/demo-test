@@ -3,6 +3,7 @@ package com.estemshan.game.ui.lobby
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.estemshan.game.data.OnlineServices
+import com.estemshan.services.PlayerPort
 import com.estemshan.services.RoomPort
 import com.estemshan.services.model.Reasons
 import com.estemshan.services.model.ServiceException
@@ -31,10 +32,33 @@ import kotlinx.coroutines.launch
  */
 class LobbyViewModel(
   private val rooms: RoomPort = OnlineServices.rooms,
+  private val players: PlayerPort = OnlineServices.players,
 ) : ViewModel() {
 
   private val _state = MutableStateFlow(LobbyUiState())
   val state: StateFlow<LobbyUiState> = _state.asStateFlow()
+
+  /**
+   * Read players/{uid}.currentMatchId — the reconnect pointer the services
+   * layer writes when a match starts and S17's OnlineMatchViewModel clears
+   * when one completes. A non-null value means a match is still live for this
+   * player, so the lobby offers the one-tap way back into it. Null is also
+   * the honest result of any read failure, so a transport hiccup costs the
+   * entry rather than the lobby.
+   */
+  fun loadResume(playerId: String) {
+    if (playerId.isEmpty()) return
+    launch {
+      val matchId = players.currentMatchId(playerId)
+      _state.value = _state.value.copy(resumableMatchId = matchId)
+    }
+  }
+
+  /** Forget the resume entry — the player took it, or backed out of it. */
+  fun clearResume() {
+    if (_state.value.resumableMatchId == null) return
+    _state.value = _state.value.copy(resumableMatchId = null)
+  }
 
   /**
    * Create a private room and show its code to share. A double-tap while one
@@ -135,6 +159,11 @@ data class LobbyUiState(
   val createdCode: String? = null,
   /** Why the last join failed, or null. */
   val joinError: LobbyJoinError? = null,
+  /**
+   * A live match this player is part of (players/{uid}.currentMatchId), or
+   * null — the lobby's reconnect entry. Cleared once taken.
+   */
+  val resumableMatchId: String? = null,
 )
 
 /**

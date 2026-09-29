@@ -77,6 +77,7 @@ import com.estemshan.services.model.Reasons.VOTE_NOT_FOUND
 import com.estemshan.services.session.AuthPort
 import com.estemshan.services.session.GameSessionPort
 import com.estemshan.services.session.MatchAdapterPort
+import com.estemshan.services.session.MatchStore
 import com.estemshan.services.session.NotLocalTurn
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
@@ -112,7 +113,7 @@ class MatchService(
   private val profileMatchSync: suspend (uid: String, matchId: String?) -> Unit = { _, _ -> },
   /** Wall clock, injectable so vote-deadline tests are deterministic. */
   private val now: () -> Long = System::currentTimeMillis,
-) {
+) : MatchStore {
 
   private val matches get() = db.collection("matches")
 
@@ -124,7 +125,7 @@ class MatchService(
    * matchId returns it without a second write. Requires all players ready;
    * firestore.rules' isValidMatchIdChange() re-verifies that independently.
    */
-  suspend fun startMatch(roomId: String): String {
+  override suspend fun startMatch(roomId: String): String {
     require(roomId.isNotEmpty()) { "startMatch: roomId is required." }
     val roomRef = db.collection("rooms").document(roomId)
     val newMatchRef = matches.document()
@@ -164,10 +165,26 @@ class MatchService(
   }
 
   /** Read-only fetch; null (never an error) when the match is gone. */
-  suspend fun loadMatch(matchId: String): MatchDoc? {
+  override suspend fun loadMatch(matchId: String): MatchDoc? {
     require(matchId.isNotEmpty()) { "loadMatch: matchId is required." }
     val snap = matches.document(matchId).getBlocking()
     return if (!snap.exists()) null else snap.data?.let { MatchDoc.fromFields(it) }
+  }
+
+  /**
+   * The local seat's authoritative hand for [round]. The hand doc is
+   * overwritten per round (its version IS the round), so a caller reads
+   * it once per round after dealRound() commits it; null when the round
+   * has not been dealt or the doc is missing. A caller never reads a seat
+   * it does not own — the rules restrict the doc to its own seat's uid.
+   */
+  override suspend fun loadHand(matchId: String, seatId: String, round: Int): HandDoc? {
+    require(matchId.isNotEmpty()) { "loadHand: matchId is required." }
+    require(seatId.isNotEmpty()) { "loadHand: seatId is required." }
+    val snap = matches.document(matchId).collection("hands").document(seatId).getBlocking()
+    if (!snap.exists()) return null
+    val hand = HandDoc.fromFields(snap.data ?: return null) ?: return null
+    return if (hand.round == round) hand else null
   }
 
   // ── 1. submitBid: Final Estimate — one value per seat, ever ─────────
@@ -180,7 +197,7 @@ class MatchService(
    * legality is the bidding log's business, and bids/ is the one-value
    * channel the rules validator locks to a single seat's slot.
    */
-  suspend fun submitBid(matchId: String, seatId: String, bid: Int): SubmitBidResult {
+  override suspend fun submitBid(matchId: String, seatId: String, bid: Int): SubmitBidResult {
     require(matchId.isNotEmpty()) { "submitBid: matchId is required." }
     require(seatId.isNotEmpty()) { "submitBid: seatId is required." }
     if (!isValidGenericBidValue(bid)) {
@@ -237,7 +254,7 @@ class MatchService(
    * own round claim is never trusted, the fresh document's currentRound
    * stamps the entry.
    */
-  suspend fun submitBiddingAction(
+  override suspend fun submitBiddingAction(
     matchId: String,
     action: BiddingActionInput,
   ): SubmitBiddingActionResult {
@@ -314,7 +331,7 @@ class MatchService(
    * a separate atomic write the card ruleset requires before it will
    * accept any card (oldData.turn == request.auth.uid).
    */
-  suspend fun submitCard(matchId: String, card: Card): SubmitCardResult {
+  override suspend fun submitCard(matchId: String, card: Card): SubmitCardResult {
     require(matchId.isNotEmpty()) { "submitCard: matchId is required." }
     if (!isValidGenericCardValue(StoredCard.fromEngine(card))) {
       throw ServiceException(INVALID_CARD_VALUE,
@@ -476,7 +493,7 @@ class MatchService(
    * re-reads committed state and takes ALREADY_ADVANCED without writing.
    * A match already complete is a no-op, never a corruption.
    */
-  suspend fun advanceToNextRound(matchId: String, completedRound: Int): AdvanceResult {
+  override suspend fun advanceToNextRound(matchId: String, completedRound: Int): AdvanceResult {
     require(matchId.isNotEmpty()) { "advanceToNextRound: matchId is required." }
     requireCompletedRound("advanceToNextRound", completedRound)
     val callingUid = auth.currentUid()
@@ -541,7 +558,7 @@ class MatchService(
    * Super Call or Sa'ayda actually occurred (that is the caller's
    * engine-derived fact, the same trust boundary advance uses).
    */
-  suspend fun extendMatchRounds(
+  override suspend fun extendMatchRounds(
     matchId: String,
     completedRound: Int,
     reason: String,
@@ -597,7 +614,7 @@ class MatchService(
    * pending extension for this round means MATCH_NOT_OVER and the caller
    * must extend first.
    */
-  suspend fun endMatch(
+  override suspend fun endMatch(
     matchId: String,
     completedRound: Int,
     finalScores: Map<String, Int>,
@@ -676,7 +693,7 @@ class MatchService(
    * seat's uid. The rules require each hand to be exactly 13 cards and
    * this round to be the match's current round.
    */
-  suspend fun dealRound(matchId: String, roundNumber: Int): DealResult {
+  override suspend fun dealRound(matchId: String, roundNumber: Int): DealResult {
     require(matchId.isNotEmpty()) { "dealRound: matchId is required." }
     requireCompletedRound("dealRound", roundNumber)
     val callingUid = auth.currentUid()
