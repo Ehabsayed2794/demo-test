@@ -383,7 +383,7 @@ class OnlineMatchViewModel(
     val dealerSeat = adapter.uidToSeat(doc, doc.dealer) ?: seat
 
     val known = session.getMode() == "online" &&
-      session.getPlayers().map { it.uid }.sorted() == doc.seats.values.sorted()
+      session.getPlayers().mapNotNull { it.uid }.sorted() == doc.seats.values.sorted()
 
     if (!known) {
       bootstrap(doc, seats, dealerSeat)

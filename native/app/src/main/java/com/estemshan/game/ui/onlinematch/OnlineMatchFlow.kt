@@ -38,13 +38,18 @@ import com.estemshan.game.ui.standings.buildStandings
 import com.estemshan.game.ui.table.TableScreen
 import com.estemshan.game.ui.theme.EstemshanTheme
 
-/** The online match graph: the matchId is the graph's one argument. */
-const val ONLINE_MATCH_GRAPH = "onlinematch/{matchId}"
+/**
+ * The online match graph: a PLAIN route, like QUICKMATCH_GRAPH. The matchId
+ * lives on [ONLINE_MATCH]'s own route instead — the same split as
+ * Routes.ROOM_PATH and its roomCode — because navigation-compose 2.7.7
+ * declares `navArgument`s on destinations, not on `navigation()` builders.
+ */
+const val ONLINE_MATCH_GRAPH = "onlinematch"
 
 /** The graph's single destination — one view model, one state machine. */
-const val ONLINE_MATCH = "onlinematch"
+const val ONLINE_MATCH = "onlinematch/{matchId}"
 
-/** The nav-arg key [ONLINE_MATCH_GRAPH] declares; the room hands the id over. */
+/** The nav-arg key [ONLINE_MATCH] declares; the room hands the id over. */
 const val MATCH_ID_KEY = "matchId"
 
 /** The one way to address an online match: the graph route with [matchId] in it. */
@@ -62,16 +67,17 @@ fun onlineMatchRoute(matchId: String): String = "onlinematch/$matchId"
  * The view model is scoped to the graph's back-stack entry, so the whole
  * flow's state (and its subscription) drops the moment the player backs out.
  */
-fun NavGraphBuilder.onlineMatchGraph(onLeft: () -> Unit) {
-  navigation(
-    startDestination = ONLINE_MATCH,
-    route = ONLINE_MATCH_GRAPH,
-    arguments = listOf(navArgument(MATCH_ID_KEY) { type = NavType.StringType }),
-  ) {
-    composable(ONLINE_MATCH) {
-      val parent = remember(it) { it.navController.getBackStackEntry(ONLINE_MATCH_GRAPH) }
+fun NavGraphBuilder.onlineMatchGraph(nav: NavController, onLeft: () -> Unit) {
+  navigation(startDestination = ONLINE_MATCH, route = ONLINE_MATCH_GRAPH) {
+    composable(
+      route = ONLINE_MATCH,
+      arguments = listOf(navArgument(MATCH_ID_KEY) { type = NavType.StringType }),
+    ) {
+      // The graph's own back-stack entry scopes the view model: the whole
+      // flow's state (and its subscription) drops when the player backs out.
+      val parent = remember(nav) { nav.getBackStackEntry(ONLINE_MATCH_GRAPH) }
       val vm: OnlineMatchViewModel = viewModel(parent)
-      val matchId = parent.arguments?.getString(MATCH_ID_KEY).orEmpty()
+      val matchId = it.arguments?.getString(MATCH_ID_KEY).orEmpty()
       // Seeding from the argument (not a callback) makes the view model the
       // single owner of "which match am I in"; a recomposition is a no-op.
       LaunchedEffect(matchId) { if (matchId.isNotEmpty()) vm.start(matchId) }

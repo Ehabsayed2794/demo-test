@@ -210,7 +210,7 @@ fun EstemshanNav() {
       quickMatchGraph(nav, qvm)
       // The online match flow. Leaving it is the one way back to the lobby —
       // the graph scopes the view model and its subscription, so both drop.
-      onlineMatchGraph {
+      onlineMatchGraph(nav) {
         nav.navigate(Routes.LOBBY) { popUpTo(ONLINE_MATCH_GRAPH) { inclusive = true } }
       }
       composable(Routes.STANDINGS) {
