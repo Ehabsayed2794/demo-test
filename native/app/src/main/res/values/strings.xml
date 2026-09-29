@@ -95,8 +95,6 @@
   <string name="room_gone">This room is no longer available.</string>
 
   <!-- S17 — the online match flow. -->
-  <!-- Shown alone while the first snapshot has not arrived yet. -->
-  <string name="online_connecting">Connecting…</string>
   <!--
     The fail-open overlay: shown over a live screen while the listener is
     retrying. The local game keeps what it has, so this never blocks play.

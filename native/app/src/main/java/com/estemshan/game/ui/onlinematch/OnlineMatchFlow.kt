@@ -127,8 +127,15 @@ fun OnlineMatchScreen(vm: OnlineMatchViewModel, onLeft: () -> Unit) {
       }
       is MatchUiState.RoundStandings -> EstemshanTheme { OnlineRoundStandings(s) }
       is MatchUiState.MatchComplete -> EstemshanTheme { OnlineMatchComplete(s, onLeft) }
+      // S18: every entry into this graph is (re)joining a live remote match
+      // document, so the pre-snapshot gap reads as reconnecting rather than a
+      // first-time connect — and the fail-open overlay must cover that
+      // cold-start window instead of dropping the player back to the lobby.
       MatchUiState.Connecting ->
-        OnlineMatchOverlay(label = stringResource(R.string.online_connecting))
+        OnlineMatchOverlay(
+          label = stringResource(R.string.online_reconnecting),
+          body = stringResource(R.string.online_reconnecting_body),
+        )
       MatchUiState.NotInMatch -> OnlineMatchOverlay(
         label = stringResource(R.string.online_not_in_match),
       )
@@ -221,8 +228,15 @@ private fun OnlineMatchFailed(state: MatchUiState.Failed, onLeft: () -> Unit) {
 
 @Preview(showBackground = true, backgroundColor = 0xFF0D0A07)
 @Composable
-private fun OnlineMatchConnectingPreview() {
-  EstemshanTheme { OnlineMatchOverlay("Connecting…") }
+private fun OnlineMatchGapOverlayPreview() {
+  // The cold-start gap: MatchUiState.Connecting now renders the reconnecting
+  // treatment, the same two strings the warm overlay over a live table uses.
+  EstemshanTheme {
+    OnlineMatchOverlay(
+      "Reconnecting…",
+      "You're still in the match.",
+    )
+  }
 }
 
 @Preview(showBackground = true, backgroundColor = 0xFF0D0A07)
