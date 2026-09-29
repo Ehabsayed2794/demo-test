@@ -2,10 +2,12 @@ package com.estemshan.game.data
 
 import com.estemshan.engine.GameSession
 import com.estemshan.services.CoroutineMatchScheduler
+import com.estemshan.services.Heartbeat
 import com.estemshan.services.MatchAdapter
 import com.estemshan.services.MatchListenerFactory
 import com.estemshan.services.MatchScheduler
 import com.estemshan.services.MatchService
+import com.estemshan.services.PlayerHeartbeat
 import com.estemshan.services.PlayerPort
 import com.estemshan.services.PlayerService
 import com.estemshan.services.RoomPort
@@ -14,9 +16,11 @@ import com.estemshan.services.session.AuthPort
 import com.estemshan.services.session.GameSessionBridge
 import com.estemshan.services.session.GameSessionPort
 import com.estemshan.services.session.MatchStore
+import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.tasks.await
 
 /**
  * The online stack's wiring point: the process-scoped pieces a screen builds
@@ -59,7 +63,29 @@ object OnlineServices {
    * entry point S17's OnlineMatchViewModel reads on a cold start. Lazy for
    * the same reason as [auth]: it reads [FirebaseModule.db].
    */
-  val players: PlayerPort by lazy { PlayerService(FirebaseModule.db, auth) }
+  /**
+   * The write reaches Firestore through an injected function rather than a
+   * bare FirebaseFirestore because that function IS the hermetic boundary —
+   * "the profile write cannot clobber anything" is the heartbeat's contract,
+   * and a JVM test asserts it against the payload it receives.
+   */
+  val players: PlayerPort by lazy {
+    val db = FirebaseModule.db
+    PlayerService(
+      profileRef = { db.collection("players").document(it) },
+      mergeOwnProfile = { uid, fields ->
+        db.collection("players").document(uid).set(fields, SetOptions.merge()).await()
+      },
+    )
+  }
+
+  /**
+   * S19's lastSeenAt cadence — the one activity signal the frozen rules let a
+   * player emit, on their OWN doc and nowhere else. Lazy for the same reason
+   * as [auth]: [PlayerHeartbeat] closes over [players], which reads
+   * [FirebaseModule.db].
+   */
+  val heartbeat: Heartbeat by lazy { PlayerHeartbeat(players) }
 
   /**
    * The Room screen's match writer. Lazy for the same reason as [auth]:

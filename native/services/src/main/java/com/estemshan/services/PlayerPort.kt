@@ -1,8 +1,7 @@
 package com.estemshan.services
 
-import com.estemshan.services.session.AuthPort
+import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.FieldValue
-import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.tasks.await
 
@@ -39,24 +38,48 @@ interface PlayerPort {
    * [matchId] clears it (the match is over and the player is out).
    */
   suspend fun setCurrentMatchId(uid: String, matchId: String?)
+
+  /**
+   * S19's activity heartbeat: stamp `lastSeenAt` on the player's OWN profile.
+   * Never throws, and best-effort by contract — it is the one activity signal
+   * the frozen rules let a player write, and under those same rules no other
+   * client may read players/{uid} (owner-read-only, `list: if false`), so it
+   * carries no gameplay consequence today. It keeps the profile's own
+   * activity field truthful while a player is in a match; it can never be
+   * turned into a presence read, and nothing here promises one.
+   */
+  suspend fun markActive(uid: String)
 }
 
 /**
- * The authoritative implementation over Firestore. Writes only the two
- * fields the match lifecycle owns (currentMatchId + lastSeenAt); a read
+ * The authoritative implementation over Firestore. Writes only the fields the
+ * match lifecycle and the heartbeat own (currentMatchId + lastSeenAt); a read
  * returns null for anything other than a real, round-tripped id.
  */
 class PlayerService(
-  private val db: FirebaseFirestore,
-  private val auth: AuthPort,
+  /**
+   * players/{uid} — the one document the rules let a player partially write.
+   * A function of uid rather than a bare
+   * [com.google.firebase.firestore.FirebaseFirestore] because a JVM test
+   * cannot build the SDK object without an initialized Firebase and this repo
+   * ships no SDK fake by design; the write below is the hermetic boundary.
+   */
+  private val profileRef: (uid: String) -> DocumentReference,
+  /**
+   * The write itself: a MERGE over the profile doc, never a bare `set()`.
+   * Overridable for the same reason [profileRef] is injectable, and because
+   * "the write cannot have clobbered anything" is exactly the heartbeat's
+   * contract — a test can only assert that against the payload it receives
+   * here.
+   */
+  private val mergeOwnProfile: suspend (uid: String, fields: Map<String, Any?>) -> Unit = { uid, fields ->
+    profileRef(uid).set(fields, SetOptions.merge()).await()
+  },
 ) : PlayerPort {
 
-  private val players get() = db.collection("players")
-
   override suspend fun currentMatchId(uid: String): String? {
-    if (uid.isEmpty()) return null
     return try {
-      val snap = players.document(uid).getBlocking()
+      val snap = profileRef(uid).getBlocking()
       if (!snap.exists()) return null
       // Firestore stores ids as Strings, but a stray type is "no match",
       // never a crash — the caller's fallback is correct for both.
@@ -68,18 +91,28 @@ class PlayerService(
 
   override suspend fun setCurrentMatchId(uid: String, matchId: String?) {
     if (uid.isEmpty()) return
-    try {
-      val fields = mapOf(
-        FIELD_CURRENT_MATCH_ID to matchId,
-        FIELD_LAST_SEEN_AT to FieldValue.serverTimestamp(),
+    runCatching {
+      mergeOwnProfile(
+        uid,
+        mapOf(
+          FIELD_CURRENT_MATCH_ID to matchId,
+          FIELD_LAST_SEEN_AT to FieldValue.serverTimestamp(),
+        ),
       )
-      // merge() so the write never clobbers displayName/avatarInitial —
-      // the profile doc already exists from sign-up, and a `set()` without
-      // merge would erase it.
-      players.document(uid).set(fields, SetOptions.merge()).await()
-    } catch (e: Throwable) {
-      // Best-effort by contract: the match write already succeeded.
     }
+    // Best-effort by contract: the match write already succeeded.
+  }
+
+  override suspend fun markActive(uid: String) {
+    if (uid.isEmpty()) return
+    runCatching {
+      // lastSeenAt and NOTHING ELSE — never displayName, avatarInitial,
+      // currentRoomId or currentMatchId, so a stale local value can never
+      // overwrite the profile's real fields. The merge (on top of the single
+      // field) is what keeps the write from erasing the doc.
+      mergeOwnProfile(uid, mapOf(FIELD_LAST_SEEN_AT to FieldValue.serverTimestamp()))
+    }
+    // Best-effort by contract: a dropped tick never fails the match.
   }
 
   private companion object {

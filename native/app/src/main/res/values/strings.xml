@@ -111,4 +111,13 @@
     every seat advances the match, so this is a short wait, not a dead button.
   -->
   <string name="online_round_opening">Waiting for the next round…</string>
+  <!--
+    S19's passive staleness hint: an opponent holds the turn and the match
+    document has not moved in a while. Deliberately "appears away" — the
+    frozen rules make true presence impossible (players/{uid} is
+    owner-read-only, list: false), so nothing stronger is ever claimed and
+    there is no online indicator anywhere in the app. EN only; AR is deferred
+    to S41 with the rest of the online strings.
+  -->
+  <string name="online_opponent_away">Opponent appears away</string>
 </resources>

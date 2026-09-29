@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.estemshan.engine.BiddingIntent
 import com.estemshan.engine.BiddingOutcome
+import com.estemshan.engine.BiddingPhase
 import com.estemshan.engine.Card
 import com.estemshan.engine.DEFAULT_SEATS
 import com.estemshan.engine.EmitResult
@@ -36,6 +37,7 @@ import com.estemshan.services.MatchAdapter
 import com.estemshan.services.MatchSnapshot
 import com.estemshan.services.MatchSnapshotListener
 import com.estemshan.services.MatchSubscriptionHandle
+import com.estemshan.services.Heartbeat
 import com.estemshan.services.PlayerPort
 import com.estemshan.services.ROUND_CARD_TOTAL
 import com.estemshan.services.model.BiddingActionInput
@@ -46,6 +48,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -100,6 +103,8 @@ class OnlineMatchViewModel(
   private val players: PlayerPort = OnlineServices.players,
   private val uid: () -> String? = { OnlineServices.auth.currentUid() },
   private val worker: CoroutineDispatcher = Dispatchers.Default,
+  private val clock: () -> Long = System::currentTimeMillis,
+  private val heartbeat: Heartbeat = OnlineServices.heartbeat,
 ) : ViewModel() {
 
   private val _state = MutableStateFlow<MatchUiState>(MatchUiState.Connecting)
@@ -112,6 +117,34 @@ class OnlineMatchViewModel(
    */
   private val _reconnecting = MutableStateFlow(false)
   val reconnecting: StateFlow<Boolean> = _reconnecting.asStateFlow()
+
+  /**
+   * S19's passive staleness hint — "opponent appears away". True only while an
+   * OPPONENT holds the turn and the match document has not progressed past the
+   * tracker's threshold. A hint, never a game state: it blocks no input and
+   * times nobody out, and it can never be more than "appears away" because the
+   * frozen rules make true presence impossible (players/{uid} is
+   * owner-read-only, `list: if false`). It reflects this client's observation
+   * of the document — nothing more.
+   */
+  private val _opponentAway = MutableStateFlow(false)
+  val opponentAway: StateFlow<Boolean> = _opponentAway.asStateFlow()
+
+  /**
+   * S19's staleness derivation — document progress + the local clock. Pure:
+   * the only timer state lives in the alarm below.
+   */
+  private val awayTracker = OpponentAwayTracker(clock = clock)
+
+  /**
+   * The ONE pending staleness alarm. An away opponent sends no snapshots, so
+   * the indicator would never flip without it; each delivery reschedules it,
+   * and any progress cancels it.
+   */
+  private var awayAlarm: Job? = null
+
+  /** The running lastSeenAt cadence, dropped with the binding. */
+  private var heartbeatJob: Job? = null
 
   /** The match this VM is bound to; null while unbound. */
   private var matchId: String? = null
@@ -185,6 +218,12 @@ class OnlineMatchViewModel(
     rejectionVersion = null
     handle = adapter.subscribeToMatch(matchId, listener, localSeatId = null)
 
+    // S19: the one activity signal the frozen rules let a player emit, on
+    // their OWN doc. Starts with the binding and drops with it.
+    heartbeatJob?.cancel()
+    val myUid = uid()
+    if (myUid != null) heartbeatJob = heartbeat.start(viewModelScope, myUid)
+
     collectorJob?.cancel()
     collectorJob = viewModelScope.launch(worker) {
       for (snapshot in inbox) {
@@ -201,6 +240,9 @@ class OnlineMatchViewModel(
     collectorJob = null
     handle?.unsubscribe()
     handle = null
+    heartbeatJob?.cancel()
+    heartbeatJob = null
+    clearOpponentAway()
     matchId = null
     boundSeat = null
   }
@@ -320,6 +362,7 @@ class OnlineMatchViewModel(
         _state.value = MatchUiState.NotInMatch
         _reconnecting.value = false
       }
+      clearOpponentAway()
       return
     }
 
@@ -328,6 +371,7 @@ class OnlineMatchViewModel(
     // player who backed out still sees how the table finished.
     if (doc.isComplete) {
       _reconnecting.value = false
+      clearOpponentAway()
       publishComplete(doc)
       return
     }
@@ -335,12 +379,14 @@ class OnlineMatchViewModel(
     val myUid = uid()
     if (myUid == null) {
       _state.value = MatchUiState.Failed("Not signed in.")
+      clearOpponentAway()
       return
     }
     val seat = adapter.uidToSeat(doc, myUid)
     if (seat == null) {
       _state.value = MatchUiState.NotInMatch
       _reconnecting.value = false
+      clearOpponentAway()
       return
     }
     bindSeat(seat)
@@ -359,6 +405,7 @@ class OnlineMatchViewModel(
     replayCards(doc)
     maybeCompleteRound(doc)
     publish(doc, seat)
+    refreshOpponentAway(doc, seat)
   }
 
   /**
@@ -797,6 +844,70 @@ class OnlineMatchViewModel(
       return
     }
     _state.value = MatchUiState.Connecting
+  }
+
+  /**
+   * S19 — re-derive the passive staleness hint after a snapshot. [ourSeat] is
+   * the seat this client holds, and the acting seat comes from the engines
+   * this same delivery drove, so the hint is a function of the state the
+   * player already sees — never a second opinion about it.
+   */
+  private fun refreshOpponentAway(doc: MatchDoc, ourSeat: String) {
+    // A scored round's window is a wait on the document, not on a player.
+    if (scoredRound == doc.currentRound) {
+      clearOpponentAway()
+      return
+    }
+    publishOpponentAway(awayTracker.onDocument(doc, opponentActingSeat(ourSeat)))
+  }
+
+  /**
+   * The seat the engines are waiting on, or null when nobody is: our own move,
+   * a resolving trick (collected automatically), a scored round, or no live
+   * engine yet. This is where "opponent" is decided — [OpponentAwayTracker]
+   * stays engine-free and receives a seat that is never ours.
+   */
+  private fun opponentActingSeat(ourSeat: String): String? {
+    val table = session.getPlayState()
+    if (table != null && session.isPlayStateValidForCurrentRound()) {
+      return if (table.phase == TablePhase.PLAY) table.turn?.takeIf { it != ourSeat } else null
+    }
+    val bidding = session.getBiddingState()
+    if (bidding != null && session.isBiddingStateValidForCurrentRound() &&
+      bidding.subPhase != BiddingPhase.DONE
+    ) {
+      return bidding.waitingFor?.takeIf { it != ourSeat }
+    }
+    return null
+  }
+
+  /**
+   * Publish [presence] and keep exactly one alarm armed: the indicator has to
+   * flip with no new snapshot, because an away opponent sends none. The alarm
+   * is rescheduled on every delivery, so any progress cancels the one that
+   * would have fired against the stale baseline.
+   */
+  private fun publishOpponentAway(presence: OpponentAwayTracker.Presence) {
+    _opponentAway.value = presence == OpponentAwayTracker.Presence.AppearsAway
+    awayAlarm?.cancel()
+    awayAlarm = null
+    if (presence != OpponentAwayTracker.Presence.OpponentActive) return
+    val remaining = awayTracker.millisUntilAway()
+    if (remaining <= 0L) return
+    awayAlarm = viewModelScope.launch(worker) {
+      delay(remaining)
+      _opponentAway.value =
+        awayTracker.reevaluate() == OpponentAwayTracker.Presence.AppearsAway
+    }
+  }
+
+  /** The hint is meaningless without a live match: drop the baseline, the
+   *  pending alarm, and the published flag. */
+  private fun clearOpponentAway() {
+    awayTracker.reset()
+    awayAlarm?.cancel()
+    awayAlarm = null
+    _opponentAway.value = false
   }
 
   private fun setRejection(message: String?, version: Int?) {

@@ -24,6 +24,7 @@ import com.estemshan.engine.nextSeat
 import com.estemshan.engine.resolveTrick
 import com.estemshan.services.MatchAdapter
 import com.estemshan.services.FirestoreError
+import com.estemshan.services.Heartbeat
 import com.estemshan.services.MatchListenerFactory
 import com.estemshan.services.MatchListenerRegistration
 import com.estemshan.services.PlayerPort
@@ -44,12 +45,16 @@ import com.estemshan.services.model.SubmitBiddingActionResult
 import com.estemshan.services.model.SubmitCardResult
 import com.estemshan.services.session.MatchStore
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.Assert.assertEquals
@@ -112,7 +117,12 @@ class OnlineMatchViewModelTest {
    * device), sharing the ONE [factory] and ONE [store] that stand in for
    * the single Firestore document every seat reads.
    */
-  private fun makeVm(uid: String, worker: CoroutineDispatcher): OnlineMatchViewModel {
+  private fun makeVm(
+    uid: String,
+    worker: CoroutineDispatcher,
+    clock: () -> Long = { System.currentTimeMillis() },
+    heartbeat: Heartbeat = Heartbeat.None,
+  ): OnlineMatchViewModel {
     val session = GameSession()
     // The production wiring: the adapter replays into a bridge around the
     // SAME GameSession the view model drives — a second instance would never
@@ -126,6 +136,8 @@ class OnlineMatchViewModelTest {
       players = players,
       uid = { uid },
       worker = worker,
+      clock = clock,
+      heartbeat = heartbeat,
     )
   }
 
@@ -159,6 +171,17 @@ class OnlineMatchViewModelTest {
   private suspend fun TestScope.broadcast(matchId: String) {
     factory.deliver(matchId, store.snapshot())
     advanceUntilIdle()
+  }
+
+  /**
+   * Deliver a document WITHOUT advancing the scheduler's clock — the
+   * S19 staleness tests need time to pass *between* deliveries, and
+   * [advanceUntilIdle] would run the pending staleness alarm forward to
+   * the threshold the moment a document lands.
+   */
+  private fun TestScope.deliverNow(matchId: String) {
+    factory.deliver(matchId, store.snapshot())
+    runCurrent()
   }
 
   private fun biddingOf(state: MatchUiState): BiddingState =
@@ -531,6 +554,149 @@ class OnlineMatchViewModelTest {
     assertEquals("$label: both hold the same estimates", ba.bids.keys, bb.bids.keys)
     assertEquals("$label: the estimates are the expected set", expected, ba.bids.keys)
     assertEquals("$label: both wait on the same seat", ba.waitingFor, bb.waitingFor)
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
+  // 4. S19 — the passive "opponent appears away" hint + the heartbeat
+  // ═══════════════════════════════════════════════════════════════════
+
+  /**
+   * The hint is this client's observation of the DOCUMENT, not a presence
+   * read — the frozen rules make one unreadable — so both halves are driven
+   * the way they actually arrive: the clock moves without a document (an away
+   * opponent sends none), and the document moves without the clock.
+   *
+   * A stale turn flips the published hint; a card landing clears it and
+   * restarts the clock from THAT progress, so the same age afterward does not
+   * flip it back. A content-free version bump is explicitly NOT activity: it
+   * is a re-delivery or a rejected write, and counting it would let noise
+   * quietly clear the hint.
+   */
+  @Test
+  fun opponentAppearsAway_flipsOnStaleness_andClearsOnProgress() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      // One completed trick: the table is live, the caller (who holds every
+      // trump in the rig) holds the opening lead of trick 2.
+      val fixture = roundOneFixture(tricks = 1)
+      store = FakeMatchStore(fixture.hands)
+      store.doc = fixture.doc
+      val leader = fixture.table.turn ?: error("the fixture table has no seat to act")
+      // We sit anywhere but the acting seat, so the turn is an opponent's.
+      val ourSeat = seats.first { it != leader }
+
+      // The tracker's clock IS the scheduler's: the baseline, the staleness
+      // alarm's delay, and the time-passage steps below all read the one
+      // clock. A separate injected `var` would desync from the alarm, which
+      // fires on the scheduler's clock — the hint would then measure one
+      // clock and be flipped by another.
+      val vm = makeVm(seatUids.getValue(ourSeat), Dispatchers.Main, clock = { currentTime })
+      vm.start("m-away")
+      deliverNow("m-away")
+
+      assertEquals("mid-table, the leader to act", leader, tableOf(vm.state.value).turn)
+      assertFalse("a fresh document shows no hint", vm.opponentAway.value)
+
+      // Only time moves, past the tracker's staleness threshold. An away
+      // opponent sends no document, so the flip comes from the ONE pending
+      // alarm the view model arms — not from a delivery.
+      advanceUntilIdle()
+      assertTrue("a turn that went stale flips the hint", vm.opponentAway.value)
+
+      // A version bump carrying no content change is not play.
+      store.bumpVersion()
+      deliverNow("m-away")
+      assertTrue("a content-free version bump does not clear the hint",
+        vm.opponentAway.value,
+      )
+
+      // A card lands on the document: progress, and a fresh baseline taken at
+      // the instant the card arrived.
+      store.submitCard("m-away", store.peekHand(leader)[1])
+      deliverNow("m-away")
+      assertFalse("fresh activity clears the hint", vm.opponentAway.value)
+      // ...and a re-delivery at that same instant still reads zero elapsed
+      // against the card that just landed — the clock restarted with it.
+      store.bumpVersion()
+      deliverNow("m-away")
+      assertFalse("the restarted clock is measured from the progress",
+        vm.opponentAway.value,
+      )
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * The hint clears the moment nobody is being waited on — a scored round's
+   * window is a wait on the document, not on a player, and a finished match
+   * has no wait at all.
+   */
+  @Test
+  fun opponentAway_clearsWhenTheMatchEnds() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      val fixture = roundOneFixture(tricks = 1)
+      store = FakeMatchStore(fixture.hands)
+      store.doc = fixture.doc
+      val leader = fixture.table.turn ?: error("the fixture table has no seat to act")
+      val ourSeat = seats.first { it != leader }
+
+      val vm = makeVm(seatUids.getValue(ourSeat), Dispatchers.Main, clock = { currentTime })
+      vm.start("m-end")
+      deliverNow("m-end")
+      assertFalse(vm.opponentAway.value)
+
+      advanceUntilIdle()
+      assertTrue("the turn went stale", vm.opponentAway.value)
+
+      // The match completes: the hint has nothing left to say.
+      store.doc = store.doc.copy(
+        status = MatchDoc.STATUS_COMPLETE,
+        finalScores = seatUids.keys.associateWith { 10 },
+        winnerIds = listOf("p1"),
+        completedRound = 1,
+        version = store.doc.version + 1,
+      )
+      deliverNow("m-end")
+      assertFalse("a completed match clears the hint", vm.opponentAway.value)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * The heartbeat is the one activity signal the frozen rules let a player
+   * EMIT — on their OWN doc, nowhere else. It starts with the binding for the
+   * signed-in player's uid and drops with it, so a player who left stops
+   * writing their profile.
+   */
+  @Test
+  fun heartbeat_runsForTheSignedInPlayer_andStopsWithTheBinding() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastRoundDoc()
+      val heartbeat = RecordingHeartbeat()
+      val vm = makeVm("uid-a", Dispatchers.Main, heartbeat = heartbeat)
+
+      vm.start("m-beat")
+      advanceUntilIdle()
+      assertEquals("the cadence starts for the signed-in player's own uid",
+        listOf("uid-a"), heartbeat.started,
+      )
+
+      vm.stop()
+      assertEquals("leaving the match stops the cadence", 1, heartbeat.stopped)
+    } finally {
+      Dispatchers.resetMain()
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -938,6 +1104,24 @@ class OnlineMatchViewModelTest {
     override suspend fun setCurrentMatchId(uid: String, matchId: String?) {
       if (matchId == null) clears.incrementAndGet()
       current[uid] = matchId
+    }
+
+    // S19's lastSeenAt: the payload is pinned in PlayerServiceTest against the
+    // merge seam; a wiring test observes the cadence through the Heartbeat
+    // seam instead, so this stands in without a profile doc.
+    override suspend fun markActive(uid: String) = Unit
+  }
+
+  /** Records the S19 cadence's lifetime: started for a uid, then stopped. */
+  private class RecordingHeartbeat : Heartbeat {
+    val started = mutableListOf<String>()
+    var stopped = 0
+
+    override fun start(scope: CoroutineScope, uid: String): Job {
+      started += uid
+      // Cancelling the returned job is how the view model stops the cadence,
+      // so a completion handler is the stop signal.
+      return Job().also { it.invokeOnCompletion { stopped++ } }
     }
   }
 }
