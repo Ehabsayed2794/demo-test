@@ -26,6 +26,7 @@ import com.estemshan.services.MatchAdapter
 import com.estemshan.services.MatchListenerFactory
 import com.estemshan.services.MatchListenerRegistration
 import com.estemshan.services.PlayerPort
+import com.estemshan.services.session.GameSessionBridge
 import com.estemshan.services.model.AdvanceResult
 import com.estemshan.services.model.BiddingActionInput
 import com.estemshan.services.model.BiddingLogEntry
@@ -45,6 +46,7 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -110,7 +112,10 @@ class OnlineMatchViewModelTest {
    */
   private fun makeVm(uid: String, worker: CoroutineDispatcher): OnlineMatchViewModel {
     val session = GameSession()
-    val adapter = MatchAdapter(session, factory)
+    // The production wiring: the adapter replays into a bridge around the
+    // SAME GameSession the view model drives — a second instance would never
+    // agree with the VM's own reads (OnlineServices.session vs sessionPort).
+    val adapter = MatchAdapter(GameSessionBridge(session), factory)
     adapters[uid] = adapter
     return OnlineMatchViewModel(
       session = session,
@@ -147,7 +152,9 @@ class OnlineMatchViewModelTest {
   /** Hand the store's current document to every subscriber, then let the
    *  view models' pipelines drain — what a Firestore tick followed by the
    *  collector looks like from the outside. */
-  private suspend fun broadcast(matchId: String) {
+  /** Needs the [TestScope] receiver for [advanceUntilIdle], like every
+   *  call site it is invoked from. */
+  private suspend fun TestScope.broadcast(matchId: String) {
     factory.deliver(matchId, store.snapshot())
     advanceUntilIdle()
   }
