@@ -193,7 +193,10 @@ class OnlineMatchViewModelTest {
       // The deal arrives with the first snapshot; the auction opens at the
       // dealer, waiting on nobody's estimate yet.
       broadcast("m-idem")
-      assertEquals("the deal was attempted once", 1, store.dealCalls.get())
+      assertEquals(
+        "one real deal landed; bindSeat's redundant re-delivery no-oped it",
+        1, store.dealCalls.get(),
+      )
       val opening = biddingOf(vm.state.value)
       assertEquals("a fast round opens straight into estimates",
         BiddingPhase.ESTIMATES, opening.subPhase,
@@ -618,6 +621,7 @@ class OnlineMatchViewModelTest {
   ) : MatchStore {
 
     val dealCalls = AtomicInteger(0)
+    val redundantDealCalls = AtomicInteger(0)
     val bidCalls = AtomicInteger(0)
     val actionCalls = AtomicInteger(0)
     val cardCalls = AtomicInteger(0)
@@ -717,10 +721,15 @@ class OnlineMatchViewModelTest {
     }
 
     override suspend fun dealRound(matchId: String, roundNumber: Int): DealResult {
-      dealCalls.incrementAndGet()
+      // Like the real transaction: a redundant attempt reads the committed
+      // dealtRound and no-ops. Counting the attempt rather than the deal
+      // would make the redundant re-delivery bindSeat performs on every
+      // first snapshot look like a double-deal.
       if (doc.gameState.dealtRound >= roundNumber) {
+        redundantDealCalls.incrementAndGet()
         return DealResult(dealt = false, reason = "ALREADY_DEALT", matchId, roundNumber)
       }
+      dealCalls.incrementAndGet()
       doc = doc.copy(gameState = GameState(initialized = true, dealtRound = roundNumber))
       return DealResult(dealt = true, reason = null, matchId, roundNumber, doc.seats.keys.toList())
     }
