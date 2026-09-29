@@ -586,8 +586,11 @@ class OnlineMatchViewModelTest {
 
       assertEquals("mid-table, the leader to act", leader, tableOf(vm.state.value).turn)
       assertFalse("a fresh document shows no hint", vm.opponentAway.value)
+      val tableAfterFirst = (vm.state.value as? MatchUiState.Table)?.state
       val docAfterFirst = "cards=${store.doc.cardLog.size} bids=${store.doc.biddingLog.size} " +
         "round=${store.doc.currentRound} turn=${store.doc.turn} phase=${store.doc.cardPhase}"
+      val phaseAfterFirst = "state=${vm.state.value::class.simpleName} " +
+        "turn=${tableAfterFirst?.turn} phase=${tableAfterFirst?.phase}"
 
       // Only the clock moves, past the tracker's staleness threshold.
       now = OpponentAwayTracker.AWAY_THRESHOLD_MILLIS + STALE_MARGIN
@@ -599,7 +602,7 @@ class OnlineMatchViewModelTest {
       assertTrue(
         "DIAG away=${vm.opponentAway.value} state=${diagState::class.simpleName} " +
           "turn=${diagTable?.turn} phase=${diagTable?.phase} ourSeat=$ourSeat leader=$leader " +
-          "doc1=[$docAfterFirst] doc2=[$docAfterSecond]",
+          "doc1=[$docAfterFirst] doc2=[$docAfterSecond] after1=[$phaseAfterFirst]",
         vm.opponentAway.value,
       )
 
