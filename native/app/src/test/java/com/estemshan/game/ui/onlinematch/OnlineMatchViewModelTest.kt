@@ -602,7 +602,8 @@ class OnlineMatchViewModelTest {
       assertTrue(
         "DIAG away=${vm.opponentAway.value} state=${diagState::class.simpleName} " +
           "turn=${diagTable?.turn} phase=${diagTable?.phase} ourSeat=$ourSeat leader=$leader " +
-          "doc1=[$docAfterFirst] doc2=[$docAfterSecond] after1=[$phaseAfterFirst]",
+          "doc1=[$docAfterFirst] doc2=[$docAfterSecond] after1=[$phaseAfterFirst] " +
+          "inputs=${vm.awayInputs}",
         vm.opponentAway.value,
       )
 
