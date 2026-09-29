@@ -302,7 +302,19 @@ class OnlineMatchViewModel(
 
     if (doc == null) {
       if (error != null) {
-        if (lastDoc == null) _state.value = MatchUiState.Failed(error.message ?: "Match unavailable.")
+        // The cold-start gap. On a relaunch the FIRST Firestore callback can
+        // be a transient error — a network blip exactly at launch — with no
+        // document yet. The adapter has classified it RETRYABLE and scheduled
+        // a reconnect with backoff, so the real document is still coming;
+        // publishing Failed here would land the player on an error page
+        // before it arrives, and the match is lost to a blip. Holding
+        // Connecting covers that gap (it renders as the "Reconnecting…"
+        // overlay) until the reconnect delivers. A TERMINAL error — a
+        // permission denial, a genuinely unreadable match — still fails
+        // honestly: fail-open must never become fail-silent.
+        if (lastDoc == null && !snapshot.retryable) {
+          _state.value = MatchUiState.Failed(error.message ?: "Match unavailable.")
+        }
       } else {
         // Deleted, not loading — the match is gone.
         _state.value = MatchUiState.NotInMatch

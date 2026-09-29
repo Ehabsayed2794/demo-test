@@ -23,6 +23,7 @@ import com.estemshan.engine.initTable
 import com.estemshan.engine.nextSeat
 import com.estemshan.engine.resolveTrick
 import com.estemshan.services.MatchAdapter
+import com.estemshan.services.FirestoreError
 import com.estemshan.services.MatchListenerFactory
 import com.estemshan.services.MatchListenerRegistration
 import com.estemshan.services.PlayerPort
@@ -52,6 +53,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.concurrent.atomic.AtomicInteger
@@ -294,6 +296,126 @@ class OnlineMatchViewModelTest {
       assertEquals("the resolve registry stopped at the replayed tricks",
         fixture.table.trickNo - 1,
         adapters.getValue(seatUids.getValue("p2")).lastResolvedTrickNo("m-cold"),
+      )
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  // ── 2b. THE COLD-START GAP — fail-open, never drop the player ────────
+
+  /**
+   * S18 — the relaunch blip. The FIRST Firestore callback a cold-started
+   * client receives is a transient error (network unavailable at launch)
+   * with no document. The adapter classifies it RETRYABLE and schedules a
+   * reconnect with backoff, so the real document is still coming; publishing
+   * Failed now would land the player on an error page before it arrives and
+   * the match would be lost to a blip. The gap is covered by Connecting
+   * instead, and once the reconnect delivers, the pipeline converges to the
+   * exact trick a live seat holds.
+   */
+  @Test
+  fun coldStart_transientFirstError_holdsTheGapThenConvergesTheExactTrick() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      val fixture = roundOneFixture(tricks = 6)
+      store = FakeMatchStore(fixture.hands)
+      store.doc = fixture.doc
+      // A NON-caller seat, exactly like the plain cold start: the local table
+      // holds only this seat's hand, so the caller's cards arrive through the
+      // replay's throwaway seeding.
+      val vm = makeVm(seatUids.getValue("p2"), Dispatchers.Main)
+
+      vm.start("m-gap")
+      // The launch blip: no document, a retryable error. The adapter queues a
+      // reconnect, and the view model must cover the gap rather than fail.
+      factory.fail("m-gap", FirestoreError("unavailable", "transient"))
+      advanceUntilIdle()
+
+      assertTrue("the cold-start gap is covered by Connecting, not Failed",
+        vm.state.value is MatchUiState.Connecting,
+      )
+      // The gap is signalled by Connecting itself, NOT by the warm fail-open
+      // reconnecting flag — there is no last-known-good document to play, so
+      // that flag's documented meaning is left exactly as it was.
+      assertFalse("the warm fail-open flag stays down with no document to play",
+        vm.reconnecting.value,
+      )
+
+      // The scheduled reconnect delivers the real document and the pipeline
+      // converges to the exact trick a live seat holds.
+      broadcast("m-gap")
+
+      val published = vm.state.value
+      assertTrue("the reconnect reached trick play, not a stuck auction",
+        published is MatchUiState.Table,
+      )
+      val resumed = tableOf(published)
+      assertEquals("resumes the exact trick", fixture.table.trickNo, resumed.trickNo)
+      assertEquals("counts the same tricks", fixture.table.tricksWon, resumed.tricksWon)
+      assertEquals("the same seat holds the next turn", fixture.table.turn, resumed.turn)
+      assertEquals("the phase agrees", fixture.table.phase, resumed.phase)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * S18 — the honest half of fail-open. A terminal error at cold start
+   * (permission-denied, a genuinely unreadable match) has no reconnect
+   * coming, so the player is told plainly instead of being parked on an
+   * overlay that would never clear. Fail-open must not become fail-silent.
+   */
+  @Test
+  fun coldStart_terminalFirstError_publishesFailed() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastRoundDoc()
+      val vm = makeVm(seatUids.getValue("p2"), Dispatchers.Main)
+
+      vm.start("m-terminal")
+      factory.fail("m-terminal", FirestoreError("permission-denied", "not allowed"))
+      advanceUntilIdle()
+
+      val published = vm.state.value
+      assertTrue("a terminal cold-start error fails honestly, not held",
+        published is MatchUiState.Failed,
+      )
+      assertEquals("the failure carries the error's own message",
+        "not allowed", (published as MatchUiState.Failed).message,
+      )
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * S18 — the gap is only for RETRYABLE errors. A confirmed deletion (no
+   * error, no document) is the match being gone, and stays NotInMatch:
+   * unchanged behavior, pinned so the fail-open cannot swallow it.
+   */
+  @Test
+  fun coldStart_deletedDocument_publishesNotInMatch() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastRoundDoc()
+      val vm = makeVm(seatUids.getValue("p2"), Dispatchers.Main)
+
+      vm.start("m-deleted")
+      // A deletion, not a failure: the listener delivers null with no error.
+      factory.deliver("m-deleted", null)
+      advanceUntilIdle()
+
+      assertTrue("a deleted match is NotInMatch, not a held gap",
+        vm.state.value is MatchUiState.NotInMatch,
       )
     } finally {
       Dispatchers.resetMain()
@@ -586,21 +708,36 @@ class OnlineMatchViewModelTest {
   private class BroadcastFactory : MatchListenerFactory {
     val listenCalls = AtomicInteger(0)
     private val sinks = mutableMapOf<String, MutableList<(MatchDoc?) -> Unit>>()
+    private val errorSinks = mutableMapOf<String, MutableList<(FirestoreError) -> Unit>>()
 
     override fun listen(
       matchId: String,
       onSnapshot: (MatchDoc?) -> Unit,
-      onError: (com.estemshan.services.FirestoreError) -> Unit,
+      onError: (FirestoreError) -> Unit,
     ): MatchListenerRegistration {
       listenCalls.incrementAndGet()
       val list = sinks.getOrPut(matchId) { mutableListOf() }
       list.add(onSnapshot)
-      return MatchListenerRegistration { list.remove(onSnapshot) }
+      val errs = errorSinks.getOrPut(matchId) { mutableListOf() }
+      errs.add(onError)
+      return MatchListenerRegistration {
+        list.remove(onSnapshot)
+        errs.remove(onError)
+      }
     }
 
     /** Hand [doc] to every live subscriber of [matchId]. */
     fun deliver(matchId: String, doc: MatchDoc?) {
       sinks[matchId]?.toList()?.forEach { it(doc) }
+    }
+
+    /** Hand [error] to every live subscriber's error sink — a Firestore
+     *  listener blip, delivered the way the adapter's onError receives it.
+     *  The adapter's own backoff (Immediate in these tests) re-attaches the
+     *  one real listener before this returns when the error is retryable, so
+     *  the next [deliver] still lands exactly one delivery. */
+    fun fail(matchId: String, error: FirestoreError) {
+      errorSinks[matchId]?.toList()?.forEach { it(error) }
     }
 
     /** Live subscribers — the "one real listener per device" invariant. */

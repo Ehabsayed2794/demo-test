@@ -519,7 +519,11 @@ class MatchAdapter(
       doc to err
     }
     if (terminal != null || delivered != null) {
-      safeInvoke(listener) { it.onSnapshot(MatchSnapshot(delivered, terminal)) }
+      // A late joiner learns a TERMINAL error here, and only ever a terminal
+      // one — [onError] records terminalError solely for the classes it did
+      // not schedule a reconnect for — so retryable is false by construction,
+      // stated rather than left to the default.
+      safeInvoke(listener) { it.onSnapshot(MatchSnapshot(delivered, terminal, retryable = false)) }
     }
     return MatchSubscriptionHandle {
       synchronized(lock) {
@@ -613,15 +617,20 @@ class MatchAdapter(
   private fun onError(entry: Subscription, err: FirestoreError) {
     // Fail-open: the last known good data (if any) is delivered ALONGSIDE
     // the error, never replaced by it — the local game keeps what it has.
+    // The retryability of the error rides along on the snapshot so a
+    // consumer can tell "a reconnect is coming" from "this match is
+    // unreadable" and cover the gap instead of dropping the player.
     val (delivered, listeners) = synchronized(lock) {
       (if (entry.hasPublished) entry.lastPublished else null) to entry.listeners.toList()
     }
+    val retryable = classify(err) == ErrorClass.RETRYABLE
     listeners.forEach {
-      safeInvoke(it) { l -> l.onSnapshot(MatchSnapshot(delivered, err)) }
+      safeInvoke(it) { l -> l.onSnapshot(MatchSnapshot(delivered, err, retryable = retryable)) }
     }
-    when (classify(err)) {
-      ErrorClass.RETRYABLE -> scheduleReconnect(entry)
-      else -> synchronized(lock) { entry.terminalError = err }
+    if (retryable) {
+      scheduleReconnect(entry)
+    } else {
+      synchronized(lock) { entry.terminalError = err }
     }
   }
 
@@ -1000,6 +1009,15 @@ data class MatchSnapshot(
   val bidSync: ApplyOutcome? = null,
   val biddingActionSync: ApplyOutcome? = null,
   val cardSync: ApplyOutcome? = null,
+  /**
+   * The error is one the adapter classified RETRYABLE and scheduled a
+   * reconnect with backoff for — the listener is between documents, not
+   * dead. False on every document delivery, on a deletion (error == null),
+   * and on an error the adapter recorded as terminal. A consumer that sees
+   * error != null with retryable == true knows a good document is still
+   * expected, and may cover the gap instead of failing.
+   */
+  val retryable: Boolean = false,
 )
 
 fun interface MatchSnapshotListener {

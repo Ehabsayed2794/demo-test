@@ -81,7 +81,17 @@ fun EstemshanNav() {
         val target = ready
         if (target != null) {
           LaunchedEffect(target) {
-            if (target is AuthUiState.SignedIn) {
+            // S18's cold-start resume: a live currentMatchId on the profile
+            // routes the player straight into the match — the same call shape
+            // as the lobby's onResumeMatch and the room→match handoff — with
+            // splash popped so there is no lobby stop on the way through. A
+            // blank or absent id falls through to the lobby as it did before.
+            val resume = target.resumeMatchId
+            if (target.auth is AuthUiState.SignedIn && !resume.isNullOrBlank()) {
+              nav.navigate(onlineMatchRoute(resume)) {
+                popUpTo(Routes.SPLASH) { inclusive = true }
+              }
+            } else if (target.auth is AuthUiState.SignedIn) {
               nav.navigate(Routes.LOBBY) { popUpTo(Routes.SPLASH) { inclusive = true } }
             } else {
               nav.navigate(Routes.LOGIN) { popUpTo(Routes.SPLASH) { inclusive = true } }
