@@ -853,6 +853,7 @@ class OnlineMatchViewModel(
    * player already sees — never a second opinion about it.
    */
   internal val awayInputs = mutableListOf<String>()
+  internal val awayWrites = mutableListOf<String>()
 
   internal fun awayDebug(): String = awayTracker.debugState()
 
@@ -897,6 +898,7 @@ class OnlineMatchViewModel(
    * would have fired against the stale baseline.
    */
   private fun publishOpponentAway(presence: OpponentAwayTracker.Presence) {
+    awayWrites.add("publish presence=$presence")
     _opponentAway.value = presence == OpponentAwayTracker.Presence.AppearsAway
     awayAlarm?.cancel()
     awayAlarm = null
@@ -905,14 +907,17 @@ class OnlineMatchViewModel(
     if (remaining <= 0L) return
     awayAlarm = viewModelScope.launch(worker) {
       delay(remaining)
+      val reeval = awayTracker.reevaluate()
+      awayWrites.add("alarm fired reeval=$reeval")
       _opponentAway.value =
-        awayTracker.reevaluate() == OpponentAwayTracker.Presence.AppearsAway
+        reeval == OpponentAwayTracker.Presence.AppearsAway
     }
   }
 
   /** The hint is meaningless without a live match: drop the baseline, the
    *  pending alarm, and the published flag. */
   private fun clearOpponentAway() {
+    awayWrites.add("clear")
     awayTracker.reset()
     awayAlarm?.cancel()
     awayAlarm = null
