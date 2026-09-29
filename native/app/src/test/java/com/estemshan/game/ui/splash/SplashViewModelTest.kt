@@ -42,6 +42,10 @@ private class FakePlayers(
   override suspend fun setCurrentMatchId(uid: String, matchId: String?) {
     throw UnsupportedOperationException("the splash only reads currentMatchId")
   }
+
+  // S19's heartbeat never fires from the splash — the cadence is owned by the
+  // match view model — so the write has no path to exercise here.
+  override suspend fun markActive(uid: String) {}
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)

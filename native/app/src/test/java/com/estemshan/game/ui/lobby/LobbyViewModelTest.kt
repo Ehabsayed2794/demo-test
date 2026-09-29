@@ -233,6 +233,9 @@ class LobbyViewModelTest {
   private object FakePlayers : PlayerPort {
     override suspend fun currentMatchId(uid: String): String? = null
     override suspend fun setCurrentMatchId(uid: String, matchId: String?) {}
+
+    // S19's heartbeat is owned by the match view model, not the lobby.
+    override suspend fun markActive(uid: String) {}
   }
 
   private class FakeRooms : RoomPort {
