@@ -590,7 +590,13 @@ class OnlineMatchViewModelTest {
       // Only the clock moves, past the tracker's staleness threshold.
       now = OpponentAwayTracker.AWAY_THRESHOLD_MILLIS + STALE_MARGIN
       broadcast("m-away")
-      assertTrue("a turn that went stale flips the hint", vm.opponentAway.value)
+      val diagState = vm.state.value
+      val diagTable = (diagState as? MatchUiState.Table)?.state
+      assertTrue(
+        "DIAG away=${vm.opponentAway.value} state=${diagState::class.simpleName} " +
+          "turn=${diagTable?.turn} phase=${diagTable?.phase} ourSeat=$ourSeat leader=$leader",
+        vm.opponentAway.value,
+      )
 
       // A version bump carrying no content change is not play.
       store.bumpVersion()
