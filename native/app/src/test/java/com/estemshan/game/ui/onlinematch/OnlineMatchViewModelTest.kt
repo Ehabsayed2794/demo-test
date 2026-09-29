@@ -52,7 +52,9 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.Assert.assertEquals
@@ -108,11 +110,6 @@ class OnlineMatchViewModelTest {
    *  view model keeps its adapter private, but the registry gates these
    *  tests assert on are the adapter's own diagnostics. */
   private val adapters = mutableMapOf<String, MatchAdapter>()
-
-  private companion object {
-    /** Comfortably past [OpponentAwayTracker.AWAY_THRESHOLD_MILLIS]. */
-    const val STALE_MARGIN = 15_000L
-  }
 
   /**
    * One seat's whole online stack: its OWN [GameSession] and its OWN
@@ -174,6 +171,17 @@ class OnlineMatchViewModelTest {
   private suspend fun TestScope.broadcast(matchId: String) {
     factory.deliver(matchId, store.snapshot())
     advanceUntilIdle()
+  }
+
+  /**
+   * Deliver a document WITHOUT advancing the scheduler's clock — the
+   * S19 staleness tests need time to pass *between* deliveries, and
+   * [advanceUntilIdle] would run the pending staleness alarm forward to
+   * the threshold the moment a document lands.
+   */
+  private fun TestScope.deliverNow(matchId: String) {
+    factory.deliver(matchId, store.snapshot())
+    runCurrent()
   }
 
   private fun biddingOf(state: MatchUiState): BiddingState =
@@ -579,49 +587,40 @@ class OnlineMatchViewModelTest {
       // We sit anywhere but the acting seat, so the turn is an opponent's.
       val ourSeat = seats.first { it != leader }
 
-      var now = 0L
-      val vm = makeVm(seatUids.getValue(ourSeat), Dispatchers.Main, clock = { now })
+      // The tracker's clock IS the scheduler's: the baseline, the staleness
+      // alarm's delay, and the time-passage steps below all read the one
+      // clock. A separate injected `var` would desync from the alarm, which
+      // fires on the scheduler's clock — the hint would then measure one
+      // clock and be flipped by another.
+      val vm = makeVm(seatUids.getValue(ourSeat), Dispatchers.Main, clock = { currentTime })
       vm.start("m-away")
-      broadcast("m-away")
+      deliverNow("m-away")
 
       assertEquals("mid-table, the leader to act", leader, tableOf(vm.state.value).turn)
       assertFalse("a fresh document shows no hint", vm.opponentAway.value)
-      val tableAfterFirst = (vm.state.value as? MatchUiState.Table)?.state
-      val docAfterFirst = "cards=${store.doc.cardLog.size} bids=${store.doc.biddingLog.size} " +
-        "round=${store.doc.currentRound} turn=${store.doc.turn} phase=${store.doc.cardPhase}"
-      val phaseAfterFirst = "state=${vm.state.value::class.simpleName} " +
-        "turn=${tableAfterFirst?.turn} phase=${tableAfterFirst?.phase}"
 
-      // Only the clock moves, past the tracker's staleness threshold.
-      now = OpponentAwayTracker.AWAY_THRESHOLD_MILLIS + STALE_MARGIN
-      broadcast("m-away")
-      val diagState = vm.state.value
-      val diagTable = (diagState as? MatchUiState.Table)?.state
-      val docAfterSecond = "cards=${store.doc.cardLog.size} bids=${store.doc.biddingLog.size} " +
-        "round=${store.doc.currentRound} turn=${store.doc.turn} phase=${store.doc.cardPhase}"
-      assertTrue(
-        "DIAG away=${vm.opponentAway.value} state=${diagState::class.simpleName} " +
-          "turn=${diagTable?.turn} phase=${diagTable?.phase} ourSeat=$ourSeat leader=$leader " +
-          "doc1=[$docAfterFirst] doc2=[$docAfterSecond] after1=[$phaseAfterFirst] " +
-          "inputs=${vm.awayInputs} tracker=${vm.awayDebug()} writes=${vm.awayWrites}",
-        vm.opponentAway.value,
-      )
+      // Only time moves, past the tracker's staleness threshold. An away
+      // opponent sends no document, so the flip comes from the ONE pending
+      // alarm the view model arms — not from a delivery.
+      advanceUntilIdle()
+      assertTrue("a turn that went stale flips the hint", vm.opponentAway.value)
 
       // A version bump carrying no content change is not play.
       store.bumpVersion()
-      broadcast("m-away")
+      deliverNow("m-away")
       assertTrue("a content-free version bump does not clear the hint",
         vm.opponentAway.value,
       )
 
-      // A card lands on the document: progress, and a fresh baseline.
+      // A card lands on the document: progress, and a fresh baseline taken at
+      // the instant the card arrived.
       store.submitCard("m-away", store.peekHand(leader)[1])
-      broadcast("m-away")
+      deliverNow("m-away")
       assertFalse("fresh activity clears the hint", vm.opponentAway.value)
-      // ...and the SAME clock value does not flip it again, because the
-      // baseline moved with the card.
-      now = OpponentAwayTracker.AWAY_THRESHOLD_MILLIS + STALE_MARGIN
-      broadcast("m-away")
+      // ...and a re-delivery at that same instant still reads zero elapsed
+      // against the card that just landed — the clock restarted with it.
+      store.bumpVersion()
+      deliverNow("m-away")
       assertFalse("the restarted clock is measured from the progress",
         vm.opponentAway.value,
       )
@@ -647,14 +646,12 @@ class OnlineMatchViewModelTest {
       val leader = fixture.table.turn ?: error("the fixture table has no seat to act")
       val ourSeat = seats.first { it != leader }
 
-      var now = 0L
-      val vm = makeVm(seatUids.getValue(ourSeat), Dispatchers.Main, clock = { now })
+      val vm = makeVm(seatUids.getValue(ourSeat), Dispatchers.Main, clock = { currentTime })
       vm.start("m-end")
-      broadcast("m-end")
+      deliverNow("m-end")
       assertFalse(vm.opponentAway.value)
 
-      now = OpponentAwayTracker.AWAY_THRESHOLD_MILLIS + STALE_MARGIN
-      broadcast("m-end")
+      advanceUntilIdle()
       assertTrue("the turn went stale", vm.opponentAway.value)
 
       // The match completes: the hint has nothing left to say.
@@ -665,7 +662,7 @@ class OnlineMatchViewModelTest {
         completedRound = 1,
         version = store.doc.version + 1,
       )
-      broadcast("m-end")
+      deliverNow("m-end")
       assertFalse("a completed match clears the hint", vm.opponentAway.value)
     } finally {
       Dispatchers.resetMain()

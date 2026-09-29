@@ -852,17 +852,7 @@ class OnlineMatchViewModel(
    * this same delivery drove, so the hint is a function of the state the
    * player already sees — never a second opinion about it.
    */
-  internal val awayInputs = mutableListOf<String>()
-  internal val awayWrites = mutableListOf<String>()
-
-  internal fun awayDebug(): String = awayTracker.debugState() + " tcalls=${awayTracker.calls}"
-
   private fun refreshOpponentAway(doc: MatchDoc, ourSeat: String) {
-    awayInputs.add(
-      "seat=$ourSeat acting=${opponentActingSeat(ourSeat)} " +
-        "tablePhase=${session.getPlayState()?.phase} valid=${session.isPlayStateValidForCurrentRound()} " +
-        "scored=$scoredRound cards=${doc.cardLog.size} bids=${doc.biddingLog.size}",
-    )
     // A scored round's window is a wait on the document, not on a player.
     if (scoredRound == doc.currentRound) {
       clearOpponentAway()
@@ -898,7 +888,6 @@ class OnlineMatchViewModel(
    * would have fired against the stale baseline.
    */
   private fun publishOpponentAway(presence: OpponentAwayTracker.Presence) {
-    awayWrites.add("publish presence=$presence")
     _opponentAway.value = presence == OpponentAwayTracker.Presence.AppearsAway
     awayAlarm?.cancel()
     awayAlarm = null
@@ -907,17 +896,14 @@ class OnlineMatchViewModel(
     if (remaining <= 0L) return
     awayAlarm = viewModelScope.launch(worker) {
       delay(remaining)
-      val reeval = awayTracker.reevaluate()
-      awayWrites.add("alarm fired reeval=$reeval")
       _opponentAway.value =
-        reeval == OpponentAwayTracker.Presence.AppearsAway
+        awayTracker.reevaluate() == OpponentAwayTracker.Presence.AppearsAway
     }
   }
 
   /** The hint is meaningless without a live match: drop the baseline, the
    *  pending alarm, and the published flag. */
   private fun clearOpponentAway() {
-    awayWrites.add("clear")
     awayTracker.reset()
     awayAlarm?.cancel()
     awayAlarm = null
