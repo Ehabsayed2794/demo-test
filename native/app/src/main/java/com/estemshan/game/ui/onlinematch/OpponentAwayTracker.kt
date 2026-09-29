@@ -126,6 +126,9 @@ internal class OpponentAwayTracker(
     baselineSeat = null
   }
 
+  internal fun debugState(): String =
+    "baseline=$baseline seat=$baselineSeat at=$baselineAt elapsed=${clock() - baselineAt} thresh=$thresholdMillis"
+
   private fun presenceFromElapsed(): Presence =
     if (clock() - baselineAt >= thresholdMillis) Presence.AppearsAway
     else Presence.OpponentActive

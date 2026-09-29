@@ -603,7 +603,7 @@ class OnlineMatchViewModelTest {
         "DIAG away=${vm.opponentAway.value} state=${diagState::class.simpleName} " +
           "turn=${diagTable?.turn} phase=${diagTable?.phase} ourSeat=$ourSeat leader=$leader " +
           "doc1=[$docAfterFirst] doc2=[$docAfterSecond] after1=[$phaseAfterFirst] " +
-          "inputs=${vm.awayInputs}",
+          "inputs=${vm.awayInputs} tracker=${vm.awayDebug()}",
         vm.opponentAway.value,
       )
 
