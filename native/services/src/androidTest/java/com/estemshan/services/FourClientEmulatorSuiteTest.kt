@@ -1,6 +1,6 @@
 package com.estemshan.services
 
-import androidx.test.core.app.InstrumentationRegistry
+import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.estemshan.services.model.MatchDoc
 import com.estemshan.services.model.SEAT_IDS

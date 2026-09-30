@@ -25,7 +25,6 @@ import com.estemshan.services.model.BiddingActionInput
 import com.estemshan.services.model.BiddingLogEntry
 import com.estemshan.services.model.MatchDoc
 import com.estemshan.services.model.RAPID_ROUND_MIN
-import com.estemshan.services.model.ROUND_CARD_TOTAL
 import com.estemshan.services.model.SEAT_IDS
 import com.estemshan.services.model.VoteDoc
 import com.estemshan.services.session.AuthPort
@@ -97,7 +96,7 @@ class ScriptedMatch(
   private val extendAtRound: Int = RAPID_ROUND_MIN
 
   private inner class Client(val seatId: String) {
-    private val firebase = seating.getValue(seatId)
+    internal val firebase = seating.getValue(seatId)
     val uid: String get() = firebase.uid
     private val db: FirebaseFirestore get() = firebase.db
     val engine: GameSession = GameSession()
@@ -338,7 +337,7 @@ class ScriptedMatch(
       }
       return engineTurn
     }
-    val docTurn = doc.uidToSeat(doc.turn)
+    val docTurn = doc.turn?.let { doc.uidToSeat(it) }
     val engineTurn = clients.first().engine.getTurn()
     for (client in clients) {
       assertEquals("seat ${client.seatId} agrees with the document's turn",
