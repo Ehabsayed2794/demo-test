@@ -240,6 +240,12 @@ jobs:
         # in against it. Ports are firebase.json's (firestore 8080, auth
         # 9099); the Android emulator reaches them via 10.0.2.2, the host
         # loopback as seen from inside the guest.
+        #
+        # firebase-tools also writes firestore-debug.log / firebase-debug.log
+        # to this directory; the artifact step below uploads them because
+        # that is the ONLY place a rules-evaluation failure is recorded with
+        # its exact CEL expression — the client SDK only surfaces
+        # "permission-denied" with a line number, never which clause threw.
         run: |
           set -euo pipefail
           npx firebase emulators:start --project demo-test-ci --only firestore,auth \
@@ -277,6 +283,19 @@ jobs:
           # true, matching :app's FirebaseModule).
           script: native/gradlew -p native :services:connectedDebugAndroidTest --stacktrace
 
+      - name: Collect the emulator debug logs
+        # The Firestore emulator's own rules-evaluation detail lands in
+        # firestore-debug.log (named in the emulator banner), written to the
+        # directory the emulators were started from — the repo root here.
+        # Copied BEFORE the emulators are stopped so a SIGTERM cannot
+        # truncate the final flush of a denial this very run produced.
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/emulator-logs"
+          for f in firestore-debug.log firebase-debug.log; do
+            [ -f "$f" ] && cp "$f" "$RUNNER_TEMP/emulator-logs/$f" || true
+          done
+
       - name: Stop the host emulators
         if: always()
         run: |
@@ -293,6 +312,7 @@ jobs:
             native/services/build/reports/androidTests/
             native/services/build/outputs/androidTest-results/
             ${{ runner.temp }}/emulators.log
+            ${{ runner.temp }}/emulator-logs/
           if-no-files-found: warn
 
   # Phase 3 — the rules layer the Kotlin services write against, proven

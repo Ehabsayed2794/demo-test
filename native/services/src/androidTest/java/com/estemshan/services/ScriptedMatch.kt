@@ -25,7 +25,9 @@ import com.estemshan.services.model.BiddingActionInput
 import com.estemshan.services.model.BiddingLogEntry
 import com.estemshan.services.model.MatchDoc
 import com.estemshan.services.model.RAPID_ROUND_MIN
+import com.estemshan.services.model.Reasons
 import com.estemshan.services.model.SEAT_IDS
+import com.estemshan.services.model.ServiceException
 import com.estemshan.services.model.VoteDoc
 import com.estemshan.services.session.AuthPort
 import com.estemshan.services.session.GameSessionBridge
@@ -197,7 +199,9 @@ class ScriptedMatch(
   /** dealRound is idempotent — every client races it, one wins. */
   private suspend fun ensureDealAndHand(client: Client, doc: MatchDoc) {
     if (doc.gameState.dealtRound < doc.currentRound) {
-      client.store.dealRound(matchId, doc.currentRound)
+      retryEmulatorTx("dealRound round ${doc.currentRound}") {
+        client.store.dealRound(matchId, doc.currentRound)
+      }
     }
     if (client.engine.getHand(client.seatId).isEmpty()) {
       val hand = client.store.loadHand(matchId, client.seatId, doc.currentRound)
@@ -315,9 +319,13 @@ class ScriptedMatch(
       BiddingPhase.DONE -> return
     }
     if (action != null) {
-      client.store.submitBiddingAction(matchId, action)
+      retryEmulatorTx("submitBiddingAction seat ${client.seatId}") {
+        client.store.submitBiddingAction(matchId, action)
+      }
     } else {
-      client.store.submitBid(matchId, actor, ESTIMATE)
+      retryEmulatorTx("submitBid seat ${client.seatId}") {
+        client.store.submitBid(matchId, actor, ESTIMATE)
+      }
     }
   }
 
@@ -354,7 +362,9 @@ class ScriptedMatch(
     assertEquals("the table's turn is the seat the driver picked", seat, turn)
     val card: Card = legalCards(table, seat).firstOrNull()
       ?: error("no legal card for $seat in trick ${table.trickNo}")
-    client.store.submitCard(matchId, card)
+    retryEmulatorTx("submitCard seat $seat trick ${table.trickNo}") {
+      client.store.submitCard(matchId, card)
+    }
   }
 
   // ── one round: bidding, 52 cards, score, race ───────────────────────
@@ -448,8 +458,10 @@ class ScriptedMatch(
     val isLast = round + 1 > maxRounds
 
     if (extend) {
-      val raced = raceAll {
-        it.store.extendMatchRounds(matchId, round, ExtensionReason.SUPER_CALL.name)
+      val raced = raceAll { client ->
+        retryEmulatorTx("extendMatchRounds round $round") {
+          client.store.extendMatchRounds(matchId, round, ExtensionReason.SUPER_CALL.name)
+        }
       }
       assertConverged("extendMatchRounds round $round", raced, { it.extended }) { it.maxRounds }
     }
@@ -457,14 +469,22 @@ class ScriptedMatch(
     val advanced: Boolean
     val ended: Boolean
     if (isLast) {
-      val raced = raceAll { it.store.endMatch(matchId, round, first.totals, first.winners) }
+      val raced = raceAll { client ->
+        retryEmulatorTx("endMatch round $round") {
+          client.store.endMatch(matchId, round, first.totals, first.winners)
+        }
+      }
       assertConverged("endMatch round $round", raced, { it.complete }) {
         it.winnerIds to it.finalScores
       }
       advanced = false
       ended = true
     } else {
-      val raced = raceAll { it.store.advanceToNextRound(matchId, round) }
+      val raced = raceAll { client ->
+        retryEmulatorTx("advanceToNextRound round $round") {
+          client.store.advanceToNextRound(matchId, round)
+        }
+      }
       // A race loser gets ALREADY_ADVANCED with the committed currentRound
       // and no archivedRound, so only the round the document landed on is
       // a safe thing to compare across all four.
@@ -571,6 +591,39 @@ class ScriptedMatch(
     }
   }
 
+  /**
+   * The Firestore EMULATOR has zero transaction retry and, under a real
+   * stateful multi-client workload, denies a rules-correct transaction on
+   * its first attempt — INVESTIGATION_CLOSEOUT.md §2 reproduced this
+   * deterministically (5/5 runs) and verified the identical writes against
+   * real Firestore, which never denies them. Retrying here supplies the
+   * retry-on-conflict the emulator fails to perform internally.
+   *
+   * Suite-only, and never in runTx: production relies on runTx surfacing a
+   * genuine denial, and on real Firestore there is nothing to retry. A
+   * PERMISSION_DENIED means the transaction committed NOTHING (Firestore is
+   * all-or-nothing), so a retry can never double-apply a write; and every
+   * retried call is itself idempotent, so a lost race resolves as the
+   * RETURNED no-op the convergence contract promises rather than as a
+   * second write. The fresh [loadMatch] between attempts is a real round
+   * trip that lets a racing client's write land first.
+   */
+  private suspend fun <T> retryEmulatorTx(what: String, block: suspend () -> T): T {
+    var last: ServiceException? = null
+    for (attempt in 1..EMULATOR_TX_ATTEMPTS) {
+      try {
+        return block()
+      } catch (err: ServiceException) {
+        if (err.reason !in RETRIED_REASONS) throw err
+        last = err
+        if (attempt < EMULATOR_TX_ATTEMPTS) loadMatch()
+      }
+    }
+    error("$what: the emulator denied a rules-correct transaction " +
+      "$EMULATOR_TX_ATTEMPTS times (an emulator artifact, per " +
+      "INVESTIGATION_CLOSEOUT.md §2): ${last?.message}")
+  }
+
   // ── rematch: vote, unanimous YES, next match ────────────────────────
 
   data class RematchReport(
@@ -581,14 +634,22 @@ class ScriptedMatch(
   )
 
   suspend fun rematch(): RematchReport {
-    val creates = raceAll { it.store.createRematchVote(matchId) }
+    val creates = raceAll { client ->
+      retryEmulatorTx("createRematchVote") { client.store.createRematchVote(matchId) }
+    }
     assertConverged("createRematchVote", creates, { it.created }) { it.vote?.status }
 
-    val votes = raceAll { it.store.submitRematchVote(matchId, VoteDoc.VOTE_VALUES.first()) }
+    val votes = raceAll { client ->
+      retryEmulatorTx("submitRematchVote") {
+        client.store.submitRematchVote(matchId, VoteDoc.VOTE_VALUES.first())
+      }
+    }
     assertEquals("every vote was recorded", CLIENTS, votes.count { it.accepted })
     assertEquals("the vote closed unanimous", VoteDoc.STATUS_ALL_YES, votes.first().status)
 
-    val creates2 = raceAll { it.store.createRematchMatch(matchId) }
+    val creates2 = raceAll { client ->
+      retryEmulatorTx("createRematchMatch") { client.store.createRematchMatch(matchId) }
+    }
     assertConverged("createRematchMatch", creates2, { it.created }) { it.newMatchId }
 
     val newMatchId = creates2.first().newMatchId!!
@@ -616,6 +677,11 @@ class ScriptedMatch(
     const val AUCTION_BID = 4
     const val BIDDING_GUARD = 120
     const val MAX_PLAUSIBLE_ROUNDS = 40
+
+    // Bounded retries on the emulator's spurious first-attempt denials —
+    // see retryEmulatorTx(). Real Firestore never needs them.
+    const val EMULATOR_TX_ATTEMPTS = 8
+    val RETRIED_REASONS = setOf(Reasons.PERMISSION_DENIED, Reasons.UNAVAILABLE)
   }
 }
 
