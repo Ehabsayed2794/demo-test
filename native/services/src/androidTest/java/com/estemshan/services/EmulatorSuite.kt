@@ -83,16 +83,16 @@ object EmulatorSuite {
   fun reset() = runBlocking(Dispatchers.IO) {
     // Firestore: the documented clear-database endpoint.
     runCatching {
-      clear("/emulator/v1/projects/$PROJECT_ID/databases/(default)/documents")
+      clear(FIRESTORE_PORT, "/emulator/v1/projects/$PROJECT_ID/databases/(default)/documents")
     }
     // Auth: stale users would not actually collide (every client mints a
     // fresh anonymous uid), but a clean slate keeps the suite
     // order-independent.
-    runCatching { clear("/emulator/v1/projects/$PROJECT_ID/accounts") }
+    runCatching { clear(AUTH_PORT, "/emulator/v1/projects/$PROJECT_ID/accounts") }
   }
 
-  private fun clear(path: String) {
-    val conn = (URL("http://$HOST/$path").openConnection() as HttpURLConnection).apply {
+  private fun clear(port: Int, path: String) {
+    val conn = (URL("http://$HOST:$port$path").openConnection() as HttpURLConnection).apply {
       requestMethod = "DELETE"
       connectTimeout = 15_000
       readTimeout = 15_000
