@@ -1,0 +1,37 @@
+package com.estemshan.services
+
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import com.estemshan.services.model.SEAT_IDS
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.fail
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+
+/**
+ * TEMPORARY diagnostic for the deterministic `submitCard` rules denial on
+ * the Firestore emulator (`evaluation error at L1536:24 for 'update'`).
+ *
+ * Replays the round-1 card write in progressively reduced shapes and fails
+ * with the emulator's verbose per-write error for each one, so the whole
+ * ladder lands verbatim in the downloaded test report. Delete this file (and
+ * `probeCardWriteShapes` in ScriptedMatch) once the denial is fixed.
+ */
+@RunWith(AndroidJUnit4::class)
+class CardWriteDenialProbeTest {
+
+  @Before
+  fun wipeEmulators() {
+    EmulatorSuite.reset()
+  }
+
+  @Test
+  fun probe_cardWriteShapes() = runBlocking {
+    val context = InstrumentationRegistry.getInstrumentation().targetContext
+    val seating = SEAT_IDS.associateWith { EmulatorSuite.client(context, it) }
+    val match = ScriptedMatch(seating, seed = 4242L)
+    match.start()
+    fail(match.probeCardWriteShapes())
+  }
+}

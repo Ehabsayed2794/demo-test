@@ -31,6 +31,7 @@ import com.estemshan.services.model.ServiceException
 import com.estemshan.services.model.VoteDoc
 import com.estemshan.services.session.AuthPort
 import com.estemshan.services.session.GameSessionBridge
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -409,6 +410,115 @@ class ScriptedMatch(
 
   /** The committed document — the ground truth every client must agree on. */
   suspend fun standings(): MatchDoc = loadMatch()
+
+  // ── S20 denial probe (TEMPORARY — delete once the deterministic
+  //    submitCard rules denial is fixed) ─────────────────────────────
+
+  /**
+   * TEMPORARY: isolates which clause of `isValidCardSubmission()` the
+   * emulator's rules authorizer rejects, by replaying the card write in
+   * progressively reduced shapes and capturing the emulator's verbose
+   * per-write error for each one. Whatever the outcome, the caller fails
+   * the test with this text so the whole ladder lands verbatim in the
+   * downloaded test report.
+   */
+  suspend fun probeCardWriteShapes(): String {
+    driveBidding(1)
+    val sb = StringBuilder()
+    val pre = loadMatch()
+    sb.append("PRE-STATE turn=${pre.turn} cardPhase=${pre.cardPhase} version=${pre.version} ")
+      .append("round=${pre.currentRound} status=${pre.status} ")
+      .append("cardLog=${pre.cardLog.size} biddingLog=${pre.biddingLog.size} ")
+      .append("seats=${pre.seats}\n")
+
+    val turnSeat = fun(m: MatchDoc): String =
+      m.uidToSeat(m.turn ?: error("probe: the document has no turn"))
+        ?: error("probe: the turn uid owns no seat")
+
+    val rungs: List<Pair<String, (MatchDoc) -> Map<String, Any?>>> = listOf(
+      "A production: cardLog arrayUnion + turn + cardPhase" to
+        { m -> val s = turnSeat(m); cardProbePatch(m, s, probeNextUid(m, s), true, true) },
+      "B literal cardLog + turn + cardPhase" to
+        { m -> val s = turnSeat(m); cardProbePatch(m, s, probeNextUid(m, s), false, true) },
+      "C production minus turn/cardPhase" to
+        { m -> val s = turnSeat(m); cardProbePatch(m, s, null, true, false) },
+      "D version + updatedAt only (baseline)" to
+        { m -> mapOf("version" to (m.version + 1), "updatedAt" to FieldValue.serverTimestamp()) },
+    )
+
+    for ((name, buildPatch) in rungs) {
+      sb.append("=== RUNG $name ===\n")
+      val outcome = try {
+        probeWrite(buildPatch)
+        "ALLOWED"
+      } catch (t: Throwable) {
+        "DENIED: ${t.message}"
+      }
+      sb.append(outcome).append('\n')
+    }
+    return sb.toString()
+  }
+
+  /** Any other seat's uid: the rules only check the new turn is SOME real
+   *  seat owner, never that it is the engine-correct next seat. */
+  private fun probeNextUid(m: MatchDoc, seat: String): String? =
+    m.seats.entries.firstOrNull { it.key != seat }?.value
+
+  private fun cardProbePatch(
+    m: MatchDoc,
+    seat: String,
+    nextUid: String?,
+    arrayUnion: Boolean,
+    withTurnPhase: Boolean,
+  ): Map<String, Any?> {
+    val entry = mapOf(
+      "seatId" to seat,
+      "card" to mapOf("suit" to "SPADES", "rank" to mapOf("v" to 2L, "s" to "2")),
+      "round" to m.currentRound,
+    )
+    val cardLog: Any = if (arrayUnion) {
+      FieldValue.arrayUnion(entry)
+    } else {
+      m.cardLog.map { it.toFields() } + entry
+    }
+    return buildMap {
+      put("cardLog", cardLog)
+      put("lastCardSeat", seat)
+      put("version", m.version + 1)
+      put("updatedAt", FieldValue.serverTimestamp())
+      if (withTurnPhase) {
+        put("turn", nextUid)
+        put("cardPhase", "PLAY")
+      }
+    }
+  }
+
+  /**
+   * One transaction run as the seat that currently holds the document's
+   * `turn` — the same authority `publishOpeningTurnIfNeeded` establishes
+   * before a real card write, so `oldData.turn == request.auth.uid` holds.
+   */
+  private suspend fun probeWrite(buildPatch: (MatchDoc) -> Map<String, Any?>) {
+    val peek = loadMatch()
+    val turnSeat = peek.uidToSeat(peek.turn ?: error("probe: the document has no turn"))
+      ?: error("probe: the turn uid owns no seat")
+    val client = bySeat.getValue(turnSeat)
+    val matchRef = client.db.collection("matches").document(matchId)
+    runTx(client.db) { tx ->
+      val snap = tx.get(matchRef)
+      if (!snap.exists()) {
+        return@runTx TxOutcome.Err(
+          ServiceException(Reasons.MATCH_NOT_FOUND, "probe: the match disappeared"),
+        )
+      }
+      val m = MatchDoc.fromFields(snap.data ?: emptyMap())
+        ?: return@runTx TxOutcome.Err(
+          ServiceException(Reasons.MATCH_NOT_FOUND, "probe: the match could not be parsed"),
+        )
+      tx.update(matchRef, buildPatch(m))
+      TxOutcome.Ok(m.version + 1)
+    }
+  }
 
   private suspend fun driveBidding(round: Int) {
     var guard = 0
