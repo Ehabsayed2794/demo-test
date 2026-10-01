@@ -103,6 +103,32 @@ android {
       // committed — FirebaseOptions are built in code (FirebaseModule).
       buildConfigField("boolean", "USE_EMULATOR", "true")
     }
+    // S21 prerequisite — the human-QA build. Same REAL Firebase project as
+    // release (USE_EMULATOR false, so FirebaseModule builds the real
+    // options and never points at 10.0.2.2, which does not exist on a
+    // physical device) but debuggable and dev-signed, so it needs no store
+    // listing and no production keystore. Firebase App Distribution ships
+    // this variant to the tester group (docs/release/HUMAN_QA.md).
+    // create(), not a qa { } block: AGP's Kotlin DSL generates typed
+    // accessors only for the built-in debug/release, so a custom build type
+    // named in a block is an unresolved reference at configuration time.
+    create("qa") {
+      buildConfigField("boolean", "USE_EMULATOR", "false")
+      isMinifyEnabled = false
+      isDebuggable = true
+      // AGP's debug key, generated on demand, so assembleQa always yields
+      // an installable APK. Deliberately NOT the production keystore: a
+      // tester build is not a signed release.
+      signingConfig = signingConfigs.getByName("debug")
+      // Installable BESIDE the debug build on one device. The two hold
+      // different Firebase projects (emulator vs real), so without this
+      // suffix one silently clobbers the other and changes which backend
+      // the installed app talks to.
+      applicationIdSuffix = ".qa"
+      // :engine and :services define no qa build type; take their release
+      // variants, whose USE_EMULATOR is also false.
+      matchingFallbacks += "release"
+    }
     release {
       buildConfigField("boolean", "USE_EMULATOR", "false")
       isMinifyEnabled = false

@@ -10,6 +10,10 @@
 #      FIREBASE_API_KEY, FIREBASE_APP_ID)
 #   3. the committed defaults (already public via design-ui/firebase-init.js)
 #
+# The qa build type (human QA, docs/release/HUMAN_QA.md) reads the SAME
+# three values — it is the real project too — so this file or the CI
+# secret also fixes a qa build that signs in against the placeholder.
+#
 # Only the applicationId has no committed source — without this file the
 # release build keeps its all-zeros PLACEHOLDER and FirebaseModule logs a
 # warning. The apiKey and projectId defaults are the project's own values.
