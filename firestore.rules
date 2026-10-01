@@ -1528,7 +1528,22 @@ service cloud.firestore {
           ('maxRounds' in affected) ? isValidRoundExtension() :
           ('currentRound' in affected) ? isValidRoundAdvance() :
           ('cardLog' in affected) ? isValidCardSubmission() :
-          ('turn' in affected) ? isValidOpeningTurnPublication() :
+          // S20 (4-Client Emulator Suite): a round-1 publish whose opening
+          // actor is the DEALER writes `turn` to the SAME uid the document
+          // already holds — `turn` is seeded to the dealer at creation and
+          // bidding never changes it — so `turn` is NOT in affectedKeys()
+          // and this discriminator never reached the validator below. A
+          // structurally correct publish then fell through to `false` and
+          // the whole submitCard() was denied, deterministically (proven:
+          // the same publish ALLOWED once `turn` was made to differ).
+          // `cardPhase` null->PLAY is what actually moves on that publish,
+          // so route on it too. This grants nothing: the validator's own
+          // hasOnly()/version/seat-owner/round-1-dealer checks remain the
+          // real gate (per this discriminator's own header note), and no
+          // card/round/match/deal write is misrouted — every one of those
+          // changes cardLog/currentRound/status/maxRounds/gameState, all
+          // checked BEFORE this line.
+          ('turn' in affected || 'cardPhase' in affected) ? isValidOpeningTurnPublication() :
           ('biddingLog' in affected) ? isValidBiddingActionSubmission() :
           ('bids' in affected) ? isValidBidSubmission() :
           false;

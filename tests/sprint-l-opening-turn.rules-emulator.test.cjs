@@ -114,6 +114,20 @@ async function run() {
     await assertFails(matchRef(uidB, nonDealer).update(openingPatch(uidB)))
       .then(function () { return true; }).catch(function () { return false; }));
 
+  // S20 (4-Client Emulator Suite) regression: every positive case above
+  // publishes turn to a DIFFERENT uid (uidB over the seeded uidA). When
+  // the round-1 opening actor IS the dealer, the publish writes turn to
+  // the SAME uid already there, so `turn` never lands in the update
+  // dispatch's affectedKeys() and the write was unroutable — denied 8/8
+  // deterministically, taking the whole submitCard() down with it (only
+  // cardPhase null->PLAY actually moves). This is the case that let the
+  // bug ship: the JS app escapes it whenever a non-dealer wins the bid.
+  var dealerOpens = "opening-round-dealer-is-opener";
+  await seed(dealerOpens);
+  check("L.6 Round-1 publication by the dealer (turn unchanged) is allowed",
+    await assertSucceeds(matchRef(uidA, dealerOpens).update(openingPatch(uidA)))
+      .then(function () { return true; }).catch(function () { return false; }));
+
   await testEnv.cleanup();
   console.log(pass + " passed, " + fail + " failed");
   process.exitCode = fail ? 1 : 0;
