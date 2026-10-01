@@ -503,8 +503,9 @@ class ScriptedMatch(
     val turnSeat = peek.uidToSeat(peek.turn ?: error("probe: the document has no turn"))
       ?: error("probe: the turn uid owns no seat")
     val client = bySeat.getValue(turnSeat)
-    val matchRef = client.db.collection("matches").document(matchId)
-    runTx(client.db) { tx ->
+    val db = client.firebase.db
+    val matchRef = db.collection("matches").document(matchId)
+    runTx(db) { tx ->
       val snap = tx.get(matchRef)
       if (!snap.exists()) {
         return@runTx TxOutcome.Err(
