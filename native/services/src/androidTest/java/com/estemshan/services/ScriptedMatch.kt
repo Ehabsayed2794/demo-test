@@ -346,10 +346,17 @@ class ScriptedMatch(
       return engineTurn
     }
     val docTurn = doc.turn?.let { doc.uidToSeat(it) }
-    val engineTurn = clients.first().engine.getTurn()
+    // Mid-trick the session's getTurn() is deliberately the round LEADER,
+    // not the next card's owner: MatchAdapter mirrors the resolved trick's
+    // next leader into session.setTurn() only at the resolving boundary
+    // (applyRemoteTrick), never per card, and applyRemoteCard advances the
+    // table state alone. The authoritative per-card turn is the table
+    // engine's own turn — the same source MatchService.submitCard() takes
+    // its authority from (previewPlay gates on state.turn == seatId).
+    val engineTurn = clients.first().engine.getPlayState()?.turn
     for (client in clients) {
       assertEquals("seat ${client.seatId} agrees with the document's turn",
-        engineTurn, client.engine.getTurn())
+        engineTurn, client.engine.getPlayState()?.turn)
     }
     assertEquals("the document's turn matches the engines'", docTurn, engineTurn)
     return docTurn
