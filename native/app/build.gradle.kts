@@ -109,7 +109,10 @@ android {
     // physical device) but debuggable and dev-signed, so it needs no store
     // listing and no production keystore. Firebase App Distribution ships
     // this variant to the tester group (docs/release/HUMAN_QA.md).
-    qa {
+    // create(), not a qa { } block: AGP's Kotlin DSL generates typed
+    // accessors only for the built-in debug/release, so a custom build type
+    // named in a block is an unresolved reference at configuration time.
+    create("qa") {
       buildConfigField("boolean", "USE_EMULATOR", "false")
       isMinifyEnabled = false
       isDebuggable = true
