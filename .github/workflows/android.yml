@@ -263,24 +263,44 @@ jobs:
         # main push after setup is the upload's own verification.
         if: github.event_name == 'push'
         env:
-          CREDENTIALS_B64: ${{ secrets.FIREBASE_APP_DISTRIBUTION_CREDENTIALS }}
+          CREDENTIALS: ${{ secrets.FIREBASE_APP_DISTRIBUTION_CREDENTIALS }}
           FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
           COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
           set -euo pipefail
           APK="native/app/build/outputs/apk/qa/app-qa.apk"
           PLACEHOLDER="1:261597513798:android:00000000000000000000000000000000"
-          if [ -z "$CREDENTIALS_B64" ] || [ -z "$FIREBASE_APP_ID" ] || [ "$FIREBASE_APP_ID" = "$PLACEHOLDER" ]; then
+          if [ -z "$CREDENTIALS" ] || [ -z "$FIREBASE_APP_ID" ] || [ "$FIREBASE_APP_ID" = "$PLACEHOLDER" ]; then
             echo "::warning::Firebase App Distribution is not configured yet — skipping the upload."
             echo "::warning::Do the one-time setup in docs/release/HUMAN_QA.md, then add two repo secrets:"
-            echo "::warning::  FIREBASE_APP_DISTRIBUTION_CREDENTIALS  base64 of the service-account JSON"
+            echo "::warning::  FIREBASE_APP_DISTRIBUTION_CREDENTIALS  the service-account JSON, raw or base64"
             echo "::warning::  FIREBASE_APP_ID                        the Android app id from the Firebase console"
             echo "::warning::The next main push after that distributes the build. The APK is already on this run's artifacts."
             exit 0
           fi
-          echo "$CREDENTIALS_B64" | base64 -d > "$RUNNER_TEMP/app-distribution.json"
+          # The secret may hold the service-account JSON itself or its base64
+          # encoding — either is one paste action in the GitHub UI. Assuming
+          # base64 made the step die on `base64: invalid input` the first time
+          # the owner configured it, so decode only when the payload is not
+          # already JSON. Raw JSON always fails base64 -d on its first { or ",
+          # so a failing decode IS the detector; the if-condition keeps
+          # pipefail from aborting the job on that expected failure.
+          CREDENTIALS_FILE="$RUNNER_TEMP/app-distribution.json"
+          if printf '%s' "$CREDENTIALS" | base64 -d > "$CREDENTIALS_FILE" 2>/dev/null; then
+            echo "Decoded the credential from base64."
+          else
+            printf '%s' "$CREDENTIALS" > "$CREDENTIALS_FILE"
+            echo "Used the credential as-is (raw JSON)."
+          fi
+          # Report a garbled secret here instead of letting firebase-cli
+          # surface it as an opaque auth failure further down the log.
+          FIRST=$(tr -d '[:space:]' < "$CREDENTIALS_FILE" | cut -c1)
+          if [ "$FIRST" != "{" ]; then
+            echo "::error::FIREBASE_APP_DISTRIBUTION_CREDENTIALS is neither valid base64 nor a service-account JSON object."
+            exit 1
+          fi
           npx firebase appdistribution:distribute "$APK" \
-            --service-credentials-file "$RUNNER_TEMP/app-distribution.json" \
+            --service-credentials-file "$CREDENTIALS_FILE" \
             --app "$FIREBASE_APP_ID" \
             --groups "estemshan-qa" \
             --release-notes "$COMMIT_MESSAGE"

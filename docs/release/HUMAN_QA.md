@@ -37,9 +37,10 @@ project. CI asserts the suffix on every build (`aapt2 dump packagename` in
    private key** → download the JSON. This account may upload builds and
    nothing else.
 4. **Add two repository secrets** (Settings → Secrets and variables → Actions):
-   - `FIREBASE_APP_DISTRIBUTION_CREDENTIALS` — the JSON file's contents,
-     **base64-encoded** (`base64 -w0 service-account.json` on Linux,
-     `base64 -i file.json` on macOS).
+   - `FIREBASE_APP_DISTRIBUTION_CREDENTIALS` — the JSON file's contents.
+     Paste the JSON as-is, or base64-encode it first
+     (`base64 -w0 service-account.json` on Linux, `base64 -i file.json` on
+     macOS) — CI accepts either and detects which one it got.
    - `FIREBASE_APP_ID` — the **Android app id** from Project settings → Your
      apps → the `com.estemshan.game` app, shaped `1:261597513798:android:…`.
      Do not confuse it with the Android *package name*; CI already knows the
