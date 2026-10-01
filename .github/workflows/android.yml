@@ -299,8 +299,14 @@ jobs:
             echo "::error::FIREBASE_APP_DISTRIBUTION_CREDENTIALS is neither valid base64 nor a service-account JSON object."
             exit 1
           fi
+          # firebase-tools 15 has no --service-credentials-file flag on this
+          # command — or anywhere; `npx firebase` resolves latest, which rejects
+          # it with "unknown option". The service account is supplied through
+          # Application Default Credentials instead: requireAuth falls through
+          # to google-auth-library when there is no --token or signed-in user,
+          # and that library reads this env var first.
+          export GOOGLE_APPLICATION_CREDENTIALS="$CREDENTIALS_FILE"
           npx firebase appdistribution:distribute "$APK" \
-            --service-credentials-file "$CREDENTIALS_FILE" \
             --app "$FIREBASE_APP_ID" \
             --groups "estemshan-qa" \
             --release-notes "$COMMIT_MESSAGE"
