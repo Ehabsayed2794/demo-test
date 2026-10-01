@@ -36,7 +36,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -652,7 +654,26 @@ class ScriptedMatch(
       }
     }
     assertEquals("every vote was recorded", CLIENTS, votes.count { it.accepted })
-    assertEquals("the vote closed unanimous", VoteDoc.STATUS_ALL_YES, votes.first().status)
+    // A client's returned status is the vote doc as that client saw it AT
+    // ITS OWN submission: submitRematchVote only flips the doc to ALL_YES
+    // on the deciding (4th) vote, so votes.first().status is OPEN unless
+    // client 1 happens to be the last to vote — the assertion was flaky by
+    // construction, passing only in the orderings where seat 1 decided. All
+    // four votes ARE recorded (above); re-read the doc and confirm it
+    // settled unanimous on a fresh read instead.
+    val settled = withTimeoutOrNull(VOTE_SETTLE_TIMEOUT_MS) {
+      val voteRef = db.collection("matches").document(matchId)
+        .collection("rematchVote").document("current")
+      while (true) {
+        val vote = voteRef.get().await().data?.let { VoteDoc.fromFields(it) }
+        if (vote?.status == VoteDoc.STATUS_ALL_YES) return@withTimeoutOrNull vote
+        delay(VOTE_SETTLE_POLL_MS)
+      }
+    }
+    assertNotNull(
+      "the vote doc never settled on ALL_YES within ${VOTE_SETTLE_TIMEOUT_MS}ms",
+      settled,
+    )
 
     val creates2 = raceAll { client ->
       retryEmulatorTx("createRematchMatch") { client.store.createRematchMatch(matchId) }
@@ -684,6 +705,14 @@ class ScriptedMatch(
     const val AUCTION_BID = 4
     const val BIDDING_GUARD = 120
     const val MAX_PLAUSIBLE_ROUNDS = 40
+
+    // Bounded wait for the rematch vote doc to settle after all four
+    // clients have submitted — see rematch(). The deciding vote's
+    // transaction has committed by the time raceAll returns, but the
+    // emulator can serve a stale read, so poll until the doc is ALL_YES
+    // rather than trusting any single snapshot.
+    const val VOTE_SETTLE_TIMEOUT_MS = 20_000L
+    const val VOTE_SETTLE_POLL_MS = 250L
 
     // Bounded retries on the emulator's spurious first-attempt denials —
     // see retryEmulatorTx(). Real Firestore never needs them.
