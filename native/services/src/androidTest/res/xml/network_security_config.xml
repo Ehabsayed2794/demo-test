@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<!-- Permits cleartext HTTP to the host emulators and nothing else.
+     The :services instrumented suite talks to the CI host's Firestore +
+     Auth emulators at 10.0.2.2 (the host loopback as seen from inside the
+     Android emulator) over plain HTTP on 8080/9099. Android forbids
+     cleartext by default from targetSdk 28 (this module targets 36), so the
+     host is named explicitly — matching is by host, so both emulator ports
+     are covered, and no other host is affected. This lives in src/androidTest
+     so it never reaches a shipped AAR or the release app. -->
+<network-security-config>
+  <domain-config cleartextTrafficPermitted="true">
+    <domain includeSubdomains="true">10.0.2.2</domain>
+  </domain-config>
+</network-security-config>

@@ -69,4 +69,10 @@ dependencies {
   androidTestImplementation("androidx.test:runner:1.6.2")
   androidTestImplementation("androidx.test.ext:junit:1.2.1")
   androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
+
+  // S20: firestore.rules requires request.auth != null on every match
+  // write, so the instrumented suite signs four real anonymous users in
+  // against the Auth emulator. Test-only — the library itself never
+  // touches Auth (that is :app's job at wiring time).
+  androidTestImplementation("com.google.firebase:firebase-auth-ktx")
 }
