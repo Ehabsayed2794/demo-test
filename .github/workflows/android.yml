@@ -69,7 +69,10 @@ jobs:
         # assembleDebugAndroidTest compiles the :services instrumented suite
         # here so a compile error in androidTest fails in ~2 minutes instead
         # of after the instrumented job has booted an emulator.
-        run: native/gradlew -p native :app:assembleDebug :app:testDebugUnitTest :engine:test :services:test :services:assembleDebugAndroidTest --stacktrace
+        # testQaUnitTest runs the SAME unit tests against the qa variant's
+        # BuildConfig — BuildVariantWiringTest asserts the real-project +
+        # .qa-suffix wiring, which only this task exercises.
+        run: native/gradlew -p native :app:assembleDebug :app:testDebugUnitTest :app:testQaUnitTest :engine:test :services:test :services:assembleDebugAndroidTest --stacktrace
 
       - name: Upload unit test reports
         if: always()
@@ -175,6 +178,112 @@ jobs:
           name: estemshan-release-apk
           path: native/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
+
+  # S21 prerequisite — Firebase App Distribution (free tier, no server of
+  # ours — fits decision D3). The qa build type targets the REAL Firebase
+  # project (never the 10.0.2.2 emulators) but stays debuggable and
+  # dev-signed, so a tester's phone runs the same backend release does
+  # without a store listing or a production keystore. Every main push ships
+  # the build to the estemshan-qa tester group; pull requests build and
+  # verify it but do not distribute — a per-PR tester release would drown
+  # the group. One-time setup: docs/release/HUMAN_QA.md.
+  qa-distribute:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK packages
+        run: |
+          set -euo pipefail
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager --install "platform-tools" "platforms;android-36" "build-tools;35.0.0"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Node.js (firebase-tools)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Assemble qa
+        run: native/gradlew -p native :app:assembleQa --stacktrace
+
+      - name: Verify the qa APK targets the real project, as a separate app
+        # Same reasoning as the release job: the dummy demo-test-ci is still
+        # compiled into the shared FirebaseModule class, so only the real
+        # id's PRESENCE is a meaningful check. The package-name half is
+        # qa-specific: it proves applicationIdSuffix survived the build.
+        # Without it the qa APK overwrites the debug one on a tester's phone
+        # and the surviving app silently talks to the emulator project.
+        run: |
+          set -euo pipefail
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          APK="native/app/build/outputs/apk/qa/app-qa.apk"
+          test -f "$APK" || { echo "qa APK missing"; exit 1; }
+          DEX_DIR="$(mktemp -d)"
+          unzip -o -q "$APK" 'classes*.dex' -d "$DEX_DIR"
+          grep -a -q "made---estimation-card-game" "$DEX_DIR"/classes*.dex \
+            || { echo "qa APK missing the real Firebase project id"; ls -la "$DEX_DIR"; exit 1; }
+          rm -rf "$DEX_DIR"
+          PACKAGE="$("$ANDROID_HOME/build-tools/35.0.0/aapt2" dump packagename "$APK")"
+          echo "qa APK package: $PACKAGE"
+          test "$PACKAGE" = "com.estemshan.game.qa" \
+            || { echo "qa APK lost its .qa applicationIdSuffix"; exit 1; }
+          echo "qa APK targets made---estimation-card-game as com.estemshan.game.qa."
+
+      - name: Upload qa APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: estemshan-qa-apk
+          path: native/app/build/outputs/apk/qa/*.apk
+          if-no-files-found: error
+
+      - name: Distribute to the estemshan-qa tester group
+        # main pushes only, so PR builds never spam the testers. Skipped —
+        # not failed — until the one-time setup lands, because the owner
+        # has not created the credential yet. A placeholder app id here
+        # makes firebase-cli fail with an unhelpful 404, so it is treated
+        # as "not configured" alongside an absent credential. The first
+        # main push after setup is the upload's own verification.
+        if: github.event_name == 'push'
+        env:
+          CREDENTIALS_B64: ${{ secrets.FIREBASE_APP_DISTRIBUTION_CREDENTIALS }}
+          FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          set -euo pipefail
+          APK="native/app/build/outputs/apk/qa/app-qa.apk"
+          PLACEHOLDER="1:261597513798:android:00000000000000000000000000000000"
+          if [ -z "$CREDENTIALS_B64" ] || [ -z "$FIREBASE_APP_ID" ] || [ "$FIREBASE_APP_ID" = "$PLACEHOLDER" ]; then
+            echo "::warning::Firebase App Distribution is not configured yet — skipping the upload."
+            echo "::warning::Do the one-time setup in docs/release/HUMAN_QA.md, then add two repo secrets:"
+            echo "::warning::  FIREBASE_APP_DISTRIBUTION_CREDENTIALS  base64 of the service-account JSON"
+            echo "::warning::  FIREBASE_APP_ID                        the Android app id from the Firebase console"
+            echo "::warning::The next main push after that distributes the build. The APK is already on this run's artifacts."
+            exit 0
+          fi
+          echo "$CREDENTIALS_B64" | base64 -d > "$RUNNER_TEMP/app-distribution.json"
+          npx firebase appdistribution:distribute "$APK" \
+            --service-credentials-file "$RUNNER_TEMP/app-distribution.json" \
+            --app "$FIREBASE_APP_ID" \
+            --groups "estemshan-qa" \
+            --release-notes "$COMMIT_MESSAGE"
 
   # S20 (plan §2D) — the instrumented 4-client emulator suite: four real
   # MatchService instances in one Android emulator, four real signed-in
