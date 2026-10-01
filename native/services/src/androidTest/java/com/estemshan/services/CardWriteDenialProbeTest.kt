@@ -13,10 +13,14 @@ import org.junit.runner.RunWith
  * TEMPORARY diagnostic for the deterministic `submitCard` rules denial on
  * the Firestore emulator (`evaluation error at L1536:24 for 'update'`).
  *
- * Replays the round-1 card write in progressively reduced shapes and fails
- * with the emulator's verbose per-write error for each one, so the whole
- * ladder lands verbatim in the downloaded test report. Delete this file (and
- * `probeCardWriteShapes` in ScriptedMatch) once the denial is fixed.
+ * v2: calls the REAL submitCard() and then replays the opening-turn
+ * publish half on its own — once with the submitter's own uid (what
+ * MatchService actually writes) and once with a different seat's uid, so
+ * `turn` genuinely changes. The contrast isolates whether the dispatch's
+ * `('turn' in affectedKeys())` routing is what misroutes the publish.
+ * Fails with the whole ladder verbatim in the downloaded test report.
+ * Delete this file (and the probe functions in ScriptedMatch) once the
+ * denial is fixed.
  */
 @RunWith(AndroidJUnit4::class)
 class CardWriteDenialProbeTest {
@@ -32,6 +36,6 @@ class CardWriteDenialProbeTest {
     val seating = SEAT_IDS.associateWith { EmulatorSuite.client(context, it) }
     val match = ScriptedMatch(seating, seed = 4242L)
     match.start()
-    fail(match.probeCardWriteShapes())
+    fail(match.probeSubmitCardHalves())
   }
 }

@@ -411,6 +411,118 @@ class ScriptedMatch(
   /** The committed document — the ground truth every client must agree on. */
   suspend fun standings(): MatchDoc = loadMatch()
 
+  // ── S20 denial probe v2 (TEMPORARY — delete once the deterministic
+  //    submitCard rules denial is fixed) ─────────────────────────────
+
+  /**
+   * TEMPORARY: calls the REAL [MatchService.submitCard] for the engine's
+   * opening seat and inspects the committed document afterwards. If
+   * `cardPhase` became PLAY the publish half succeeded and the card write
+   * is the denial; if it stayed null the publish half itself was denied.
+   * The ladder then replays each half separately as raw transactions to
+   * capture the emulator's verbose verdict per write.
+   */
+  suspend fun probeSubmitCardHalves(): String {
+    driveBidding(1)
+    val sb = StringBuilder()
+    val before = loadMatch()
+    val engineTurn = clients.first().engine.getTurn()
+    val submitClient = bySeat.getValue(engineTurn ?: error("the engine has no turn"))
+    // RAW uids matter, not seats: the rules dispatch routes on
+    // affectedKeys(), and the publish is only routed to
+    // isValidOpeningTurnPublication() when 'turn' is among them. If the
+    // engine's opening seat already IS the document's turn holder, the
+    // publish writes turn to the SAME uid and the dispatch never routes.
+    sb.append("BEFORE doc.turn=${before.turn} ")
+      .append("doc.dealer=${before.dealer} ")
+      .append("submitter.uid=${submitClient.uid} ")
+      .append("doc.turn==submitter.uid=${before.turn == submitClient.uid} ")
+      .append("doc.turn==doc.dealer=${before.turn == before.dealer} ")
+      .append("openingWindow=${before.isRoundOneOpeningWindow} ")
+      .append("cardPhase=${before.cardPhase} version=${before.version}\n")
+    sb.append("BEFORE engine.turn=").append(engineTurn).append('\n')
+
+    val table = submitClient.engine.getPlayState() ?: error("no table engine")
+    val turnNow = table.turn ?: error("the table has no turn")
+    assertEquals("the probe submits as the engine's turn holder", engineTurn, turnNow)
+    val card = legalCards(table, turnNow).firstOrNull()
+      ?: error("no legal card for $turnNow")
+
+    sb.append("=== RUNG E the real submitCard() (publish + card) ===\n")
+    val e = try {
+      submitClient.store.submitCard(matchId, card)
+      "ALLOWED"
+    } catch (t: Throwable) {
+      "DENIED: ${t.message}"
+    }
+    sb.append(e).append('\n')
+    val after = loadMatch()
+    sb.append("AFTER cardPhase=${after.cardPhase} version=${after.version} ")
+      .append("cardLog=${after.cardLog.size} turn=${after.turn}(raw)\n")
+    sb.append("PUBLISH HALF: ").append(if (after.cardPhase == "PLAY") "SUCCEEDED" else "DID NOT LAND").append('\n')
+
+    // Rung F: the publish write exactly as MatchService writes it — turn
+    // set to the SUBMITTER's own uid, which is what the document already
+    // holds when the engine's opening seat is the round's turn holder.
+    sb.append("=== RUNG F publish write (turn = submitter uid) ===\n")
+    val f = if (after.cardPhase == "PLAY") {
+      "SKIPPED (the publish already landed in rung E)"
+    } else {
+      try {
+        publishProbeWrite(submitClient, after, submitClient.uid)
+        "ALLOWED"
+      } catch (t: Throwable) {
+        "DENIED: ${t.message}"
+      }
+    }
+    sb.append(f).append('\n')
+
+    // Rung G: the SAME publish shape but with ANOTHER seat's uid as turn,
+    // so 'turn' genuinely changes and the dispatch's
+    // `('turn' in affected)` clause can fire. If G is ALLOWED while F is
+    // DENIED, the root cause is the DISPATCH ROUTING (a publish that
+    // leaves turn unchanged is unroutable), not the publish's own validity.
+    val postF = loadMatch()
+    val otherUid = before.seats.entries.firstOrNull { it.value != submitClient.uid }?.value
+      ?: error("probe: no other seat to borrow a uid from")
+    sb.append("=== RUNG G publish write (turn = a DIFFERENT seat uid) ===\n")
+    val g = if (postF.cardPhase == "PLAY") {
+      "SKIPPED (the publish already landed)"
+    } else {
+      try {
+        publishProbeWrite(submitClient, postF, otherUid)
+        "ALLOWED"
+      } catch (t: Throwable) {
+        "DENIED: ${t.message}"
+      }
+    }
+    sb.append(g).append('\n')
+    return sb.toString()
+  }
+
+  private suspend fun publishProbeWrite(client: Client, match: MatchDoc, turnUid: String) {
+    val matchRef = client.firebase.db.collection("matches").document(matchId)
+    runTx(client.firebase.db) { tx ->
+      val snap = tx.get(matchRef)
+      if (!snap.exists()) {
+        return@runTx TxOutcome.Err(
+          ServiceException(Reasons.MATCH_NOT_FOUND, "probe: the match disappeared"),
+        )
+      }
+      val fresh = MatchDoc.fromFields(snap.data ?: emptyMap())
+        ?: return@runTx TxOutcome.Err(
+          ServiceException(Reasons.MATCH_NOT_FOUND, "probe: the match could not be parsed"),
+        )
+      tx.update(matchRef, mapOf(
+        "turn" to turnUid,
+        "cardPhase" to MatchDoc.CARD_PHASE_PLAY,
+        "version" to fresh.version + 1,
+        "updatedAt" to FieldValue.serverTimestamp(),
+      ))
+      TxOutcome.Ok(fresh.version + 1)
+    }
+  }
+
   // ── S20 denial probe (TEMPORARY — delete once the deterministic
   //    submitCard rules denial is fixed) ─────────────────────────────
 
