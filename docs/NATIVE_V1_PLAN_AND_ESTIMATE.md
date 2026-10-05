@@ -103,7 +103,32 @@ The full design narrative, the contradiction register, and the per-screen UI imp
 
 **Open (do not invent answers)**
 
-- **RD26** **Exact numeric RP thresholds for all 19 ranks — OPEN OWNER DECISION.** Structure per RD3; placeholders Bronze III: TBD … Royal I: TBD, King: TBD. Invent/infer/copy nothing; the "Gold III = 900 RP" line is illustrative only; derive nothing from the `design-ui` mocks. The engine stays independent of the constants. **Non-blocking** — the UI binds the structure, the numbers are tunable constants.
+- **RD26** **RP thresholds for all 19 ranks — CLOSED 2026-10-05.** These are the
+  **lower-bound RP** values, per RD3 — promote at the next rank's lower bound,
+  demote below the current floor:
+
+  | Rank | Lower-bound RP | | Rank | Lower-bound RP |
+  |---|---:|---|---|---:|
+  | Bronze III | 0 | | Platinum III | 1,000 |
+  | Bronze II | 75 | | Platinum II | 1,200 |
+  | Bronze I | 150 | | Platinum I | 1,400 |
+  | Silver III | 250 | | Diamond III | 1,600 |
+  | Silver II | 350 | | Diamond II | 1,800 |
+  | Silver I | 450 | | Diamond I | 2,000 |
+  | Gold III | 575 | | Royal III | 2,250 |
+  | Gold II | 700 | | Royal II | 2,500 |
+  | Gold I | 825 | | Royal I | 2,750 |
+  | | | | **King** | **3,000** |
+
+  Structure per RD1–RD3: Bronze → Silver → Gold → Platinum → Diamond → Royal,
+  each III → II → I, plus King with **no division** = 19 ranks. **RP is dynamic
+  (RD4), never a fixed ±X per match** — these are only the rank boundaries the
+  dynamic engine measures against. **RP ≥ 0 always**; **King has a lower bound
+  and no upper bound — RP above King is leaderboard-only** (RD27). The thresholds
+  are **tunable server/config constants and stay independent of the RP
+  calculation engine** (S46), so these numbers can move after playtest without
+  touching the engine or the UI. Nothing is derived from the `design-ui` mocks —
+  their values are non-canonical legacy data.
 - **OPEN-1** **Reconnect after 15-timeout automatic removal — not finalized.** The removal itself is decided (RD20); whether/how that player may rejoin that match is an open implementation detail.
 - **OPEN-2** **Is gameplay paused while a Vote Kick is active?** The vote's target is the *unique current Koz*, so the target must not be able to change mid-vote. Whether the match pauses for the vote duration is **not established by the repository or the design**. Recorded as a small owner decision, not silently assumed.
 
@@ -365,7 +390,7 @@ Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.
 | **R23** | **Arabic review bottleneck.** `values-ar` needs a native-speaker review before submission, and that reviewer is an external person on no sprint clock | Store submission waits on one human's inbox | Draft `values-ar` early with AI assistance (EN infra lands with S12, so strings are reviewable long before S41 starts); book the reviewer when S24 opens, not when S41 needs sign-off. **The Ranked tier titles (مبتدئ / لاعب / معلم / وزير / أمير / سلطان / ملك) are product identity — put them in the reviewer's first batch, they are the most visible AR strings in the app** |
 | **R24** | **Cloud Functions cold-start latency on settlement.** The player sits on the Ranked result screen (S57) while the settlement callable warms up | A "settling…" wait that feels broken at the most satisfying moment in the game | UI shows an explicit settling state, never a blank or a spinner that implies failure. min-instances only if cost-justified — RD16 says monitor first, do not pre-buy capacity |
 | **R25** | **The MVP security boundary (RD14) is a compromise, not full authority.** In-play state stays client-converged; the server validates at settlement, not realtime | A determined cheater who controls all four clients can still produce a plausible-looking converged history | **This residual is accepted deliberately (RD16), named in the appendix essay, and logged in the RP audit ledger (S62).** Upgrade path: stronger realtime authority when cheating, scale, revenue, or competitive pressure justifies it. Do not silently oversell the boundary |
-| **R26** | **RD26 thresholds are unset.** All 19 rank lower-bounds are TBD placeholders | Progression feel is undefined until the owner sets numbers; tuning after playtest may move promotion/demotion cadence | **S46 isolates the thresholds into a tunable constant source**, so numbers change without redesign. The UI binds the ladder *structure*, not the numbers, so RD26 does not block any UI work |
+| **R26** | **RD26 thresholds are SET (2026-10-05) but unvalidated by play.** All 19 rank lower-bounds are now closed constants — but no real player has climbed the ladder yet | Progression feel may still move promotion/demotion cadence once a playtest grinds it; the numbers were set by judgement, not by data | **S46 isolates the thresholds into a tunable constant source**, so numbers change without redesign. The UI binds the ladder *structure*, not the numbers. The residual risk is now *tuning*, not *absence* — a v1.1 balance pass is expected, not a sign the decision was wrong |
 | **R27** | **Season reset is a one-way data migration.** Two-step demotion direction (Gold I → Gold III, never the reverse), ladder floor, Highest Rank preservation, King → Royal I — all irreversible once run | A botched reset corrupts every player's rank at once and cannot be rolled back without a backup | S59 + a **mandatory emulator dry-run against a seeded production-shaped dataset before the first real season**. The direction is the trap: I > II > III, so "down two" from Gold I is Gold III |
 | **R28** | **Mixed-tier RP feels punitive to the higher-tier loser.** RD5 multiplies their loss because they lost to a lower-tier opponent — intentional, but it *reads* as unfair if unexplained | Negative reviews from Gold players losing to Silver | The Ranked result screen (S57) shows the delta and the reason; RD5 is owner-approved, so the fix is communication, not a formula change. Tunable in S47 |
 | **R29** | **Cloud Functions cost at scale.** Settlement is one invocation per match — cheap at launch, unbounded at growth | A surprise bill if the game succeeds | RD16 governs: monitor, do not pre-build. The RP audit ledger (S62) is the natural usage signal. Spark plan covers the whole v1 forecast |
@@ -410,7 +435,7 @@ Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.
 
 | Contingency bucket | % of 1,032 | Hours | Why this rate |
 |---|---|---|---|
-| Unknown requirements | 4% | 41 | **Ranked is now the largest undocumented area** (RD26 thresholds are TBD placeholders, R26) — this bucket grows with it. AI-bot scope was the previous driver (R13); voice is pinned by V1–V5 |
+| Unknown requirements | 4% | 41 | **Ranked is now the largest undocumented area** (its thresholds are set but unplayed — R26) — this bucket grows with it. AI-bot scope was the previous driver (R13); voice is pinned by V1–V5 |
 | Bugs | 4% | 41 | Bot tier balance always needs more iterations than planned; **RP tuning will need a playtest cycle or two** (R26) |
 | Integration problems | 4% | 41 | The `:app`↔`:services` wiring + instrumented tier is untested territory (R8), **plus a first WebRTC integration** (R15/R16/R21), **plus a first Cloud Functions settlement layer** (R24 cold starts, R25 boundary) |
 | Rework | 2% | 21 | Toolchain decision may force a Compose-compiler migration; the WebRTC artifact choice may need swapping (R21); **a season-reset defect found in dry-run is rework by definition** (R27) |
@@ -439,13 +464,13 @@ Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.
 
 **Required team.** **One engineer (the owner) + AI coding agents**, plus part-time QA for the final 3 weeks (including a 4-physical-device voice room). No artist, animator, sound designer, or backend *hire* needed at v1 scope — **but the plan now contains 388h of backend work**, written by that one engineer as lightweight Cloud Functions (RD11), not as a server.
 
-**Major risks.** (1) The app currently targets API 34 — Google requires API 36 as of Aug 31, 2026, so the toolchain must be upgraded before anything can ship. (2) The AdMob 14-day closed-testing clock is the one immovable external deadline. (3) The AI bot files are coupled to the "deferred" Monte-Carlo module more tightly than expected. (4) The frozen security rules make true player presence impossible — by design, not by oversight. (5) **Voice cannot reach every player STUN-only: 5–15% of room-pairs sit behind symmetric NATs and will show "unreachable" — TURN is a v1.1, $0-effort-only fix, not a launch blocker, and the UX must say so rather than spin.** (6) The official WebRTC artifact is no longer on Google's Maven (Bintray sunset) — pin a Maven Central republish deliberately. **(7) The MVP security boundary is a compromise: Cloud Functions validate and settle, but in-play state stays client-converged — a fully colluding table is the known residual (R25, RD14). (8) The 19 RP thresholds are owner-TBD (RD26); the ladder ships with tunable placeholders, so progression feel is unset until the owner sets numbers (R26).**
+**Major risks.** (1) The app currently targets API 34 — Google requires API 36 as of Aug 31, 2026, so the toolchain must be upgraded before anything can ship. (2) The AdMob 14-day closed-testing clock is the one immovable external deadline. (3) The AI bot files are coupled to the "deferred" Monte-Carlo module more tightly than expected. (4) The frozen security rules make true player presence impossible — by design, not by oversight. (5) **Voice cannot reach every player STUN-only: 5–15% of room-pairs sit behind symmetric NATs and will show "unreachable" — TURN is a v1.1, $0-effort-only fix, not a launch blocker, and the UX must say so rather than spin.** (6) The official WebRTC artifact is no longer on Google's Maven (Bintray sunset) — pin a Maven Central republish deliberately. **(7) The MVP security boundary is a compromise: Cloud Functions validate and settle, but in-play state stays client-converged — a fully colluding table is the known residual (R25, RD14). (8) The 19 RP thresholds are set (RD26, closed 2026-10-05) but unplayed — progression feel is a tuning risk for the first Ranked playtest, not a missing-input risk (R26).**
 
-**Main assumptions.** The 1-engineer + AI-agent cadence observed over Phases 0–10 continues; the AdMob/Play/RevenueCat accounts are activated immediately; bot balancing is "good enough," not tournament-grade; EN + Arabic only; voice is acceptable to players as PTT-only with no open mic; **the owner sets RD26's RP threshold numbers before the first Ranked playtest**.
+**Main assumptions.** The 1-engineer + AI-agent cadence observed over Phases 0–10 continues; the AdMob/Play/RevenueCat accounts are activated immediately; bot balancing is "good enough," not tournament-grade; EN + Arabic only; voice is acceptable to players as PTT-only with no open mic; **RD26's RP thresholds are set (2026-10-05) and are treated as v1 values, to be re-tuned from playtest data rather than from judgement**.
 
 **What is NOT included.** EXPERT Monte-Carlo bots and adaptive difficulty (post-launch); **voice in Ranked — never (RD22)**; shop and missions (no economy to sell into — **seasons ARE in scope, RD24**); rewarded video (nothing to reward yet); true presence/abandonment (blocked by frozen rules); custom analytics events beyond crash reporting; full i18n beyond EN/AR; **a dedicated always-on game server (D3 amended — lightweight Cloud Functions are in, a server is not, RD11)**; any **Firestore rules revision** — `firestore.rules` stays frozen and byte-identical, the Functions are the only legitimate Ranked write path; **no TURN server in v1** (STUN-only, symmetric-NAT limitation accepted and disclosed, coturn on a free VM reserved for v1.1); **no recording, transcription, or server-side audio storage of any kind**; no open-mic / always-on voice; no foreground-service background voice; **no player-facing Ranked match history for MVP (RD23 — the profile carries the 9 career statistics instead)**; **no separate seasonal trophy system (RD24)**. Also excluded: re-estimating the ~460 hours of work already merged to `main`.
 
-**One decision for management.** Start the AdMob/Play Console/RevenueCat account activations **today** — they're external clocks, and they — not the code — determine the launch date. **A second one: RD26's 19 RP threshold numbers. They are the only owner input on the Ranked critical path, and the first Ranked playtest cannot tune progression feel without them.**
+**One decision for management.** Start the AdMob/Play Console/RevenueCat account activations **today** — they're external clocks, and they — not the code — determine the launch date. **RD26's 19 RP threshold numbers are now CLOSED (2026-10-05) — the last owner input on the Ranked critical path is in, and nothing on that path is waiting on a decision anymore.**
 
 ---
 
@@ -500,7 +525,7 @@ One epic per phase; stories sized in hours; `S/M/L` from §2. Critical path mark
 | | S43 `mode` field on `MatchDoc` — **exactly `ROOM` / `RANKED`** (RD28) + separate private/password access flag + migration of in-memory mode to persisted authority | 10 | S42 |
 | | S44 Ranked profile model: tier, division, RP, seasonId, highestRank, placementState, 9 stats | 14 | S43 |
 | | S45 Rank ladder definitions + Arabic title resources (EN `values`, AR `values-ar`) + rank formatting | 10 | S44 |
-| | S46 RP threshold table as tunable constants (**RD26 placeholders TBD**) + rank↔RP conversion | 10 | S44 |
+| | S46 RP threshold table as tunable constants (**RD26 values closed 2026-10-05**) + rank↔RP conversion | 10 | S44 |
 | | S47 RP engine: dynamic gain/loss from RD4 inputs; tunable; unit-testable in isolation | 24 | S46 |
 | | S48 Mixed-tier asymmetry (RD5) + Private ×2 cap (RD6) | 14 | S47 |
 | | S49 Demotion + one-match protection (RD7); King ceiling + leaderboard-only overflow (RD3) | 12 | S47 |
@@ -654,7 +679,7 @@ The owner's constraint is absolute (V4): **no paid SDK, no metered minutes, no c
 
 The one place this plan disagrees with the existing documentation is the **status snapshot**: the plan's "~45% — session ~5%, Phase 3 untouched" was true on 2026-09-19 but is stale as of 2026-09-21, because PRs #47 and #48 merged the services module and the GameSession store. Estimating from the stale snapshot would have roughly **doubled** the online-multiplayer line. The assumptions that would have caused that error: trusting a status section instead of reading `origin/main`, and not noticing that `:services` is now a CI-tested module.
 
-**A second disagreement, corrected by the 2026-10-05 amendment rather than by reading code:** the plan's own scope statement excluded matchmaking/ranked and seasons, describing ranked as post-v1. That was a planning decision, not a repository fact — and the owner's RD25 inverts it. **Ranked, matchmaking, RP, and seasons are MVP and launch-blocking.** The six sites that stated otherwise (V2, the Phase 6 row, D3, the Backend-development row, M4c, and the executive summary's "what is NOT included") are all amended in place above, with the pre-amendment text preserved in parentheses where it still carries the voice-in-Ranked exclusion — which survives, because RD22 is unchanged. **The `design-ui` rank mocks are non-canonical legacy data** (`Gold III` 1240 > `Gold I` 980 reverses the I > II > III order, and `Platinum IV` does not exist in a 6×3+King ladder). RD26's TBD placeholders govern; nothing is derived from those mocks.
+**A second disagreement, corrected by the 2026-10-05 amendment rather than by reading code:** the plan's own scope statement excluded matchmaking/ranked and seasons, describing ranked as post-v1. That was a planning decision, not a repository fact — and the owner's RD25 inverts it. **Ranked, matchmaking, RP, and seasons are MVP and launch-blocking.** The six sites that stated otherwise (V2, the Phase 6 row, D3, the Backend-development row, M4c, and the executive summary's "what is NOT included") are all amended in place above, with the pre-amendment text preserved in parentheses where it still carries the voice-in-Ranked exclusion — which survives, because RD22 is unchanged. **The `design-ui` rank mocks are non-canonical legacy data** (`Gold III` 1240 > `Gold I` 980 reverses the I > II > III order, and `Platinum IV` does not exist in a 6×3+King ladder). RD26's closed threshold values govern (set 2026-10-05); nothing is derived from those mocks.
 
 ---
 
@@ -690,7 +715,7 @@ Voice adds no new purchase, no new data collection, and no new server — but it
 ## Final status block (2026-10-05)
 
 ```
-RANKED SYSTEM PLANNING      — UPDATED 2026-10-05 (RD1–RD28 + OPEN-1/OPEN-2)
+RANKED SYSTEM PLANNING      — UPDATED 2026-10-05 (RD1–RD28; RD26 CLOSED, OPEN-1/OPEN-2 remain)
 UI/UX ROADMAP               — UPDATED (§4b + contradiction register)
 CODE/ARCHITECTURE ROADMAP   — UPDATED (E6b S42–S64, R24–R29, M9–M11)
 IMPLEMENTATION              — NOT STARTED
@@ -707,13 +732,14 @@ the same 19-rank ladder, the same RD1–RD28 decision set, the same `mode`-first
 critical path, and the same four-tier authority model. The code roadmap owns the
 *execution* view (S42–S64, +388 h, R24–R29, M9–M11); the UI/UX roadmap owns the
 *design* view (screens S45–S58, the Rank Chip and Tier Ladder components, the
-tier-token gaps, the design gates). **RD26's 19 thresholds, OPEN-1, and OPEN-2
-are open in both, identically, and all three are non-blocking.** Neither document
+tier-token gaps, the design gates). **RD26's 19 thresholds are CLOSED in both,
+identically (2026-10-05); OPEN-1 and OPEN-2 remain open in both, identically, and
+both are non-blocking.** Neither document
 reopens a closed owner decision.
 
-**The two inputs the owner still owes, both on the Ranked critical path and both
-non-blocking for design work:** the **19 RP threshold numbers (RD26)**, and the
-two small decisions **OPEN-1** (reconnect after 15-timeout removal) and
-**OPEN-2** (whether a Vote Kick pauses the match). Everything else is closed.
+**The two small decisions the owner still owes, both on the Ranked critical path
+and both non-blocking for design work:** **OPEN-1** (reconnect after the
+15-timeout automatic removal) and **OPEN-2** (whether a Vote Kick pauses the
+match). Everything else is closed — **RD26's 19 thresholds are in**.
 
 Arabic translations are provided as a working baseline; **have a native speaker review them before submission** — the same standard the rest of the AR strings should meet.

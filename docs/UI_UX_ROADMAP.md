@@ -31,10 +31,10 @@ account)**, **Vote Kick moved to Ranked-only**, the 50 s inactivity / timeout /
 **3-month seasons** with a two-division-step reset, the **lightweight Cloud
 Functions authority model** (correct-and-settle, the MVP security boundary), the
 cost principle, **the seasonal Ranked leaderboard**, and — critically — **Ranked
-is now MVP scope and launch-blocking (RD25)**. Decisions are **RD1–RD28**; two
-items stay explicitly open and non-blocking: **RD26** (the 19 numeric RP
-thresholds) and **OPEN-1/OPEN-2** (reconnect-after-15-timeout-removal; whether a
-Vote Kick pauses the match). **This amendment is in the same standing as the
+is now MVP scope and launch-blocking (RD25)**. Decisions are **RD1–RD28**; **RD26
+(the 19 numeric RP thresholds) was CLOSED on 2026-10-05 with the final
+lower-bound values**, so only **OPEN-1/OPEN-2** (reconnect-after-15-timeout-removal; whether a
+Vote Kick pauses the match) stay open, both non-blocking. **This amendment is in the same standing as the
 2026-10-03 block above.** Where frozen Batch 1 text contradicted RD1–RD28, the
 contradiction register below lists the correction and the document's own
 "real contradiction" escape hatch (the Batch 1 freeze line) is invoked — nothing
@@ -1659,7 +1659,7 @@ the amendment-relevant slice.)
 | **S43 King/Koz badges** | the live scores (already synced) + a derived ranking computation | Cheapest amendment feature: the scores exist; only the derivation and the badge components are new. Multiple winners are already rules-supported |
 | **S03/S44 Statistics + Quick Stats** | a **mode flag on the match document**; a place to **persist placements per player**; a **readable** stats source for other players | None of these exist (§0.6-V4/V5/V6). `players/{uid}` is owner-read-only, so S44 is blocked until a readable stats surface is decided |
 | **S35 Push-to-Talk** | room mode; microphone permission; push-to-talk state | Deferred by owner decision — no implementation work, and **never** in Ranked |
-| **S45–S53 Ranked identity + progression UI** | the **RankedProfile model** (tier, division, RP, seasonId, highestRank, placementState); the 19-rank ladder definitions; the RP threshold table | Render is read-only, but it cannot ship before the profile model exists (code S44–S46). **RD26's TBD thresholds do NOT block the UI** — the ladder binds the structure and shows placeholders; the numbers are tunable constants behind it |
+| **S45–S53 Ranked identity + progression UI** | the **RankedProfile model** (tier, division, RP, seasonId, highestRank, placementState); the 19-rank ladder definitions; the RP threshold table | Render is read-only, but it cannot ship before the profile model exists (code S44–S46). **RD26's thresholds are CLOSED (2026-10-05), so the ladder renders real numbers, not placeholders** |
 | **S47–S50 Placement** | the once-per-account placement flag; the scripted-bot director (reuses the existing `BotTier`/`BotPersonality` — invent none); placement scoring (10/20/70) | The "Start from Bronze" branch needs only the profile model. The three matches are system-controlled: the player never picks difficulty or personality, and **never sees a provisional rank** — only 1/3, 2/3, 3/3 |
 | **S55/S56 Matchmaking** | the **server-side** eligible-pool resolver (own tier or exactly one below — RD9); the search lifecycle | Pool derivation must read **server-side** rank, never a client claim. A lower-tier player cannot opt up; the server may still form a mixed-tier match |
 | **S57 Ranked Match Result** | the settlement function (correct-and-settle, RD12); the RP engine; the mode field | Both results land in one surface: the match outcome (King/2nd/3rd/Koz) **and** the ranked delta (RP change, rank transition). Mixed-tier matches must be able to show the RD5 asymmetry in the delta |
@@ -1700,7 +1700,7 @@ design dependency · 👤 owner decision needed.
 | Create Room and Ranked sharing one Create Game screen | 🎨 + ⚙️ | S36 does not exist; no configuration is captured before match creation today |
 | **`mode` field on the match document (RD28)** | ⚙️ | **`MatchDoc` has no `mode` field today** (§0.6-V5); `mode` is in-memory only. It is the authority key that gates Vote Kick, settlement, and Ranked statistics — exactly `ROOM` / `RANKED`; private Ranked is `RANKED` + an access flag, **never a third mode**. On the critical path for nearly every Ranked surface (code S43) |
 | **19-rank ladder + Arabic titles (RD1/RD2)** | ⚙️ + 🖌 | No tier/division/RP anywhere in `native/`. 6 tiers × 3 divisions + King; **I > II > III**; EN + Arabic titles are product identity, 1:1 — مبتدئ / لاعب / معلم / وزير / أمير / سلطان / ملك |
-| **RP engine + thresholds (RD3/RD4/RD26)** | ⚙️ + 👤 | Dynamic RP (opponent strength, tier difference, outcome, placement, mixed-tier conditions); RP ≥ 0; engine independent of the threshold constants. **The 19 numeric thresholds are owner-TBD (RD26) — non-blocking; the UI binds structure, not numbers** |
+| **RP engine + thresholds (RD3/RD4/RD26)** | ⚙️ | Dynamic RP (opponent strength, tier difference, outcome, placement, mixed-tier conditions); RP ≥ 0; engine independent of the threshold constants. **The 19 thresholds are CLOSED (RD26, 2026-10-05) — the UI binds the real numbers, which stay tunable behind the engine seam** |
 | **Mixed-tier asymmetry + private cap (RD5/RD6)** | ⚙️ | Higher-tier win → reduced reward; higher-tier loss → loss multiplied; lower-tier beats higher tier → increased reward. Private Ranked: same rules, **hard ×2 cap on the loss multiplier**, any tier mix |
 | **Placement (RD10)** | ⚙️ + 🎨 | Once per account, never per season; 3 scripted matches (Easy+Medium / Medium+Hard / Hard+Expert); 10/20/70 weights; **Platinum ceiling**; counts toward **no** statistic |
 | **Settlement / correct-and-settle (RD12/RD13)** | ⚙️ | No `functions/` module exists at all. The client's `finalScores` is recomputed and **corrected**, not trusted and not merely rejected; idempotent, authenticated, retry-resistant. `firestore.rules` already denies progression writes, so the Functions are the only legitimate write path — **the rules stay untouched** |
@@ -1778,7 +1778,7 @@ named here as FIXED** rather than silently repaired. The final owner decisions
 | 52 | **Ranked is launch-blocking MVP scope (RD25)** | ✅ Every post-v1 statement about Ranked/matchmaking/RP/seasons in this document is corrected; the code roadmap carries epic E6b (S42–S64) |
 | 53 | **Voice never in Ranked (RD22)** | ✅ S35 and the Disconnect/pause vote stay Rooms-only; the ranked-absence variants are required artboards (§4.3.9) |
 | 54 | **Gold ≠ Match-King (token risk)** | ✅ Called out as a token gap (§4.1.4 #5) and in §4b: `#E8A33D` is the **Match-King badge** colour; the **Gold tier** must not reuse the crown or the gold-for-King semantic |
-| 55 | **No placement number is invented (RD26)** | ✅ The ladder shows TBD placeholders; the non-canonical `design-ui` mocks (`Gold III` 1240 > `Gold I` 980, nonexistent `Platinum IV`) are flagged as legacy data and derived from nowhere |
+| 55 | **No threshold number is invented (RD26)** | ✅ **CLOSED 2026-10-05:** the ladder carries the owner's 19 final lower-bound values (§4b.1); the non-canonical `design-ui` mocks (`Gold III` 1240 > `Gold I` 980, nonexistent `Platinum IV`) are flagged as legacy data and derived from nowhere |
 | 56 | **A Vote Kick vote cannot change target mid-vote (OPEN-2)** | ✅ Recorded as an open owner decision, not silently assumed; the frozen text's "match state must not advance" assertion is downgraded to "not established" (S40) |
 
 **One residual tension the owner should know about (not a contradiction):** rule
@@ -1966,12 +1966,13 @@ What remains is:
    The value is correct and unchanged — **the constant is a one-line addition at
    port time**, not an open decision. Flagged so the implementing agent does not
    grep for a constant that isn't there.
-4. **RD26 — the 19 numeric RP thresholds are OPEN (non-blocking).** The ladder
+4. **RD26 — the 19 numeric RP thresholds are CLOSED (2026-10-05).** The ladder
    *structure* is closed (RD1–RD3): 6 tiers × 3 divisions + King, I > II > III,
    every rank has a lower bound, RP ≥ 0, King has no upper bound. **The numbers
-   are TBD placeholders.** Do not invent or infer them, and do not derive anything
-   from the non-canonical `design-ui` mocks. The UI binds the structure, so this
-   does not block design work.
+   are now the owner's final lower-bound values** (Bronze III 0 → King 3,000, in
+   §4b.1). Nothing is derived from the non-canonical `design-ui` mocks. The
+   thresholds stay tunable constants independent of the engine, so a playtest
+   balance pass can still move them — but as a tuning decision, not an open one.
 5. **OPEN-1 — reconnect after the 15-timeout automatic removal.** The removal
    itself is closed (RD20); whether/how that player may rejoin that match is not.
    No screen assumes an answer either way.
@@ -2335,7 +2336,7 @@ full in **§4b** below; the artboard counts here keep the §4.5 summary honest.
 | ID | Artboards | States / variants |
 |---|---|---|
 | S45 Ranked Home / Overview | 1 `NEW` | entry point; current Rank chip + RP + progress; **two paths: "Test my level" (placement) or "Start from Bronze" (permanent, irreversible — RD10)**; season indicator |
-| S46 Tier & Division presentation | 1 `NEW` component | **6 tiers × 3 divisions + King = 19 rungs** (never "7 tiers × 3"); **King has NO divisions**; EN + Arabic titles (مبتدئ / لاعب / معلم / وزير / أمير / سلطان / ملك); current rung highlighted; RD26 placeholders shown as TBD, never as invented numbers |
+| S46 Tier & Division presentation | 1 `NEW` component | **6 tiers × 3 divisions + King = 19 rungs** (never "7 tiers × 3"); **King has NO divisions**; EN + Arabic titles (مبتدئ / لاعب / معلم / وزير / أمير / سلطان / ملك); current rung highlighted; **RD26's 19 lower-bound RP values rendered (Bronze III 0 → King 3,000, §4b.1), never invented numbers** |
 | S47 Placement Introduction | 1 `NEW` | the two-path choice; **"Start from Bronze" must state it is permanent — no placement later (RD10)** |
 | S48 Placement Match Progress | 1 `NEW` | **only "Placement 1/3 → 2/3 → 3/3" — a provisional rank is NEVER shown** (RD10); bot difficulty/personality are not selectable and not shown |
 | S49 Placement Result / "Calculating Rank" | 1 `NEW` | calculating state → reveal |
@@ -2549,14 +2550,29 @@ not fuse (RD8):**
 The `#E8A33D` gold in the tokens belongs to the **Match-King badge**. The **Gold
 tier** must not reuse it (§4.1.4 #5).
 
-**Thresholds (RD3/RD26):** every rank has a lower-bound RP; promote at the next
-rank's lower-bound, demote below the current floor. **RP ≥ 0 always.** King has a
+**Thresholds (RD3/RD26 — CLOSED 2026-10-05):** every rank has a **lower-bound
+RP**; promote at the next rank's lower bound, demote below the current floor.
+**RP ≥ 0 always.** **RP is dynamic (RD4), never a fixed ±X per match** — these
+are only the rank boundaries the dynamic engine measures against. King has a
 lower bound and **no upper bound** — RP above it is **leaderboard-only** (RD27).
-**The 19 numeric thresholds are OWNER-TBD (RD26) and non-blocking:** the ladder
-component renders the structure and shows **TBD** placeholders, and the engine is
-independent of the constants so the numbers are tunable without redesign.
-**Invent nothing, infer nothing, copy nothing** — the `design-ui` mocks' rank
-numbers are non-canonical legacy data (§2.7 check 55).
+**The 19 thresholds are FINAL owner-approved values** (set 2026-10-05); the
+engine stays independent of the constants so the numbers remain tunable without
+redesign, and a v1.1 balance pass from playtest data is expected rather than a
+sign the decision was wrong. Nothing is derived from the `design-ui` mocks —
+their values are non-canonical legacy data (§2.7 check 55).
+
+| Rank | Lower-bound RP | | Rank | Lower-bound RP |
+|---|---:|---|---|---:|
+| Bronze III | 0 | | Platinum III | 1,000 |
+| Bronze II | 75 | | Platinum II | 1,200 |
+| Bronze I | 150 | | Platinum I | 1,400 |
+| Silver III | 250 | | Diamond III | 1,600 |
+| Silver II | 350 | | Diamond II | 1,800 |
+| Silver I | 450 | | Diamond I | 2,000 |
+| Gold III | 575 | | Royal III | 2,250 |
+| Gold II | 700 | | Royal II | 2,500 |
+| Gold I | 825 | | Royal I | 2,750 |
+| | | | **King** | **3,000** |
 
 ## 4b.2 Placement — the one-time entry
 
@@ -2702,9 +2718,9 @@ never lie about:
 **Design constraints that fall out of the architecture:**
 
 - **RP ≥ 0, always (RD3).**
-- **The engine is independent of the threshold constants**, so the 19 TBD numbers
-  (RD26) are tunable without touching the engine or the UI — the ladder renders
-  structure, and the numbers land behind it.
+- **The engine is independent of the threshold constants**, so the 19 closed
+  values (RD26, set 2026-10-05) remain tunable without touching the engine or the
+  UI — the ladder renders structure, and the numbers land behind it.
 - **The client never computes RP.** It displays a settled, server-owned value.
   The UI's job is to render the delta and the direction honestly — including
   "settling…" when the function is cold-starting (R24), **never a blank and never
@@ -2889,7 +2905,7 @@ states (S55/S56) · Ranked result (S57) · Season Overview (S54) · Leaderboard
 **The two Figma components this adds to §4.2's library:** **`Rank Chip`** (tier
 token + EN/AR title + RP, sized for a seat slot and a roster row) and **`Tier
 Ladder`** (18 divisional rungs + the division-less King destination, current rung
-highlighted, TBD placeholders).
+highlighted, RD26's closed lower-bound values).
 
 ## 4b.14 Dependency map — the critical path
 
@@ -2911,7 +2927,7 @@ Ranked feature.** The UI roadmap says the same about `mode` as the code roadmap;
 
 | Feature | Depends on | Note |
 |---|---|---|
-| Ranked UI (S45–S53, S58) | RankedProfile model, ladder defs, threshold table | RD26 placeholders do NOT block — UI binds structure, numbers are TBD constants |
+| Ranked UI (S45–S53, S58) | RankedProfile model, ladder defs, threshold table | RD26 thresholds CLOSED (2026-10-05) — UI binds the real numbers, still tunable behind the engine seam |
 | Placement (S53/S54) | profile model, RP engine, the scripted-bot director | Parallel to settlement; "Start from Bronze" needs only the profile model |
 | RP / settlement (S47/S50/S51/S52) | functions module, `mode`, the pure rules engine (exists, test-covered) | **Critical path.** Validation consumes the same converged action history reload-safe replay already depends on — no new in-play authority is invented |
 | Matchmaking (S56/S57) | authoritative rank (server-side), `mode` = RANKED | Pool derivation reads server-side rank, never a client claim |
@@ -2975,8 +2991,8 @@ Additional acceptance checks, answerable by looking at the file:
 11. **S35 and S41 are visibly ABSENT in the Ranked flows** — not disabled.
 12. **Private Ranked adds a password field and a cross-tier roster without
     implying a third mode.**
-13. **Every Ranked threshold number in the file is a TBD placeholder** — no
-    invented value, and nothing derived from the `design-ui` mocks.
+13. **Every Ranked threshold number in the file is the owner's closed value**
+    (§4b.1) — no invented value, and nothing derived from the `design-ui` mocks.
 
 ## 4b.17 Consistency-audit additions
 
@@ -3003,7 +3019,7 @@ untouched.** The non-canonical `design-ui` mocks are flagged, not rewritten.
 ## 4b.18 Final status block
 
 ```
-RANKED SYSTEM PLANNING      — UPDATED 2026-10-05 (RD1–RD28 + OPEN-1/OPEN-2)
+RANKED SYSTEM PLANNING      — UPDATED 2026-10-05 (RD1–RD28; RD26 CLOSED, OPEN-1/OPEN-2 remain)
 UI/UX ROADMAP               — UPDATED (§4b + contradiction register)
 CODE/ARCHITECTURE ROADMAP   — UPDATED (E6b S42–S64, R24–R29, M9–M11)
 IMPLEMENTATION              — NOT STARTED
@@ -3016,8 +3032,9 @@ the same 19-rank ladder, the same RD1–RD28 decision set, the same `mode`-first
 critical path, and the same four-tier authority model. The UI/UX roadmap owns the
 *design* view (screens S45–S58, the two new components, the token gaps, the
 design gates); the code roadmap owns the *execution* view (stories S42–S64,
-+388 h, risks R24–R29, milestones M9–M11). **RD26's 19 thresholds, OPEN-1, and
-OPEN-2 are open in both, identically.** Neither document reopens a closed owner
++388 h, risks R24–R29, milestones M9–M11). **RD26's 19 thresholds are CLOSED in
+both, identically (2026-10-05, Bronze III 0 → King 3,000); OPEN-1 and OPEN-2
+remain open in both, identically.** Neither document reopens a closed owner
 decision.
 
 ---
