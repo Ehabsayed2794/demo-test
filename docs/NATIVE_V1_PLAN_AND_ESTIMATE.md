@@ -15,7 +15,7 @@ This plan replaces vibes with hours, and corrects four things the existing plan 
 
 1. **The status snapshot is stale.** The plan says "session ~5%, Phase 3 untouched." As of today, PRs #47 and #48 merged the entire `:services` module (MatchService, MatchAdapter, RoomService, TxSupport, models, session bridge) **and** the `GameSession` store in `:engine` — CI now runs `:services:test`. The honest remaining figure is smaller than the plan implies.
 2. **`targetSdk 34` is a hard Play rejection right now.** Google requires new apps to target Android 16 (API 36) as of **August 31, 2026** — that deadline has passed. This forces an AGP/Gradle/Kotlin toolchain cascade that the current plan treats as an afterthought in "Phase 5."
-3. **Monetization has nothing to sell yet.** Shop/missions/seasons are deferred, so "monetization in v1" can only honestly mean **ads + one "Remove Ads" IAP** — not an economy.
+3. **Monetization has nothing to sell yet.** Shop/missions are deferred, so "monetization in v1" can only honestly mean **ads + one "Remove Ads" IAP** — not an economy. (**Seasons are NO LONGER deferred — RD24 makes them MVP; see the 2026-10-05 amendment below.**)
 4. **The AI bots the owner just dropped in (`AI Bots/`) have a hidden coupling.** `botPersonality.ts` imports from `botSimulation.ts` (the "deferred" Monte-Carlo file) and uses it for **HARD, not just EXPERT**. It can't be cleanly deferred without a documented regression.
 
 **Intended outcome:** management can see the true remaining scope, the critical path, and the one decision that actually controls the calendar (the AdMob 14-day closed-testing clock).
@@ -28,7 +28,7 @@ Preserved verbatim from `ANDROID_MIGRATION_PLAN.md` §7, which this document sup
 
 - **D1 — Native scoring: as-is.** Carry bid² + dash tables + flat sole ±10 (Classic unchanged) into the native game. Same numbers the owner confirmed for legacy.
 - **D2 — Risk table: graduated (native only).** Native Risk uses the canonical ladder — diff-from-13 of 1→0, 2–3→10, 4–5→20, 6+→30 — applied ONLY to the Risk player, stacking with Caller/With/sole exactly as §4 of `docs/specs/04-scoring.md`. `src/` keeps its flat ±10 (no change requested).
-- **D3 — Billing verification: free tier.** RevenueCat (free tier, no server of our own). No paid plan required. Revisit only if volume outgrows the free tier.
+- **D3 — Billing verification: free tier.** RevenueCat (free tier, no server of our own). No paid plan required. Revisit only if volume outgrows the free tier. **Amended 2026-10-05 (RD11):** "no server of our own" still means **no dedicated always-on game server** — but Ranked progression now requires a **lightweight Cloud Functions + Firestore authority layer**. That is a per-match-invoked function, not a server; see §F and the appendix essay.
 - **D4 — Web fate: small page.** After Play launch, hosting shrinks to a minimal site (store link + privacy policy). Full decommission explicitly rejected.
 
 **Additional decisions made 2026-09-21 for this plan:** AI opponents are in v1 scope (4 tiers + personalities + "Play vs AI" + Choose Level screen), with EXPERT Monte-Carlo deferred post-launch over mobile perf risk. Monetization is in v1. The dealer seam is seat-keyed (`p1..p4`) — a uid→seat translation layer in the session layer is explicitly forbidden (see `GameSessionBridge.kt`'s seam note).
@@ -36,7 +36,7 @@ Preserved verbatim from `ANDROID_MIGRATION_PLAN.md` §7, which this document sup
 **Voice chat decisions of record (2026-09-21):**
 
 - **V1 — Push-to-talk ONLY.** Hold/touch-to-speak; **muted by default.** No open mic, no always-on, no audio transmitted while the user is outside a room.
-- **V2 — Casual rooms only.** Room-code rooms and matches started from them. **Ranked play ships with no voice, by design** (ranked is itself post-v1; if it ever ships, it stays voiceless).
+- **V2 — Casual rooms only.** Room-code rooms and matches started from them. **Ranked play ships with no voice, by design** (ranked is now **in v1 scope per RD25**, and it stays voiceless — RD22).
 - **V3 — Max 4 speakers per room** (one mesh, the room's own player set).
 - **V4 — Hard $0 constraint.** No paid SDK, no metered minutes, no credit card on file, no usage-based billing that can surprise us. Pure WebRTC (Android) + free public STUN + signaling over existing Firebase. **Agora / Twilio / Daily / LiveKit and any vendor requiring billing activation are forbidden.**
 - **V5 — No recording, no transcription, no server-side storage of audio.** Audio flows peer-to-peer; the signaling channel carries only connection metadata.
@@ -44,6 +44,68 @@ Preserved verbatim from `ANDROID_MIGRATION_PLAN.md` §7, which this document sup
 **Voice scope placement:** Full version, **not MVP** (see §4). Voice is the lowest-priority item in v1 and the first thing an aggressive scenario defers — it is a social nicety for a room of friends, not a launch gate.
 
 **i18n decision of record (2026-09-26):** S12 ships EN `strings.xml` infrastructure only (matching the 8 existing English-only screens); full Arabic — `values-ar` for every screen + migration of the 8 hardcoded screens + native-speaker review + RTL verification — is scheduled story **S41** in the store phase (with S24), in-v1 and blocking production (not the closed track). Per-screen state is never mixed: S12 uses `stringResource` from day one; the 8 older screens migrate wholesale in S41.
+
+---
+
+## Owner amendment of record (FINAL — 2026-10-05): the Ranked progression system
+
+**This amendment is documentation-only. No code, no Firestore rules, no Cloud Functions, no Figma, no screens, no matchmaking have been implemented. It changes this plan's scope, stories, hours, and timelines.**
+
+The owner issued a FINAL decision set for Ranked / RP / Seasons / Matchmaking / Vote Kick / Timers / Statistics / Leaderboard on 2026-10-05. Ranked is **no longer post-v1 — it is MVP and launch-blocking** (RD25). The decisions are recorded below as **RD1–RD28**, and they carry the same standing as D1–D4 and V1–V5 above.
+
+The full design narrative, the contradiction register, and the per-screen UI impact live in `docs/UI_UX_ROADMAP.md` (its new **Phase 4b**). This document carries the **code, architecture, security, and estimate** impact.
+
+### Decisions RD1–RD28
+
+**Rank / RP**
+
+- **RD1** The ladder is **6 tiers × 3 divisions + King = 19 ranks**: Bronze, Silver, Gold, Platinum, Diamond, Royal — each III → II → I — plus **King, which has NO divisions. Never write "7 tiers × 3 divisions."** Arabic titles are product identity, 1:1, never genericized: مبتدئ / لاعب / معلم / وزير / أمير / سلطان / ملك.
+- **RD2** Division order is **I > II > III**. Gold I → Gold III is a two-step demotion; never write Gold III → Gold I as a demotion.
+- **RD3** Every rank has a lower-bound RP; promote at the next rank's lower-bound, demote below the current floor. **RP ≥ 0 always.** King has a lower bound but no upper bound; RP above King is **leaderboard-only** (ordered against other King players by RP — RD27).
+- **RD4** RP is **DYNAMIC**, not a fixed ±X. Inputs: opponent strength, tier difference, match outcome, final placement/performance, mixed-tier conditions. The engine is **independent of threshold constants** so numbers are tunable without redesign. Concept + inputs only; constants not finalized.
+- **RD5** Mixed-tier public Ranked is **asymmetric**: higher-tier wins → **reduced** RP reward; higher-tier loses → loss **multiplied (×2 in Private Ranked, RD6's cap)**; lower-tier beats a higher-tier opponent → **increased** RP reward. All three directions documented explicitly.
+- **RD6** Private/Password Ranked: **any tiers together**, no restriction; a **true Ranked match** awarding RP; **the same mixed-tier rules as public (RD5) apply**, with a **hard ×2 cap on the loss multiplier — never more than ×2.** NOT casual/unranked.
+- **RD7** Demotion is real, with **exactly ONE match of demotion protection** — a limited one-match mechanism, not permanent.
+- **RD8** **Rank King ≠ Match King.** Rank King = account competitive ceiling; Match King = first place in one match; Koz = current unique last place, NOT a ranked tier.
+
+**Matchmaking**
+
+- **RD9** Public Ranked matchmaking is **server-controlled**. The player never picks a higher-tier pool; the server derives it. **Own tier or exactly one tier below, never two+**; a lower-tier player cannot opt up (Silver cannot request Gold). The server **may form a mixed Gold/Silver match** — do not write "Gold players can only be matched in Gold."
+
+**Placement**
+
+- **RD10** **Once per account, never per season.** 3 matches: M1 Easy+Medium, M2 Medium+Hard, M3 Hard+Expert. The player cannot choose difficulty or personality and **never sees a provisional rank** — only "Placement 1/3, 2/3, 3/3." Score from real engine signals (placement, result, score, estimate accuracy, bidding performance, consistency). **Weights FINAL: M1 10%, M2 20%, M3 70%.** Max placement = **Platinum** (never Diamond/Royal/King). Determines Tier + Division; the player starts at **that division's first/lower-bound RP**. **Placement matches count toward NO statistic.** "Start from Bronze" is permanent and irreversible.
+
+**Authority / security / cost**
+
+- **RD11** **Lightweight Firebase-backed authority: Cloud Functions + Firestore** — NOT a dedicated always-on game server, NOT enterprise-scale. Early-stage game; low infra cost; enough integrity that progression can't be trivially forged; upgradeable later.
+- **RD12** **Correct-and-settle.** Client `finalScores` is not blindly trusted and not merely rejected: the backend **validates, corrects/recomputes the authoritative result, and settles the corrected result**; RP is computed from it.
+- **RD13** Settlement is **idempotent** (once per match), authenticated, retry-resistant. **The client is read-only for rank/RP/history after settlement.** No fabricating wins/scores/RP, no suppressing losses, no double-settling, no client rank manipulation. **Action evidence is ownership-constrained and immutable:** one client must not be able to rewrite another player's actions or fabricate another player's result — each player's action records are written under that player's own identity, and the converged sequence the server re-derives is append-only.
+- **RD14** **Settlement alone is NOT the whole boundary.** If all Ranked-critical state stays client-authoritative, settlement is insufficient. The plan includes **server-side validation of Ranked-critical state, actions, and results**. **Do not claim Cloud Functions provide full realtime authority** — the real boundary is documented below as the **MVP security boundary**.
+- **RD15** Rooms = lower-security, cost-sensitive, no RP progression, no Ranked authority needed. Ranked = critical outcomes protected, authority in the backend.
+- **RD16** **Cost principle:** prefer the lower-cost MVP option provided it creates no unacceptable integrity risk. No expensive infra because it is technically stronger. Strengthen later on growth / revenue / cheating pressure / competitor pressure / budget.
+
+**Ties / King-Koz / Vote Kick / inactivity**
+
+- **RD17** Ties: tie 1st → all are Match King; tie 2nd → all 2nd; tie 3rd → all 3rd; **stats count the placement actually achieved, even when shared**. Tie for last → **no unique Koz → no Vote Kick**; never fabricate a Koz.
+- **RD18** **Vote Kick is RANKED ONLY — not in Rooms** (this corrects frozen Batch 1 text in `docs/UI_UX_ROADMAP.md`; see its contradiction register). Only **after Round 7 has FULLY completed** (first vote is Round 8). Target = the **unique** Koz; the target cannot initiate; any other player may. **2 YES of 3 non-target players** (2Y/1N = kick; 1Y/2N = no; no majority by timeout = no). Failure → **5-round cooldown on that same target only**. Success → **permanent** removal, **no rejoin**, recorded as **Koz**. Purpose: griefing/abuse, **not** normal mistakes.
+- **RD19** Inactivity (**50 s**) → the configured bot takes over immediately; the player **may reconnect and reclaim the SAME seat**; the bot stands down. Vote Kick forbids rejoin. Never merge the two.
+- **RD20** **Timeout → MEDIUM bot decision engine regardless of configured difficulty.** Explicit **leave → configured difficulty + configured personality immediately.** Timeouts accumulate across **all** phases (Dash, Bidding, Estimates, Card Play); **15 total decision timeouts during the same match → automatic kick/removal — a SEPARATE mechanism from Vote Kick.** It requires no Round-7 completion, no Koz target, no vote, no 2-of-3 threshold, no cooldown, and does not count as a Vote Kick. **Never merge the two systems.** Reconnect-after-15-timeout-removal behaviour is **not finalized** (OPEN-1). **The timeout counter is cumulative across the whole match and is PRIVATE — opponents must never see another player's timeout count.**
+
+**Config / timers / voice / stats / seasons / leaderboard / mode**
+
+- **RD21** One Create Game screen for Rooms and Ranked. Replacement-bot difficulty Easy/Medium/Hard/Expert; personality from the existing four only (reuse the Kotlin implementation, invent none); decision timer 5/10/15/20. **Dash/Bidding/Estimates = base + 5; Card Play = base** (15 → 20/20/20/15). **Defaults: Medium bot, the approved default personality, 15 s timer.** (The default-personality constant is a one-line addition at port time — the value is the existing `BALANCED` literal; `BotPersonality.DEFAULT` does not exist yet.)
+- **RD28** **`mode` is exactly two values: `ROOM` or `RANKED`.** Private/Password Ranked is **NOT a third mode** — it is `RANKED` plus a private/password access flag. It still awards RP and stats and still allows any tier mix (RD6). `mode` is the authority key that gates Vote Kick, settlement, and Ranked statistics; the private flag only gates access.
+- **RD22** Voice is **Rooms-only** (PTT, press-and-hold, Waiting Room + Rooms match). **Never in Ranked.**
+- **RD23** **Exactly 9 career stats:** Games Played, King count, King %, 2nd count, 2nd %, 3rd count, 3rd %, Koz count, Koz %. (**Never "10 values."**) Include Public + Private Ranked; **exclude Placement**. Long-press shows **SHORT stats only**: Rank, Games, King %, 2nd %, 3rd %, Koz %. **No player-facing match history for MVP**; an internal RP audit ledger IS required. Profile records **Highest Rank ever**, never erased by seasonal demotion.
+- **RD24** **Seasons are MVP scope NOW.** Duration **3 months**. End-of-season demotes Tier/Division **two division steps** (Gold I → Gold III), floored at the ladder bottom; **career stats never reset**. Placement never repeats per season. No separate trophy system. **King has no divisions and is demoted to Royal I at season reset** (owner-closed; RD1's division-less King is preserved — this is a destination, not a division).
+- **RD27** **Seasonal Ranked Leaderboard is in scope.** Server-authoritative ordering: rank position, player, Tier/Rank, RP, season, **current player highlighted**. **King players are ranked among themselves by RP above the King lower bound** — King has no divisions, so RP is the only ordering key there (RD3). **Season isolation:** the board shows one season only and resets with the season (RD24); rank position is recomputed per season, never blended. The client may read, never order.
+
+**Open (do not invent answers)**
+
+- **RD26** **Exact numeric RP thresholds for all 19 ranks — OPEN OWNER DECISION.** Structure per RD3; placeholders Bronze III: TBD … Royal I: TBD, King: TBD. Invent/infer/copy nothing; the "Gold III = 900 RP" line is illustrative only; derive nothing from the `design-ui` mocks. The engine stays independent of the constants. **Non-blocking** — the UI binds the structure, the numbers are tunable constants.
+- **OPEN-1** **Reconnect after 15-timeout automatic removal — not finalized.** The removal itself is decided (RD20); whether/how that player may rejoin that match is an open implementation detail.
+- **OPEN-2** **Is gameplay paused while a Vote Kick is active?** The vote's target is the *unique current Koz*, so the target must not be able to change mid-vote. Whether the match pauses for the vote duration is **not established by the repository or the design**. Recorded as a small owner decision, not silently assumed.
 
 ---
 
@@ -57,7 +119,7 @@ Verified on `origin/main`:
 | `:services` — MatchService, MatchAdapter, RoomService, TxSupport, models, session/ | **DONE, green** | 15 kt files; CI runs `:services:test`; `MatchAdapterReloadReplayTest` + `GameSessionBridgeTest` |
 | `:app` Compose UI — Splash, Login, Bidding, Table, Standings, Profile, Settings | **DONE** | Offline hot-seat QuickMatchFlow end-to-end |
 | Online multiplayer wiring | **0%** | `:app` depends on `:engine` **only** — `:services` is not even a dependency yet |
-| AI bots | **0%** | no Kotlin bot code |
+| AI bots | **DONE, green** | the Kotlin bot port is merged to `main` — `BotTier` (EASY/MEDIUM/HARD/EXPERT) + `BotPersonality` (BALANCED/AGGRESSIVE/CONSERVATIVE/TRICKSTER) are wired and reused by Ranked (RD10/RD21). *(This row read "0%" before the port landed; corrected 2026-10-05.)* |
 | Ads / IAP / analytics / audio / art / signing / store assets | **0%** | see §Dependencies & Risks |
 | Voice chat / WebRTC / any audio-input path | **0%** | manifest declares **only** `INTERNET` — no `RECORD_AUDIO`, no `FOREGROUND_SERVICE`; no WebRTC dep anywhere in `native/` |
 
@@ -76,7 +138,7 @@ The 13 canonical phases, adjusted to this project's reality:
 | 3 | UI/UX | Partial — 7 screens exist; Lobby/Room/Choose-Level are missing |
 | 4 | Game Development | Engines sunk. **AI bot port is the big remaining game-dev item** |
 | 5 | Android Development / Integration | **The critical path** — `:app`↔`:services` wiring, Room screen, online VM, reconnect, **push-to-talk voice** (casual rooms only) |
-| 6 | Backend / API | Frozen `firestore.rules` + existing JS services = the backend. No new server (D3). Backend work = **zero new code, only rules-conformant clients**. Voice signaling rides on **Firebase RTDB** — a separate rules file, so `firestore.rules` stays untouched (see §E and R22) |
+| 6 | Backend / API | **Amended 2026-10-05 (RD11):** the frozen `firestore.rules` + existing JS services remain the Room backend, but Ranked now adds a **lightweight Cloud Functions authority layer** — settlement, RP, placement scoring, matchmaking pool resolution, season reset, leaderboard ordering. Still **no dedicated always-on game server** (D3 amended below); the functions are invoked per-match, not always-on. `firestore.rules` itself stays untouched |
 | 7 | Ads / Monetization | AdMob banner + UMP + RevenueCat "Remove Ads" — in v1 per owner |
 | 8 | Analytics | Crashlytics only in v1; custom events → v1.1 |
 | 9 | Testing / QA | JVM tests strong; **instrumented/emulator tier for Kotlin does not exist** |
@@ -146,6 +208,25 @@ Complexity: **S** = straightforward port/2–6h · **M** = 6–16h · **L** = 16
 | Online manual QA + device matrix | minSdk 26 → modern API-36 device; RTL layout pass for Arabic | | M | 16 |
 | **QA subtotal** | | | | **46** |
 
+### F. Ranked progression system (owner amendment, 2026-10-05 — RD1–RD28)
+
+**Status: MVP and launch-blocking (RD25).** This is the single largest scope addition since voice. It is **not** a UI-only feature: it adds a data model, a backend authority layer, a progression engine, matchmaking, seasons, and a leaderboard. Verified against `origin/main` before writing — **none of it exists in the repo today** (no rank/RP/tier/division fields, no `mode` on `MatchDoc`, no matchmaking, no seasons, no leaderboard code, no Vote Kick, no in-match Koz).
+
+What **does** exist and is reused, not replaced: the Kotlin bot engine (`BotTier` EASY/MEDIUM/HARD/EXPERT, `BotPersonality` BALANCED/AGGRESSIVE/CONSERVATIVE/TRICKSTER), the pure rules engine (re-used by settlement), the converged multi-client action history that reload-safe replay already depends on, and the frozen `firestore.rules` deny-list on progression fields (which is *why* the client cannot self-award RP).
+
+| Area | Scope |
+|---|---|
+| **F1 Rank data model** | 19-rank ladder enum (6×3 + King), Arabic title resources, RP fields, season fields, Highest Rank, placement state, leaderboard doc |
+| **F2 RP engine** | Dynamic calculation from RD4 inputs; threshold table as a tunable constant source; RP ≥ 0; mixed-tier asymmetry (RD5); ×2 private cap (RD6) |
+| **F3 Placement** | Once-per-account flag; 3 scripted bot matches (Easy+Med / Med+Hard / Hard+Expert); 10/20/70 weighting; Platinum ceiling; division lower-bound start |
+| **F4 Settlement** | Cloud Functions: correct-and-settle, idempotency, auth, retry resistance, RP application; ownership-constrained/immutable action evidence |
+| **F5 Matchmaking** | Server-side eligible-pool derivation (own tier or one below); queue/search states |
+| **F6 Seasons + leaderboard** | 3-month season, two-step reset (King → Royal I), career stats untouched, Highest Rank preserved; server-authoritative season-isolated ordering |
+| **F7 Statistics** | The 9 career stats; long-press short stats; Placement excluded |
+| **F8 Mode model** | `mode` = ROOM \| RANKED only; private Ranked is RANKED + access flag, not a third mode |
+
+**See the story table (§E6b, S42–S64) for the hour breakdown, and the appendix essay for the security boundary.**
+
 ### E. Push-to-talk voice chat (casual rooms only — new scope from owner)
 
 **Hard constraints (owner, 2026-09-21): $0 cost, push-to-talk only, muted by default, casual rooms only (never ranked), max 4 speakers, no recording/transcription/storage.**
@@ -164,7 +245,7 @@ Verified against `origin/main` before designing this — these facts drove every
 | WebRTC voice engine | Audio-only peer connections over the official WebRTC Android API — `AudioRecord` capture + `AudioTrack` playback, or the library's built-in audio device module; `AcousticEchoCanceler` + `NoiseSuppressor` (WebRTC's internal AEC/NS where available, platform AEC as fallback); Opus/ISAC via the library's default audio codec | **New `:webrtc` or `:services` voice package.** Note `org.webrtc:google-webrtc:1.0.32006` is **no longer resolvable from Google's Maven** (Bintray sunset — the recurring "Failed to Resolve" reports through 2026). Use a Maven Central republish such as `com.infobip:google-webrtc` (verified present, latest `1.0.48246t`) or GetStream's `webrtc-android` build — pin an exact version, audit it, and treat the artifact source as R21 | XL | 40 |
 | Signaling over Firebase RTDB | Join/leave/offer/answer/ICE-candidate exchange. Paths: `rooms/{roomId}/voice/{uid}/presence` (onDisconnect-cleared), `.../offers/{fromUid}`, `.../answers/{fromUid}`, `.../ice/{fromUid}`. Clients write only their own subtree | Write a **separate `database.rules.json`** (auth-required, self-only writes, presence TTL). **Zero cost**, but it *is* a new rules artifact + an RTDB instance to enable in the console — flagged as a cost-free, time-cost item (R22) | L | 24 |
 | Room voice lifecycle | Join a room → join that room's voice mesh; leave room / host-kick / host-starts-match → leave voice; **auto-mute the moment the app goes to background** | Hooks into the existing `RoomService` join/leave surface — voice membership is derived from room membership, never an independent list a player can desync | M | 14 |
-| Push-to-talk UI | Hold-to-talk button (press = unmute+transmit, release = mute); **muted is the default and the resting state**; per-seat mic indicator showing who is speaking / who is unreachable; "unreachable" state for the STUN-only failure case | Compose. Voice follows V2 exactly: room-code rooms **and matches started from them** carry it; it must be mode-gated so it can never surface outside that path (ranked doesn't exist in v1 — the gate is built now so a future ranked mode inherits silence) | M | 16 |
+| Push-to-talk UI | Hold-to-talk button (press = unmute+transmit, release = mute); **muted is the default and the resting state**; per-seat mic indicator showing who is speaking / who is unreachable; "unreachable" state for the STUN-only failure case | Compose. Voice follows V2/RD22 exactly: room-code rooms **and matches started from them** carry it; it must be `mode`-gated so it can never surface in a Ranked match (**Ranked exists in v1 now — RD25 — so the gate is enforced against a real `mode` field, S43, not a hypothetical**). Voice is structurally absent from Ranked; Vote Kick's Ranked-only rule (RD18) uses the same `mode` key in the opposite direction | M | 16 |
 | Per-player mute + host mute-all | Any player can mute any other player locally (client-side audio-track disable — no need for a server round-trip); host gets a "mute all" if recommended | Local track `setEnabled(false)` per remote stream — cheap and idempotent | S | 8 |
 | `RECORD_AUDIO` permission flow | Rationale UI (EN + **AR**), `shouldShowRequestPermissionRationale` handling, denied → graceful degradation (text/preset chat fallback, voice controls hidden, no crash), limited-access on API-31+; headset/Bluetooth routing (`AudioManager` `setMode`/`startBluetoothSco`) | minSdk 26 → targetSdk 36 span means handling both the legacy and the API-31+ one-time/limited models | M | 14 |
 | Audio focus + echo handling | Request transient audio focus while PTT is active, abandon on release; duck the game SFX while someone speaks; AEC on speaker (the echo hazard is speakerphone, not headphones — see R16) | Coordinates with §C Audio (`SoundManager`) — the two must not fight over focus | M | 12 |
@@ -174,7 +255,9 @@ Verified against `origin/main` before designing this — these facts drove every
 
 **Voice total: 158 hours** (in the Full version only — excluded from MVP; see §4).
 
-**Feature total: 434 + 158 (voice) = 592 hours.** Adding the 12h voice store/policy deltas (§3) gives **604**; plus 40 PM = **644** — the number every downstream section uses.
+**Ranked total: 388 hours** (MVP and launch-blocking — RD25; see §F and the E6b story table).
+
+**Feature total: 434 + 388 (Ranked) + 158 (voice) = 980 hours.** Adding the 12h voice store/policy deltas (§3) gives **992**; plus 40 PM = **1,032** — the number every downstream section uses. *(Before the 2026-10-05 Ranked amendment this was 592 / 604 / 644.)*
 
 ---
 
@@ -189,10 +272,10 @@ Verified against `origin/main` before designing this — these facts drove every
 | UI/UX | 42 + 16 = 58 | *(inside the above)* Choose Level 14 + Lobby 16 + Room 14 — reuse the existing gold-on-dark theme; no new design system. +16 for the PTT control + per-seat mic indicators (§E). |
 | Art / animation | 26 | 14 audio + 12 animation. No 2D/3D artist needed at v1 scope: cards render as glyphs today and that is acceptable for launch. |
 | Sound | 14 | Included above (5 SFX + SoundManager). |
-| Backend development | **0** | Deliberate. `firestore.rules` is frozen and deployed; the JS services are the reference. D3 = no own server. Any backend work would be a **rules revision** with a new SHA pin — that's a separate release, not this one. |
+| Backend development | **388** *(Ranked only)* | **Amended 2026-10-05 (RD11):** the Ranked authority layer — `functions/` module, correct-and-settle, idempotent RP application, server-side validation, placement, matchmaking pool, seasons, leaderboard. Deliberately lightweight: Cloud Functions invoked per-match, not an always-on server. `firestore.rules` stays frozen; the functions are the only legitimate Ranked write path. See §F and the appendix essay. |
 | QA / testing | 46 + 16 = 62 | JVM coverage is already excellent (12 suites, incl. the P1-3 pins). The gap is exclusively the instrumented/emulator tier. The +16 is the voice QA tier (§E), which is *counted inside the Android row above* and restated here only so QA isn't misread as shortchanged — it is not double-counted. |
 | Project management | 40 | ~7% — owner/PM overhead, store-form correspondence, account activation chasing, release coordination, **voice policy correspondence** (mic-justification + data-safety answers). |
-| **Total** | **434 + 158 + 12 + 40 = 644** | |
+| **Total** | **434 + 388 (Ranked) + 158 (voice) + 12 (voice-policy) + 40 (PM) = 1,032** | *(pre-contingency; was 644 before the 2026-10-05 Ranked amendment)* |
 
 ---
 
@@ -210,20 +293,29 @@ One engineer + AI agents, ~22 productive engineering days/month (allowing for re
 | **5c Push-to-talk voice** | **2.5 wk** | **5a (room membership)** | PTT works in a real 4-device room; muted by default; voice structurally absent outside the casual-room path |
 | 9 Instrumented 4-client emulator suite | 1.5 wk | 5b (design during 5b) | Release gate for online |
 | 9b Voice device matrix (incl. symmetric-NAT) | 0.5 wk | 5c, 9 | Field failure-rate estimate + echo pass |
+| **6b Ranked authority + RP + placement** ⏱ | **6.5 wk** | **5b, 4a (bot engine reused)** | `functions/` module, `mode` field, correct-and-settle, RP engine, placement (S42–S54) |
+| **6c Matchmaking + private Ranked** ⏱ | **3 wk** | **6b** | Server-controlled pool, private/password cross-tier (S56–S58) |
+| **6d Seasons + leaderboard + Vote Kick + timeout tracking** ⏱ | **5 wk** | **6b, 6c** | Two-step reset, King → Royal I, season-isolated board, Ranked-only Vote Kick, 15-timeout removal (S59–S61, S64) |
 | 7 Monetization (AdMob + UMP + RevenueCat) | 1.5 wk | 0b, accounts active | Banner + Remove Ads, test purchases |
 | 12 Store prep (res/, strings, policy, listing, Crashlytics) | 1.5 wk | 0b | Store-ready listing, signed AAB, full AR strings (S41) |
 | 8b Audio + animations (parallel throughout) | 1 wk | — | SFX + polish |
 | 13 Closed track → staged rollout | 1 wk | all | Production v1 |
 
-### MVP Timeline — 9.5 weeks (~2.2 months)
+### MVP Timeline — 20 weeks (~4.6 months) — amended 2026-10-05
 
-The minimum to launch: **AI-only + online, no voice, monetization as a rapid v1.0.1 follow-up.**
-0b (1.5) + 4a (2.5) + 4b (1.5) + 5a (1.5) + 5b (2) + store basics (1) + stabilization (0.5).
+**The MVP now includes Ranked (RD25).** Ranked is launch-blocking, so it cannot be deferred; voice still is.
+
+The minimum to launch: **AI-only + online + Ranked, no voice, monetization as a rapid v1.0.1 follow-up.**
+0b (1.5) + 4a (2.5) + 4b (1.5) + 5a (1.5) + 5b (2) + 6b (6.5) + 6c (3) + 6d (5) + store basics (1) + stabilization (1).
 Rationale: neither AI nor online depends on ads — and neither depends on voice. **Voice is deliberately outside the MVP:** it adds 170h, it carries the only two new hardware-policy surfaces in the project (mic permission + Play audio disclosure), and its worst-case failure mode (echo, or a NAT pair that can't connect) is a *support burden*, not a blocker. If the AdMob 14-day clock or a UMP edge case slips, this is the line that holds. Voice (2.5) + voice QA (0.5) then land as v1.0.1/v1.1 alongside TURN (see §E).
 
-### Full Version Timeline — 18 weeks (~4.1 months)
+*(Pre-amendment MVP was 9.5 weeks / ~340h; +388h of launch-blocking Ranked at the same cadence lands at ≈20 weeks.)*
 
-Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.5) + monetization (1.5) + store prep overlap + audio/polish (1) + closed-track rollout (1). Calendar time exceeds the raw hours because of the **AdMob 14-day closed-testing clock** — an immovable external dependency. Voice is the single largest week-adder after the toolchain spike, and it is sequenced *after* online works, because voice membership is derived from room membership and must never be able to drift from it. Full Arabic (S41) rides inside store prep — +12h absorbed without moving the 18-week label.
+### Full Version Timeline — 29 weeks (~6.7 months) — amended 2026-10-05
+
+Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.5) + monetization (1.5) + store prep overlap + audio/polish (1) + closed-track rollout (1). Calendar time exceeds the raw hours because of the **AdMob 14-day closed-testing clock** — an immovable external dependency. Voice is the single largest week-adder after the Ranked block, and it is sequenced *after* online works, because voice membership is derived from room membership and must never be able to drift from it. Full Arabic (S41) rides inside store prep — +12h absorbed without moving the 29-week label.
+
+**Ranked adds ~14.5 weeks** (6b 6.5 + 6c 3 + 6d 5) and sits on the critical path: `mode` (S43) gates Vote Kick, settlement, and Ranked statistics, so it cannot start after online — it starts *with* it.
 
 ---
 
@@ -238,7 +330,7 @@ Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.
 | QA / manual tester | **Part-time, only in the final 3 weeks** | Device matrix, RTL pass, online 4-human playthroughs, **4-device voice room incl. one symmetric-NAT case**, ad/IAP verification | 16 (folded into §604) |
 | 2D/3D artist, animator | **Not required for v1** | Cards render as glyphs; launcher icon from an icon generator is acceptable at v1 | 0 |
 | Sound designer | **Not required** | License 5 SFX from a royalty-free library (voice uses the WebRTC library's own AEC/NS, not custom DSP work) | 0 |
-| Backend developer | **Not required** | Frozen `firestore.rules` untouched; RTDB signaling rules are a thin declarative artifact, not a service. D3 = no server | 0 |
+| Backend developer | **Not required — but the plan now includes backend *work*** | **Amended 2026-10-05 (RD11):** the Ranked authority layer is 388h of Cloud Functions + Firestore, but it is written by the lead engineer in the existing 1-engineer model — it is Kotlin/TS-adjacent Functions over the project's own data model, not a distributed-systems hire. D3 still means no always-on server | 0 (headcount; the hours are in §F) |
 | **WebRTC / real-time media specialist** | **Not required — but flag the learning curve** | The WebRTC engine row (40h, XL) assumes the engineer becomes productive with `PeerConnectionFactory`/SDP/ICE. If the first mesh refuses to connect, that row is the one most likely to blow its estimate. Mitigation: GetStream's `webrtc-android` reference + a deliberate day-1 "two devices, one audio track" spike before the full mesh | 0 (risk, not headcount) |
 | Project manager | **Not separately** | Owner already performs this | (in the 40 PM hours) |
 
@@ -270,7 +362,13 @@ Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.
 | **R20** | **Voice + turn timeouts collide** — a player holding-to-talk during their turn is the exact scenario where a card game's turn clock fires | Lost turns, "the game skipped me" support load | PTT must not reset or pause the turn clock; voice is orthogonal to `turn`. Verify in the 4-device matrix, and make the turn-clock resolution the *gameplay* authority regardless of voice state |
 | **R21** | **WebRTC artifact supply chain** — `org.webrtc:google-webrtc:1.0.32006` is **no longer resolvable from Google's Maven** (the Bintray hosting sunset; "Failed to Resolve" reports recur through 2026) | Build breaks on a clean checkout, or a transitive consumer drags in a stale/mirrored binary | Use a Maven Central republish (`com.infobip:google-webrtc`, latest verified `1.0.48246t`) or GetStream's `webrtc-android` build; **pin an exact version**, audit the artifact once, and record the choice in an ADR. Do not leave it on a floating `+` |
 | **R22** | **Voice signaling needs a Firebase RTDB instance + its own `database.rules.json`** — cost $0, but it is a *new rules artifact and a console change*, i.e. exactly the kind of item the "rules release" constraint was meant to catch | Owner asked to prefer a path that avoids a rules release; **this is why we could not** | Being explicit: the **frozen `firestore.rules` is NOT touched** — no new SHA pin, no Firestore release. But RTDB signaling requires enabling Realtime Database in the console and shipping a small `database.rules.json` (auth-required, self-only writes, presence TTL). Cost **$0** on the Spark plan; effort ~2h of the 24h signaling row. Listed here as a *cost-free-but-time-cost* item so it is never mistaken for a surprise billing event |
-| **R23** | **Arabic review bottleneck.** `values-ar` needs a native-speaker review before submission, and that reviewer is an external person on no sprint clock | Store submission waits on one human's inbox | Draft `values-ar` early with AI assistance (EN infra lands with S12, so strings are reviewable long before S41 starts); book the reviewer when S24 opens, not when S41 needs sign-off |
+| **R23** | **Arabic review bottleneck.** `values-ar` needs a native-speaker review before submission, and that reviewer is an external person on no sprint clock | Store submission waits on one human's inbox | Draft `values-ar` early with AI assistance (EN infra lands with S12, so strings are reviewable long before S41 starts); book the reviewer when S24 opens, not when S41 needs sign-off. **The Ranked tier titles (مبتدئ / لاعب / معلم / وزير / أمير / سلطان / ملك) are product identity — put them in the reviewer's first batch, they are the most visible AR strings in the app** |
+| **R24** | **Cloud Functions cold-start latency on settlement.** The player sits on the Ranked result screen (S57) while the settlement callable warms up | A "settling…" wait that feels broken at the most satisfying moment in the game | UI shows an explicit settling state, never a blank or a spinner that implies failure. min-instances only if cost-justified — RD16 says monitor first, do not pre-buy capacity |
+| **R25** | **The MVP security boundary (RD14) is a compromise, not full authority.** In-play state stays client-converged; the server validates at settlement, not realtime | A determined cheater who controls all four clients can still produce a plausible-looking converged history | **This residual is accepted deliberately (RD16), named in the appendix essay, and logged in the RP audit ledger (S62).** Upgrade path: stronger realtime authority when cheating, scale, revenue, or competitive pressure justifies it. Do not silently oversell the boundary |
+| **R26** | **RD26 thresholds are unset.** All 19 rank lower-bounds are TBD placeholders | Progression feel is undefined until the owner sets numbers; tuning after playtest may move promotion/demotion cadence | **S46 isolates the thresholds into a tunable constant source**, so numbers change without redesign. The UI binds the ladder *structure*, not the numbers, so RD26 does not block any UI work |
+| **R27** | **Season reset is a one-way data migration.** Two-step demotion direction (Gold I → Gold III, never the reverse), ladder floor, Highest Rank preservation, King → Royal I — all irreversible once run | A botched reset corrupts every player's rank at once and cannot be rolled back without a backup | S59 + a **mandatory emulator dry-run against a seeded production-shaped dataset before the first real season**. The direction is the trap: I > II > III, so "down two" from Gold I is Gold III |
+| **R28** | **Mixed-tier RP feels punitive to the higher-tier loser.** RD5 multiplies their loss because they lost to a lower-tier opponent — intentional, but it *reads* as unfair if unexplained | Negative reviews from Gold players losing to Silver | The Ranked result screen (S57) shows the delta and the reason; RD5 is owner-approved, so the fix is communication, not a formula change. Tunable in S47 |
+| **R29** | **Cloud Functions cost at scale.** Settlement is one invocation per match — cheap at launch, unbounded at growth | A surprise bill if the game succeeds | RD16 governs: monitor, do not pre-build. The RP audit ledger (S62) is the natural usage signal. Spark plan covers the whole v1 forecast |
 
 ---
 
@@ -283,11 +381,14 @@ Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.
 | **M3 — Online playable** | 4 humans create/join by code, play a full 18-round match to FinalStandings, and rematch — all through the real `MatchService` |
 | **M4 — Reconnect works** | Kill the app mid-match, relaunch: returns to the exact trick via `currentMatchId` + log replay, no double-resolved history (P1-3 pin holds) |
 | **M4b — Voice works in a real room** | **Four physical devices** (not emulators) in one room-code room: any player holds-to-talk and the other three hear them; **nobody is transmitting at room join** (muted-by-default verified by packet inspection, not just UI state); backgrounding the app leaves voice and nothing keeps transmitting; a player who denies the mic still plays and still sees others' indicators |
-| **M4c — Voice failure modes are honest** | At least one **deliberate symmetric-NAT pairing** in the matrix: the affected seat shows "unreachable", the room continues, and the round completes. Also: voice is provably **gated to the casual-room path only** — a grep for any WebRTC init, `RECORD_AUDIO` prompt, or PTT button outside the room-code/room screen returns **zero**. (Ranked doesn't exist in v1, so this is verified as an *absence*, not a toggle: the gate is structural, and it must stay that way if ranked ever ships.) |
+| **M4c — Voice failure modes are honest** | At least one **deliberate symmetric-NAT pairing** in the matrix: the affected seat shows "unreachable", the room continues, and the round completes. Also: voice is provably **gated to the casual-room path only** — a grep for any WebRTC init, `RECORD_AUDIO` prompt, or PTT button outside the room-code/room screen returns **zero**, and **voice is provably absent from any `mode == RANKED` match** (RD22). Ranked now exists in v1 (RD25), so this is verified against the real `mode` field (S43), not as a hypothetical. |
 | **M5 — Instrumented gate green** | The 4-client emulator suite asserts convergence on the archive/advance race and endMatch in CI |
 | **M6 — Monetization integrated** | UMP consent completes before any ad loads; banner shows in Lobby/Standings only; "Remove Ads" test purchase succeeds via RevenueCat |
 | **M7 — Store-ready** | Privacy policy live, IARC rating set, data-safety form submitted and consistent with ad declarations, EN+AR screenshots, full AR strings live on every screen (S41), signed AAB on the **closed track** |
 | **M8 — Production v1** | Staged rollout started; Crashlytics receiving; no P0 crashes for 72h at 5% |
+| **M9 — Ranked settlement is authoritative** | The `functions/` module is live on the emulator; a **forged** `finalScores` is **corrected**, not accepted; settlement is idempotent across replayed calls; RP never goes negative |
+| **M10 — The Ranked loop is playable** | Placement (3 matches, 10/20/70, Platinum ceiling) → matchmaking (own tier or one below, no opt-up) → full match → Ranked result with RP delta, end to end |
+| **M11 — Ranked launch gate** | Seasons (two-step reset, King → Royal I, Highest Rank preserved), Vote Kick (Ranked-only, Round-7 gate, 2-of-3, 5-round cooldown, no rejoin), the 9 statistics, the 15-timeout automatic removal, and the season-isolated leaderboard all green. **Ranked is launch-blocking — v1 does not ship without this** |
 
 ---
 
@@ -295,53 +396,56 @@ Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.
 
 | Scenario | Hours | Timeline | Conditions |
 |---|---|---|---|
-| **Conservative** | 644 + 25% = **805** | **~21 weeks** | Toolchain spike forces Kotlin 2.x migration; AdClock slips; bot balancing needs real playtest iteration; instrumented suite reveals a rules-fidelity bug requiring a client rework; **voice exceeds its 40h XL row** (ICE debugging on real devices is the classic 2x line) |
-| **Realistic** | 644 + 15% = **741** | **18 weeks** | Spike stays on Kotlin 1.9.25; bots port cleanly with the SimPort seam; online wiring behaves as the JS reference did; voice mesh connects on the first 4-device attempt using a Maven-Central WebRTC republish. **Recommended.** |
-| **Aggressive** | 644 − 10% (skip animations, minimal audio, Crashlytics only, **defer voice to v1.1**) = **427** | **10 weeks** | Requires the toolchain spike to land clean in week 1, zero rules-fidelity surprises, and the AdMob account already activated. Voice is the cleanest single thing to cut: 170h (158 voice + 12 policy) with no gameplay dependency — cutting it maps this scenario onto the pre-voice 474h baseline exactly. Only viable if accounts are started **today** |
+| **Conservative** | 1,032 + 25% = **1,290** | **~34 weeks** | Toolchain spike forces Kotlin 2.x migration; AdClock slips; bot balancing needs real playtest iteration; instrumented suite reveals a rules-fidelity bug requiring a client rework; **voice exceeds its 40h XL row** (ICE debugging on real devices is the classic 2x line); **RD26 threshold tuning takes a full playtest cycle** (R26); season-reset dry-run finds a migration defect (R27) |
+| **Realistic** | 1,032 + 15% = **1,187** | **29 weeks** | Spike stays on Kotlin 1.9.25; bots port cleanly with the SimPort seam; online wiring behaves as the JS reference did; voice mesh connects on the first 4-device attempt using a Maven-Central WebRTC republish; **the settlement layer lands on the emulator without a rules revision** (RD11's promise holds). **Recommended.** |
+| **Aggressive** | 1,032 − 10% (skip animations, minimal audio, Crashlytics only, **defer voice to v1.1**) = **929** | **~26 weeks** | Requires the toolchain spike to land clean in week 1, zero rules-fidelity surprises, and the AdMob account already activated. Voice is the cleanest single thing to cut: 170h (158 voice + 12 policy) with no gameplay dependency — **but Ranked cannot be cut (RD25), so this scenario's floor is higher than the old one's.** Cutting it maps this scenario onto the 862h no-voice baseline. Only viable if accounts are started **today** |
 
-> **Voice is the swing item.** It is the only scope block in this plan that is simultaneously large (170h), non-blocking for launch, and carrying two policy surfaces. The spread between Realistic and Aggressive is almost entirely "voice or not."
+> **Voice is still the swing item — but it is no longer the only one.** It remains the only scope block that is simultaneously large (170h), non-blocking for launch, and carrying two policy surfaces. **Ranked (388h) is the new immovable block: RD25 makes it launch-blocking, so it moves the floor of every scenario.** The spread between Realistic and Aggressive is still mostly "voice or not"; the spread between this amendment and the previous plan is entirely "Ranked or not."
+
+> **Arithmetic, stated rather than hidden (2026-10-05 amendment):** all figures are recomputed from the **388h Ranked subtotal** (S42–S64, §E6b). Pre-amendment this table was 805 / 741 / 427 against 644. The old "defer voice → 474h / 13 weeks" baseline becomes **862h / ~24 weeks**, because Ranked is added to it. Do not carry the old numbers forward.
 
 ---
 
 # 9. Contingency
 
-| Contingency bucket | % of 644 | Hours | Why this rate |
+| Contingency bucket | % of 1,032 | Hours | Why this rate |
 |---|---|---|---|
-| Unknown requirements | 4% | 26 | AI-bot scope is the only genuinely undocumented area (R13); specs froze everything else. Voice requirements are pinned by V1–V5 above, which is why voice itself does not add to this bucket |
-| Bugs | 4% | 26 | Bot tier balance always needs more iterations than planned |
-| Integration problems | 4% | 26 | The `:app`↔`:services` wiring + instrumented tier is untested territory (R8), **plus a first WebRTC integration** (R15/R16/R21) |
-| Rework | 2% | 13 | Toolchain decision may force a Compose-compiler migration; the WebRTC artifact choice may need swapping (R21) |
-| Testing | 1% | 6 | Device-matrix surprises, especially RTL Arabic layouts and the speakerphone echo pass |
-| **Total contingency** | **15%** | **97** | **Conservative = 25% (161h) if the toolchain spike goes badly or voice ICE debugging runs long** |
+| Unknown requirements | 4% | 41 | **Ranked is now the largest undocumented area** (RD26 thresholds are TBD placeholders, R26) — this bucket grows with it. AI-bot scope was the previous driver (R13); voice is pinned by V1–V5 |
+| Bugs | 4% | 41 | Bot tier balance always needs more iterations than planned; **RP tuning will need a playtest cycle or two** (R26) |
+| Integration problems | 4% | 41 | The `:app`↔`:services` wiring + instrumented tier is untested territory (R8), **plus a first WebRTC integration** (R15/R16/R21), **plus a first Cloud Functions settlement layer** (R24 cold starts, R25 boundary) |
+| Rework | 2% | 21 | Toolchain decision may force a Compose-compiler migration; the WebRTC artifact choice may need swapping (R21); **a season-reset defect found in dry-run is rework by definition** (R27) |
+| Testing | 1% | 10 | Device-matrix surprises, especially RTL Arabic layouts and the speakerphone echo pass |
+| **Total contingency** | **15%** | **155** | **Conservative = 25% (258h) if the toolchain spike goes badly, voice ICE debugging runs long, or RD26 needs more than one tuning cycle** |
 
-- **Before contingency:** **644 hours**
-- **After contingency (realistic):** **741 hours ≈ 18 weeks**
-- **After contingency (conservative):** **805 hours ≈ 21 weeks**
-- **If voice is deferred to v1.1:** **644 − 170 = 474 hours ≈ 13 weeks** — the pre-voice baseline exactly
+- **Before contingency:** **1,032 hours**
+- **After contingency (realistic):** **1,187 hours ≈ 29 weeks**
+- **After contingency (conservative):** **1,290 hours ≈ 34 weeks**
+- **If voice is deferred to v1.1:** **1,032 − 170 = 862 hours ≈ 24 weeks** — the pre-voice baseline, **now with Ranked included** (RD25 makes Ranked uncuttable)
+- *(Pre-amendment figures, for traceability only — do not carry forward: 644 / 741 / 805 / 474.)*
 
 ---
 
 # 10. Final Executive Summary
 
-**Project scope.** Ship "Estemshan," a 4-player Egyptian trick-taking card game, as a native Android (Kotlin/Compose) app with three modes: offline vs AI bots (4 difficulty tiers + personalities), online matches with friends via room code, and offline hot-seat — with **push-to-talk voice chat in casual rooms** (muted by default, max 4 speakers, never in ranked), fully localized in English and Arabic (EN `strings.xml` infra from S12, full `values-ar` retrofit in S41). Monetized with a single banner ad plus a one-time "Remove Ads" purchase.
+**Project scope.** Ship "Estemshan," a 4-player Egyptian trick-taking card game, as a native Android (Kotlin/Compose) app with three modes: offline vs AI bots (4 difficulty tiers + personalities), online matches with friends via room code, and offline hot-seat — plus **a full Ranked progression system** (19-rank ladder, dynamic RP, placement test, server-controlled matchmaking, 3-month seasons, seasonal leaderboard — MVP and launch-blocking per RD25), and **push-to-talk voice chat in casual rooms only** (muted by default, max 4 speakers, **never in Ranked** — RD22), fully localized in English and Arabic (EN `strings.xml` infra from S12, full `values-ar` retrofit in S41). Monetized with a single banner ad plus a one-time "Remove Ads" purchase.
 
-**Where we're starting from.** The game engines, scoring, and online *service* layer are **already built and green on `main`** — including the hardest piece, reload-safe replay. Roughly **half the native v1 is done**. What's left is: the AI bots the owner just supplied, wiring the online services into the app, voice chat, and everything platform-facing.
+**Where we're starting from.** The game engines, scoring, and online *service* layer are **already built and green on `main`** — including the hardest piece, reload-safe replay — and **the AI bot port is merged and wired** (`BotTier` + `BotPersonality` are reusable by Ranked placement and timeouts). Roughly **half the native v1 is done**. What's left is: wiring the online services into the app, the Ranked authority + progression layer, voice chat, and everything platform-facing.
 
-**MVP scope.** AI play + online multiplayer, with monetization following as a rapid v1.0.1. Neither gameplay mode depends on ads — and neither depends on voice. **Voice is Full-version scope, deliberately outside the MVP.**
+**MVP scope.** AI play + online multiplayer + **Ranked (launch-blocking)**, with monetization following as a rapid v1.0.1. Neither gameplay mode depends on ads — and neither depends on voice. **Voice is Full-version scope, deliberately outside the MVP. Ranked is not: RD25 puts it in the MVP.**
 
-**Total estimated hours.** **644** before contingency (434 base + 158 voice + 12 voice-policy deltas + 40 PM), **~741 after** (15%).
+**Total estimated hours.** **1,032** before contingency (434 base + **388 Ranked** + 158 voice + 12 voice-policy deltas + 40 PM), **~1,187 after** (15%). *(Pre-Ranked: 644 / ~741.)*
 
-**Estimated timeline.** **18 weeks** realistic (MVP in 9.5). Conservative 21 weeks if the Android toolchain forces a Kotlin migration or voice ICE debugging runs long. **Deferring voice to v1.1 restores the 13-week / 474-hour baseline exactly.**
+**Estimated timeline.** **29 weeks** realistic (MVP in ~20). Conservative 34 weeks if the Android toolchain forces a Kotlin migration, voice ICE debugging runs long, or RD26 threshold tuning needs extra playtest cycles. **Deferring voice to v1.1 gives a 24-week / 862-hour baseline — but Ranked stays, so the floor no longer drops to 13 weeks.**
 
-**Required team.** **One engineer (the owner) + AI coding agents**, plus part-time QA for the final 3 weeks (including a 4-physical-device voice room). No artist, animator, sound designer, or backend developer is needed at v1 scope.
+**Required team.** **One engineer (the owner) + AI coding agents**, plus part-time QA for the final 3 weeks (including a 4-physical-device voice room). No artist, animator, sound designer, or backend *hire* needed at v1 scope — **but the plan now contains 388h of backend work**, written by that one engineer as lightweight Cloud Functions (RD11), not as a server.
 
-**Major risks.** (1) The app currently targets API 34 — Google requires API 36 as of Aug 31, 2026, so the toolchain must be upgraded before anything can ship. (2) The AdMob 14-day closed-testing clock is the one immovable external deadline. (3) The AI bot files are coupled to the "deferred" Monte-Carlo module more tightly than expected. (4) The frozen security rules make true player presence impossible — by design, not by oversight. (5) **Voice cannot reach every player STUN-only: 5–15% of room-pairs sit behind symmetric NATs and will show "unreachable" — TURN is a v1.1, $0-effort-only fix, not a launch blocker, and the UX must say so rather than spin.** (6) The official WebRTC artifact is no longer on Google's Maven (Bintray sunset) — pin a Maven Central republish deliberately.
+**Major risks.** (1) The app currently targets API 34 — Google requires API 36 as of Aug 31, 2026, so the toolchain must be upgraded before anything can ship. (2) The AdMob 14-day closed-testing clock is the one immovable external deadline. (3) The AI bot files are coupled to the "deferred" Monte-Carlo module more tightly than expected. (4) The frozen security rules make true player presence impossible — by design, not by oversight. (5) **Voice cannot reach every player STUN-only: 5–15% of room-pairs sit behind symmetric NATs and will show "unreachable" — TURN is a v1.1, $0-effort-only fix, not a launch blocker, and the UX must say so rather than spin.** (6) The official WebRTC artifact is no longer on Google's Maven (Bintray sunset) — pin a Maven Central republish deliberately. **(7) The MVP security boundary is a compromise: Cloud Functions validate and settle, but in-play state stays client-converged — a fully colluding table is the known residual (R25, RD14). (8) The 19 RP thresholds are owner-TBD (RD26); the ladder ships with tunable placeholders, so progression feel is unset until the owner sets numbers (R26).**
 
-**Main assumptions.** The 1-engineer + AI-agent cadence observed over Phases 0–10 continues; the AdMob/Play/RevenueCat accounts are activated immediately; bot balancing is "good enough," not tournament-grade; EN + Arabic only; voice is acceptable to players as PTT-only with no open mic.
+**Main assumptions.** The 1-engineer + AI-agent cadence observed over Phases 0–10 continues; the AdMob/Play/RevenueCat accounts are activated immediately; bot balancing is "good enough," not tournament-grade; EN + Arabic only; voice is acceptable to players as PTT-only with no open mic; **the owner sets RD26's RP threshold numbers before the first Ranked playtest**.
 
-**What is NOT included.** EXPERT Monte-Carlo bots and adaptive difficulty (post-launch); matchmaking/ranked play (**ranked will never carry voice**); shop, missions, and seasons (no economy to sell into); rewarded video (nothing to reward yet); true presence/abandonment (blocked by frozen rules); custom analytics events beyond crash reporting; full i18n beyond EN/AR; any **backend development** — `firestore.rules` stays frozen and no server is being built (D3); **no TURN server in v1** (STUN-only, symmetric-NAT limitation accepted and disclosed, coturn on a free VM reserved for v1.1); **no recording, transcription, or server-side audio storage of any kind**; no open-mic / always-on voice; no foreground-service background voice. Also excluded: re-estimating the ~460 hours of work already merged to `main`.
+**What is NOT included.** EXPERT Monte-Carlo bots and adaptive difficulty (post-launch); **voice in Ranked — never (RD22)**; shop and missions (no economy to sell into — **seasons ARE in scope, RD24**); rewarded video (nothing to reward yet); true presence/abandonment (blocked by frozen rules); custom analytics events beyond crash reporting; full i18n beyond EN/AR; **a dedicated always-on game server (D3 amended — lightweight Cloud Functions are in, a server is not, RD11)**; any **Firestore rules revision** — `firestore.rules` stays frozen and byte-identical, the Functions are the only legitimate Ranked write path; **no TURN server in v1** (STUN-only, symmetric-NAT limitation accepted and disclosed, coturn on a free VM reserved for v1.1); **no recording, transcription, or server-side audio storage of any kind**; no open-mic / always-on voice; no foreground-service background voice; **no player-facing Ranked match history for MVP (RD23 — the profile carries the 9 career statistics instead)**; **no separate seasonal trophy system (RD24)**. Also excluded: re-estimating the ~460 hours of work already merged to `main`.
 
-**One decision for management.** Start the AdMob/Play Console/RevenueCat account activations **today** — they're external clocks, and they — not the code — determine the launch date.
+**One decision for management.** Start the AdMob/Play Console/RevenueCat account activations **today** — they're external clocks, and they — not the code — determine the launch date. **A second one: RD26's 19 RP threshold numbers. They are the only owner input on the Ranked critical path, and the first Ranked playtest cannot tune progression feel without them.**
 
 ---
 
@@ -392,15 +496,95 @@ One epic per phase; stories sized in hours; `S/M/L` from §2. Critical path mark
 | **E8b Polish** | S27 SoundManager + 5 SFX behind existing toggle | 14 | — |
 | | S28 Compose animations (card play, trick sweep, winner) | 12 | — |
 | **E13 Release** | S29 Closed track + staged rollout + 72h Crashlytics watch | 8 | all |
+| **E6b Ranked** ⏱ | S42 `functions/` module: deploy target + emulator wiring + callable-auth + idempotency guard — lightweight (RD11/RD16) | 20 | S4 |
+| | S43 `mode` field on `MatchDoc` — **exactly `ROOM` / `RANKED`** (RD28) + separate private/password access flag + migration of in-memory mode to persisted authority | 10 | S42 |
+| | S44 Ranked profile model: tier, division, RP, seasonId, highestRank, placementState, 9 stats | 14 | S43 |
+| | S45 Rank ladder definitions + Arabic title resources (EN `values`, AR `values-ar`) + rank formatting | 10 | S44 |
+| | S46 RP threshold table as tunable constants (**RD26 placeholders TBD**) + rank↔RP conversion | 10 | S44 |
+| | S47 RP engine: dynamic gain/loss from RD4 inputs; tunable; unit-testable in isolation | 24 | S46 |
+| | S48 Mixed-tier asymmetry (RD5) + Private ×2 cap (RD6) | 14 | S47 |
+| | S49 Demotion + one-match protection (RD7); King ceiling + leaderboard-only overflow (RD3) | 12 | S47 |
+| | S50 Settlement function: authoritative result recompute + correct-and-settle (RD12) | 26 | S42, S43 |
+| | S51 Idempotent RP application + retry/duplicate resistance + auth identity verify (RD13) | 16 | S50 |
+| | S52 Server-side validation of Ranked-critical state/actions (**MVP security boundary, RD14**) | 30 | S50 |
+| | S53 Placement service: 3 scripted matches (Easy+Med / Med+Hard / Hard+Expert), system-controlled bots | 16 | S44 |
+| | S54 Placement scoring: engine-derived signals, 10/20/70 weights, Platinum ceiling, division lower-bound start | 20 | S53, S47 |
+| | S55 Ranked statistics accumulator: the 9 values, Public+Private, Placement excluded | 14 | S51, S44 |
+| | S56 Matchmaking: server-side eligible-pool derivation (own tier / one below), queue, search lifecycle | 30 | S44 |
+| | S57 Matchmaking anti-abuse: no client tier selection, no opt-up, pool authority (RD9) | 12 | S56 |
+| | S58 Private/Password Ranked: cross-tier allowed, password gate, Ranked integrity retained | 14 | S50, S48 |
+| | S59 Seasons: 3-month cycle, season ID, two-step reset with ladder floor, **King → Royal I**, Highest Rank preserved | 20 | S44, S49 |
+| | S60 Vote Kick Ranked-only enforcement by `mode` + Round-7-complete gate + unique-Koz requirement + **target frozen for the vote duration (OPEN-2)** (RD17/18) | 20 | S43 |
+| | S61 Timeout/inactivity separation: MEDIUM engine on timeout, configured bot on leave, 15-timeout counter → **automatic removal (distinct from Vote Kick)** | 16 | S43 |
+| | S62 RP audit ledger (internal) + observability hooks | 10 | S51 |
+| | S63 Abuse/edge-case coverage: forged results, replayed settlements, cross-tier injection, tie edge cases | 12 | S61 |
+| | S64 Seasonal Ranked Leaderboard: server-authoritative ordering (position, player, Tier/Rank, RP, season), King ranked by RP above the King lower bound, current player highlighted, season isolation/reset | 18 | S59 |
+| | **E6b Ranked subtotal** | **388** | |
 | | **PM overhead** | 40 | — |
-| | **Contingency 15%** | 97 | — |
-| | **TOTAL** | **751** | |
+| | **Contingency 15%** | 155 | — |
+| | **TOTAL** | **1,197** | |
 
-> Story-table arithmetic, stated rather than hidden: the 30 non-voice stories sum to **444h** (the 29 pre-voice stories at **432h** — a +10h decomposition granularity, since S7 is sized 26 vs its feature row's 24 and S13 is split out separately — plus S41 at **12h**) against §2's 434h feature line. The 11 voice stories sum to exactly **170h**, matching §2/§3 (158 voice + 12 policy deltas). PM (40) + 15% contingency (97) land the table at **751**, against the §9 headline of **741** — the 10h difference is precisely that story-vs-feature drift, and it is absorbed by contingency. Stories are the *execution* view; §9 is the *estimate* view. Nothing is rounded away silently.
+> Story-table arithmetic, stated rather than hidden. **Pre-amendment (for traceability):** the 30 non-voice stories summed to **444h** (the 29 pre-voice stories at **432h** — a +10h decomposition granularity, since S7 is sized 26 vs its feature row's 24 and S13 is split out separately — plus S41 at **12h**) against §2's 434h feature line. The 11 voice stories summed to exactly **170h**, matching §2/§3 (158 voice + 12 policy deltas). PM (40) + 15% contingency (97) landed the table at **751**, against the §9 headline of **741** — the 10h difference was precisely that story-vs-feature drift, absorbed by contingency.
+>
+> **After the 2026-10-05 Ranked amendment:** the 23 new **E6b** stories (S42–S64) sum to exactly **388h**, matching §2's Ranked feature line (§F) with zero drift this time — the ladder, settlement, and matchmaking stories decompose cleanly against the feature rows. The table now carries 444 + 388 = **832h** non-voice stories plus **170h** voice = **1,002h** of stories; PM (40) and 15% contingency (**155**, taken on the §3 pre-contingency total of 1,032 per this table's own convention — pre-amendment it was 97 on 644) land the table at **1,197**, against the §9 headline of **1,187**. The 10h gap is exactly the pre-amendment story-vs-feature drift, unchanged in kind: the non-voice stories sum to 832h against §2's 822h non-voice feature line (+10h of decomposition granularity), and contingency amplifies it by 1.15. Stories are the *execution* view; §9 is the *estimate* view. Nothing is rounded away silently.
+>
+> **Rank-King vs Match-King, once, because it is the single easiest thing to get wrong in this amendment:** Rank King is the account's competitive ceiling (19th rung, no divisions). Match King is whoever finishes first in one match. Koz is the unique current last place in one match — not a rank at all. The `#E8A33D` gold colour in the design tokens belongs to the **Match-King badge**; the **Gold tier** must not reuse it, or "Gold" collapses into "King" in the UI.
 
 ---
 
-### Two technically valid approaches — compared
+## Appendix (2026-10-05): Ranked — the lightweight authority compromise
+
+**The question this section answers:** how does a low-cost MVP validate Ranked results without pretending Cloud Functions are a realtime game server? The owner's priorities are explicit (RD16): keep infra cost low, avoid enterprise-scale architecture, keep enough integrity that progression can't be *trivially* forged, and upgrade later when scale or cheating justifies it.
+
+### Why not a dedicated game server
+
+An always-on authoritative game server is the textbook answer and the wrong one *for this stage*. It is a permanent running cost, it needs capacity for peak concurrent matches, it needs a uptime/operations owner, and this is a card game with one engineer. **RD11 chooses Cloud Functions + Firestore instead**: the authority logic runs on invocation — once per match, at settlement — and costs nothing between matches. The frozen `firestore.rules` deny-list on progression fields already guarantees the client cannot write its own rank or RP; the Functions are the only legitimate write path into those fields.
+
+### What the Functions actually buy (RD12/RD13), and what they do not (RD14)
+
+**They buy:** correct-and-settle (the client's `finalScores` is recomputed, and a wrong claim is *corrected*, then settled — not blindly trusted, not merely rejected); idempotency (a match settles exactly once, replays and retries included); authenticated identity (the settling player is verified, and only their own action records are accepted); and server-owned invariants (`mode`, tier eligibility, placement weights, the 9-stat accounting, Vote Kick's Round-7 and unique-Koz gates).
+
+**They do NOT buy:** realtime authority. The server does not adjudicate each bid or card as it happens. In-play state stays client-converged for the whole match and is only verified retrospectively, at settlement. **This is the MVP security boundary (RD14), and overstating it would be the main way this plan goes wrong.**
+
+### The concrete validation mechanism
+
+The mechanism is **server-validated Ranked actions plus deterministic verification at settlement** — reusing two things the repo already has:
+
+1. **Ranked-critical actions converge to a shared Firestore document.** Bidding, estimates, and card plays are already written by all four clients to the same match document — that is precisely what the existing reload-safe replay depends on. The settlement function re-reads that **converged** document, not the client's claim, and treats the converged action history as the input of record.
+2. **The rules engine is pure and already test-covered.** Settlement re-runs scoring over the converged action sequence to recompute the authoritative final placement and scores. A `finalScores` that disagrees is **corrected** (RD12) — the recomputed value is what settles.
+3. **Server-owned invariants, checked at settlement.** `mode` authority (Ranked vs Room), unique-Koz eligibility for Vote Kick, Round-7 completion, tier eligibility per RD9, placement weights, the 9-stat accounting, and the idempotency key. These are properties the server derives from documents the client cannot forge, because `firestore.rules` already deny progression writes.
+4. **Action evidence is ownership-constrained and immutable (RD13).** Each player's action records are written under that player's own identity; one client cannot rewrite another player's actions or fabricate another player's result. The converged sequence the server re-derives is append-only.
+
+**What the server does not do:** it does not hold authoritative game state during play, and it does not intervene mid-match. This is the accepted residual, stated openly rather than buried.
+
+### The four trust tiers, named
+
+| Tier | What lives here | Mechanism |
+|---|---|---|
+| **Client — read-only post-settlement** | Match UI, rank display, statistics read, matchmaking search *request* | Never writes RP/rank/result. Enforced by the existing `firestore.rules` deny-list on progression fields |
+| **Client — converged, transient** | In-match gameplay state: bidding, estimates, card plays | Written by all clients to the shared match document; convergent by design (reload-safe replay already relies on it). **The RD14 residual: not server-adjudicated in realtime.** Not untrusted — multi-client-converged, which makes single-client forgery visible |
+| **Cloud Functions — authority, invoked once per match** | Settlement, RP, placement scoring, matchmaking pool resolution, season reset, leaderboard ordering, Vote Kick eligibility by `mode` | Re-reads the converged document, re-runs the pure engine, **corrects** a wrong `finalScores` (RD12), applies RP idempotently (RD13) |
+| **Firestore — source of truth** | RankedProfile, Season, RP audit ledger, match `mode`, Leaderboard | Post-settlement the client's read of its own rank/RP/stats is the only path — there is no client write path to close |
+
+### Why this is sufficient for launch, and what it costs you
+
+**Sufficient because:** forging Ranked progression under this design requires forging the converged multi-client action history that all four players' devices agree on — materially harder than editing a score field, and detectable at settlement. Combined with the rules deny-list, the cheap attacks (self-awarding RP, suppressing a loss, double-settling, fabricating another player's result) are all closed.
+
+**Costs you, knowingly (R25):** (a) a fully colluding table — four players who agree to fabricate a whole match — can still produce a plausible-looking converged history, because the server was not watching each trick; (b) subtle in-play exploits are caught only if they break convergence or an engine invariant, not in realtime; (c) settlement is retrospective, so a detected fraud can be *corrected* but not *prevented* mid-match. Each is accepted at MVP, logged in the RP audit ledger (S62), and revisited under the RD16 upgrade triggers.
+
+### The upgrade path, and its triggers
+
+Stronger **realtime** server authority — the server adjudicating each action as it happens — becomes the right answer when **any** of these fire: cheating becomes a meaningful problem in the field, player scale increases, revenue justifies higher infrastructure cost, or competitive-integrity requirements increase (esports-style play). The architecture is designed so that step is an *addition* — the settlement layer stays, and per-action validation is layered in front of it — not a rewrite. **That upgradeability is the reason "lightweight" is a deliberate choice here, not a shortcut.**
+
+### The Rooms / Ranked trust split (RD15)
+
+**Rooms** are the lower-security, cost-sensitive flow: no competitive RP progression, so no need for full Ranked authority. The existing frozen rules and client-converged play are sufficient — which is why Rooms ship unchanged and voice is allowed there.
+
+**Ranked** is where the boundary applies: critical outcomes are protected, authority lives in the backend, and the four tiers above govern every write. **A Room match and a Ranked match use the same engine and the same table; they differ in authority, not in gameplay.** The `mode` field (S43) is the single key that separates them, and it gates Vote Kick (Ranked-only, RD18), settlement, and Ranked statistics.
+
+**One consequence worth stating flatly:** this is an MVP compromise, not a claim of full server authority. If the plan is read as "Cloud Functions make cheating impossible," it has been misread — they make *trivial* forgery impossible and *hard* forgery detectable, at a cost of one function invocation per match.
+
+---
 
 **Approach A (recommended): Bot brains in `:engine` as pure functions; a `BotDriver` in `:app`.**
 - Brains take engine state and return `BiddingIntent`/`PlayCard` — they're pure JVM, testable in the **existing** JVM CI tier, including the bot-vs-bot smoke test.
@@ -444,15 +628,33 @@ The owner's constraint is absolute (V4): **no paid SDK, no metered minutes, no c
 3. **JS rules suites (keep green)** — `tests/native-phase3-rules-negative.test.cjs` + `native-phase3-integration.test.cjs` remain the fidelity gate for the rules layer; they must not bit-rot. **The voice RTDB rules get their own negative test** (a player may not write another player's presence/offer/ICE subtree) — signaling is the one new rules surface in the project and it is tested at the same standard as the frozen rules, not hand-waved.
 4. **Voice — 4 real devices, one room (M4b/M4c).** Not emulators: WebRTC audio path, AEC, and NAT behavior are all hardware-dependent, so an emulator pass here is a false green. The matrix must include: (a) at least one **deliberate symmetric-NAT pairing** (force it via a carrier-tethered device or a NAT-simulation router) asserting the seat shows "unreachable" and the round still completes; (b) a **speakerphone echo pass**; (c) the **permission-denied path** — revoke `RECORD_AUDIO` mid-room and confirm the room stays playable with voice controls hidden, no crash, no repeated re-prompt loop; (d) **backgrounding the app** and confirming transmission actually stops (verified by packet capture or the remote side's indicator flipping, not just the local UI); (e) **voice is gated to the casual-room path** — grep the whole codebase for any WebRTC init, `RECORD_AUDIO` prompt, or PTT button outside the room-code/room screen, and expect zero. Matches started *from* a casual room do carry voice (V2); everything else must not.
 5. **Manual** — device matrix minSdk 26 → API 36, an Arabic RTL layout pass (including the PTT button and mic-justification dialog, which are new RTL surfaces), a 4-human online playthrough, and a real UMP consent flow on a EU-region device before submission.
-6. **Field** — Crashlytics is the only way a one-engineer launch learns about field crashes; 72h at 5% rollout with no P0 before widening. For voice specifically, watch for a cluster of "unreachable" reports from one country/carrier — that's the symmetric-NAT rate exceeding the estimate and the trigger to pull coturn forward from v1.1.
+6. **Field** — Crashlytics is the only way a one-engineer launch learns about field crashes; 72h at 5% rollout with no P0 before widening. For voice specifically, watch for a cluster of "unreachable" reports from one country/carrier — that's the symmetric-NAT rate exceeding the estimate and the trigger to pull coturn forward from v1.1. **For Ranked, watch the RP audit ledger (S62) for settlement anomalies — repeated correct-and-settle corrections from the same player or the same table is the signature of the R25 residual being exercised in the wild.**
+7. **Ranked tier (new, M9–M11)** — designed now, run at the Phase 9 gate alongside the instrumented suite:
+   - Forged `finalScores` is **corrected** and the corrected result settles (RD12) — a fabricated score never becomes a real RP gain.
+   - Settlement is idempotent across replayed calls; duplicate/retry settlement settles once (RD13).
+   - RP never goes negative; mixed-tier asymmetry holds in all three directions; the private ×2 cap is never exceeded (RD5/RD6).
+   - Demotion + the one-match protection (RD7); King ceiling: RP accrues above King and is leaderboard-only (RD3).
+   - Placement: 10/20/70 weighting, Platinum ceiling never exceeded, no provisional rank ever shown, placement matches count toward no statistic (RD10).
+   - Matchmaking: own tier or exactly one below, no opt-up, mixed pool permitted when the server forms it (RD9).
+   - Season reset: two-step demotion **direction** (Gold I → Gold III, never the reverse), ladder floor respected, career stats intact, Highest Rank intact, **King → Royal I** (RD24).
+   - Leaderboard: ordering is server-computed, never client-ordered; King players sort by RP above the King lower bound; the current player's row is highlighted; a new season produces a fresh board with no carryover positions (RD27).
+   - Vote Kick: Ranked-only enforced by `mode`; unavailable before Round 7 completes; tied last place blocks it; 2-of-3 passes; 1-of-3 or timeout fails; failure puts a 5-round cooldown on that same target only; success removes permanently, forbids rejoin, and records the target as Koz (RD17/18).
+   - **15-timeout automatic removal fires with no vote, no Round-7 gate, and no Koz requirement — and it neither consumes nor resets the Vote Kick cooldown. The two mechanisms share no state.** (RD20)
+   - **The timeout counter is private: an opponent can never read another player's timeout count** (RD20).
+   - A Vote Kick vote cannot change its target mid-vote — the unique-Koz target is frozen for the vote's duration (OPEN-2, resolved one way or the other before this test is written).
+   - Tie for 1st → all tied players render as Match King; shared placements are counted in stats exactly as achieved (RD17).
+   - A bot-controlled seat never votes and never pads the eligible-voter count.
+   - Long-press short stats never blocks a legal card play; the popup shows exactly the 6 short values (RD23).
 
 ---
 
 ### Honest reconciliation with the previous estimate
 
-`ANDROID_MIGRATION_PLAN.md` says "**~5–8 months, one engineer**" for the whole migration. This plan says **~4.1 months for what's left** (18 weeks, voice included; 13 weeks without it). Those are consistent, not contradictory — roughly 5 months of the original range is already spent (Phases 0–10, spec through offline UI). The remaining 4 months lands inside the original envelope, and the voice addition is the reason this revision grew from 13 to 18 weeks.
+`ANDROID_MIGRATION_PLAN.md` says "**~5–8 months, one engineer**" for the whole migration. Before the Ranked amendment this plan said **~4.1 months for what's left** (18 weeks, voice included; 13 weeks without it) — consistent, not contradictory, with roughly 5 months of the original range already spent (Phases 0–10, spec through offline UI). **The 2026-10-05 Ranked amendment (RD25) breaks that envelope: 29 weeks realistic / ~34 conservative**, because Ranked is 388h of launch-blocking scope that the original migration plan never contained. The honest statement is now: **the original "~5–8 months" estimate covered the JS→Kotlin migration, not the competitive system.** Ranked is new product scope, and it is the reason this revision grew from 18 to 29 weeks — just as voice was the reason it previously grew from 13 to 18.
 
 The one place this plan disagrees with the existing documentation is the **status snapshot**: the plan's "~45% — session ~5%, Phase 3 untouched" was true on 2026-09-19 but is stale as of 2026-09-21, because PRs #47 and #48 merged the services module and the GameSession store. Estimating from the stale snapshot would have roughly **doubled** the online-multiplayer line. The assumptions that would have caused that error: trusting a status section instead of reading `origin/main`, and not noticing that `:services` is now a CI-tested module.
+
+**A second disagreement, corrected by the 2026-10-05 amendment rather than by reading code:** the plan's own scope statement excluded matchmaking/ranked and seasons, describing ranked as post-v1. That was a planning decision, not a repository fact — and the owner's RD25 inverts it. **Ranked, matchmaking, RP, and seasons are MVP and launch-blocking.** The six sites that stated otherwise (V2, the Phase 6 row, D3, the Backend-development row, M4c, and the executive summary's "what is NOT included") are all amended in place above, with the pre-amendment text preserved in parentheses where it still carries the voice-in-Ranked exclusion — which survives, because RD22 is unchanged. **The `design-ui` rank mocks are non-canonical legacy data** (`Gold III` 1240 > `Gold I` 980 reverses the I > II > III order, and `Platinum IV` does not exist in a 6×3+King ladder). RD26's TBD placeholders govern; nothing is derived from those mocks.
 
 ---
 
@@ -464,7 +666,7 @@ Voice adds no new purchase, no new data collection, and no new server — but it
 |---|---|---|
 | `RECORD_AUDIO` permission justification | "Used for push-to-talk voice chat with other players in the same room. Audio is captured only while you press and hold the talk button, is transmitted directly to those players, and is never recorded or stored." Must be **honest about PTT** — do not describe an always-on mic we don't have, and do not describe a mic we then leave open | Play Console → App content → Permissions; also the in-app rationale dialog (EN + AR) |
 | Data-safety audio declaration | **Audio is not collected, not stored, not transcribed, not uploaded to any server.** It flows peer-to-peer between room members. If Play offers a "transferred" vs "collected" distinction, answer transferred-between-users, never "collected" | Play Console → Data safety. **Must agree with the permission justification and the privacy policy — reviewed as one set, not three** |
-| Privacy policy sentence (EN + AR) | "Estemshan offers optional push-to-talk voice chat in casual rooms. Voice audio is transmitted directly between players in the same room while you hold the talk button. We do not record, store, transcribe, or retain voice audio." (Ranked/competitive modes, if ever introduced, will not include voice — a policy commitment, not a description of a shipped feature, so it is stated in the plan rather than the policy.) | Privacy policy page (hosted via the D4 web shrink) |
+| Privacy policy sentence (EN + AR) | "Estemshan offers optional push-to-talk voice chat in casual rooms. Voice audio is transmitted directly between players in the same room while you hold the talk button. We do not record, store, transcribe, or retain voice audio." (**Ranked is now MVP scope — RD25 — and carries no voice ever, RD22. The sentence stays accurate as written; the exclusion is a permanent rule, not a hypothetical.**) | Privacy policy page (hosted via the D4 web shrink) |
 | Mic-disclosure posture | No foreground service, no background capture, default muted, auto-leave on background — **this is the policy defense, and it is a code property, not a claim**. If any of those four regresses, this disclosure becomes false | Verified by the voice QA matrix items (d) and (e), not by review |
 
 **The dependency to respect:** `AI Bots/` strings are EN-only today, and the app's RTL is already enabled (`supportsRtl=true`) with no `res/` at all. The PTT button label, the mic-rationale dialog, and the "unreachable"/"muted-by-default" states are **new user-facing strings that must ship in EN and AR** — EN lands with their own stories' `strings.xml` infra (S12 pattern), AR values land with S41 — never as hardcoded Compose text.
@@ -482,5 +684,36 @@ Voice adds no new purchase, no new data collection, and no new server — but it
 | `mic_rationale_body` | Audio is sent only while you hold the talk button, directly to players in this room. Nothing is recorded or stored. | يُرسل الصوت فقط أثناء الضغط على زر التحدث، مباشرةً إلى اللاعبين في هذه الغرفة. لا يتم تسجيل أي شيء أو تخزينه. |
 | `mic_denied_fallback` | Mic turned off — you can still play and chat | تم إيقاف الميكروفون — لا يزال بإمكانك اللعب والدردشة |
 | `mute_player` | Mute this player | كتم هذا اللاعب |
+
+---
+
+## Final status block (2026-10-05)
+
+```
+RANKED SYSTEM PLANNING      — UPDATED 2026-10-05 (RD1–RD28 + OPEN-1/OPEN-2)
+UI/UX ROADMAP               — UPDATED (§4b + contradiction register)
+CODE/ARCHITECTURE ROADMAP   — UPDATED (E6b S42–S64, R24–R29, M9–M11)
+IMPLEMENTATION              — NOT STARTED
+FIGMA                       — NOT STARTED
+BATCH 2                     — NOT STARTED
+```
+
+**Planning only.** No code, no Kotlin/Java/TypeScript/JavaScript, no Cloud
+Functions, no Firestore rules change, no matchmaking implementation, no UI, no
+screens, no Figma. The two roadmap documents are the deliverable.
+
+**Where the two documents agree, and where they differ on purpose:** both carry
+the same 19-rank ladder, the same RD1–RD28 decision set, the same `mode`-first
+critical path, and the same four-tier authority model. The code roadmap owns the
+*execution* view (S42–S64, +388 h, R24–R29, M9–M11); the UI/UX roadmap owns the
+*design* view (screens S45–S58, the Rank Chip and Tier Ladder components, the
+tier-token gaps, the design gates). **RD26's 19 thresholds, OPEN-1, and OPEN-2
+are open in both, identically, and all three are non-blocking.** Neither document
+reopens a closed owner decision.
+
+**The two inputs the owner still owes, both on the Ranked critical path and both
+non-blocking for design work:** the **19 RP threshold numbers (RD26)**, and the
+two small decisions **OPEN-1** (reconnect after 15-timeout removal) and
+**OPEN-2** (whether a Vote Kick pauses the match). Everything else is closed.
 
 Arabic translations are provided as a working baseline; **have a native speaker review them before submission** — the same standard the rest of the AR strings should meet.
