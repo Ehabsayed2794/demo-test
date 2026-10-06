@@ -1,8 +1,10 @@
 package com.estemshan.services.model
 
 import com.estemshan.engine.Card
+import com.estemshan.engine.GameType
 import com.estemshan.engine.RANKS
 import com.estemshan.engine.Rank
+import com.estemshan.engine.ScoringMode
 import com.estemshan.engine.Suit
 
 /**
@@ -218,6 +220,14 @@ data class MatchDoc(
   val winnerIds: List<String>? = null,
   val finalScores: Map<String, Int>? = null,
   val completedRound: Int? = null,
+  /**
+   * S66 (E7): the match's game type + calculation mode. Absent in a doc
+   * written before S66 ⇒ FULL / NORMAL (no migration). Serialized as the
+   * enum names ('FULL'/'MINI', 'NORMAL'/'CLASSIC') — the values S67's
+   * rules allowlist.
+   */
+  val gameType: GameType = GameType.FULL,
+  val scoringMode: ScoringMode = ScoringMode.NORMAL,
 ) {
 
   /** The match is over, terminal: status never moves complete → anything. */
@@ -307,6 +317,8 @@ data class MatchDoc(
           key to value
         }?.toMap(),
         completedRound = (fields["completedRound"] as? Long)?.toInt(),
+        gameType = RoomDoc.parseGameType(fields["gameType"]),
+        scoringMode = RoomDoc.parseScoringMode(fields["scoringMode"]),
       )
     }
   }
