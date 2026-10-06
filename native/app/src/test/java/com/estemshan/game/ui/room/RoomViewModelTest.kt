@@ -1,5 +1,7 @@
 package com.estemshan.game.ui.room
 
+import com.estemshan.engine.GameType
+import com.estemshan.engine.ScoringMode
 import com.estemshan.services.RoomPort
 import com.estemshan.services.model.MatchStartResult
 import com.estemshan.services.model.Reasons
@@ -236,7 +238,12 @@ class RoomViewModelTest {
       rooms[key] = rooms.getValue(key).copy(readyPlayers = rooms.getValue(key).readyPlayers + playerId)
     }
 
-    override suspend fun createRoom(playerId: String, roomName: String?): String {
+    override suspend fun createRoom(
+      playerId: String,
+      roomName: String?,
+      gameType: GameType,
+      scoringMode: ScoringMode,
+    ): String {
       createCalls.incrementAndGet()
       val code = "ROOM%02d".format(rooms.size)
       rooms[code] = RoomDoc(
@@ -246,6 +253,8 @@ class RoomViewModelTest {
         players = listOf(playerId),
         readyPlayers = emptyList(),
         matchId = null,
+        gameType = gameType,
+        scoringMode = scoringMode,
       )
       return code
     }
