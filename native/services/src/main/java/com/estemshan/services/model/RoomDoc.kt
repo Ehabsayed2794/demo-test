@@ -69,7 +69,6 @@ data class RoomDoc(
     fun parseScoringMode(value: Any?): ScoringMode =
       (value as? String)?.let { runCatching { ScoringMode.valueOf(it) }.getOrNull() }
         ?: ScoringMode.NORMAL
-    }
   }
 }
 
