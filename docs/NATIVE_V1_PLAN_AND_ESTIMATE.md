@@ -64,17 +64,19 @@ The full design narrative, the contradiction register, and the per-screen UI imp
 - **RD3** Every rank has a lower-bound RP; promote at the next rank's lower-bound, demote below the current floor. **RP ≥ 0 always.** King has a lower bound but no upper bound; RP above King is **leaderboard-only** (ordered against other King players by RP — RD27).
 - **RD4** RP is **DYNAMIC**, not a fixed ±X. Inputs: opponent strength, tier difference, match outcome, final placement/performance, mixed-tier conditions. The engine is **independent of threshold constants** so numbers are tunable without redesign. Concept + inputs only; constants not finalized.
 - **RD5** Mixed-tier public Ranked is **asymmetric**: higher-tier wins → **reduced** RP reward; higher-tier loses → loss **multiplied (×2 in Private Ranked, RD6's cap)**; lower-tier beats a higher-tier opponent → **increased** RP reward. All three directions documented explicitly.
-- **RD6** Private/Password Ranked: **any tiers together**, no restriction; a **true Ranked match** awarding RP; **the same mixed-tier rules as public (RD5) apply**, with a **hard ×2 cap on the loss multiplier — never more than ×2.** NOT casual/unranked.
+- **RD6** Private/Password Ranked: **any tiers *within RD29*** (one tier apart or less) — **amended 2026-10-06; the earlier "any tiers together, no restriction" is repealed**; a **true Ranked match** awarding RP; **the same mixed-tier rules as public (RD5) apply**, with a **hard ×2 cap on the loss multiplier — never more than ×2.** NOT casual/unranked.
 - **RD7** Demotion is real, with **exactly ONE match of demotion protection** — a limited one-match mechanism, not permanent.
 - **RD8** **Rank King ≠ Match King.** Rank King = account competitive ceiling; Match King = first place in one match; Koz = current unique last place, NOT a ranked tier.
 
 **Matchmaking**
 
 - **RD9** Public Ranked matchmaking is **server-controlled**. The player never picks a higher-tier pool; the server derives it. **Own tier or exactly one tier below, never two+**; a lower-tier player cannot opt up (Silver cannot request Gold). The server **may form a mixed Gold/Silver match** — do not write "Gold players can only be matched in Gold."
+- **RD29** **Ranked party eligibility — two friends playing Ranked together.** Allowed iff their **tiers differ by at most one tier** — the same boundary as RD9, applied **against the creator**, and **symmetric** (RD9's "cannot opt up" has no meaning between two consenting friends, so a Silver host may invite a Gold friend and vice versa; RD9's asymmetry is preserved for solo Auto-Match). Division gaps within a tier are always eligible (Gold I + Gold III); one tier apart is eligible (Gold + Silver); **two or more tiers apart is ineligible** (Gold + Bronze). King: one tier below is Royal. **Compared by tier, never by 19-rank index** (King has no divisions). **Checked server-side only** — the client never reads the other player's rank. **No MMR, no rank-range expansion, no party queue, no special party rules.** *Ranked-ineligible does not mean "cannot play together": the flow offers Unranked (see the 2026-10-06 amendment).* See `docs/UI_UX_ROADMAP.md` §4b.4.
+- **RD30** **Placement is optional (owner wording verbatim, 2026-10-06):** *"Placement is optional and must be explicitly chosen. If a player skips placement, the account starts at Bronze III as a real Ranked tier and follows normal Ranked progression. Once placement is skipped, placement cannot be started later on that account."* An unplaced player holds **Bronze III** (RD26 lower bound 0) as a real starting tier — **not a "no tier" state** — and climbs normally. **This removes the edge case from RD29 and RD9 alike: every player always resolves to a tier.** RD10's placement track (3 matches, 10/20/70, Platinum ceiling, once per account, no statistics) is otherwise unchanged. **Skipping placement is a legitimate Bronze start, not a penalty — copy must never read as one.** See `docs/rules/CANONICAL_RULES.md` Amendment A3.
 
 **Placement**
 
-- **RD10** **Once per account, never per season.** 3 matches: M1 Easy+Medium, M2 Medium+Hard, M3 Hard+Expert. The player cannot choose difficulty or personality and **never sees a provisional rank** — only "Placement 1/3, 2/3, 3/3." Score from real engine signals (placement, result, score, estimate accuracy, bidding performance, consistency). **Weights FINAL: M1 10%, M2 20%, M3 70%.** Max placement = **Platinum** (never Diamond/Royal/King). Determines Tier + Division; the player starts at **that division's first/lower-bound RP**. **Placement matches count toward NO statistic.** "Start from Bronze" is permanent and irreversible.
+- **RD10** **Once per account, never per season.** 3 matches: M1 Easy+Medium, M2 Medium+Hard, M3 Hard+Expert. The player cannot choose difficulty or personality and **never sees a provisional rank** — only "Placement 1/3, 2/3, 3/3." Score from real engine signals (placement, result, score, estimate accuracy, bidding performance, consistency). **Weights FINAL: M1 10%, M2 20%, M3 70%.** Max placement = **Platinum** (never Diamond/Royal/King). Determines Tier + Division; the player starts at **that division's first/lower-bound RP**. **Placement matches count toward NO statistic.** "Start from Bronze" is permanent and irreversible. **Placement is OPTIONAL (RD30, 2026-10-06): a player who declines placement still plays Ranked, holding Bronze III as a real starting tier — not a "no tier" state — and every tier comparison (RD9 pool, RD29 party eligibility, the rank chip) reads that real value.**
 
 **Authority / security / cost**
 
@@ -95,8 +97,8 @@ The full design narrative, the contradiction register, and the per-screen UI imp
 **Config / timers / voice / stats / seasons / leaderboard / mode**
 
 - **RD21** One Create Game screen for Rooms and Ranked. Replacement-bot difficulty Easy/Medium/Hard/Expert; personality from the existing four only (reuse the Kotlin implementation, invent none); decision timer 5/10/15/20. **Dash/Bidding/Estimates = base + 5; Card Play = base** (15 → 20/20/20/15). **Defaults: Medium bot, the approved default personality, 15 s timer.** (The default-personality constant is a one-line addition at port time — the value is the existing `BALANCED` literal; `BotPersonality.DEFAULT` does not exist yet.)
-- **RD28** **`mode` is exactly two values: `ROOM` or `RANKED`.** Private/Password Ranked is **NOT a third mode** — it is `RANKED` plus a private/password access flag. It still awards RP and stats and still allows any tier mix (RD6). `mode` is the authority key that gates Vote Kick, settlement, and Ranked statistics; the private flag only gates access.
-- **RD22** Voice is **Rooms-only** (PTT, press-and-hold, Waiting Room + Rooms match). **Never in Ranked.**
+- **RD28** **`mode` is three values: `ROOM`, `RANKED`, or `UNRANKED` (amended 2026-10-06; originally two).** Rank-down (formerly Private/Password Ranked) is **NOT a mode** — it is `RANKED` plus a private/password access flag, still awards RP and stats, and allows any tier mix **within RD29** (amended 2026-10-06). `mode` is the authority key that gates voice, Vote Kick, disconnect/pause, settlement, and Ranked statistics; the private flag only gates access. **Unranked IS a first-class `mode: UNRANKED` value** (owner decision, 2026-10-06 — repealing this amendment's original "Unranked is `mode: ROOM` + a marker" framing). Every `mode` switch site therefore has an explicit `UNRANKED` branch: voice absent, Vote Kick absent, disconnect/pause present, settlement absent, statistics absent.
+- **RD22** Voice is **`ROOM`-only** (PTT, press-and-hold, Waiting Room + Rooms match). **Never in Ranked, and never in Unranked** (amended 2026-10-06 — Unranked is a first-class mode, not a Room, so it does not inherit a Room's voice).
 - **RD23** **Exactly 9 career stats:** Games Played, King count, King %, 2nd count, 2nd %, 3rd count, 3rd %, Koz count, Koz %. (**Never "10 values."**) Include Public + Private Ranked; **exclude Placement**. Long-press shows **SHORT stats only**: Rank, Games, King %, 2nd %, 3rd %, Koz %. **No player-facing match history for MVP**; an internal RP audit ledger IS required. Profile records **Highest Rank ever**, never erased by seasonal demotion.
 - **RD24** **Seasons are MVP scope NOW.** Duration **3 months**. End-of-season demotes Tier/Division **two division steps** (Gold I → Gold III), floored at the ladder bottom; **career stats never reset**. Placement never repeats per season. No separate trophy system. **King has no divisions and is demoted to Royal I at season reset** (owner-closed; RD1's division-less King is preserved — this is a destination, not a division).
 - **RD27** **Seasonal Ranked Leaderboard is in scope.** Server-authoritative ordering: rank position, player, Tier/Rank, RP, season, **current player highlighted**. **King players are ranked among themselves by RP above the King lower bound** — King has no divisions, so RP is the only ordering key there (RD3). **Season isolation:** the board shows one season only and resets with the season (RD24); rank position is recomputed per season, never blended. The client may read, never order.
@@ -367,6 +369,147 @@ New epic **E7 — Game Type & Calculation Mode (GM)**, placed **before** E6b:
 
 ---
 
+## Owner amendment of record (2026-10-06): Ranked party eligibility & the Unranked mode
+
+**Documentation-only. No Kotlin, no Firestore rules, no UI, no Cloud Functions have been changed.** This amendment records a FINAL owner decision set, the audit that verified it against the code and the frozen design, and the plan/stories that carry it. It changes this plan's scope, stories, and hours.
+
+**The decision it records:** two players whose ranks are **not eligible for Ranked party play** may not create/join a Ranked match together. Instead, the Create Game flow offers them **"Play Unranked"** — a normal, first-class match type where they play together, the remaining seats fill from a shared human pool, and the match awards **no RP and no Ranked progression**. Solo Auto-Match is untouched.
+
+**The rule this amendment exists to state plainly:** *Ranked-ineligible does not mean "cannot play together."* Two friends outside the allowed tier gap are blocked from **Ranked** together and offered **Unranked**, where they play with no restriction at all. **No refusal in this flow is a dead end.**
+
+The design view lives in `docs/UI_UX_ROADMAP.md` (§2.1 flow, S36, §4b.4/§4b.5, S08); the rules view in `docs/rules/CANONICAL_RULES.md` **Amendment A3**. This document carries the **code, architecture, security, and estimate** impact.
+
+### The audit (verified against `origin/main`, 2026-10-06)
+
+- **The only Ranked-with-friends path in the plan is Private/Password Ranked**, which RD6 currently admits at **any tier mix** ("A Bronze and a King may share a private table"). This amendment **repeals** that clause — see the amendment to RD6 below.
+- **A friend's rank is known only at join.** S36 is a pure configuration screen; no friend is selected at confirm time, so **no rank comparison is possible on S36**. The eligibility check is a **join-time, server-side** check, not a create-time one.
+- **A client cannot read another player's rank at all.** `firestore.rules:67-68` — `players/{uid}` allows `get: if isOwner(uid)` and `list: if false`; a rules-level `get()` on another player's profile is blocked by the same owner-only read (RD13). **The check therefore lives in the Functions module (S42), not in the client and not in `firestore.rules`.** The function returns only allow/deny + a plain-language reason — never the other player's RP.
+- **There is no friend list, no invite-by-uid, and no party abstraction** anywhere in `native/` — friends are reached by sharing a room code. This amendment adds **no** social system; it works on the existing code-share path.
+- **`mode` does not exist yet as a persisted field** (`MatchDoc` has none) and was planned as exactly `ROOM | RANKED` (RD28 as written 2026-10-05). **The 2026-10-06 owner decision amends this to `ROOM | RANKED | UNRANKED` — Unranked is a first-class, independent `mode` value, not `ROOM` plus a marker** (see "Amendments to existing decisions" below). Every `mode` switch site in the plan must be re-audited for the third value.
+- **But `mode` DOES already exist in-memory in the engine, carrying the legacy enum** — `native/engine/.../Session.kt:128,146,180` holds `mode: String?`, and `GameSessionTest.kt` asserts the values `"ranked"` / `"ai"` / `"friends"` (the same legacy enum `FirestoreSchema.md`'s speculative section documents). **S43 replaces this free string with the persisted three-value authority field**; until then, nothing reads it for gating. The audit note for S43: **do not port `"friends" | "ranked" | "ai"` — the native authority model is `ROOM | RANKED | UNRANKED`, and the private/Rank-down flag is a separate field.**
+- **"Unranked" exists nowhere today** except the transient default profile string (`firestore.rules:41`).
+- **Online bot seat-occupation is already funded** by RD19/RD20 and S61 (inactivity/leave → configured bot takes the seat). Unranked's bot fallback reuses that mechanism; it does not invent online bots.
+
+### Decisions RD29–RD30
+
+These carry the same standing as D1–D4, V1–V5, RD1–RD28, and GM1–GM8.
+
+- **RD29 — Ranked party eligibility.** Two players may be in the same Ranked party iff their **tiers differ by at most one tier** — the same boundary as the solo pool (RD9: own tier or exactly one tier below), applied **against the creator** (every joining member must be within one tier of the creator).
+  - **Symmetric.** RD9's "a lower-tier player cannot opt up" has no meaning between two consenting friends: a Silver host may invite a Gold friend and vice versa. **RD9's asymmetry is preserved for solo Auto-Match, which is untouched.**
+  - **Compared by tier, not by 19-rank index**, because RD9 is written in tiers and King has no divisions.
+  - Division differences within a tier are **always eligible** (Gold I + Gold III: eligible). One tier apart is eligible (Gold + Silver). **Two or more tiers apart is ineligible** (Gold + Bronze). King: one tier below is Royal — King + Royal eligible, King + Platinum not.
+  - **Checked server-side only**; the client never reads the other player's rank.
+  - **No MMR, no rank-range expansion, no party queue, no special party rules** — RD29 reuses one existing constant (the one-tier boundary) and nothing else.
+
+- **RD30 — Placement is optional (owner wording verbatim, 2026-10-06):**
+
+  > *"Placement is optional and must be explicitly chosen. If a player skips
+  > placement, the account starts at Bronze III as a real Ranked tier and
+  > follows normal Ranked progression. Once placement is skipped, placement
+  > cannot be started later on that account."*
+
+  - **RD10's placement track is unchanged** — 3 matches, 10/20/70 weights, Platinum ceiling, once per account, "Placement 1/3, 2/3, 3/3", counts toward no statistic.
+  - **What changes:** skipping placement is not a downgrade, not a block, and not a penalty. The account holds **Bronze III** (RD26 lower bound 0) as a real rank, climbs normally, and is shown a real rank chip — never a "no tier" placeholder. **The final clause is a rule of the account, not a punishment for having skipped.**
+  - **The consequence this plan is written around: there is no edge case in RD29.** Every player always resolves to a tier, so the eligibility check, the RD9 solo pool, and the rank chip all read one uniform value.
+
+### Amendments to existing decisions
+
+- **RD6 — amended (the conflict this amendment resolves).** Private/Password Ranked no longer admits "any tiers together." It admits **any tiers *within RD29*** — one tier apart or less. It remains a **true Ranked match**: RP awarded, statistics accumulate, Vote Kick available, settlement identical, RD5 mixed-tier asymmetry applies within the permitted band, and the **×2 private loss cap is unchanged**. The "NOT casual/unranked" clause survives — this mode is still Ranked, merely rank-gated. **The sentence "A Bronze and a King may share a private table" is repealed.**
+- **RD28 — amended, not merely annotated (owner decision, 2026-10-06).** The mode model is now **`mode ∈ {ROOM, RANKED, UNRANKED}`** — three values, not two. The trailing clause "and still allows any tier mix (RD6)" becomes "and still allows any tier mix **within RD29**". The Ranked-with-friends variant — now product-named **Rank-down** — remains `RANKED` + a private/password access flag, **never a mode of its own**. **Unranked, by contrast, IS a first-class `mode: UNRANKED` value** — the owner's explicit decision, repealing the earlier "Unranked is `mode: ROOM` plus a marker" framing this amendment originally proposed. See the audit note below.
+- **RD22 — amended (owner decision, 2026-10-06).** Push-to-talk voice was "Rooms-only" under a two-value mode model. With `UNRANKED` first-class, **voice is `ROOM`-only and explicitly absent in `UNRANKED`** — including at a table whose remaining seats were filled from the shared pool by strangers. Unranked is not a Room.
+
+> **Mode-model audit note (2026-10-06).** This amendment was first drafted with
+> Unranked as `mode: ROOM` + a marker, on the reasoning that its authority
+> behaviour matched a Room's and that a third value would force every `mode`
+> switch site to handle a duplicate bucket. **The owner rejected that framing:
+> Unranked is a normal, independent game mode, so the authority key must say
+> so.** The consequence is accepted deliberately — with three values, **no
+> mode-gated rule resolves by accident**, and each switch site gains an
+> explicit `UNRANKED` branch: voice **absent** (RD22), Vote Kick **absent**
+> (RD18), disconnect vote + pause **present** (S41/S42), settlement **absent**
+> (RD12/RD13), Ranked statistics **absent** (RD23), RP **absent** (RD15),
+> GameType/scoring **present** (GM1–GM8). The one rule that is genuinely shared
+> with a Room is *not* the mode's definition: an Unranked table fills its empty
+> seats from the shared pool and starts only when full, whereas an invite-only
+> Room fills nothing and may start with 2–3.
+
+### Architecture: three match types, three authority modes
+
+Per the owner, **Create Game (S36) presents a match-type choice of three entries**, not a binary toggle:
+
+1. **Ranked** — the normal Ranked match (solo Auto-Match, RD9 rules unchanged).
+2. **Rank-down** (the owner's product name for the entry formerly called Private/Password Ranked) — the Ranked mode that admits the permitted tier difference (RD29). Still `mode: RANKED` + access flag, still a true Ranked match. **A configuration of Ranked, never a mode of its own.**
+3. **Unranked** — **`mode: UNRANKED`, a first-class independent mode.** **Ignores rank completely.** A King, Diamond, Gold, or Bronze may all enter the same Unranked match. Remaining seats fill from the shared Unranked pool; **no RP, no Ranked progression, no Ranked statistics, no voice, no Vote Kick**.
+
+**Authority layer: `mode ∈ {ROOM, RANKED, UNRANKED}` (RD28 as amended 2026-10-06).**
+
+| Match type | `mode` | Rank gate | Seat fill | Voice / pause | Vote Kick | RP / stats |
+|---|---|---|---|---|---|---|
+| **Invite-only Room** | `ROOM` | none | none — code/invite only; 2–3 player start valid | **yes** / yes | no | none |
+| **Ranked** (solo) | `RANKED` | RD9 pool, server-derived | matchmaking (S55) | no / no | yes | full |
+| **Rank-down** (Ranked + private flag) | `RANKED` | **RD29, server-side at join** | friends fill; pool not used | no / no | yes | full |
+| **Unranked** *(new)* | **`UNRANKED`** | **none — rank-blind** | **shared human pool; bots only after a 4 minute timeout** | **no** / **yes** | **no** | **none** |
+
+**The invite-only Room is a fourth product path and is unchanged** — code-shared, fills no seat from any pool, permits a 2–3 player start, and keeps push-to-talk. It is deliberately **not** one of the three match types: some friend groups want no strangers, and removing a designed path would violate "do not invent." S08's "no AI seat is fabricated to fill gaps" rule survives scoped to this path only.
+
+### Architecture: the join-time gate and the conversion
+
+```
+Friend enters code (+ access credential) to a Rank-down Ranked room
+        │
+        └── server-side eligibility check (RD29) vs creator's tier
+                ├── eligible ──► admit ──► S08 (Ranked variant, roster shows both ranks)
+                └── ineligible ──► DENY, reason = RANK_INCOMPATIBLE
+                        ├── joiner sees: the reason in plain language +
+                        │   "the host can switch this game to Unranked"
+                        └── host's S08 shows: the failed join + the rank difference
+                                  └── [ Play Unranked ] ──► conversion ──► Unranked
+                                          │  mode: RANKED → UNRANKED (an authority
+                                          │   transition, not a flag flip)
+                                          │  access credential cleared
+                                          │  pre-match only; idempotent
+                                          ▼
+                                  Unranked — the denied friend re-enters the same
+                                  code; remaining seats go to the shared pool
+```
+
+**Conversion ("Play Unranked") — the host only** (RD21/S36 make mode the host's config; the joining friend is informed, not the actor). Pre-conditions: `status == WAITING` and no match started — **pre-match only, never mid-match**. Effect: `mode` becomes `UNRANKED`, the access credential is cleared, and the rank gate is dropped. **Idempotent**; seated players keep their seats. The denied friend re-enters the same code and is admitted; remaining seats are then offered to the shared Unranked pool. **A conversion is a mode transition on the document, which is why `mode` must be a persisted authority field (S43) rather than an in-memory label** — the roster, the voice gate, and the Vote Kick gate all read it after the switch.
+
+**Unranked seat-fill — the owner's rule, recorded precisely:**
+
+- **One shared Unranked pool, not a separate solo Unranked queue.** A party of friends and a solo player drawing Unranked are served by the same pool.
+- **Rank-blind.** Any rank may land at the same Unranked table — King through Bronze. **RD9 does not apply here at all.**
+- **Humans fill the seats.** Two friends choose Unranked; the remaining 1–2 seats are offered to available human players from the pool, regardless of rank.
+- **Bots are only a timeout fallback**, not the primary fill — reusing the S61 online-bot-seat mechanism at the configured S36 difficulty/personality. **The timeout is 4 minutes (owner value, 2026-10-06)**: a seat unfilled after 4 minutes is taken by a configured bot and the match starts. The waiting room shows the countdown so the wait reads as a bounded timer.
+
+This is a genuinely new matchmaking surface (a pool + seat-filling) but it is **simple and rank-blind by design**: no MMR, no tier derivation, no party-queue logic. The owner's "no complex Ranked Party matchmaking" constraint is untouched — it constrains **Ranked**; the Unranked pool is the explicit instruction that makes "Play Unranked" real.
+
+### Story impact
+
+Two new stories, added to **E6b** (they extend the Ranked ruleset and the room flow it gates):
+
+| Story | Scope | Hours | Deps |
+|---|---|---|---|
+| **S70** | **Ranked party eligibility gate.** Server-side check (Cloud Function, S42 module): at join to a Rank-down Ranked room, resolve each player's tier per RD30 (unplaced → Bronze III) and apply RD29 against the creator; deny with reason `RANK_INCOMPATIBLE`. Client join path surfaces the new denial reason. **The client must never read another player's rank** — the function returns only allow/deny + the plain-language reason. | 14 | S42, S44 |
+| **S71** | **Unranked mode: match-type choice, conversion, and the shared pool.** The three-entry match-type choice on S36; the host-only "Play Unranked" conversion (pre-match only, idempotent, access credential cleared, `mode` → `UNRANKED`); the **rank-blind shared Unranked pool** (one pool serving parties and solos; remaining seats offered to available humans regardless of rank); **bot fallback after a 4 minute fill timeout** reusing the S61 mechanism; the Unranked waiting-room state with the countdown. Asserts: `mode` persisted as `UNRANKED` (not `ROOM` + marker), no RP, no Ranked statistics, **no Vote Kick**, **no push-to-talk voice**, disconnect/pause vote **present**, and rank-blind mixing (King + Bronze seats together). **Every existing `mode` switch site is updated for the third value** (S70's audit list is the checklist). | 26 | S70, S56, S61, S68 |
+| — | Documents: `CANONICAL_RULES.md` A3, `UI_UX_ROADMAP.md` amendments, architecture/spec notes | 4 | — |
+| **E6b addition** | | **44** | |
+
+**E6b becomes 432h (388 + 44). The critical path is unchanged** — S70 depends only on S42/S44, and S71 reuses the S56 search-lifecycle shape rather than adding a new queue discipline, so both run parallel to the Ranked core.
+
+### Estimate impact
+
+**Totals become 1,124 pre-contingency (was 1,080) and ~1,293 after 15% (was ~1,242).** The feature total becomes 1,072 (1,028 + 44); with the 12h voice store/policy deltas → 1,084, plus 40 PM → 1,124. **The 20-week MVP / 29-week Full timeline does not change**, because S70/S71 parallel the Ranked core rather than extending it.
+
+### New risks
+
+- **R30** **Unranked cannibalizes Ranked party play.** If Unranked is the easier way to play with friends, players stop climbing together and the Ranked pool thins. *Mitigation:* Unranked awards **no RP and no Ranked statistics** (RD15/RD23 via `mode: UNRANKED`) and carries **no voice**, so a Ranked party keeps its full feature set; Ranked keeps the RD5/RD6 asymmetry and the full progression loop — the incentive to play Ranked together is preserved by what it awards, not by blocking the alternative.
+- **R32** **The three-value mode model increases the surface of every `mode` switch site (added 2026-10-06).** Making `UNRANKED` first-class (rather than `ROOM` + a marker) means each gate — voice, Vote Kick, disconnect/pause, settlement, statistics — now has an explicit third branch instead of inheriting a Room's behaviour. *Mitigation:* the switch-site audit is a first-class deliverable of S70/S71 and its checklist is an assertion in the testing plan; a gate that silently treats `UNRANKED` as `ROOM` or `RANKED` is a bug, and the disconnect/pause-vote-present assertion catches the most likely collapse (a match where the vote is wrongly unavailable, or wrongly unavailable in Ranked).
+- **R31** **The rank-blind Unranked pool produces lopsided tables.** A King and a Bronze at the same table is **by design** (the owner's explicit rule), but a one-sided match can read as a bug to the players in it. *Mitigation:* present Unranked as rank-blind on S36 and in the waiting room, and never surface a "mismatched" warning — it is the mode's definition, not a malfunction.
+- **R28 — amended (scope narrowed, not removed).** Mixed-tier RP asymmetry now applies only to **public matchmaking** and **within-one-tier private matches** (RD6 as amended). The communication fix (S57 shows the delta and the reason) is unchanged.
+
+---
+
 ## Correction: what's actually already built (sunk, not re-estimated)
 
 Verified on `origin/main`:
@@ -480,10 +623,11 @@ What **does** exist and is reused, not replaced: the Kotlin bot engine (`BotTier
 | **F2 RP engine** | Dynamic calculation from RD4 inputs; threshold table as a tunable constant source; RP ≥ 0; mixed-tier asymmetry (RD5); ×2 private cap (RD6) |
 | **F3 Placement** | Once-per-account flag; 3 scripted bot matches (Easy+Med / Med+Hard / Hard+Expert); 10/20/70 weighting; Platinum ceiling; division lower-bound start |
 | **F4 Settlement** | Cloud Functions: correct-and-settle, idempotency, auth, retry resistance, RP application; ownership-constrained/immutable action evidence |
-| **F5 Matchmaking** | Server-side eligible-pool derivation (own tier or one below); queue/search states |
+| **F5 Matchmaking** | Server-side eligible-pool derivation (own tier or one below); queue/search states; **the rank-blind shared Unranked pool (2026-10-06): one pool serving parties and solo, no tier derivation, humans first and configured bots only after a 4 minute fill timeout** |
 | **F6 Seasons + leaderboard** | 3-month season, two-step reset (King → Royal I), career stats untouched, Highest Rank preserved; server-authoritative season-isolated ordering |
-| **F7 Statistics** | The 9 career stats; long-press short stats; Placement excluded |
-| **F8 Mode model** | `mode` = ROOM \| RANKED only; private Ranked is RANKED + access flag, not a third mode |
+| **F7 Statistics** | The 9 career stats; long-press short stats; Placement excluded; **Unranked excluded (2026-10-06 — `mode: UNRANKED` records none of the nine)** |
+| **F8 Mode model** | `mode` = ROOM \| RANKED \| **UNRANKED** (three values, amended 2026-10-06; originally two); Rank-down is RANKED + a private/password access flag, never a mode; **Unranked is a first-class independent `mode: UNRANKED` value — the authority key itself, not `ROOM` + a marker. Every mode-gated gate (voice, Vote Kick, disconnect/pause, settlement, statistics) carries an explicit `UNRANKED` branch** |
+| **F9 Ranked party eligibility & Unranked mode (2026-10-06)** | RD29 one-tier party gate, server-side at join, `RANK_INCOMPATIBLE` denial; RD30 unplaced = Bronze III (placement optional, explicitly chosen, skip is permanent); the host-only "Play Unranked" conversion (mode → `UNRANKED`, credential cleared); S36's three-entry match-type choice (Ranked / **Rank-down** / Unranked); the shared rank-blind Unranked pool + 4-minute bot fallback; **the `mode` switch-site audit for the third value** |
 
 **See the story table (§E6b, S42–S64) for the hour breakdown, and the appendix essay for the security boundary.**
 
@@ -515,10 +659,10 @@ Verified against `origin/main` before designing this — these facts drove every
 
 **Voice total: 158 hours** (in the Full version only — excluded from MVP; see §4).
 
-**Ranked total: 388 hours** (MVP and launch-blocking — RD25; see §F and the E6b story table).
+**Ranked total: 432 hours** (MVP and launch-blocking — RD25; see §F and the E6b story table. Was 388 before the 2026-10-06 RD29/RD30 amendment added S70/S71 + docs = 44h.)
 **GameType & Calculation total: 48 hours** (E7, S65–S69 + docs — see the 2026-10-06 amendment above; a **prerequisite** for E6b, since S43/S47/S56 consume `gameType`).
 
-**Feature total: 434 + 388 (Ranked) + 48 (GM) + 158 (voice) = 1,028 hours.** Adding the 12h voice store/policy deltas (§3) gives **1,040**; plus 40 PM = **1,080** — the number every downstream section uses. *(Before the 2026-10-05 Ranked amendment this was 592 / 604 / 644; before the 2026-10-06 GM amendment it was 980 / 992 / 1,032.)*
+**Feature total: 434 + 432 (Ranked) + 48 (GM) + 158 (voice) = 1,072 hours.** Adding the 12h voice store/policy deltas (§3) gives **1,084**; plus 40 PM = **1,124** — the number every downstream section uses. *(Before the 2026-10-05 Ranked amendment this was 592 / 604 / 644; before the 2026-10-06 GM amendment it was 980 / 992 / 1,032; before the 2026-10-06 RD29/RD30 amendment it was 1,028 / 1,040 / 1,080.)*
 
 ---
 
@@ -533,10 +677,10 @@ Verified against `origin/main` before designing this — these facts drove every
 | UI/UX | 42 + 16 = 58 | *(inside the above)* Choose Level 14 + Lobby 16 + Room 14 — reuse the existing gold-on-dark theme; no new design system. +16 for the PTT control + per-seat mic indicators (§E). |
 | Art / animation | 26 | 14 audio + 12 animation. No 2D/3D artist needed at v1 scope: cards render as glyphs today and that is acceptable for launch. |
 | Sound | 14 | Included above (5 SFX + SoundManager). |
-| Backend development | **388** *(Ranked only)* | **Amended 2026-10-05 (RD11):** the Ranked authority layer — `functions/` module, correct-and-settle, idempotent RP application, server-side validation, placement, matchmaking pool, seasons, leaderboard. Deliberately lightweight: Cloud Functions invoked per-match, not an always-on server. `firestore.rules` stays frozen; the functions are the only legitimate Ranked write path. See §F and the appendix essay. |
+| Backend development | **432** *(Ranked only)* | **Amended 2026-10-05 (RD11), +44h 2026-10-06 (RD29/RD30):** the Ranked authority layer — `functions/` module, correct-and-settle, idempotent RP application, server-side validation, placement, matchmaking pool, seasons, leaderboard — **plus the join-time party-eligibility gate (S70) and the rank-blind shared Unranked pool with bot timeout fallback (S71)**. Deliberately lightweight: Cloud Functions invoked per-match, not an always-on server. `firestore.rules` stays frozen; the functions are the only legitimate Ranked write path. See §F and the appendix essay. |
 | QA / testing | 46 + 16 = 62 | JVM coverage is already excellent (12 suites, incl. the P1-3 pins). The gap is exclusively the instrumented/emulator tier. The +16 is the voice QA tier (§E), which is *counted inside the Android row above* and restated here only so QA isn't misread as shortchanged — it is not double-counted. |
 | Project management | 40 | ~7% — owner/PM overhead, store-form correspondence, account activation chasing, release coordination, **voice policy correspondence** (mic-justification + data-safety answers). |
-| **Total** | **434 + 388 (Ranked) + 48 (GM) + 158 (voice) + 12 (voice-policy) + 40 (PM) = 1,080** | *(pre-contingency; was 644 before the 2026-10-05 Ranked amendment and 1,032 before the 2026-10-06 GM amendment)* |
+| **Total** | **434 + 432 (Ranked) + 48 (GM) + 158 (voice) + 12 (voice-policy) + 40 (PM) = 1,124** | *(pre-contingency; was 644 before the 2026-10-05 Ranked amendment, 1,032 before the 2026-10-06 GM amendment, and 1,080 before the 2026-10-06 RD29/RD30 amendment)* |
 
 ---
 
@@ -555,7 +699,7 @@ One engineer + AI agents, ~22 productive engineering days/month (allowing for re
 | 9 Instrumented 4-client emulator suite | 1.5 wk | 5b (design during 5b) | Release gate for online |
 | 9b Voice device matrix (incl. symmetric-NAT) | 0.5 wk | 5c, 9 | Field failure-rate estimate + echo pass |
 | **6b Ranked authority + RP + placement** ⏱ | **6.5 wk** | **5b, 4a (bot engine reused)** | `functions/` module, `mode` field, correct-and-settle, RP engine, placement (S42–S54) |
-| **6c Matchmaking + private Ranked** ⏱ | **3 wk** | **6b** | Server-controlled pool, private/password cross-tier (S56–S58) |
+| **6c Matchmaking + private Ranked + party eligibility + Unranked** ⏱ | **3 wk** | **6b** | Server-controlled pool, private/password within RD29 (S56–S58), **the join-time party-eligibility gate (S70), and the rank-blind shared Unranked pool + conversion (S71)** — the +44h lands inside this window because S70/S71 parallel the pool work, not after it |
 | **6d Seasons + leaderboard + Vote Kick + timeout tracking** ⏱ | **5 wk** | **6b, 6c** | Two-step reset, King → Royal I, season-isolated board, Ranked-only Vote Kick, 15-timeout removal (S59–S61, S64) |
 | 7 Monetization (AdMob + UMP + RevenueCat) | 1.5 wk | 0b, accounts active | Banner + Remove Ads, test purchases |
 | 12 Store prep (res/, strings, policy, listing, Crashlytics) | 1.5 wk | 0b | Store-ready listing, signed AAB, full AR strings (S41) |
@@ -591,7 +735,7 @@ Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.
 | QA / manual tester | **Part-time, only in the final 3 weeks** | Device matrix, RTL pass, online 4-human playthroughs, **4-device voice room incl. one symmetric-NAT case**, ad/IAP verification | 16 (folded into §604) |
 | 2D/3D artist, animator | **Not required for v1** | Cards render as glyphs; launcher icon from an icon generator is acceptable at v1 | 0 |
 | Sound designer | **Not required** | License 5 SFX from a royalty-free library (voice uses the WebRTC library's own AEC/NS, not custom DSP work) | 0 |
-| Backend developer | **Not required — but the plan now includes backend *work*** | **Amended 2026-10-05 (RD11):** the Ranked authority layer is 388h of Cloud Functions + Firestore, but it is written by the lead engineer in the existing 1-engineer model — it is Kotlin/TS-adjacent Functions over the project's own data model, not a distributed-systems hire. D3 still means no always-on server | 0 (headcount; the hours are in §F) |
+| Backend developer | **Not required — but the plan now includes backend *work*** | **Amended 2026-10-05 (RD11), +44h 2026-10-06 (RD29/RD30):** the Ranked authority layer is 432h of Cloud Functions + Firestore, but it is written by the lead engineer in the existing 1-engineer model — it is Kotlin/TS-adjacent Functions over the project's own data model, not a distributed-systems hire. D3 still means no always-on server | 0 (headcount; the hours are in §F) |
 | **WebRTC / real-time media specialist** | **Not required — but flag the learning curve** | The WebRTC engine row (40h, XL) assumes the engineer becomes productive with `PeerConnectionFactory`/SDP/ICE. If the first mesh refuses to connect, that row is the one most likely to blow its estimate. Mitigation: GetStream's `webrtc-android` reference + a deliberate day-1 "two devices, one audio track" spike before the full mesh | 0 (risk, not headcount) |
 | Project manager | **Not separately** | Owner already performs this | (in the 40 PM hours) |
 
@@ -628,8 +772,11 @@ Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.
 | **R25** | **The MVP security boundary (RD14) is a compromise, not full authority.** In-play state stays client-converged; the server validates at settlement, not realtime | A determined cheater who controls all four clients can still produce a plausible-looking converged history | **This residual is accepted deliberately (RD16), named in the appendix essay, and logged in the RP audit ledger (S62).** Upgrade path: stronger realtime authority when cheating, scale, revenue, or competitive pressure justifies it. Do not silently oversell the boundary |
 | **R26** | **RD26 thresholds are SET (2026-10-05) but unvalidated by play.** All 19 rank lower-bounds are now closed constants — but no real player has climbed the ladder yet | Progression feel may still move promotion/demotion cadence once a playtest grinds it; the numbers were set by judgement, not by data | **S46 isolates the thresholds into a tunable constant source**, so numbers change without redesign. The UI binds the ladder *structure*, not the numbers. The residual risk is now *tuning*, not *absence* — a v1.1 balance pass is expected, not a sign the decision was wrong |
 | **R27** | **Season reset is a one-way data migration.** Two-step demotion direction (Gold I → Gold III, never the reverse), ladder floor, Highest Rank preservation, King → Royal I — all irreversible once run | A botched reset corrupts every player's rank at once and cannot be rolled back without a backup | S59 + a **mandatory emulator dry-run against a seeded production-shaped dataset before the first real season**. The direction is the trap: I > II > III, so "down two" from Gold I is Gold III |
-| **R28** | **Mixed-tier RP feels punitive to the higher-tier loser.** RD5 multiplies their loss because they lost to a lower-tier opponent — intentional, but it *reads* as unfair if unexplained | Negative reviews from Gold players losing to Silver | The Ranked result screen (S57) shows the delta and the reason; RD5 is owner-approved, so the fix is communication, not a formula change. Tunable in S47 |
+| **R28** | **Mixed-tier RP feels punitive to the higher-tier loser.** RD5 multiplies their loss because they lost to a lower-tier opponent — intentional, but it *reads* as unfair if unexplained | Negative reviews from Gold players losing to Silver | The Ranked result screen (S57) shows the delta and the reason; RD5 is owner-approved, so the fix is communication, not a formula change. Tunable in S47. **Scope narrowed 2026-10-06:** mixed-tier Ranked now occurs only in public matchmaking and within-one-tier private matches (RD6 as amended) — a Bronze and a King can no longer meet in Ranked; they are offered Unranked instead |
 | **R29** | **Cloud Functions cost at scale.** Settlement is one invocation per match — cheap at launch, unbounded at growth | A surprise bill if the game succeeds | RD16 governs: monitor, do not pre-build. The RP audit ledger (S62) is the natural usage signal. Spark plan covers the whole v1 forecast |
+| **R30** | **Unranked cannibalizes Ranked party play.** If Unranked is the easier way to play with friends, players stop climbing together and the Ranked pool thins | Longer solo queues; a ladder that feels empty at the top | Unranked awards **no RP and no Ranked statistics** (RD15/RD23, via `mode: UNRANKED`) and carries **no voice**, so a Ranked party keeps the full feature set. The incentive to play Ranked together is preserved by **what it awards**, not by blocking the alternative. Watch the S62 ledger for the party-mode split at the M11 gate |
+| **R31** | **The rank-blind Unranked pool produces lopsided tables.** A King and a Bronze at the same table is **by owner design** (RD29's "ineligible ≠ cannot play together"), but a one-sided match can read as a bug to the players in it | "Matchmaking is broken" reviews from a mode that is deliberately not matchmaking | Present Unranked as **rank-blind** on S36 and in the waiting room, and never surface a "mismatched ranks" warning — it is the mode's definition, not a malfunction. The 4-minute bot fallback (S71) bounds wait time; it does not balance the table |
+| **R32** | **The three-value mode model widens every `mode` switch site (2026-10-06).** Making `UNRANKED` a first-class value means each gate (voice, Vote Kick, disconnect/pause, settlement, statistics) has an explicit third branch instead of inheriting a Room's behaviour — a gate that collapses `UNRANKED` onto `ROOM` or `RANKED` is a silent rules bug | Voice leaking into an Unranked stranger table, or a Ranked-only feature vanishing from Rank-down | The switch-site audit is a first-class S70/S71 deliverable and its checklist is an assertion in the testing plan; the disconnect/pause vote being **present** in Unranked and **absent** in Ranked is the canary that catches a collapsed gate |
 
 ---
 
@@ -657,34 +804,36 @@ Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.
 
 | Scenario | Hours | Timeline | Conditions |
 |---|---|---|---|
-| **Conservative** | 1,080 + 25% = **1,350** | **~35 weeks** | Toolchain spike forces Kotlin 2.x migration; AdClock slips; bot balancing needs real playtest iteration; instrumented suite reveals a rules-fidelity bug requiring a client rework; **voice exceeds its 40h XL row** (ICE debugging on real devices is the classic 2x line); **RD26 threshold tuning takes a full playtest cycle** (R26); season-reset dry-run finds a migration defect (R27) |
-| **Realistic** | 1,080 + 15% = **1,242** | **~30 weeks** | Spike stays on Kotlin 1.9.25; bots port cleanly with the SimPort seam; online wiring behaves as the JS reference did; voice mesh connects on the first 4-device attempt using a Maven-Central WebRTC republish; **the settlement layer lands on the emulator without a rules revision** (RD11's promise holds). **Recommended.** |
-| **Aggressive** | 1,080 − 10% (skip animations, minimal audio, Crashlytics only, **defer voice to v1.1**) = **972** | **~27 weeks** | Requires the toolchain spike to land clean in week 1, zero rules-fidelity surprises, and the AdMob account already activated. Voice is the cleanest single thing to cut: 170h (158 voice + 12 policy) with no gameplay dependency — **but neither Ranked (RD25) nor the GameType substrate (E7, a Ranked prerequisite) can be cut, so this scenario's floor is higher than the old one's.** Cutting it maps this scenario onto the 910h no-voice baseline. Only viable if accounts are started **today** |
+| **Conservative** | 1,124 + 25% = **1,405** | **~35 weeks** | Toolchain spike forces Kotlin 2.x migration; AdClock slips; bot balancing needs real playtest iteration; instrumented suite reveals a rules-fidelity bug requiring a client rework; **voice exceeds its 40h XL row** (ICE debugging on real devices is the classic 2x line); **RD26 threshold tuning takes a full playtest cycle** (R26); season-reset dry-run finds a migration defect (R27); **the Unranked pool's timeout-fallback tuning runs long** (R31) |
+| **Realistic** | 1,124 + 15% = **1,293** | **~30 weeks** | Spike stays on Kotlin 1.9.25; bots port cleanly with the SimPort seam; online wiring behaves as the JS reference did; voice mesh connects on the first 4-device attempt using a Maven-Central WebRTC republish; **the settlement layer lands on the emulator without a rules revision** (RD11's promise holds). **Recommended.** |
+| **Aggressive** | 1,124 − 10% (skip animations, minimal audio, Crashlytics only, **defer voice to v1.1**) = **1,012** | **~27 weeks** | Requires the toolchain spike to land clean in week 1, zero rules-fidelity surprises, and the AdMob account already activated. Voice is the cleanest single thing to cut: 170h (158 voice + 12 policy) with no gameplay dependency — **but neither Ranked (RD25) nor the GameType substrate (E7, a Ranked prerequisite) can be cut, so this scenario's floor is higher than the old one's.** Cutting it maps this scenario onto the 954h no-voice baseline. Only viable if accounts are started **today** |
 
-> **Voice is still the swing item — but it is no longer the only one.** It remains the only scope block that is simultaneously large (170h), non-blocking for launch, and carrying two policy surfaces. **Ranked (388h) is the new immovable block: RD25 makes it launch-blocking, so it moves the floor of every scenario.** The spread between Realistic and Aggressive is still mostly "voice or not"; the spread between this amendment and the previous plan is entirely "Ranked or not."
+> **Voice is still the swing item — but it is no longer the only one.** It remains the only scope block that is simultaneously large (170h), non-blocking for launch, and carrying two policy surfaces. **Ranked (432h) is the new immovable block: RD25 makes it launch-blocking, so it moves the floor of every scenario.** The spread between Realistic and Aggressive is still mostly "voice or not"; the spread between this amendment and the previous plan is entirely "Ranked or not."
 
 > **Arithmetic, stated rather than hidden (2026-10-05 amendment):** all figures are recomputed from the **388h Ranked subtotal** (S42–S64, §E6b). Pre-amendment this table was 805 / 741 / 427 against 644. The old "defer voice → 474h / 13 weeks" baseline becomes **862h / ~24 weeks**, because Ranked is added to it. Do not carry the old numbers forward.
 
 > **Arithmetic, stated rather than hidden (2026-10-06 GM amendment):** all figures are recomputed again from the **48h E7 subtotal** (S65–S69 + docs, §E7 above), which lands **before** E6b because Ranked must be GameType-aware from S63's first line. The 1,032 / 1,187 / 1,290 / 862 figures above become **1,080 / 1,242 / 1,350 / 910**. Week counts scale proportionally and are rounded — the contingency percentage, not the week count, is the number with real precision. Do not carry the 2026-10-05 figures forward.
 
+> **Arithmetic, stated rather than hidden (2026-10-06 RD29/RD30 amendment):** all figures are recomputed once more from the **44h addition to E6b** (S70 14h + S71 26h + 4h docs; E6b becomes 432h). The 1,080 / 1,242 / 1,350 / 910 figures above become **1,124 / 1,293 / 1,405 / 954**. **The week counts do not move**: S70 depends only on S42/S44 and S71 reuses the S56 search-lifecycle shape, so both run parallel to the Ranked core and do not extend the critical path. Do not carry the GM-amendment figures forward.
+
 ---
 
 # 9. Contingency
 
-| Contingency bucket | % of 1,080 | Hours | Why this rate |
+| Contingency bucket | % of 1,124 | Hours | Why this rate |
 |---|---|---|---|
-| Unknown requirements | 4% | 43 | **Ranked is now the largest undocumented area** (its thresholds are set but unplayed — R26) — this bucket grows with it. AI-bot scope was the previous driver (R13); voice is pinned by V1–V5. **The GM amendment adds a second unplayed surface: MINI's pacing (10 rounds, Quick from 6) has never been played by anyone** |
-| Bugs | 4% | 43 | Bot tier balance always needs more iterations than planned; **RP tuning will need a playtest cycle or two** (R26); **MINI's one-extension cap is a new rule boundary with a rules-enforcement counterpart** (E7/S67) |
-| Integration problems | 4% | 43 | The `:app`↔`:services` wiring + instrumented tier is untested territory (R8), **plus a first WebRTC integration** (R15/R16/R21), **plus a first Cloud Functions settlement layer** (R24 cold starts, R25 boundary) |
+| Unknown requirements | 4% | 45 | **Ranked is now the largest undocumented area** (its thresholds are set but unplayed — R26) — this bucket grows with it. AI-bot scope was the previous driver (R13); voice is pinned by V1–V5. **The GM amendment adds a second unplayed surface: MINI's pacing (10 rounds, Quick from 6) has never been played by anyone. The RD29/RD30 amendment adds a third: the rank-blind Unranked pool's seat-filling cadence is untested (R31)** |
+| Bugs | 4% | 45 | Bot tier balance always needs more iterations than planned; **RP tuning will need a playtest cycle or two** (R26); **MINI's one-extension cap is a new rule boundary with a rules-enforcement counterpart** (E7/S67); **the RD29 tier comparison's King/floor edge cases are a new boundary** (S70) |
+| Integration problems | 4% | 45 | The `:app`↔`:services` wiring + instrumented tier is untested territory (R8), **plus a first WebRTC integration** (R15/R16/R21), **plus a first Cloud Functions settlement layer** (R24 cold starts, R25 boundary) |
 | Rework | 2% | 22 | Toolchain decision may force a Compose-compiler migration; the WebRTC artifact choice may need swapping (R21); **a season-reset defect found in dry-run is rework by definition** (R27) |
 | Testing | 1% | 11 | Device-matrix surprises, especially RTL Arabic layouts and the speakerphone echo pass |
-| **Total contingency** | **15%** | **162** | **Conservative = 25% (270h) if the toolchain spike goes badly, voice ICE debugging runs long, or RD26 needs more than one tuning cycle** |
+| **Total contingency** | **15%** | **169** | **Conservative = 25% (281h) if the toolchain spike goes badly, voice ICE debugging runs long, RD26 needs more than one tuning cycle, or the Unranked pool needs a fallback rewrite. Bucket rows are rounded independently and sum to 168; the authoritative figure is the 15% total (169)** |
 
-- **Before contingency:** **1,080 hours**
-- **After contingency (realistic):** **1,242 hours ≈ 30 weeks**
-- **After contingency (conservative):** **1,350 hours ≈ 35 weeks**
-- **If voice is deferred to v1.1:** **1,080 − 170 = 910 hours ≈ 25 weeks** — the pre-voice baseline, **now with Ranked included** (RD25 makes Ranked uncuttable)
-- *(Pre-amendment figures, for traceability only — do not carry forward: 644 / 741 / 805 / 474 / 1,032 / 1,187.)*
+- **Before contingency:** **1,124 hours**
+- **After contingency (realistic):** **1,293 hours ≈ 30 weeks**
+- **After contingency (conservative):** **1,405 hours ≈ 35 weeks**
+- **If voice is deferred to v1.1:** **1,124 − 170 = 954 hours ≈ 25 weeks** — the pre-voice baseline, **now with Ranked included** (RD25 makes Ranked uncuttable)
+- *(Pre-amendment figures, for traceability only — do not carry forward: 644 / 741 / 805 / 474 / 1,032 / 1,187 / 1,080 / 1,242.)*
 
 ---
 
@@ -696,11 +845,11 @@ Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.
 
 **MVP scope.** AI play + online multiplayer + **Ranked (launch-blocking)**, with monetization following as a rapid v1.0.1. Neither gameplay mode depends on ads — and neither depends on voice. **Voice is Full-version scope, deliberately outside the MVP. Ranked is not: RD25 puts it in the MVP.**
 
-**Total estimated hours.** **1,080** before contingency (434 base + **388 Ranked** + **48 GameType/Calculation (E7)** + 158 voice + 12 voice-policy deltas + 40 PM), **~1,242 after** (15%). *(Pre-Ranked: 644 / ~741; pre-GM: 1,032 / ~1,187.)*
+**Total estimated hours.** **1,124** before contingency (434 base + **432 Ranked** + **48 GameType/Calculation (E7)** + 158 voice + 12 voice-policy deltas + 40 PM), **~1,293 after** (15%). *(Pre-Ranked: 644 / ~741; pre-GM: 1,032 / ~1,187; pre-RD29/RD30: 1,080 / ~1,242.)*
 
 **Estimated timeline.** **29 weeks** realistic (MVP in ~20). Conservative 34 weeks if the Android toolchain forces a Kotlin migration, voice ICE debugging runs long, or RD26 threshold tuning needs extra playtest cycles. **Deferring voice to v1.1 gives a 24-week / 862-hour baseline — but Ranked stays, so the floor no longer drops to 13 weeks.**
 
-**Required team.** **One engineer (the owner) + AI coding agents**, plus part-time QA for the final 3 weeks (including a 4-physical-device voice room). No artist, animator, sound designer, or backend *hire* needed at v1 scope — **but the plan now contains 388h of backend work**, written by that one engineer as lightweight Cloud Functions (RD11), not as a server.
+**Required team.** **One engineer (the owner) + AI coding agents**, plus part-time QA for the final 3 weeks (including a 4-physical-device voice room). No artist, animator, sound designer, or backend *hire* needed at v1 scope — **but the plan now contains 432h of backend work**, written by that one engineer as lightweight Cloud Functions (RD11), not as a server.
 
 **Major risks.** (1) The app currently targets API 34 — Google requires API 36 as of Aug 31, 2026, so the toolchain must be upgraded before anything can ship. (2) The AdMob 14-day closed-testing clock is the one immovable external deadline. (3) The AI bot files are coupled to the "deferred" Monte-Carlo module more tightly than expected. (4) The frozen security rules make true player presence impossible — by design, not by oversight. (5) **Voice cannot reach every player STUN-only: 5–15% of room-pairs sit behind symmetric NATs and will show "unreachable" — TURN is a v1.1, $0-effort-only fix, not a launch blocker, and the UX must say so rather than spin.** (6) The official WebRTC artifact is no longer on Google's Maven (Bintray sunset) — pin a Maven Central republish deliberately. **(7) The MVP security boundary is a compromise: Cloud Functions validate and settle, but in-play state stays client-converged — a fully colluding table is the known residual (R25, RD14). (8) The 19 RP thresholds are set (RD26, closed 2026-10-05) but unplayed — progression feel is a tuning risk for the first Ranked playtest, not a missing-input risk (R26).**
 
@@ -760,7 +909,7 @@ One epic per phase; stories sized in hours; `S/M/L` from §2. Critical path mark
 | | S28 Compose animations (card play, trick sweep, winner) | 12 | — |
 | **E13 Release** | S29 Closed track + staged rollout + 72h Crashlytics watch | 8 | all |
 | **E6b Ranked** ⏱ | S42 `functions/` module: deploy target + emulator wiring + callable-auth + idempotency guard — lightweight (RD11/RD16) | 20 | S4 |
-| | S43 `mode` field on `MatchDoc` — **exactly `ROOM` / `RANKED`** (RD28) + separate private/password access flag + migration of in-memory mode to persisted authority; **consumes `gameType`/`scoringMode` on the Ranked path (written by E7/S66 — not re-estimated here)** | 10 | S42 |
+| | S43 `mode` field on `MatchDoc` — **`ROOM` / `RANKED` / `UNRANKED`** (RD28 as amended 2026-10-06; three values, not two) + separate private/password access flag (Rank-down's gate, never a mode) + migration of in-memory mode to persisted authority; **consumes `gameType`/`scoringMode` on the Ranked path (written by E7/S66 — not re-estimated here)**. The persisted field is what makes the Ranked→Unranked conversion authoritative (S71) | 10 | S42 |
 | | S44 Ranked profile model: tier, division, RP, seasonId, highestRank, placementState, 9 stats | 14 | S43 |
 | | S45 Rank ladder definitions + Arabic title resources (EN `values`, AR `values-ar`) + rank formatting | 10 | S44 |
 | | S46 RP threshold table as tunable constants (**RD26 values closed 2026-10-05**) + rank↔RP conversion | 10 | S44 |
@@ -775,14 +924,16 @@ One epic per phase; stories sized in hours; `S/M/L` from §2. Critical path mark
 | | S55 Ranked statistics accumulator: the 9 values, Public+Private, Placement excluded | 14 | S51, S44 |
 | | S56 Matchmaking: server-side eligible-pool derivation (own tier / one below), queue, search lifecycle; **`gameType` carried on the search, orthogonal to the tier pool (GM5 — the pool rule never widens or narrows for Mini)** | 30 | S44 |
 | | S57 Matchmaking anti-abuse: no client tier selection, no opt-up, pool authority (RD9) | 12 | S56 |
-| | S58 Private/Password Ranked: cross-tier allowed, password gate, Ranked integrity retained | 14 | S50, S48 |
+| | S58 **Rank-down** (formerly Private/Password Ranked): **cross-tier within RD29 only** — one tier from the creator or less, enforced by the S70 join gate; password gate, Ranked integrity retained | 14 | S50, S48 |
 | | S59 Seasons: 3-month cycle, season ID, two-step reset with ladder floor, **King → Royal I**, Highest Rank preserved | 20 | S44, S49 |
 | | S60 Vote Kick Ranked-only enforcement by `mode` + Round-7-complete gate + unique-Koz requirement + **target frozen for the vote duration (OPEN-2)** (RD17/18) | 20 | S43 |
 | | S61 Timeout/inactivity separation: MEDIUM engine on timeout, configured bot on leave, 15-timeout counter → **automatic removal (distinct from Vote Kick)** | 16 | S43 |
 | | S62 RP audit ledger (internal) + observability hooks | 10 | S51 |
 | | S63 Abuse/edge-case coverage: forged results, replayed settlements, cross-tier injection, tie edge cases | 12 | S61 |
 | | S64 Seasonal Ranked Leaderboard: server-authoritative ordering (position, player, Tier/Rank, RP, season), King ranked by RP above the King lower bound, current player highlighted, season isolation/reset | 18 | S59 |
-| | **E6b Ranked subtotal** | **388** | |
+| | S70 **Ranked party eligibility gate (RD29/RD30, 2026-10-06):** server-side tier comparison at join to a Rank-down Ranked room — unplaced resolves to Bronze III (RD30), one tier from the creator or less (RD29), else deny `RANK_INCOMPATIBLE`; client surfaces the reason; **the client never reads another player's rank** | 14 | S42, S44 |
+| | S71 **Unranked mode (2026-10-06):** S36's three-entry match-type choice (Ranked / Rank-down / Unranked); the host-only pre-match "Play Unranked" conversion (`mode` → **`UNRANKED`**, access credential cleared, idempotent); the **rank-blind shared Unranked pool** — one pool for parties and solo, remaining seats offered to humans regardless of rank, **configured bots only after a 4-minute fill timeout** (S61 mechanism); Unranked waiting-room state with the countdown. Asserts `mode` persisted as `UNRANKED` (not `ROOM` + marker) / no RP / no Vote Kick / **no voice** / disconnect-pause present / no Ranked stats / King+Bronze seats together; **the `mode` switch-site audit for the third value is part of this story** | 26 | S70, S56, S61, S68 |
+| | **E6b Ranked subtotal** | **432** | |
 | **E7 GameType & Calculation** ⏱ | S65 `:engine` `GameType` enum (`baseRounds` / `firstFastRound` / `maxExtensions`); parameterize `isFastRound`, `fixedTrumpFor` (the `Math.floorMod` fix for the round-6 crash), `initFastRound`/`initNormalRound`, `computeRoundExtension`, `Session.gameType`; FULL golden regression + MINI ladder/cap tests | 10 | — |
 | | S66 `:services` — `gameType`/`scoringMode` on `RoomDoc` + `MatchDoc` (absent ⇒ FULL/NORMAL, so old docs parse); `buildMatchFields` derives `maxRounds` from the type; `buildRematchMatchFields` inherits the type; `startMatch` propagates room config; `extendMatchRounds` gains the count cap returning `ALREADY_EXTENDED` + unit tests | 12 | S65 |
 | | S67 `firestore.rules` — four function changes (room / match / rematch allowlists, type-derived `maxRounds`, Mini extension count cap), absent-means-FULL back-compat; emulator re-run + re-pin `firestore.rules.sha256` | 6 | S66 |
@@ -791,14 +942,16 @@ One epic per phase; stories sized in hours; `S/M/L` from §2. Critical path mark
 | | Documents — `CANONICAL_RULES.md` Amendment A2, `UI_UX_ROADMAP.md` amendments, architecture/spec notes | 4 | — |
 | | **E7 GameType subtotal** | **48** | |
 | | **PM overhead** | 40 | — |
-| | **Contingency 15%** | 162 | — |
-| | **TOTAL** | **1,252** | |
+| | **Contingency 15%** | 169 | — |
+| | **TOTAL** | **1,303** | |
 
 > Story-table arithmetic, stated rather than hidden. **Pre-amendment (for traceability):** the 30 non-voice stories summed to **444h** (the 29 pre-voice stories at **432h** — a +10h decomposition granularity, since S7 is sized 26 vs its feature row's 24 and S13 is split out separately — plus S41 at **12h**) against §2's 434h feature line. The 11 voice stories summed to exactly **170h**, matching §2/§3 (158 voice + 12 policy deltas). PM (40) + 15% contingency (97) landed the table at **751**, against the §9 headline of **741** — the 10h difference was precisely that story-vs-feature drift, absorbed by contingency.
 >
 > **After the 2026-10-05 Ranked amendment:** the 23 new **E6b** stories (S42–S64) sum to exactly **388h**, matching §2's Ranked feature line (§F) with zero drift this time — the ladder, settlement, and matchmaking stories decompose cleanly against the feature rows. The table now carries 444 + 388 = **832h** non-voice stories plus **170h** voice = **1,002h** of stories; PM (40) and 15% contingency (**155**, taken on the §3 pre-contingency total of 1,032 per this table's own convention — pre-amendment it was 97 on 644) land the table at **1,197**, against the §9 headline of **1,187**. The 10h gap is exactly the pre-amendment story-vs-feature drift, unchanged in kind: the non-voice stories sum to 832h against §2's 822h non-voice feature line (+10h of decomposition granularity), and contingency amplifies it by 1.15. Stories are the *execution* view; §9 is the *estimate* view. Nothing is rounded away silently.
 >
 > **After the 2026-10-06 GM amendment:** the 5 new **E7** stories (S65–S69, plus a 4h documents row) sum to exactly **48h**, matching §2's GM feature line with zero drift. The table now carries 832 + 48 = **880h** non-voice stories plus **170h** voice = **1,050h** of stories; PM (40) and 15% contingency (**162**, on the new pre-contingency total of 1,080) land the table at **1,252**, against the §9 headline of **1,242** — the same 10h story-vs-feature drift, unchanged in kind and size. E7 is placed **after** E6b in the table only because the table is ordered by story number; **the execution order is E7 → E6b**, since S43/S47/S56 all consume `gameType`.
+>
+> **After the 2026-10-06 RD29/RD30 amendment:** the 2 new **E6b** stories (S70 at 14h, S71 at 26h, plus a 4h documents row) sum to exactly **44h**, matching the amendment block's §F9 feature line with zero drift. E6b becomes **432h** (388 + 44). The table now carries 880 + 44 = **924h** non-voice stories plus **170h** voice = **1,094h** of stories; PM (40) and 15% contingency (**169**, on the new pre-contingency total of 1,124) land the table at **1,303**, against the §9 headline of **1,293** — the same 10h story-vs-feature drift, unchanged in kind and size. **The critical path does not extend**: S70 depends only on S42/S44, and S71 reuses the S56 search-lifecycle shape, so both run parallel to the Ranked core.
 >
 > **Rank-King vs Match-King, once, because it is the single easiest thing to get wrong in this amendment:** Rank King is the account's competitive ceiling (19th rung, no divisions). Match King is whoever finishes first in one match. Koz is the unique current last place in one match — not a rank at all. The `#E8A33D` gold colour in the design tokens belongs to the **Match-King badge**; the **Gold tier** must not reuse it, or "Gold" collapses into "King" in the UI.
 
@@ -965,7 +1118,7 @@ Voice adds no new purchase, no new data collection, and no new server — but it
 RANKED SYSTEM PLANNING      — UPDATED 2026-10-05 (RD1–RD28; RD26 CLOSED, OPEN-1/OPEN-2 remain)
 GAME TYPE / CALCULATION     — ADDED 2026-10-06 (GM1–GM8, E7 S65–S69, +48h; OPEN-3 CLOSED)
 UI/UX ROADMAP               — UPDATED (§4b + contradiction register)
-CODE/ARCHITECTURE ROADMAP   — UPDATED (E6b S42–S64, E7 S65–S69, R24–R29, M9–M11)
+CODE/ARCHITECTURE ROADMAP   — UPDATED (E6b S42–S64 + **S70–S71**, E7 S65–S69, R24–**R32**, M9–M11)
 IMPLEMENTATION              — NOT STARTED
 FIGMA                       — NOT STARTED
 BATCH 2                     — NOT STARTED
@@ -977,15 +1130,20 @@ screens, no Figma. The two roadmap documents — and, for the GM amendment,
 `docs/rules/CANONICAL_RULES.md` Amendment A2 — are the deliverable.
 
 **Where the two documents agree, and where they differ on purpose:** both carry
-the same 19-rank ladder, the same RD1–RD28 decision set, the same `mode`-first
+the same 19-rank ladder, the same RD1–RD28 decision set **as amended 2026-10-06
+(RD6 narrowed, RD22 voice pulled from Unranked, RD28 opened to three `mode`
+values, RD29/RD30 added)**, the same `mode`-first
 critical path, and the same four-tier authority model. The code roadmap owns the
-*execution* view (S42–S64 + **S65–S69**, +388 h **+48 h**, R24–R29, M9–M11); the UI/UX roadmap owns the
+*execution* view (S42–S64 + **S65–S69** + **S70–S71**, +388 h **+48 h +44 h**, R24–**R32**, M9–M11); the UI/UX roadmap owns the
 *design* view (screens S45–S58, the Rank Chip and Tier Ladder components, the
 tier-token gaps, the design gates). **RD26's 19 thresholds are CLOSED in both,
 identically (2026-10-05); OPEN-1 and OPEN-2 remain open in both, identically, and
 both are non-blocking.** Neither document
 reopens a closed owner decision. **The GM amendment (GM1–GM8) is carried in both
-identically, with A2 as the shared rule statement. **OPEN-3 — the Mini RP rounding rule — was CLOSED 2026-10-06, before S47 was written, exactly as planned: nearest integer, ties away from zero (+15 → +8, −15 → −8), implemented with `kotlin.math.round` rather than `java.lang.Math.round`.** With OPEN-3 closed, **no open item gates a Ranked story** — OPEN-1 and OPEN-2 remain open and non-blocking, and neither blocks E6b or E7.
+identically, with A2 as the shared rule statement; the RD29/RD30 amendment is
+carried in both with A3 as the shared rule statement — and both agree that
+`mode` is `ROOM | RANKED | UNRANKED`, three values, with Rank-down a `RANKED`
+configuration and Unranked a first-class mode that has no voice.** **OPEN-3 — the Mini RP rounding rule — was CLOSED 2026-10-06, before S47 was written, exactly as planned: nearest integer, ties away from zero (+15 → +8, −15 → −8), implemented with `kotlin.math.round` rather than `java.lang.Math.round`.** With OPEN-3 closed, **no open item gates a Ranked story** — OPEN-1 and OPEN-2 remain open and non-blocking, and neither blocks E6b or E7.
 
 **The two small decisions the owner still owes, both on the Ranked critical path
 and both non-blocking for design work:** **OPEN-1** (reconnect after the

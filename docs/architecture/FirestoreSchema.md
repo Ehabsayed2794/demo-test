@@ -44,6 +44,23 @@ Design only — nothing in this document is deployed. Field names below intentio
   - ~~`seats: [{ uid, ready, isAI }]`~~ → use the flat `players: string[]` + `readyPlayers: string[]` arrays. `isAI` tracking doesn't exist yet — no AI-filled room slots are implemented.
   - ~~`expiresAt`~~ → still not yet implemented; no TTL-cleanup code exists yet (Sprint 3.2.5 Architecture Audit finding F8, still open — see `RoomLifecycle.md`'s "Room Expiration" section). (`matchId` — listed here as not-yet-implemented through Sprint 3.3 — **is now implemented as of Sprint 3.4**; see the new field entry above.)
 - **Relationships:** `creator` and each entry in `players[]`/`readyPlayers[]` → `players/{uid}`.
+
+> **2026-10-06 planning note — match type on the room document.** The native
+> Create Game screen (S36) offers three match types — **Ranked** (solo
+> Auto-Match), **Rank-down** (Ranked + a private/password access flag), and
+> **Unranked** — alongside the unchanged invite-only Room path. The room
+> document therefore gains, at native port time: the chosen **match type /
+> `mode`** (`ROOM` | `RANKED` | `UNRANKED`, RD28 as amended), an optional
+> **access credential** for Rank-down only (**Unranked carries none**), and —
+> for Unranked only — **seat-fill state** for the remaining seats offered to the
+> shared rank-blind pool (claimed-by-friend / open-to-the-pool /
+> bot-after-4-minutes). None of these fields exists in the shipped web build
+> above; this is forward planning for the native schema, not a change to what is
+> deployed. Two rules are worth pinning now: **the eligibility gate for Rank-down
+> is a server-side tier comparison (RD29), never a client one** — `players/{uid}`
+> is owner-read-only, so a friend's rank is not readable by the joiner; and the
+> host-only Ranked→Unranked conversion writes `mode: UNRANKED` and clears the
+> credential in one pre-match, idempotent write.
 - **Read frequency:** Low today — nothing yet polls or listens to a room after creation/join/ready (`subscribeToRoom()` remains an unimplemented stub); reads happen only at the moment of `create`/`join`/`leave`/`setReady`.
 - **Write frequency:** Low — one write per create/join/leave/ready-toggle (idempotent no-op ready-toggles perform zero writes — see `room-service.js`'s `setReady`).
 - **Security requirements (as actually deployed — see `firestore.rules` and `docs/implementation/ReadyStateFoundation.md` for the full reasoning; tightened in Sprint 3.3 per Sprint 3.2.5 Architecture Audit findings F3/F6/F7):**
@@ -86,7 +103,7 @@ Everything below this line describes the eventual full-gameplay shape this colle
 
 - **Purpose:** The single authoritative live-match document — the multiplayer equivalent of today's local `GameSession` object. One document holds the *entire* match state; this is a deliberate flat-document choice over subcollections (see rationale below).
 - **Fields** (directly modeled on `freshSession()`/`freshBiddingState()`/`freshPlayState()` in `session.js`):
-  - `mode: "friends" | "ranked" | "ai"`, `scoringMode: "normal" | "classic"`
+  - `mode: "friends" | "ranked" | "ai"` *(the legacy speculative enum — **superseded for planning purposes by the native `ROOM | RANKED | UNRANKED` authority model**, RD28 as amended 2026-10-06; see the note below)*, `scoringMode: "normal" | "classic"`
   - `players: [{ uid, name, isAI, seat }]` (4 entries, seat-ordered)
   - `dealerId: string`
   - `round: { number, maxRounds, multiplier, trump, callerId, withPlayers, estimates, dashCallers }`
@@ -98,6 +115,28 @@ Everything below this line describes the eventual full-gameplay shape this colle
   - `matchScores: { [uid]: number }`, `roundHistory: [{ round, trump, callerId, tricksWon, estimates }]`
   - `winnerId: string | null`, `startedAt: timestamp`, `updatedAt: timestamp` (for staleness/abandonment detection — see `MatchLifecycle.md`)
 - **Relationships:** `players[].uid` → `players/{uid}`; created from a `rooms/{roomId}` (friends/ranked) or directly (AI — though AI matches likely never need a Firestore document at all, see the note in `MigrationPlan.md` about which sprints need this collection at all).
+
+> **2026-10-06 planning note — the `mode` authority model (RD28 as amended).** The
+> native plan carries `mode` as **three values: `ROOM` | `RANKED` | `UNRANKED`**,
+> a persisted authority field on the match document (story S43), not the
+> in-memory label it is today. The legacy `"friends" | "ranked" | "ai"` enum above
+> predates that model and is retained only because this section is speculative
+> planning for the shipped web build; **do not carry the old enum into the native
+> implementation.** Two consequences worth recording here:
+>
+> 1. **`mode` is the authority key, so it must be write-once at creation except
+>    for one case** — the host-only Ranked→Unranked conversion (RD29's "Play
+>    Unranked" offer), which flips `RANKED` → `UNRANKED` pre-match, clears the
+>    access credential, and is idempotent. That is a mode *transition* on the
+>    document, which is precisely why the field must be persisted rather than
+>    derived in memory: the roster, the voice gate, and the Vote Kick gate all
+>    read it after the switch.
+> 2. **The Ranked party-eligibility check (RD29) is a server read, never a
+>    client one.** `players/{uid}` is owner-read-only in `firestore.rules`, so
+>    tier comparison against the creator happens in a Cloud Function (story S70)
+>    that returns only allow/deny plus a plain-language reason — **never the
+>    other player's RP.** A rules-level `get()` on another player's profile is
+>    blocked by the same owner-only read.
 - **Read frequency:** Very high while a match is live — every seated client holds an open `onSnapshot` listener on this one document for the whole match duration (typically 15-30 min). This is the single biggest Firestore quota consumer in the whole system — see the quota risk in the Risks section of `BackendArchitecture.md`'s companion risk file, and the mitigation (batch per-trick writes, not per-card, where the rules doc allows it).
 - **Write frequency:** Medium-high — roughly one write per accepted bid/pass/estimate/card-play/trick-resolution. Four players × 13 tricks × (bid phase + play phase) per round × up to 18 rounds is the theoretical ceiling; in practice most matches end well before round 18. *(The "up to 18" ceiling is the **FULL** type — 2026-10-06 GM amendment; a **MINI** match's ceiling is 10 base rounds plus its single extension, and the schema gains `gameType`/`scoringMode` fields. See `docs/rules/CANONICAL_RULES.md` Amendment A2.)*
 - **Security requirements:** this is the collection where client-authoritative-with-rules is hardest to get fully right (see `SecurityArchitecture.md`'s dedicated section on `matches`). The critical field is `hands` — see below.

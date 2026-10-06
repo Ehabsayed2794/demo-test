@@ -211,7 +211,7 @@ All scoring bonuses/penalties stack unless explicitly forbidden.
 
 ### A2.1 Game Type — FULL and MINI
 
-Two Game Types are selectable on every match, in every mode (casual rooms **and** Ranked — GM5). **MINI is not a different game. It is FULL with two numbers changed; every rule in this document applies to both identically except where A2 says otherwise.**
+Two Game Types are selectable on every match, in every mode (casual rooms, Ranked, **and Unranked** — GM5; the three authority modes per Amendment A3). **MINI is not a different game. It is FULL with two numbers changed; every rule in this document applies to both identically except where A2 says otherwise.**
 
 | | FULL (the default) | MINI |
 |---|---|---|
@@ -243,3 +243,70 @@ Both scoring modes in this document are **first-class and selectable on every ma
 - **Ranked supports both Game Types.** Ranked is not Full-only, and Mini is not a casual-only format. The matchmaking tier-pool rule is **orthogonal to Game Type** — the server derives the tier pool exactly as RD9 specifies, and the Game Type rides along without widening or narrowing it.
 - **MINI Ranked RP is 50% of FULL Ranked RP.** The full Ranked result is computed exactly as the Ranked system specifies — every input, every modifier, every mixed-tier asymmetry — and **only then** is the **final RP delta** multiplied by 0.5, for gains and losses alike (+20 → +10, −14 → −7). **There is no separate Mini RP formula, and no threshold, gate, ladder, division, progression, promotion/demotion, or season rule is adjusted to compensate for the shorter match.**
 - **Rounding of a half-delta is CLOSED (2026-10-06): nearest integer, ties rounded AWAY FROM ZERO, symmetric for gains and losses.** +15 → **+8**, −15 → **−8**, +9 → +5, −9 → −5; even deltas are exact (+20 → +10, −14 → −7). The precedent in Amendment A1 ("rounded half-up") is a round-score rule and does not bind RP — **note the difference: half-up would give −7.5 → −7, which this rule deliberately rejects.** RP is an integer, and the round happens once, at settlement, on the final delta only.
+
+---
+
+## Amendment A3 — Ranked party eligibility, optional placement, and the Unranked match type (owner decision 2026-10-06)
+
+> **Provenance:** owner decision, 2026-10-06, recorded in `docs/NATIVE_V1_PLAN_AND_ESTIMATE.md` (decisions RD29–RD30, the RD6/RD22/RD28 amendments, epic E6b stories S70–S71) and designed in `docs/UI_UX_ROADMAP.md` (§2.1, §0.5, S36, §4b.4, §4b.4b, §4b.4c). **This amendment changes not one gameplay rule above.** It governs *who may sit at which kind of table*, and *what a match of a given type records*. Every rule in §§1–5 — deal, bidding, scoring, Sa'ayda, extensions, both Game Types, both Calculation Modes — applies to an Unranked match exactly as it applies to any other.
+
+### A3.1 The three match types and the three authority modes
+
+`mode` on the match document is **three values: `ROOM`, `RANKED`, or `UNRANKED`** (amending the two-value model RD28 was written with).
+
+- **`ROOM`** — the invite-only table: code-shared, fills no seat from any pool, may start with 2–3 players, push-to-talk voice available.
+- **`RANKED`** — the Ranked match: full progression. **Rank-down is `RANKED` plus a private/password access flag, never a mode of its own**; the flag gates entry and nothing else, so a Rank-down match is a Ranked match for every rule below.
+- **`UNRANKED`** — a first-class, independent match type: rank-blind seat assignment, no progression of any kind. **Unranked is not `ROOM` plus a marker — the authority key itself carries the value**, and each gate below states its Unranked branch explicitly rather than inheriting a Room's.
+
+**Game Type and Calculation Mode (Amendment A2) are selectable in all three modes.** Unranked plays FULL or MINI, NORMAL or CLASSIC, by the identical rules.
+
+### A3.2 RD29 — Ranked party eligibility
+
+> Two players may sit at the same Ranked table together iff their **tiers differ by at most one tier**.
+
+- The boundary is the same one the solo pool uses (RD9: own tier or exactly one tier below), applied **against the creator** — every joining member must be within one tier of the creator.
+- **Symmetric between friends.** RD9's "a lower-tier player cannot opt up" is a solo-pool rule and stays asymmetric there; between two consenting friends a Silver host may invite a Gold friend and vice versa.
+- **Compared by tier, not by 19-rank index**, because King has no divisions.
+- **Within one tier, any division difference is eligible** (Gold I + Gold III: eligible). **Two or more tiers apart is ineligible** (Gold + Bronze: ineligible). King's one tier below is Royal — King + Royal eligible, King + Platinum not.
+- **Checked server-side only.** A client cannot read another player's rank, so the check is a Cloud Function; the joiner learns the outcome and a plain-language reason, never the host's RP.
+- **No MMR, no rank-range expansion, no party queue, no special party rules.**
+
+**The rule this section exists to state plainly: *Ranked-ineligible does not mean "cannot play together."*** Two players outside the allowed tier gap are refused entry to that **Ranked** table and are offered **Unranked** (A3.4), where they may play with no restriction at all. No refusal in this flow is a dead end.
+
+### A3.3 RD30 — Placement is optional
+
+> *"Placement is optional and must be explicitly chosen. If a player skips placement, the account starts at Bronze III as a real Ranked tier and follows normal Ranked progression. Once placement is skipped, placement cannot be started later on that account."*
+
+- An unplaced account resolves to **Bronze III** for every tier comparison in A3.2 and every solo-pool derivation in RD9 — **a real tier, never a "no tier" state.** There is therefore no edge case in RD29: every player resolves to a tier.
+- The placement track itself (3 matches, 10/20/70 weights, Platinum ceiling, once per account, counts toward no statistic) is unchanged; what changes is that **declining it is a legitimate Bronze start, not a downgrade, a block, or a penalty.**
+- **The final clause is a rule of the account, not a punishment.** Skipping placement forecloses placement; it does not cap the account.
+
+### A3.4 Unranked — the rank-blind match type
+
+An Unranked match is a **normal match type**, reached either by choosing it on the Create Game screen or by the host converting a refused Ranked table pre-match ("Play Unranked" — host only, idempotent, never mid-match, clears the access credential, sets `mode: UNRANKED`).
+
+**Seat assignment is rank-blind.** A King, a Diamond, a Gold, and a Bronze may all hold seats at the same Unranked table. **RD9 and RD29 do not apply to Unranked at all.**
+
+**Seat filling:** one **shared** Unranked pool serves a party of friends and a solo player alike. Remaining seats are offered to available human players from that pool regardless of rank; **only after a seat has waited 4 minutes does a configured bot take it** (reusing the existing inactivity/leave bot-seat mechanism), at the difficulty and personality the host configured.
+
+### A3.5 What Unranked does and does not record
+
+| Rule | `ROOM` | `RANKED` | `UNRANKED` |
+|---|---|---|---|
+| All gameplay in §§1–5, both Game Types, both Calculation Modes | yes | yes | **yes** |
+| RP / Ranked progression | no | yes | **no** |
+| The 9 career statistics | no | yes | **no** |
+| Manual Vote Kick | no | yes (incl. Rank-down) | **no** |
+| Automatic 15-timeout removal | yes | yes | **yes** |
+| Push-to-talk voice | yes | no | **no** |
+| Disconnect vote + pause | yes | no | **yes** |
+| Settlement | no | yes | **no** |
+
+- **Fully Unranked means no progression of any kind** — neither RP nor any of the nine career statistics. A finished Unranked match writes no Ranked outcome.
+- **Voice is not available in Unranked**, including at a table whose remaining seats were filled from the shared pool by strangers. Push-to-talk is a Rooms-only capability, and Unranked is not a Room.
+- **The disconnect vote and pause are available in Unranked**, as in a Room.
+- **The automatic 15-timeout removal is shared by all three modes** — it is not Vote Kick and shares no state with it.
+
+### A3.6 What this amendment does not change
+
+Solo Auto-Match (RD9), the tier ladder (19 ranks), the RP engine and its thresholds, mixed-tier asymmetry (RD5) and the ×2 private loss cap (both surviving, scoped to public matchmaking and within-one-tier Rank-down matches), placement mechanics where chosen, seasons, the leaderboard, the rules of §§1–5, and Amendment A2 in full. **Amendment A1 and A2 are untouched, and no rule number in the document above changes** — Unranked is a match type, not a ruleset.

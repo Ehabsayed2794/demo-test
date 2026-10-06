@@ -54,6 +54,28 @@ Covered above under "States and transitions." Two things explicitly **not** impl
 
 No code creates a `match` document, no code transitions a room past `"waiting"`/`"closed"`, no card dealing exists tied to room state. This is intentionally out of scope through Sprint 3.3.
 
+> **2026-10-06 planning note — Game Start forks by match type (RD28 as
+> amended, RD29/RD30).** The native Create Game screen offers four product
+> paths, and "everyone ready → start" is not the only start condition anymore.
+> **`mode` on the room is `ROOM` | `RANKED` | `UNRANKED`** (three authority
+> values, not two):
+>
+> | Path | `mode` | Ready-to-start condition | Seat filling |
+> |---|---|---|---|
+> | **Invite-only Room** (unchanged) | `ROOM` | 2–3 players is a valid start — **no seat is fabricated** | none; code/invite only |
+> | **Ranked (solo)** | `RANKED` | the server-derived pool supplies a full table (RD9) | matchmaking |
+> | **Rank-down** (Ranked + private flag) | `RANKED` | friends ready; **each join passes the server-side RD29 tier check first** | friends only |
+> | **Unranked** | `UNRANKED` | **full table only** — friends plus pool/bot seats | **shared rank-blind pool; configured bots after a 4-minute wait** |
+>
+> Two join-path rules are worth pinning now, before implementation: the **RD29
+> check is server-side only** (a client cannot read another player's rank —
+> `players/{uid}` is owner-read-only — so a refused join returns
+> `RANK_INCOMPATIBLE` with a plain-language reason and never the host's RP), and
+> the **host-only Ranked→Unranked conversion** ("Play Unranked", offered on that
+> refusal) writes `mode: UNRANKED` and clears the access credential pre-match,
+> idempotently. The S08 "no AI seat is fabricated to fill gaps" rule above
+> **survives scoped to the invite-only Room path only.**
+
 ## Reconnect — Not Yet Implemented
 
 The heartbeat-presence idea (a `lastSeenAt` field on `players/{uid}`, refreshed on an interval, staleness computed by observing clients — see `ArchitectureDecisionLog.md` ADR-003) remains a **design**, not shipped behavior. `players/{uid}.lastSeenAt` exists and is stamped once per login (`PlayerService.ensurePlayerProfile`), but nothing refreshes it on an interval while a screen is open, and nothing reads it to compute staleness yet. No reconnect flow exists — a dropped client returning to the app does not currently rejoin a room automatically.
