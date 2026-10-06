@@ -211,9 +211,13 @@ fun calculateRoundScore(input: RoundScoreInput): RoundScoreResult {
 /**
  * Whether the completed round extends maxRounds by exactly +1 — reusing
  * ALREADY-COMPUTED facts, never re-deriving Super legality or success.
- * Only Rapid Rounds 14-18 are eligible; an already-extended round
- * (19+) never extends further. The two reasons are mutually exclusive
+ * Only Quick rounds in the type's extension window are eligible (FULL
+ * 14-18, MINI 6-10); an already-extended round past [GameType.baseRounds]
+ * never extends further. The two reasons are mutually exclusive
  * (Sa'ayda means the caller failed too), so at most +1 per round.
+ * The per-type extension COUNT cap (GM3: MINI 1, FULL 5) is enforced at
+ * the services layer, not here — this function answers "does THIS round
+ * qualify", which is all the I/O-free engine can know.
  */
 fun computeRoundExtension(
   round: Int,
@@ -221,12 +225,13 @@ fun computeRoundExtension(
   trump: Suit,
   callerSucceeded: Boolean,
   isSaayda: Boolean,
+  gameType: GameType = GameType.FULL,
 ): RoundExtension {
-  if (round < 14 || round > 18) return RoundExtension(false)
+  if (round !in gameType.firstFastRound..gameType.baseRounds) return RoundExtension(false)
   if (isSaayda) return RoundExtension(true, ExtensionReason.SAAYDA)
   // In a fast round callerId is ONLY populated by the Super Call path —
   // a non-null caller here already IS the Super signal, not a re-derivation.
-  if (callerId != null && callerSucceeded && trump != fixedTrumpFor(round)) {
+  if (callerId != null && callerSucceeded && trump != fixedTrumpFor(round, gameType)) {
     return RoundExtension(true, ExtensionReason.SUPER_CALL)
   }
   return RoundExtension(false)

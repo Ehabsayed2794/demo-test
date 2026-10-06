@@ -145,6 +145,7 @@ class GameSession(
   private var matchId: String = "m-" + clock()
   private var mode: String? = null
   private var scoringMode: ScoringMode = ScoringMode.NORMAL
+  private var gameType: GameType = GameType.FULL
   private var players: List<SessionPlayer> = emptyList()
   private var room: SessionRoom = SessionRoom()
   private var dealerId: String? = null
@@ -179,10 +180,11 @@ class GameSession(
     matchId = "m-" + clock()
     mode = matchMode
     scoringMode = ScoringMode.NORMAL
+    gameType = GameType.FULL
     players = emptyList()
     room = SessionRoom()
     dealerId = room.seats.firstOrNull()
-    round = RoundState()
+    round = RoundState(maxRounds = gameType.baseRounds)
     turnId = null
     hands = emptyMap()
     dealState = DealState()
@@ -240,6 +242,13 @@ class GameSession(
   fun setScoringMode(mode: ScoringMode) { scoringMode = mode }
   val escalationCap: Int
     get() = if (scoringMode == ScoringMode.CLASSIC) 2 else 8
+
+  // ── game type ─────────────────────────────────────────────────────
+  // GM1/GM8: the match's shape (base rounds, first Quick round, extension
+  // policy). Feeds the RoundState.maxRounds default. Orthogonal to
+  // [scoringMode] (the Sa'ayda formula) and to `mode` (WHO you play).
+  fun getGameType(): GameType = gameType
+  fun setGameType(type: GameType) { gameType = type }
 
   // ── players (real only) ───────────────────────────────────────────
 

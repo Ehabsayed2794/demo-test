@@ -314,7 +314,7 @@ object BidBrain {
     personality: BotPersonality,
     simulation: BotSimulation,
   ): BiddingIntent.FinalEstimate {
-    val trump = if (state.fastRound) state.declaredTrump ?: fixedTrumpFor(state.round) else state.declaredTrump
+    val trump = if (state.fastRound) state.declaredTrump ?: fixedTrumpFor(state.round, state.gameType) else state.declaredTrump
     val eval = botBid(hand, tier, playerId, chosenTrump = trump, personality, simulation)
 
     // The Caller's cap bounds every other seat; a fast round's sentinel of 13
