@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="design_doc_mode" content="canvas"><title>Estemshan · Design System Foundation (§4.1 + §4.2)</title>
+<link href="https://fonts.googleapis.com/css2?family=Marcellus&family=Saira:wght@400;500;600;700&family=Spline+Sans+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0D0A07;--surface:#17130E;--surfaceHigh:#1D1912;--pill:#1D1A16;--gold:#E8A33D;--goldHi:#F4B860;--goldDim:#A8742A;--ink:#F0EADA;--inkDim:#A89F8E;--inkFaint:#8A8272;--error:#F25555;--onPrimary:#000;--panelLine:rgba(255,240,210,.07);--redSuit:#E0545B;--affirm:#69C87E;--koz:#9C8FD0;--cardIvory:#F7F1E3;--cardInk:#1D1A17;--backBlue:#12284A;--backBlueHi:#244B7E;--gradDoc:linear-gradient(160deg,#FFF3DA,#E8A33D,#1A1208);--btnGrad:linear-gradient(160deg,#FFF3DA,#E8A33D,#1A1208);--goldGrad:linear-gradient(160deg,#FFF3DA,#E8A33D);--glow:0.6;--r-sm:8px;--r-md:12px;--r-lg:16px;--r-pill:999px;--r-card:8px;--t-control:.12s ease;--t-sheet:.2s ease-out;--t-trick:.9s;--display:"Marcellus",serif;--body:"Saira",sans-serif;--mono:"Spline Sans Mono",monospace;--glowShadow:0 0 calc(18px*var(--glow)) rgba(232,163,61,calc(.55*var(--glow)))}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0a0806;color:var(--ink);font-family:var(--body);font-size:14px}
+a{color:var(--gold)}a:hover{color:var(--goldHi)}
+.n,.mono{font-family:var(--mono)}
+.f{position:absolute;left:0;width:1480px;background:var(--bg);border:1px solid var(--panelLine);border-radius:var(--r-lg);padding:40px 48px 48px}
+.f>h2{font-family:var(--display);font-weight:400;font-size:34px;color:var(--gold);margin-bottom:6px}
+.f>.sub{color:var(--inkDim);font-size:15px;max-width:980px;line-height:1.5;margin-bottom:28px}
+.f>.sec{font-family:var(--mono);font-size:12px;letter-spacing:.16em;color:var(--inkFaint);margin-bottom:10px}
+h3{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--inkDim);font-weight:600;margin:28px 0 12px}
+h3:first-of-type{margin-top:0}
+.row{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start}
+.cell{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.cap{font-family:var(--mono);font-size:12px;color:var(--inkFaint);letter-spacing:.04em}
+.note{font-size:14px;color:var(--inkDim);line-height:1.5;max-width:720px}
+.note b{color:var(--ink);font-weight:600}
+.tag{font-family:var(--mono);font-size:12px;padding:2px 8px;border-radius:var(--r-pill);border:1px solid var(--panelLine);background:var(--pill);color:var(--inkDim)}
+.sw{width:150px;border:1px solid var(--panelLine);border-radius:var(--r-md);overflow:hidden;background:var(--surface)}
+.sw i{display:block;height:64px}
+.sw div{padding:8px 10px;font-family:var(--mono);font-size:12px;color:var(--inkDim);line-height:1.5}
+.sw b{display:block;color:var(--ink);font-size:13px}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th{font-family:var(--mono);font-size:12px;letter-spacing:.08em;text-align:left;color:var(--inkFaint);padding:8px 10px;border-bottom:1px solid var(--panelLine);font-weight:600}
+td{padding:8px 10px;border-bottom:1px solid var(--panelLine);color:var(--inkDim);vertical-align:middle}
+td:first-child{color:var(--ink);font-family:var(--mono);font-size:13px}
+.ok{color:var(--affirm)}.no{color:var(--error)}
+.chipdot{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:8px;vertical-align:-1px;border:1px solid var(--panelLine)}
+.ph{width:390px;background:var(--bg);border:1px solid var(--panelLine);border-radius:var(--r-lg);position:relative;overflow:hidden;padding:16px}
+.panel{background:var(--surface);border:1px solid var(--panelLine);border-radius:var(--r-md)}
+/* controls */
+.btn{font-family:var(--body);font-weight:600;font-size:16px;letter-spacing:.04em;min-height:48px;min-width:140px;padding:0 24px;border-radius:var(--r-md);border:1px solid transparent;display:inline-flex;align-items:center;justify-content:center;gap:10px;cursor:pointer;transition:transform var(--t-control),filter var(--t-control),background var(--t-control)}
+.btn.p{background:linear-gradient(var(--gold),var(--gold)) padding-box,var(--btnGrad) border-box;border:6px solid transparent;color:#000;box-shadow:var(--glowShadow)}
+.btn.p.pr{transform:scale(.97);filter:brightness(.88);box-shadow:none}
+.btn.p.dis{background:var(--pill);color:var(--inkFaint);box-shadow:none;border:1px solid var(--panelLine)}
+.btn.s{background:var(--surfaceHigh);color:var(--ink);border-color:rgba(255,240,210,.16)}
+.btn.s:hover{border-color:var(--goldDim)}
+.btn.d{background:transparent;color:var(--error);border-color:var(--error)}
+.btn.d.fill{background:var(--error);color:var(--bg)}
+.spin{width:18px;height:18px;border:2.5px solid rgba(13,10,7,.3);border-top-color:var(--bg);border-radius:50%;animation:sp .8s linear infinite}
+.spin.g{border-color:rgba(232,163,61,.25);border-top-color:var(--gold)}
+@keyframes sp{to{transform:rotate(360deg)}}
+.chip{min-width:56px;height:48px;padding:0 14px;border-radius:var(--r-pill);background:var(--pill);border:1px solid var(--panelLine);color:var(--ink);font-size:22px;display:inline-flex;align-items:center;justify-content:center;font-family:var(--body);font-weight:600;gap:6px}
+.chip.red{color:var(--redSuit)}
+.chip.on{border-color:var(--gold);background:rgba(232,163,61,.12);box-shadow:var(--glowShadow)}
+.chip.sans{font-size:15px;letter-spacing:.1em;color:var(--gold);font-family:var(--mono)}
+.chip.on.sans{color:var(--goldHi)}
+.opt{height:48px;padding:0 18px;border-radius:var(--r-md);background:var(--surface);border:1px solid var(--panelLine);color:var(--inkDim);font-size:16px;display:inline-flex;align-items:center;gap:10px}
+.opt.on{border-color:var(--gold);color:var(--ink);background:rgba(232,163,61,.1)}
+.opt.dis{opacity:.45}
+.opt .dot{width:16px;height:16px;border-radius:50%;border:2px solid var(--inkFaint)}.opt.on .dot{border-color:var(--gold);background:radial-gradient(var(--gold) 45%,transparent 50%)}
+.step{display:inline-flex;align-items:center;background:var(--surface);border:1px solid var(--panelLine);border-radius:var(--r-md);overflow:hidden}
+.step button{width:52px;height:52px;background:var(--surfaceHigh);border:0;color:var(--gold);font-size:26px;font-family:var(--mono)}
+.step button:disabled,.step .off{color:var(--inkFaint);opacity:.5}
+.step .v{min-width:64px;text-align:center;font-family:var(--mono);font-size:24px;font-weight:600;color:var(--ink)}
+.step .v small{display:block;font-size:12px;color:var(--inkFaint);font-weight:400;margin-top:-4px}
+.fld{width:300px;min-height:52px;padding:6px 14px;border-radius:var(--r-md);background:var(--surface);border:1px solid var(--panelLine);display:flex;flex-direction:column;justify-content:center}
+.fld label{font-size:14px;color:var(--inkDim)}
+.fld .val{font-size:16px;color:var(--ink)}.fld .val.ph0{color:var(--inkFaint)}
+.fld.err{border-color:var(--error)}.fld.foc{border-color:var(--gold)}
+.help{font-size:14px;color:var(--error);margin-top:4px}
+/* avatar */
+.av{position:relative;width:72px;height:72px;display:grid;place-items:center}
+.av .face{width:56px;height:56px;border-radius:50%;background:var(--surfaceHigh);border:2px solid var(--panelLine);display:grid;place-items:center;font-family:var(--display);font-size:24px;color:var(--ink)}
+.av.active .face{border-color:var(--gold);box-shadow:var(--glowShadow)}
+.av.bot .face{border:2px dashed var(--inkDim);color:var(--inkDim)}
+.av.inactive .face{opacity:.4;filter:grayscale(.8)}
+.av.disc .face{border:2px dashed var(--error);opacity:.75}
+.av.kicked .face{opacity:.35;filter:grayscale(1);border-color:var(--error)}
+.av.you .face{border-color:var(--ink);box-shadow:0 0 0 3px var(--bg),0 0 0 4px var(--inkDim)}
+.av .mk{position:absolute;right:-24px;bottom:-2px;min-width:22px;height:22px;border-radius:11px;background:var(--bg);border:1px solid var(--panelLine);font-family:var(--mono);font-size:11px;display:grid;place-items:center;color:var(--inkDim);padding:0 5px}
+.av.disc .mk{color:var(--error);border-color:var(--error)}.av.kicked .mk{color:var(--error);border-color:var(--error)}
+.av .tg{position:absolute;left:50%;bottom:-8px;transform:translateX(-50%);font-family:var(--mono);font-size:11px;padding:1px 7px;border-radius:9px;background:var(--ink);color:var(--bg);font-weight:700;white-space:nowrap}
+.seat{width:150px;padding:10px 8px 12px;border-radius:var(--r-md);background:var(--surface);border:1px solid var(--panelLine);display:flex;flex-direction:column;align-items:center;gap:4px;text-align:center}
+.seat.act{border-color:rgba(232,163,61,.45)}
+.seat .nm{font-size:16px;font-weight:600}.seat .st{font-family:var(--mono);font-size:16px;color:var(--inkDim);display:flex;gap:10px}
+.seat .st b{color:var(--ink);font-weight:600}
+.badge{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px 0 8px;border-radius:var(--r-pill);font-family:var(--mono);font-size:14px;font-weight:700;letter-spacing:.06em}
+.badge.king{background:var(--goldGrad);color:var(--onPrimary)}
+.badge.koz{background:rgba(156,143,208,.16);color:var(--koz);border:1.5px solid var(--koz);border-radius:8px}
+.badge.kozold{background:rgba(168,116,42,.18);color:var(--goldDim);border:1.5px solid var(--goldDim);border-radius:8px}
+.ring{position:relative;display:grid;place-items:center}
+.ring svg{position:absolute;inset:0}
+.ring .dg{position:relative;font-family:var(--mono);font-weight:700;font-size:16px;color:var(--ink)}
+.ring.low .dg{color:var(--error)}.ring.exp .dg{color:var(--inkFaint)}
+.ring.low svg .arc{animation:pls .6s ease-in-out infinite alternate}
+@keyframes pls{from{opacity:1}to{opacity:.55}}
+/* cards */
+.card{--cw:56px;width:var(--cw);height:calc(var(--cw)*1.4);border-radius:var(--r-card);background:var(--cardIvory);color:var(--cardInk);position:relative;flex:none;border:1px solid rgba(0,0,0,.25);box-shadow:0 1px 0 rgba(255,255,255,.4) inset,0 2px 8px rgba(0,0,0,.5);font-family:var(--mono);transition:transform var(--t-control),filter var(--t-control),opacity var(--t-control)}
+.card.r{color:var(--redSuit)}
+.card .ix{position:absolute;left:calc(var(--cw)*.09);top:calc(var(--cw)*.05);display:flex;flex-direction:column;align-items:center;line-height:1;font-weight:700;font-size:max(16px,calc(var(--cw)*.3))}
+.card .ix s{text-decoration:none;font-size:max(14px,calc(var(--cw)*.26));margin-top:1px}
+.card .pp{position:absolute;right:calc(var(--cw)*.1);bottom:calc(var(--cw)*.06);font-size:calc(var(--cw)*.5);line-height:1}
+.card.sans{background:linear-gradient(160deg,#fff7e0,var(--cardIvory));color:#7A5A1A}
+.card.sans .ix{font-size:max(14px,calc(var(--cw)*.2));letter-spacing:.04em}
+.card.back{background:var(--backBlue);border:1px solid var(--goldDim);overflow:hidden}
+.card.back svg{position:absolute;inset:0;width:100%;height:100%}
+.card.dim{filter:brightness(.55) saturate(.7)}
+.card.dis{filter:grayscale(.9) brightness(.5);opacity:.75}
+.card.dis::after{content:"";position:absolute;inset:0;border-radius:inherit;background:repeating-linear-gradient(135deg,transparent 0 6px,rgba(0,0,0,.28) 6px 8px)}
+.card.win{box-shadow:0 0 0 2px var(--gold),var(--glowShadow);transform:translateY(-4px)}
+.card.lift{transform:translateY(-10px);box-shadow:0 0 0 1.5px var(--goldDim),0 4px 10px rgba(0,0,0,.6)}
+.card.ghost{background:transparent;border:1.5px dashed rgba(255,240,210,.22);box-shadow:none}
+.card.ghost *{display:none}
+.hand{display:flex;padding:14px 0 4px;height:98px;align-items:flex-end}
+.hand .card{--cw:52px;margin-left:-26px}.hand .card:first-child{margin-left:0}
+.hand.sp .card:nth-child(n){margin-left:-26px}
+.hand.sp .card:first-child{margin-left:0}
+.hand .card:last-child{margin-right:0}
+.hand.dimmed{opacity:.6}
+.table-strip{height:60px;border-radius:var(--r-md);background:radial-gradient(70% 90% at 50% 50%,rgba(107,66,38,.35),transparent 75%),var(--surface);border:1px solid var(--panelLine);display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:10px;font-family:var(--mono);font-size:14px;color:var(--inkDim)}
+.table-strip .card{--cw:34px}
+/* feedback */
+.scrim{position:absolute;inset:0;background:rgba(5,3,2,.68)}
+.sheet{position:absolute;left:0;right:0;bottom:0;background:var(--surfaceHigh);border-top:1px solid rgba(255,240,210,.14);border-radius:20px 20px 0 0;padding:12px 20px 24px}
+.sheet .gr{width:40px;height:4px;border-radius:2px;background:var(--inkFaint);margin:0 auto 14px;opacity:.6}
+.dlg{position:absolute;left:24px;right:24px;top:50%;transform:translateY(-50%);background:var(--surfaceHigh);border:1px solid rgba(255,240,210,.14);border-radius:var(--r-lg);padding:22px}
+.ttl{font-family:var(--display);font-size:22px;color:var(--ink);margin-bottom:6px}
+.bnr{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border-radius:var(--r-md);background:var(--surface);border:1px solid var(--panelLine);width:360px;font-size:14px;line-height:1.45;color:var(--inkDim)}
+.bnr b{color:var(--ink)}.bnr .ic{font-family:var(--mono);font-weight:700;width:22px;height:22px;border-radius:50%;display:grid;place-items:center;flex:none;font-size:14px}
+.bnr.i .ic{background:rgba(232,163,61,.16);color:var(--gold)}.bnr.w{border-color:rgba(232,163,61,.4)}.bnr.w .ic{background:var(--gold);color:var(--bg)}.bnr.e{border-color:var(--error)}.bnr.e .ic{background:var(--error);color:var(--bg)}
+.toast{display:inline-flex;align-items:center;gap:12px;height:48px;padding:0 20px;border-radius:var(--r-pill);background:var(--surfaceHigh);border:1px solid rgba(255,240,210,.16);box-shadow:0 8px 24px rgba(0,0,0,.55);font-size:16px;color:var(--ink)}
+.vote{width:350px;padding:16px;background:var(--surfaceHigh);border:1px solid rgba(255,240,210,.14);border-radius:var(--r-md);display:flex;flex-direction:column;gap:12px}
+.vote .hd{display:flex;justify-content:space-between;align-items:center}
+.vote .q{font-size:16px;color:var(--ink);line-height:1.4}
+.vote .tl{display:flex;gap:6px}.vote .tl i{flex:1;height:8px;border-radius:4px;background:var(--pill)}.vote .tl i.y{background:var(--affirm)}.vote .tl i.x{background:var(--error)}
+.vote .cnt{display:flex;justify-content:space-between;font-family:var(--mono);font-size:16px;font-weight:600}
+.vote .ac{display:flex;gap:10px}.vote .ac .btn{flex:1;min-width:0;min-height:48px}
+.btn.yes{background:rgba(105,200,126,.14);color:var(--affirm);border-color:var(--affirm)}
+.btn.no2{background:rgba(242,85,85,.14);color:var(--error);border-color:var(--error)}
+.btn.neu{background:var(--pill);color:var(--inkFaint);border-color:var(--panelLine)}
+.stat{width:170px;padding:14px 16px;border-radius:var(--r-md);background:var(--surface);border:1px solid var(--panelLine)}
+.stat .l{font-size:14px;color:var(--inkDim)}.stat .v{font-family:var(--mono);font-size:28px;font-weight:600;margin-top:2px}.stat .d{font-family:var(--mono);font-size:14px;color:var(--affirm)}
+.empty{width:300px;padding:28px 20px;border-radius:var(--r-md);background:var(--surface);border:1px dashed rgba(255,240,210,.16);text-align:center;display:flex;flex-direction:column;align-items:center;gap:8px}
+.empty .ttl{font-size:20px;margin:0}.empty p{font-size:14px;color:var(--inkDim)}
+.sk{height:14px;border-radius:7px;background:linear-gradient(90deg,var(--pill) 0 35%,var(--surfaceHigh) 50%,var(--pill) 65% 100%);background-size:300% 100%;animation:shm 1.4s linear infinite}
+@keyframes shm{from{background-position:100% 0}to{background-position:0 0}}
+.res{display:grid;grid-template-columns:1fr 1fr;gap:28px}
+.res .blk{padding:22px;border-radius:var(--r-md);background:var(--surface);border:1px solid var(--panelLine);display:flex;flex-direction:column;gap:14px}
+.res .blk h4{font-family:var(--display);font-weight:400;font-size:22px;color:var(--gold)}
+.res .why{font-size:14px;line-height:1.55;color:var(--inkDim)}.res .why b{color:var(--ink)}
+.warn{padding:12px 16px;border-radius:var(--r-md);border:1px solid rgba(232,163,61,.4);background:rgba(232,163,61,.07);font-size:14px;color:var(--ink);line-height:1.5;max-width:1000px}
+.scale{display:flex;gap:18px;align-items:flex-end;flex-wrap:wrap}
+</style></head><body>
+
+<section class="f" id="s0" data-screen-label="00 Overview">
+<h2>Estemshan · Design System Foundation</h2>
+<p class="sub">§4.1 token foundation and §4.2 component library, specified as live CSS custom properties on one canvas so a Figma pass can be read off section by section. Mobile scale (390 dp frames, body ≥14, play-critical ≥16). Regions: 01 Tokens · 02 Contrast · 03 Core controls · 04 Player and table · 05 Cards and hand · 06 Feedback · 07 Gap resolutions · 08 Provenance.</p>
+<div class="warn"><b>Source status.</b> Native tokens come from the eight EstemshanTheme.kt colours supplied by the owner (Background, Surface, SurfaceHigh, Gold, GoldDim, Ink, InkDim, Error) plus onPrimary = black. They are not read from web files. pill, goldHi, goldLow, redSuit and inkFaint do not exist in Kotlin; they are web-only and adding them to native is scheduled work. Anything unconfirmed is marked <b>UNVERIFIED</b> in region 08. <b>Both region-07 decisions are resolved:</b> the primary button keeps the documented 3-stop gradient with its label on a Gold chip, and redSuit is unified to #E0545B across cards and suit chips.</div>
+</section>
+
+<section class="f" id="s1" data-screen-label="01 Tokens">
+<div class="sec">01 · §4.1 TOKENS</div><h2>Tokens</h2><p class="sub">Every swatch, radius and motion value below is drawn from the custom property of the same name. Elevation is the 1px panelLine hairline plus surface steps; the palette is too dark for shadows to carry it.</p>
+<h3>Colour</h3><div class="row" id="sw"></div>
+<h3>Gradient, hairline, glow</h3>
+<div class="row">
+<div class="cell"><div style="width:240px;height:64px;border-radius:12px;background:var(--btnGrad)"></div><span class="cap">btnGrad · 160° #FFF3DA → #E8A33D → #1A1208 · the documented 3-stop gradient; label sits on a Gold chip (region 07)</span></div>
+<div class="cell"><div style="width:240px;height:64px;border-radius:12px;background:var(--surface);border:1px solid var(--panelLine)"></div><span class="cap">panelLine · 1px · rgba(255,240,210,.07)</span></div>
+<div class="cell"><div style="width:240px;height:64px;border-radius:12px;background:var(--surfaceHigh);border:1px solid rgba(255,240,210,.14)"></div><span class="cap">elevation step · surfaceHigh + 14% hairline</span></div>
+<div class="cell"><div style="width:240px;height:64px;border-radius:12px;background:var(--surface);border:1px solid var(--gold);box-shadow:var(--glowShadow)"></div><span class="cap">glow · --glow .6 · active / selected only</span></div>
+</div>
+<h3>Typography · Marcellus display · Saira body · Spline Sans Mono for every numeral</h3>
+<div class="row" style="gap:48px">
+<div class="cell"><span style="font-family:var(--display);font-size:34px">Display 34 · Estemshan</span><span style="font-family:var(--display);font-size:22px">Title 22 · Waiting Room</span><span class="cap">Marcellus · screen and dialog titles</span></div>
+<div class="cell"><span style="font-size:18px;font-weight:600">Body L 18 · Saira 600</span><span style="font-size:16px">Body 16 · play-critical minimum</span><span style="font-size:14px;color:var(--inkDim)">Body S 14 · absolute minimum</span><span class="cap">Saira · all text</span></div>
+<div class="cell"><span class="n" style="font-size:32px;font-weight:700">1,240</span><span class="n" style="font-size:24px;font-weight:600">Bid 7 · 00:27 · 3/4</span><span class="n" style="font-size:16px;letter-spacing:.2em">ROOM · K7Q2</span><span class="cap">Mono · scores, bids, timers, room codes, tallies. ≥16 when play-critical</span></div>
+</div>
+<h3>Radii and motion</h3>
+<div class="row" style="gap:28px">
+<div class="cell"><div style="width:72px;height:72px;border-radius:8px;background:var(--surfaceHigh);border:1px solid var(--panelLine)"></div><span class="cap">r-sm / r-card 8</span></div>
+<div class="cell"><div style="width:72px;height:72px;border-radius:12px;background:var(--surfaceHigh);border:1px solid var(--panelLine)"></div><span class="cap">r-md 12 · controls</span></div>
+<div class="cell"><div style="width:72px;height:72px;border-radius:16px;background:var(--surfaceHigh);border:1px solid var(--panelLine)"></div><span class="cap">r-lg 16 · panels, dialogs</span></div>
+<div class="cell"><div style="width:72px;height:72px;border-radius:20px 20px 0 0;background:var(--surfaceHigh);border:1px solid var(--panelLine)"></div><span class="cap">sheet 20 top</span></div>
+<div class="cell"><div style="width:72px;height:36px;border-radius:999px;background:var(--pill);border:1px solid var(--panelLine)"></div><span class="cap">r-pill</span></div>
+<table style="width:520px;margin-left:24px"><tr><th>MOTION TOKEN</th><th>VALUE</th><th>USE</th></tr><tr><td>t-control</td><td>120 ms ease</td><td>press, select, toggle</td></tr><tr><td>t-sheet</td><td>200 ms ease-out</td><td>sheet, dialog, toast (max)</td></tr><tr><td>t-trick</td><td>900 ms</td><td>trick-resolution beat (RESOLVING hold)</td></tr></table>
+</div>
+</section>
+
+<section class="f" id="s2" data-screen-label="02 Contrast">
+<div class="sec">02 · §4.1.2 CONTRAST AUDIT</div><h2>Contrast audit</h2><p class="sub">Computed live from the tokens (WCAG relative luminance). Threshold 4.5:1. Computed against the eight native values. Text tokens are not darkened; inkFaint stays at #8A8272.</p>
+<table id="ct"><thead><tr><th>TOKEN</th><th>HEX</th><th>ON bg</th><th>ON surface</th><th>ON surfaceHigh</th><th>NOTE</th></tr></thead><tbody></tbody></table>
+<h3 style="margin-top:28px">Fixed-ground pairs</h3>
+<table id="ct2"><thead><tr><th>PAIR</th><th>FOREGROUND</th><th>BACKGROUND</th><th>RATIO</th><th>RESULT</th></tr></thead><tbody></tbody></table>
+</section>
+
+<section class="f" id="s3" data-screen-label="03 Core controls">
+<div class="sec">03 · §4.2.1 CORE CONTROLS</div><h2>Core controls</h2><p class="sub">48 dp minimum touch height. Control states animate in 120 ms.</p>
+<h3>Button / Primary · default · pressed · disabled · loading</h3>
+<div class="row"><div class="cell"><button class="btn p">PLACE BID</button><span class="cap">default</span></div><div class="cell"><button class="btn p pr">PLACE BID</button><span class="cap">pressed · .97 · −12% brightness</span></div><div class="cell"><button class="btn p dis">PLACE BID</button><span class="cap">disabled</span></div><div class="cell"><button class="btn p"><span class="spin"></span>JOINING</button><span class="cap">loading</span></div></div>
+<h3>Button / Secondary · Destructive</h3>
+<div class="row"><div class="cell"><button class="btn s">Cancel</button><span class="cap">secondary</span></div><div class="cell"><button class="btn s dis" style="opacity:.45">Cancel</button><span class="cap">secondary disabled</span></div><div class="cell"><button class="btn d">Leave table</button><span class="cap">destructive · outline</span></div><div class="cell"><button class="btn d fill">Confirm leave</button><span class="cap">destructive · confirm step</span></div></div>
+<h3>Chip / Suit · ♣ ♦ ♥ ♠ + SANS × unselected / selected</h3>
+<div class="row" style="gap:28px"><div class="cell"><div class="row" style="gap:10px"><span class="chip">♣</span><span class="chip red">♦</span><span class="chip red">♥</span><span class="chip">♠</span><span class="chip sans">SANS</span></div><span class="cap">unselected</span></div><div class="cell"><div class="row" style="gap:10px"><span class="chip on">♣</span><span class="chip on red">♦</span><span class="chip on red">♥</span><span class="chip on">♠</span><span class="chip on sans">SANS</span></div><span class="cap">selected · gold border + glow</span></div></div>
+<h3>Chip / Option · selected · unselected · disabled</h3>
+<div class="row"><span class="opt on"><i class="dot"></i>4 players</span><span class="opt"><i class="dot"></i>Rounds 18</span><span class="opt dis"><i class="dot"></i>Private</span></div>
+<h3>Stepper · − / value / + with clamp</h3>
+<div class="row"><div class="cell"><div class="step"><button>−</button><span class="v">7</span><button>+</button></div><span class="cap">mid-range</span></div><div class="cell"><div class="step"><button disabled>−</button><span class="v">0<small>MIN</small></span><button>+</button></div><span class="cap">clamped at min</span></div><div class="cell"><div class="step"><button>−</button><span class="v">13<small>MAX</small></span><button disabled>+</button></div><span class="cap">clamped at max</span></div></div>
+<h3>Field / Panel · empty · filled · error</h3>
+<div class="row"><div class="cell"><div class="fld"><label>Room code</label><span class="val ph0 n">ENTER CODE</span></div><span class="cap">empty</span></div><div class="cell"><div class="fld foc"><label>Room code</label><span class="val n" style="letter-spacing:.2em">K7Q2</span></div><span class="cap">filled / focused</span></div><div class="cell"><div><div class="fld err"><label>Room code</label><span class="val n" style="letter-spacing:.2em">K7Q</span></div><div class="help">Codes have 4 characters.</div></div><span class="cap">error · message below field</span></div></div>
+<p class="note" style="margin-top:20px"><b>Documented only:</b> FAB / Push-to-Talk exists on the invite-only Room path only. It is not drawn here and never appears in Ranked or Unranked.</p>
+</section>
+
+<section class="f" id="s4" data-screen-label="04 Player and table">
+<div class="sec">04 · §4.2.1 PLAYER AND TABLE PRIMITIVES</div><h2>Player and table primitives</h2><p class="sub">No avatar state assumes voice or Vote Kick. Those appear only in the modes that own them (see section 06).</p>
+<h3>Avatar · 7 states</h3><div class="row" id="avs" style="gap:28px"></div>
+<h3>Timer Ring · wraps avatar and sits inline · running / low-time / expired</h3><div class="row" id="rings" style="gap:36px"></div>
+<p class="note" style="margin-top:12px">Running: thin gold arc that drains. Low-time (≤5 s): thick error arc with 4 tick marks and a 0.6 s pulse. Expired: full ring broken by a gap, dashed, static, digits in inkFaint. Each reads by stroke weight and pattern, not colour alone.</p>
+<h3>Seat · 4 positions · active turn · bot · you</h3><div class="row" id="seats" style="gap:20px"></div>
+<h3>Badge / King · Badge / Koz</h3>
+<div class="row" style="gap:36px">
+<div class="cell"><div class="row" style="gap:10px"><span class="badge king"><svg width="18" height="14" viewBox="0 0 18 14"><path d="M1 12 L2.5 3 L6.5 7.5 L9 1.5 L11.5 7.5 L15.5 3 L17 12 Z" fill="#0D0A07"/></svg>KING</span><span class="badge king"><svg width="18" height="14" viewBox="0 0 18 14"><path d="M1 12 L2.5 3 L6.5 7.5 L9 1.5 L11.5 7.5 L15.5 3 L17 12 Z" fill="#0D0A07"/></svg>KING</span></div><span class="cap">Match-King · crown, gold fill · multiple simultaneous instances (ties)</span></div>
+<div class="cell"><span class="badge koz"><svg width="14" height="16" viewBox="0 0 14 16"><path d="M7 1 L13 3.5 V8 C13 11.5 10 14 7 15 C4 14 1 11.5 1 8 V3.5 Z" fill="none" stroke="#9C8FD0" stroke-width="1.8"/></svg>KOZ</span><span class="cap">Koz · shield outline, cool koz tone</span></div>
+<div class="cell"><div class="row" style="gap:10px"><span class="badge king"><svg width="18" height="14" viewBox="0 0 18 14"><path d="M1 12 L2.5 3 L6.5 7.5 L9 1.5 L11.5 7.5 L15.5 3 L17 12 Z" fill="#0D0A07"/></svg>KING</span><span class="badge koz"><svg width="14" height="16" viewBox="0 0 14 16"><path d="M7 1 L13 3.5 V8 C13 11.5 10 14 7 15 C4 14 1 11.5 1 8 V3.5 Z" fill="none" stroke="#9C8FD0" stroke-width="1.8"/></svg>KOZ</span></div><span class="cap">together on one seat</span></div>
+</div>
+</section>
+
+<section class="f" id="s5" data-screen-label="05 Cards and hand">
+<div class="sec">05 · §4.2.2 CARD · TOP PRIORITY</div><h2>Card and hand</h2><p class="sub">One Card component and one Hand treatment. The same hand renders in Bidding (S12–S15) and Table (S19–S22), including RESOLVING and round-DONE, so the hand no longer vanishes. Ranks are mono, ≥16 dp.</p>
+<h3>Card face · 13 ranks × 4 suits + SANS</h3><div id="faces"></div>
+<h3>Card states</h3><div class="row" id="cst" style="gap:28px"></div>
+<h3>Blue-gold card back · drawn</h3>
+<div class="row" style="gap:28px;align-items:flex-end"><div id="bk1"></div><div id="bk2"></div><div class="note" style="max-width:520px">Deep blue ground (backBlue #12284A), gold hairline frame, goldDim lattice and a central gold lozenge. No green felt anywhere. Back sits at the same 1:1.4 ratio and 8 dp radius as the face, so a played-card stack and a hand share one silhouette.</div></div>
+<h3>One hand treatment, five contexts (390 dp)</h3><div class="row" id="hands" style="gap:24px"></div>
+<p class="note" style="margin-top:14px"><b>Hand rules.</b> 13 cards, 52 dp wide, 26 dp overlap, rank index always in the exposed left strip. Legal card lifts 10 dp with a goldDim hairline; illegal cards take the disabled hatch. RESOLVING dims the whole hand to 60% for the 900 ms beat and keeps it visible. Round-DONE keeps the 13 slots as dashed ghosts, so the hand area never collapses.</p>
+</section>
+
+<section class="f" id="s6" data-screen-label="06 Feedback">
+<div class="sec">06 · §4.2.3 FEEDBACK SURFACES</div><h2>Feedback surfaces</h2><p class="sub">Scrim, hairline and surfaceHigh carry elevation. Sheets and dialogs animate in at 200 ms.</p>
+<h3>Modal / Sheet · bottom sheet and centered dialog</h3>
+<div class="row" style="gap:24px">
+<div class="ph" style="height:340px"><div class="panel" style="padding:14px"><span class="n" style="font-size:16px">Bid 7 · ♠</span></div><div class="scrim"></div><div class="sheet"><div class="gr"></div><div class="ttl">Choose trump</div><p class="note" style="margin-bottom:14px">Pick the suit for this round.</p><div class="row" style="gap:8px"><span class="chip">♣</span><span class="chip red">♦</span><span class="chip red">♥</span><span class="chip on">♠</span><span class="chip sans">SANS</span></div></div></div>
+<div class="ph" style="height:340px"><div class="panel" style="padding:14px"><span class="n" style="font-size:16px">Round 4 · 00:27</span></div><div class="scrim"></div><div class="dlg"><div class="ttl">Leave this match?</div><p class="note" style="margin-bottom:16px">Your seat will be filled by a bot.</p><div class="row" style="gap:10px;flex-wrap:nowrap"><button class="btn s" style="flex:1;min-width:0">Stay</button><button class="btn d fill" style="flex:1;min-width:0">Leave</button></div></div></div>
+</div>
+<h3>Vote Panel · open · passed · failed · disabled</h3>
+<div class="row" id="votes" style="gap:20px"></div>
+<p class="note" style="margin-top:10px">Vote tokens: affirm (#69C87E) for yes, error for no, pill/inkFaint for disabled or already voted. The Vote Kick title is tagged RANKED and RANK-DOWN. It is not rendered in Unranked or Room. No voice control appears in any panel.</p>
+<h3>Banner / Inline · Toast · Stat Tile · Empty / Loading</h3>
+<div class="row" style="gap:24px">
+<div class="cell" style="gap:10px"><div class="bnr i"><i class="ic">i</i><div><b>Waiting for players</b><br>2 of 4 seats filled.</div></div><div class="bnr w"><i class="ic">!</i><div><b>Connection unstable</b><br>Reconnecting in <span class="n">5</span> s.</div></div><div class="bnr e"><i class="ic">×</i><div><b>Couldn’t join table</b><br>Seat taken. Try again.</div></div></div>
+<div class="cell" style="gap:12px"><span class="toast"><b class="n" style="color:var(--gold)">+12</b>Bid made</span><span class="toast" style="border-color:var(--error)"><span style="color:var(--error)">Player disconnected</span></span>
+<div class="row" style="gap:12px"><div class="stat"><div class="l">Score</div><div class="v">1,240</div><div class="d">+85</div></div><div class="stat"><div class="l">Tricks</div><div class="v">7<span style="color:var(--inkFaint)">/13</span></div></div></div></div>
+<div class="cell" style="gap:12px"><div class="empty"><div class="ttl">No tables yet</div><p>Create one to start playing.</p><button class="btn s" style="min-height:48px;margin-top:6px">Create table</button></div><div class="empty" style="gap:14px"><span class="spin g" style="width:28px;height:28px"></span><div class="sk" style="width:200px"></div><div class="sk" style="width:140px"></div></div></div>
+</div>
+</section>
+
+<section class="f" id="s7" data-screen-label="07 Gap resolutions">
+<div class="sec">07 · §4.1.4 GAPS 1–4</div><h2>Gap resolutions</h2><p class="sub">Each block shows the decision and the reasoning.</p>
+<div class="res">
+<div class="blk"><h4>1 · King vs Koz</h4>
+<div class="row" style="gap:20px;align-items:center"><div class="cell"><span class="cap">REJECTED · gold vs goldDim</span><div class="row" style="gap:8px"><span class="badge king"><svg width="18" height="14" viewBox="0 0 18 14"><path d="M1 12 L2.5 3 L6.5 7.5 L9 1.5 L11.5 7.5 L15.5 3 L17 12 Z" fill="#0D0A07"/></svg>KING</span><span class="badge kozold">KOZ</span></div></div><div class="cell"><span class="cap">ADOPTED · gold crown vs koz shield</span><div class="row" style="gap:8px"><span class="badge king"><svg width="18" height="14" viewBox="0 0 18 14"><path d="M1 12 L2.5 3 L6.5 7.5 L9 1.5 L11.5 7.5 L15.5 3 L17 12 Z" fill="#0D0A07"/></svg>KING</span><span class="badge koz"><svg width="14" height="16" viewBox="0 0 14 16"><path d="M7 1 L13 3.5 V8 C13 11.5 10 14 7 15 C4 14 1 11.5 1 8 V3.5 Z" fill="none" stroke="#9C8FD0" stroke-width="1.8"/></svg>KOZ</span></div></div></div>
+<div class="row" style="gap:12px"><span class="cap">At table scale (blur):</span><div style="filter:blur(2.5px);display:flex;gap:8px"><span class="badge king">KING</span><span class="badge kozold">KOZ</span></div><div style="filter:blur(2.5px);display:flex;gap:8px"><span class="badge king">KING</span><span class="badge koz">KOZ</span></div></div>
+<p class="why"><b>Decision: introduce a distinct Koz token, koz #9C8FD0.</b> gold and goldDim share one amber hue and differ only in lightness, so in peripheral vision both read as “gold badge”. The cool lavender sits opposite amber on the hue wheel, passes 4.5:1 on all three grounds, and the badge also changes shape (filled crown pill vs outlined shield). Separation does not rely on colour alone. goldDim stays in the system for dim rings and borders.</p>
+<p class="why"><b>Constraint for the Ranked pass (§4.3.9):</b> gold #E8A33D is the Match-King badge. If the Koz token is not approved, goldDim #A8742A is the Koz badge. Either way the future Gold tier must not reuse the crown glyph or gold-for-King semantic, or “Gold” collapses into “King” on one seat. Rank King (19th rung, no divisions) and Match King (first place in one match) are different things; never render King as III/II/I.</p></div>
+<div class="blk"><h4>2 · Timer ring states</h4><div id="rg2" class="row" style="gap:36px"></div>
+<p class="why"><b>Running</b> 3 dp gold arc, drains clockwise. <b>Low-time</b> 6 dp error arc, 4 ticks, pulse. <b>Expired</b> 3 dp dashed inkFaint ring, no arc, static. Stroke weight and pattern change, so the state reads in peripheral vision with the digits hidden (right-hand set). The low threshold is 5 s; the pulse is 600 ms and stops on expiry.</p></div>
+<div class="blk"><h4>3 · Vote language</h4><div class="row" style="gap:10px;flex-wrap:nowrap"><button class="btn yes" style="min-width:0;flex:1">Yes · <span class="n">3</span></button><button class="btn no2" style="min-width:0;flex:1">No · <span class="n">1</span></button><button class="btn neu" style="min-width:0;flex:1">Voted</button></div>
+<p class="why"><b>One affirmative accent: affirm #69C87E</b> (the web client’s legal-move green). <b>Negative: error</b> (#F25555 passes as text and fill). <b>Neutral and disabled: pill ground with inkFaint.</b> Gold is reserved for primary actions and selection, so a gold button never means “vote yes”. Labels always carry the word, so colour is secondary.</p></div>
+<div class="blk"><h4>4 · Card back</h4><div class="row" style="gap:16px"><div id="bk3"></div><div id="bk4"></div></div>
+<p class="why">Owner direction: blue-gold, no green felt. Back uses backBlue #12284A with backBlueHi #244B7E lattice highlights and a goldDim/gold frame, drawn in SVG so it scales from the 52 dp hand to the 34 dp trick pile. In peripheral vision it separates from the ivory face by ground value alone.</p></div>
+<div class="blk" style="grid-column:1/-1"><h4>5 · Primary button gradient <span class="tag" style="color:var(--gold)">RESOLVED · documented 3-stop + Gold-chip label</span></h4>
+<p class="why">Roadmap §4.1.1 documents <b>#FFF3DA → #E8A33D → #1A1208 at 160°</b>, and that gradient is kept exactly as specified. Because <b>onPrimary is black</b>, no single label colour passes along it (black on #1A1208 = 1.13), so the approved treatment keeps all three stops and sits the label on a solid Gold chip — black on Gold 9.74 — letting the chip carry contrast while the gradient remains as the button’s rim. This is how <b>Button / Primary</b> in region 03 now renders.</p>
+<div id="gd" class="row" style="gap:28px"></div><table id="gdt" style="margin-top:8px"><thead><tr><th>PAIR</th><th>FOREGROUND</th><th>BACKGROUND</th><th>RATIO</th><th>RESULT</th></tr></thead><tbody></tbody></table></div>
+<div class="blk" style="grid-column:1/-1"><h4>6 · redSuit <span class="tag" style="color:var(--gold)">RESOLVED · #E0545B</span></h4>
+<p class="why">The red suit appears on the ivory card face and as a glyph on near-black surfaces (bid summaries, suit chips), so one token must serve both. No single red passes 4.5:1 on both grounds; the corner index is ≥16 dp at weight 700, so the 3:1 large-text standard applies there. <b>#E0545B is adopted as the single redSuit token</b> — 3.34 on ivory (passes 3:1) and 4.61 / 5.25 on the dark grounds (passes 4.5). Cards (<span class="n">.card.r</span>) and suit chips (<span class="n">.chip.red</span>) now read the same <span class="n">--redSuit</span> custom property.</p>3252C as a placeholder.</p>
+<div id="rs" class="row" style="gap:20px"></div></div>
+</div>
+<div class="warn" style="margin-top:28px"><b>New tokens approved with this foundation:</b> koz #9C8FD0, affirm #69C87E, redSuit #E0545B (unified across cards and suit chips), backBlue #12284A, backBlueHi #244B7E. Native Error #F25555 passes as text; errorText is removed. <b>Deferred:</b> tier-token system (§4.1.4 item 5, §4.3.9, E6b-gated), S36 Create Game (E7-gated), all §4.3 artboards, §4.4 wiring. Lobby S05 and Waiting Room S08 untouched.</div>
+</section>
+
+<section class="f" id="s8" data-screen-label="08 Provenance">
+<div class="sec">08 · PROVENANCE</div><h2>Provenance</h2><p class="sub">Every native value is taken from the owner-supplied EstemshanTheme.kt list. Web-only tokens are labelled as such. The Kotlin file itself was not read by this pass, so the owner list is the source; anything else is UNVERIFIED.</p>
+<table id="pv"><thead><tr><th>TOKEN</th><th>VALUE</th><th>SOURCE</th><th>KOTLIN NAME</th><th>STATUS</th></tr></thead><tbody></tbody></table>
+</section>
+
+<script>
+const $=s=>document.querySelector(s),css=n=>getComputedStyle(document.documentElement).getPropertyValue('--'+n).trim();
+const T=[['bg','Background','owner list (EstemshanTheme.kt)','VERIFIED (owner)'],['surface','Surface','owner list (EstemshanTheme.kt); web calls it --panel','VERIFIED (owner)'],['surfaceHigh','SurfaceHigh','owner list (EstemshanTheme.kt)','VERIFIED (owner)'],['gold','Gold','owner list (EstemshanTheme.kt)','VERIFIED (owner)'],['goldDim','GoldDim','owner list (EstemshanTheme.kt)','VERIFIED (owner)'],['ink','Ink','owner list (EstemshanTheme.kt)','VERIFIED (owner)'],['inkDim','InkDim','owner list (EstemshanTheme.kt)','VERIFIED (owner)'],['error','Error','owner list (EstemshanTheme.kt); web #C14026 not used','VERIFIED (owner)'],['onPrimary','onPrimary = Color.Black','owner list (EstemshanTheme.kt); primary-button label','VERIFIED (owner)'],['pill','—','roadmap §4.1 only; not in Kotlin; web-only #1D1A16','WEB-ONLY, native work scheduled'],['inkFaint','—','roadmap §4.1 only; not in Kotlin; #8A8272','WEB-ONLY, native work scheduled'],['goldHi','—','roadmap §4.1 only; not in Kotlin. Value #F4B860 is from the web client','WEB-ONLY, value UNVERIFIED'],['redSuit','—','roadmap §4.1 only; not in Kotlin. Resolved to #E0545B, unified across cards and suit chips','WEB-ONLY, RESOLVED #E0545B'],['panelLine','—','web client, rgba(255,240,210,.07), kept as alpha','UNVERIFIED'],['cardIvory','—','web client table-system.css','UNVERIFIED'],['cardInk','—','web client table-system.css','UNVERIFIED'],['glow','—','web client .6','UNVERIFIED'],['affirm','—','approved with this foundation; reuses web legal-move green','APPROVED'],['koz','—','approved with this foundation','APPROVED'],['backBlue','—','approved with this foundation','APPROVED'],['backBlueHi','—','approved with this foundation','APPROVED']];
+const tagOf=s=>/VERIFIED \(/.test(s)?'NATIVE':/WEB-ONLY/.test(s)?'WEB-ONLY':/APPROVED/.test(s)?'APPROVED':/PROPOSED/.test(s)?'PROPOSED':'UNVERIFIED';
+const SW=['bg','surface','surfaceHigh','gold','goldDim','ink','inkDim','error','onPrimary','pill','inkFaint','goldHi','redSuit','affirm','koz','backBlue','backBlueHi','cardIvory'];
+$('#sw').innerHTML=SW.map(n=>{const s=T.find(t=>t[0]==n);return `<div class="sw"><i style="background:var(--${n})"></i><div><b>${n}</b>${css(n).toUpperCase()}<br><span style="color:var(--inkFaint)">${s?tagOf(s[3]):'UNVERIFIED'}</span></div></div>`}).join('');
+const hx=h=>{h=h.replace('#','');return[0,2,4].map(i=>parseInt(h.substr(i,2),16))},L=h=>{const c=hx(h).map(v=>{v/=255;return v<=.03928?v/12.92:Math.pow((v+.055)/1.055,2.4)});return .2126*c[0]+.7152*c[1]+.0722*c[2]},cr=(a,b)=>{const x=L(a),y=L(b);return(Math.max(x,y)+.05)/(Math.min(x,y)+.05)};
+const G=['bg','surface','surfaceHigh'].map(css),cell=(r)=>`<td class="${r>=4.5?'ok':'no'}">${r.toFixed(2)} ${r>=4.5?'pass':'fail'}</td>`;
+const notes={ink:'',inkDim:'',inkFaint:'web-only; do not darken',gold:'',goldDim:'FAILS on surfaceHigh. Koz-border and dim-ring colour; not body text on raised panels',error:'passes as fill, border and text. errorText removed',affirm:'approved',koz:'approved'};
+let rows=['ink','inkDim','inkFaint','gold','goldDim','error','affirm','koz'].map(n=>{const h=css(n);return`<tr><td><span class="chipdot" style="background:${h}"></span>${n}</td><td>${h.toUpperCase()}</td>${G.map(g=>cell(cr(h,g))).join('')}<td>${notes[n]||''}</td></tr>`});
+$('#ct tbody').innerHTML=rows.join('');
+const P=[['black on #FFF3DA (gradient light stop)','#000000','#FFF3DA'],['black on Gold (gradient mid stop)','#000000','#E8A33D'],['black on #1A1208 (gradient dark stop)','#000000','#1A1208'],['black on #7A5A1A (previous substitution)','#000000','#7A5A1A'],['Ink on #1A1208 (option A label)','ink','#1A1208'],['Ink on Gold (option A label)','ink','#E8A33D'],['Ink on #FFF3DA (option A label)','ink','#FFF3DA'],['GoldDim on light Ink','goldDim','ink'],['Error on light Ink','error','ink'],['Gold on light Ink','gold','ink'],['Gold on backBlue (card-back lozenge)','gold','backBlue'],['cardInk on cardIvory','cardInk','cardIvory'],['bg label on Error fill','bg','error'],['bg on affirm','bg','affirm'],['koz on bg','koz','bg']];
+const prow=([t,a,b])=>{const A=a[0]=='#'?a:css(a),B=b[0]=='#'?b:css(b),r=cr(A,B);return`<tr><td>${t}</td><td>${A.toUpperCase()}</td><td>${B.toUpperCase()}</td><td>${r.toFixed(2)}</td><td class="${r>=4.5?'ok':'no'}">${r>=4.5?'pass':'fail'}</td></tr>`};
+$('#ct2 tbody').innerHTML=P.map(prow).join('');
+const G3='linear-gradient(160deg,#FFF3DA,#E8A33D,#1A1208)',G2='linear-gradient(160deg,#FFF3DA,#E8A33D)';
+const col=(t,cap,btn)=>`<div class="cell" style="width:300px;gap:10px"><span class="tag">${t}</span><div style="padding:24px;background:var(--surface);border-radius:12px;display:flex;justify-content:center;width:100%">${btn}</div><span class="cap" style="max-width:290px;line-height:1.5">${cap}</span></div>`;
+const rr=(a,b)=>cr(a,b).toFixed(2);
+$('#gd').innerHTML=col('DOCUMENTED · black label','Considered. Black label: 19.08 light end, 9.74 mid, 1.13 dark end. Fails where the gradient darkens.',`<button class="btn p" style="background:${G3};min-width:200px">PLACE BID</button>`)
++col('A1 · documented, Ink label','Considered. Ink label: '+rr('#F0EADA','#1A1208')+' at dark end, '+rr('#F0EADA','#E8A33D')+' at Gold, '+rr('#F0EADA','#FFF3DA')+' at light end. Fails across the light two-thirds.',`<button class="btn p" style="background:${G3};color:var(--ink);min-width:200px;box-shadow:none">PLACE BID</button>`)
++col('A2 · ADOPTED · label on gold chip','Shipped. Keeps all three documented stops; the label sits on a solid Gold chip: black on Gold 9.74. The chip carries contrast; the gradient is decoration.',`<button class="btn p" style="background:${G3};min-width:220px;box-shadow:none;padding:0 8px"><span style="background:var(--gold);color:#000;border-radius:8px;padding:8px 22px">PLACE BID</span></button>`)
++col('B · clamped at Gold, black label','Considered. Gradient #FFF3DA → #E8A33D, never darker than Gold. Black label 19.08 → 9.74 throughout. Rejected: it does not keep the documented stops.',`<button class="btn p" style="background:${G2};min-width:200px">PLACE BID</button>`);
+$('#gdt tbody').innerHTML=P.slice(0,7).map(prow).join('');
+const crown='<svg width="18" height="14" viewBox="0 0 18 14"><path d="M1 12 L2.5 3 L6.5 7.5 L9 1.5 L11.5 7.5 L15.5 3 L17 12 Z" fill="#0D0A07"/></svg>';
+const AV=[['idle','S','idle',''],['active turn','N','active',''],['bot controlled','E','bot','BOT'],['inactive','W','inactive','zz'],['disconnected','S','disc','!'],['kicked','E','kicked','×'],['is you','S','you','']];
+$('#avs').innerHTML=AV.map(([l,i,c,m])=>`<div class="cell" style="align-items:center"><div class="av ${c}"><div class="face">${i}</div>${m?`<span class="mk">${m}</span>`:''}${c=='you'?'<span class="tg">YOU</span>':''}</div><span class="cap">${l}</span></div>`).join('');
+function ring(st,sz,inner,dg){const w=st=='low'?6:3,r=(sz-w)/2-1,c=2*Math.PI*r,s=sz/2;let g=`<circle cx="${s}" cy="${s}" r="${r}" fill="none" stroke="rgba(255,240,210,.12)" stroke-width="${st=='exp'?3:w}" ${st=='exp'?'stroke-dasharray="3 5" stroke="#8A8272"':''}/>`;
+if(st=='run')g+=`<circle class="arc" cx="${s}" cy="${s}" r="${r}" fill="none" stroke="#E8A33D" stroke-width="3" stroke-linecap="round" stroke-dasharray="${c*.7} ${c}" transform="rotate(-90 ${s} ${s})"/>`;
+if(st=='low'){g+=`<circle class="arc" cx="${s}" cy="${s}" r="${r}" fill="none" stroke="#F25555" stroke-width="6" stroke-dasharray="${c*.18} ${c}" transform="rotate(-90 ${s} ${s})"/>`;for(let k=0;k<4;k++){const a=k*Math.PI/2;g+=`<line x1="${s+Math.sin(a)*(r+4)}" y1="${s-Math.cos(a)*(r+4)}" x2="${s+Math.sin(a)*(r-4)}" y2="${s-Math.cos(a)*(r-4)}" stroke="#F25555" stroke-width="2"/>`}}
+return`<div class="ring ${st}" style="width:${sz}px;height:${sz}px"><svg width="${sz}" height="${sz}">${g}</svg>${inner||''}<span class="dg" style="${dg?'':'display:none'}">${dg||''}</span></div>`}
+const RS=[['run','running','00:21'],['low','low-time','00:04'],['exp','expired','00:00']];
+$('#rings').innerHTML=RS.map(([s,l,d])=>`<div class="cell" style="align-items:center">${ring(s,84,'<div class="av '+(s=='exp'?'inactive':s=='run'?'active':'')+'" style="width:56px;height:56px"><div class="face" style="width:48px;height:48px;font-size:20px">N</div></div>')}<span class="cap">wrap · ${l}</span></div>`).join('')+RS.map(([s,l,d])=>`<div class="cell" style="align-items:center">${ring(s,48,'',d.slice(3))}<span class="cap">inline · ${l}</span></div>`).join('');
+$('#rg2').innerHTML=RS.map(([s,l,d])=>`<div class="cell" style="align-items:center">${ring(s,64,'',d.slice(3))}<span class="cap">${l}</span></div>`).join('')+'<span style="width:1px;height:60px;background:var(--panelLine)"></span>'+RS.map(([s,l])=>`<div class="cell" style="align-items:center">${ring(s,64,'')}<span class="cap">no digits</span></div>`).join('');
+const SE=[['N','Salma',0,'active'],['E','Omar',1,'bot'],['S','You',0,'you'],['W','Lina',2,'']];
+$('#seats').innerHTML=SE.map(([p,n,k,c],i)=>`<div class="seat ${c=='active'?'act':''}"><span class="cap">${p} seat</span><div class="av ${c}"><div class="face">${n[0]}</div>${c=='bot'?'<span class="mk">BOT</span>':''}${c=='you'?'<span class="tg">YOU</span>':''}</div><div class="nm" style="margin-top:${c=='you'?8:0}px">${n}</div><div class="st"><span>Bid <b>${[7,3,'–',2][i]}</b></span><span>Tr <b>${[4,1,0,2][i]}</b></span></div>${i==0?`<span class="badge king">${crown}KING</span>`:i==3?'<span class="badge koz"><svg width="14" height="16" viewBox="0 0 14 16"><path d="M7 1 L13 3.5 V8 C13 11.5 10 14 7 15 C4 14 1 11.5 1 8 V3.5 Z" fill="none" stroke="#9C8FD0" stroke-width="1.8"/></svg>KOZ</span>':''}</div>`).join('');
+const R=['2','3','4','5','6','7','8','9','10','J','Q','K','A'],S=[['♣',0],['♦',1],['♥',1],['♠',0]];
+const card=(r,s,x='',w=56)=>s=='SANS'?`<div class="card sans ${x}" style="--cw:${w}px"><div class="ix">SANS</div><div class="pp" style="right:50%;transform:translateX(50%);font-size:${w*.5}px">✦</div></div>`:`<div class="card ${S[s][1]?'r':''} ${x}" style="--cw:${w}px"><div class="ix">${r}<s>${S[s][0]}</s></div><div class="pp">${S[s][0]}</div></div>`;
+const back=(x='',w=56)=>`<div class="card back ${x}" style="--cw:${w}px"><svg viewBox="0 0 56 78" preserveAspectRatio="none"><defs><pattern id="lt${w}${x.replace(/\W/g,'')}" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><path d="M0 0H14M0 0V14" stroke="#A8742A" stroke-width=".7" opacity=".55" fill="none"/></pattern></defs><rect width="56" height="78" fill="#12284A"/><rect width="56" height="78" fill="url(#lt${w}${x.replace(/\W/g,'')})"/><rect x="4" y="4" width="48" height="70" rx="4" fill="none" stroke="#E8A33D" stroke-width="1.2"/><rect x="7" y="7" width="42" height="64" rx="3" fill="none" stroke="#244B7E" stroke-width="1"/><g transform="translate(28 39)"><path d="M0-15L10 0 0 15-10 0Z" fill="#12284A" stroke="#E8A33D" stroke-width="1.4"/><path d="M0-8L5 0 0 8-5 0Z" fill="#E8A33D"/></g></svg></div>`;
+$('#faces').innerHTML=S.map(([_,i])=>`<div class="row" style="gap:6px;margin-bottom:8px;flex-wrap:nowrap">${R.map(r=>card(r,i,'',54)).join('')}</div>`).join('')+`<div class="row" style="gap:12px;align-items:center;flex-wrap:nowrap">${card('','SANS','',54)}<span class="cap">SANS · no-trump face</span></div>`;
+$('#cst').innerHTML=[['face',card('A',3)],['back',back()],['dimmed',card('A',3,'dim')],['disabled (illegal)',card('A',3,'dis')],['played · winner',card('A',3,'win')],['legal · lifted',card('A',3,'lift')],['spent ghost',card('A',3,'ghost')]].map(([l,h])=>`<div class="cell" style="align-items:center;padding-top:10px">${h}<span class="cap">${l}</span></div>`).join('');
+$('#bk1').innerHTML=back('',112);$('#bk2').innerHTML=back('',56);$('#bk3').innerHTML=back('',84);$('#bk4').innerHTML=back('',52);
+const H=[[3,0],[3,1],[2,0],[2,2],[1,0],[1,2],[0,3],[0,1],[3,3],[2,3],[1,3],[0,0],[0,2]].map(([a,b],i)=>[R[[12,10,7,5,3,1,11,8,4,9,0,6,2][i]],[0,1,2,3][(i*3)%4]]);
+const hand=(f)=>`<div class="hand">${H.map((c,i)=>card(c[0],c[1],f(i))).join('')}</div>`;
+const legal=i=>[1,4,5,9].includes(i);
+const ctx=[['S12–S15 · Bidding','<div class="table-strip"><span>Bid <b class="n">7</b> ♠ · your turn · <b class="n">00:21</b></span></div>',hand(()=>'')],
+['S19–S22 · Table · your turn','<div class="table-strip">'+card('K',1,'',34)+card('9',1,'',34)+back('',34)+'<span>lead ♦</span></div>',hand(i=>legal(i)?'lift':'dis')],
+['S19–S22 · Table · waiting','<div class="table-strip">'+card('K',1,'',34)+card('9',1,'',34)+back('',34)+back('',34)+'</div>',hand(()=>'')],
+['RESOLVING · 900 ms','<div class="table-strip">'+card('K',1,'win',34)+card('9',1,'',34)+card('4',1,'',34)+card('A',2,'',34)+'<span style="margin-left:6px">N wins</span></div>','<div class="hand dimmed">'+H.map((c,i)=>card(c[0],c[1],'')).join('')+'</div>'],
+['Round DONE','<div class="table-strip"><span>Round complete · <b class="n">+85</b></span></div>','<div class="hand">'+'<div class="card ghost" style="--cw:52px"></div>'.repeat(13)+'</div>']];
+$('#hands').innerHTML=ctx.map(([l,t,h])=>`<div class="cell"><span class="tag">${l}</span><div class="ph" style="padding:12px 14px 10px">${t}${h}</div></div>`).join('');
+const vp=(t,sub,y,x,st,tag)=>`<div class="cell"><div class="vote"><div class="hd"><span class="ttl" style="font-size:18px;margin:0">${t}</span><span class="tag">${tag}</span></div><div class="q">${sub}</div><div class="tl">${[0,1,2].map(i=>`<i class="${i<y?'y':i<y+x?'x':''}"></i>`).join('')}</div><div class="cnt"><span style="color:var(--affirm)">Yes ${y}</span><span style="color:var(--error)">No ${x}</span><span style="color:var(--inkDim)">Need 2/3</span></div><div class="ac">${st}</div></div></div>`;
+$('#votes').innerHTML=vp('Vote Kick','Remove Omar from this match?',1,0,'<button class="btn yes">Yes</button><button class="btn no2">No</button>','RANKED · RANK-DOWN')+vp('Vote Kick','Remove Omar from this match?',2,0,'<button class="btn neu" style="flex:1">Passed · Omar removed</button>','PASSED')+vp('Vote Kick','Remove Omar from this match?',0,2,'<button class="btn neu" style="flex:1">Failed · Omar stays</button>','FAILED')+vp('Vote Kick','Remove Omar from this match?',1,0,'<button class="btn neu">Yes</button><button class="btn neu">No</button>','VOTED');
+$('#pv tbody').innerHTML=T.map(([n,k,w,st])=>`<tr><td>${n}</td><td>${css(n).toUpperCase()}</td><td>${w}</td><td class="n" style="font-size:13px">${k}</td><td class="${/VERIFIED \(|APPROVED|RESOLVED/.test(st)?'ok':'no'}">${st}</td></tr>`).join('')+`<tr><td>Typography</td><td>Marcellus · Saira · Spline Sans Mono</td><td>web client</td><td class="n">—</td><td class="no">UNVERIFIED</td></tr><tr><td>Radii / motion</td><td>8·12·16·20 / 120·200·900 ms</td><td>brief §4.1</td><td class="n">—</td><td class="no">UNVERIFIED</td></tr>`;
+{const th=(r,g)=>{const x=cr(r,g);return x>=4.5?'pass 4.5':x>=3?'pass 3:1 only':'fail'};
+$('#rs').innerHTML=[['#E0545B','ADOPTED · unified redSuit',1],['#E57373','roadmap documented value',0],['#B3252C','web value (v1)',0],['#C73A3A','compromise',0]].map(([c,l,ad])=>{const iv=cr(c,'#F7F1E3'),bg=cr(c,'#0D0A07');return `<div class="cell" style="width:340px;gap:10px"><span class="tag" ${ad?'style="color:var(--gold);border-color:var(--gold)"':''}>${c} · ${l}</span><div style="display:flex;gap:12px;width:100%"><div style="background:#F7F1E3;border-radius:12px;padding:16px;display:flex;gap:10px;align-items:center;flex:1;justify-content:center"><b class="n" style="color:${c};font-size:28px">A♥</b><b class="n" style="color:${c};font-size:28px">7♦</b></div><div style="background:var(--surface);border-radius:12px;padding:16px;display:flex;gap:10px;align-items:center;flex:1;justify-content:center"><b class="n" style="color:${c};font-size:28px">♥</b><span class="n" style="color:var(--ink);font-size:16px">7♦ bid</span></div></div><span class="cap" style="line-height:1.6">ivory ${iv.toFixed(2)} · ${th(c,'#F7F1E3')}<br>near-black ${bg.toFixed(2)} · ${th(c,'#0D0A07')}</span></div>`}).join('')}
+function stack(){const fs=[...document.querySelectorAll('.f')];if(fs.every(f=>!f.offsetHeight))return;let y=0;fs.forEach(f=>{f.style.top=y+'px';y+=f.offsetHeight+80})}
+stack();document.fonts.ready.then(stack);window.addEventListener('load',stack);const ro=new ResizeObserver(stack);document.querySelectorAll('.f').forEach(f=>ro.observe(f));[100,400,1000,2500].forEach(t=>setTimeout(stack,t));setInterval(stack,1500);
+</script>
+</body></html>
