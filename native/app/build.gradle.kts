@@ -171,6 +171,9 @@ dependencies {
   implementation(composeBom)
   androidTestImplementation(composeBom)
   implementation("androidx.compose.material3:material3")
+  // S28: Table-screen motion (AnimatedVisibility + animateFloatAsState).
+  // Version-aligned via the compose BOM above; purely visual, no logic.
+  implementation("androidx.compose.animation:animation")
   implementation("androidx.compose.ui:ui-tooling-preview")
 
   implementation("androidx.core:core-ktx:1.13.1")
