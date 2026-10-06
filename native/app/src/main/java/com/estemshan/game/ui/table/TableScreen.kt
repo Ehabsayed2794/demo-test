@@ -1,5 +1,12 @@
 package com.estemshan.game.ui.table
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.slideInVertically
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -22,9 +30,12 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.estemshan.engine.Card as EngineCard
@@ -41,6 +52,7 @@ import com.estemshan.engine.emitPlay
 import com.estemshan.engine.initTable
 import com.estemshan.engine.isLegal
 import com.estemshan.engine.resolveTrick
+import com.estemshan.game.ui.theme.EstemshanMotion
 import com.estemshan.game.ui.theme.EstemshanTheme
 import kotlinx.coroutines.delay
 
@@ -57,6 +69,15 @@ fun tableSuitColor(suit: Suit): Color = when (suit) {
  * trick auto-collects after a short highlight (the turn loop's
  * sweep-then-resolve, UI-side timing only — resolution itself is the
  * engine's resolveTrick via [onResolve]).
+ *
+ * S28 animations (all purely visual, driven by [state] only):
+ * - card-play transition: each new entry in state.plays enters with a
+ *   180 ms fade+slide+scale (AnimatedVisibility enter).
+ * - trick-collection sweep: during RESOLVING the row drifts toward the
+ *   winner (450 ms) while losers dim; runs *within* the 900 ms beat.
+ * - winner highlight: the winning card scales to 1.08x with a gold border.
+ * No animation gates intent: taps call onPlay synchronously, input is never
+ * disabled by animation state, and nothing awaits a frame.
  */
 @Composable
 fun TableScreen(
@@ -66,6 +87,8 @@ fun TableScreen(
   onPlay: (String, EngineCard) -> Unit,
   onResolve: () -> Unit,
 ) {
+  // The 900 ms trick-resolution beat (S28: deliberate, not a transition).
+  // The sweep/highlight animate *within* it; this delay is unchanged.
   if (state.phase == TablePhase.RESOLVING) {
     LaunchedEffect(state.trickNo) {
       delay(900)
@@ -143,20 +166,73 @@ private fun TrickArea(state: TableState) {
     Text("Lead a card", style = MaterialTheme.typography.bodyMedium)
     return
   }
-  val winner = if (state.phase == TablePhase.RESOLVING) currentWinnerId(state) else null
+  val isResolving = state.phase == TablePhase.RESOLVING
+  val winner = if (isResolving) currentWinnerId(state) else null
+  val winnerIndex =
+    state.plays.indexOfFirst { it.playerId == winner }.takeIf { it >= 0 }
+      ?: (state.plays.size / 2)
+  val centerIndex = (state.plays.size - 1) / 2f
+  // Sweep drift toward the winner's seat side; 0 when not resolving.
+  // Purely visual: runs concurrently with the 900 ms beat, never delays it.
+  val sweepShift by animateFloatAsState(
+    targetValue = if (isResolving) (winnerIndex - centerIndex) * 28f else 0f,
+    animationSpec = EstemshanMotion.floatSweepSpec(),
+  )
   Row(
-    modifier = Modifier.fillMaxWidth(),
+    modifier = Modifier.fillMaxWidth().graphicsLayer {
+      translationX = sweepShift
+    },
     horizontalArrangement = Arrangement.SpaceEvenly,
   ) {
     for (play in state.plays) {
-      PlayedCard(play, isWinner = play.playerId == winner)
+      key(play.card.id) {
+        AnimatedVisibility(
+          visible = true,
+          enter = fadeIn(EstemshanMotion.floatControlSpec()) +
+            slideInVertically(EstemshanMotion.offsetCardPlaySpec()) { it / 2 } +
+            scaleIn(EstemshanMotion.floatControlSpec(), initialScale = 0.85f),
+          exit = fadeOut(EstemshanMotion.floatSweepSpec()),
+        ) {
+          PlayedCard(
+            play = play,
+            isWinner = play.playerId == winner,
+            dimForSweep = isResolving && play.playerId != winner,
+          )
+        }
+      }
     }
   }
 }
 
 @Composable
-private fun PlayedCard(play: Play, isWinner: Boolean) {
+private fun PlayedCard(play: Play, isWinner: Boolean, dimForSweep: Boolean = false) {
+  // Winner highlight: 180 ms scale pulse + gold border. Losers dim to 45%
+  // over the 450 ms sweep. Both are graphicsLayer-only — no layout, no
+  // state, no intent gating.
+  val winnerScale by animateFloatAsState(
+    targetValue = if (isWinner) 1.08f else 1f,
+    animationSpec = EstemshanMotion.floatWinnerSpec(),
+  )
+  val sweepAlpha by animateFloatAsState(
+    targetValue = if (dimForSweep) 0.45f else 1f,
+    animationSpec = EstemshanMotion.floatSweepSpec(),
+  )
   Card(
+    modifier = Modifier.graphicsLayer {
+      scaleX = winnerScale
+      scaleY = winnerScale
+      alpha = sweepAlpha
+    }.then(
+      if (isWinner) {
+        Modifier.border(
+          2.dp,
+          MaterialTheme.colorScheme.primary,
+          RoundedCornerShape(12.dp),
+        )
+      } else {
+        Modifier
+      },
+    ),
     colors = CardDefaults.cardColors(
       containerColor = if (isWinner) {
         MaterialTheme.colorScheme.primary
@@ -184,6 +260,9 @@ private fun HandRow(state: TableState, seat: String, onPlay: ((String, EngineCar
       val legal = isLegal(state, seat, card)
       val label = "${card.rank.s}${card.suit.symbol}"
       if (onPlay != null && legal) {
+        // S28: intent fires synchronously on tap — the table enter-animation
+        // runs concurrently *after* dispatch, never ahead of it. No
+        // awaitFrame, no animation-state gate, input never disabled.
         Button(
           onClick = { onPlay(seat, card) },
           modifier = Modifier.heightIn(min = 64.dp).width(52.dp),
