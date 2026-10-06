@@ -88,6 +88,7 @@ data class BiddingState(
   val fastRound: Boolean,
   val noSuitConstraint: Boolean,
   val fastSuperResolved: Boolean,
+  val gameType: GameType = GameType.FULL,
   val actionHistory: List<BidAction>,
   val roundMultiplier: Int,
 )
@@ -100,15 +101,57 @@ private val FIXED_SUITS: List<Suit> = listOf(
   Suit.SANS, Suit.SPADES, Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS,
 )
 
-fun isFastRound(roundNumber: Int): Boolean = roundNumber >= 14
+/**
+ * GM1/GM8: the one shared model for a match's shape. MINI is FULL with two
+ * numbers changed, never a second ruleset — the 52-card deal, auction,
+ * estimates, card play, scoring, roles, and win conditions are identical.
+ * FULL is byte-for-byte the pre-GameType behaviour (GM2): every caller that
+ * keeps the [GameType.FULL] default compiles to exactly what it did before.
+ */
+enum class GameType(val baseRounds: Int, val firstFastRound: Int, val maxExtensions: Int) {
+  FULL(baseRounds = 18, firstFastRound = 14, maxExtensions = 5),
+  MINI(baseRounds = 10, firstFastRound = 6, maxExtensions = 1);
 
-fun fixedTrumpFor(roundNumber: Int): Suit = FIXED_SUITS[(roundNumber - 14) % FIXED_SUITS.size]
+  /**
+   * GM1: rounds at or past [firstFastRound] are Quick (fixed-trump) rounds.
+   * FULL keeps the legacy `>= 14` boundary; MINI starts at 6.
+   */
+  fun isFastRound(round: Int): Boolean = round >= firstFastRound
+
+  /**
+   * The extension window — FULL 14-18, MINI 6-10 (GM2/GM3). Rounds past
+   * [baseRounds] repeat the trump ladder but can never trigger an extension.
+   */
+  fun isExtensionRound(round: Int): Boolean = round in firstFastRound..baseRounds
+
+  /**
+   * The fixed trump ladder for a Quick round. [Math.floorMod] is
+   * load-bearing: Kotlin's `%` keeps the dividend's sign, so the
+   * pre-GameType indexing (`(round - 14) % FIXED_SUITS.size`) threw
+   * IndexOutOfBoundsException on any round below the ladder's start —
+   * MINI's round 6 hit `FIXED_SUITS[-3]`. floorMod maps both directions
+   * through the ladder (FULL 14→Sans … 19→Sans; MINI 6→Sans … 11→Sans)
+   * and is numerically identical to `%` for FULL's round >= 14 inputs, so
+   * the [BiddingTest] golden cases are unchanged.
+   */
+  fun fixedTrumpFor(round: Int): Suit =
+    FIXED_SUITS[Math.floorMod(round - firstFastRound, FIXED_SUITS.size)]
+}
+
+/** Legacy parameterized form — delegates to [GameType.isFastRound]. */
+fun isFastRound(roundNumber: Int, gameType: GameType = GameType.FULL): Boolean =
+  gameType.isFastRound(roundNumber)
+
+/** Legacy parameterized form — delegates to [GameType.fixedTrumpFor]. */
+fun fixedTrumpFor(roundNumber: Int, gameType: GameType = GameType.FULL): Suit =
+  gameType.fixedTrumpFor(roundNumber)
 
 fun initNormalRound(
   round: Int,
   dealer: String,
   seats: List<String> = DEFAULT_SEATS,
   multiplier: Int = 1,
+  gameType: GameType = GameType.FULL,
 ): BiddingState = BiddingState(
   round = round,
   subPhase = BiddingPhase.DASH,
@@ -127,6 +170,7 @@ fun initNormalRound(
   fastRound = false,
   noSuitConstraint = false,
   fastSuperResolved = false,
+  gameType = gameType,
   actionHistory = emptyList(),
   roundMultiplier = multiplier,
 )
@@ -136,8 +180,9 @@ fun initFastRound(
   dealer: String,
   seats: List<String> = DEFAULT_SEATS,
   multiplier: Int = 1,
+  gameType: GameType = GameType.FULL,
 ): BiddingState {
-  val fixedTrump = fixedTrumpFor(round)
+  val fixedTrump = fixedTrumpFor(round, gameType)
   return BiddingState(
     round = round,
     subPhase = BiddingPhase.ESTIMATES,
@@ -157,6 +202,7 @@ fun initFastRound(
     fastRound = true,
     noSuitConstraint = false,
     fastSuperResolved = false,
+    gameType = gameType,
     actionHistory = emptyList(),
     roundMultiplier = multiplier,
   )
@@ -672,7 +718,7 @@ private fun emitFinalEstimate(state: BiddingState, intent: BiddingIntent.FinalEs
       return EmitResult.Completed(
         done,
         BiddingOutcome(
-          trump = base.declaredTrump ?: fixedTrumpFor(state.round),
+          trump = base.declaredTrump ?: fixedTrumpFor(state.round, state.gameType),
           callerId = base.callerId,
           withPlayers = base.withPlayers,
           estimates = extractEstimates(newBids),
@@ -702,7 +748,7 @@ private fun emitFinalEstimate(state: BiddingState, intent: BiddingIntent.FinalEs
     return EmitResult.Completed(
       done,
       BiddingOutcome(
-        trump = base.declaredTrump ?: fixedTrumpFor(state.round),
+        trump = base.declaredTrump ?: fixedTrumpFor(state.round, state.gameType),
         callerId = fastCallerId,
         withPlayers = fastWith,
         estimates = extractEstimates(newBids),

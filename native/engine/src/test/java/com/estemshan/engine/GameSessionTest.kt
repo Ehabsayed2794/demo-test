@@ -112,6 +112,36 @@ class GameSessionTest {
     assertEquals(8, session.escalationCap)
   }
 
+  // ── game type (GM1/GM7: FULL by default; feeds maxRounds) ───────────
+
+  @Test
+  fun gameType_fullByDefaultAndSeedsMaxRoundsAtBaseRounds() {
+    val session = newSession()
+    // GM7: FULL + NORMAL until the UI exists; no doc wiring reaches here yet.
+    assertEquals(GameType.FULL, session.getGameType())
+    // freshSession derives the round ceiling from the type (GM2: 18 for FULL).
+    assertEquals(18, session.getRound().maxRounds)
+
+    // The setter is the seam S66/S69 will drive from the room/match doc.
+    session.setGameType(GameType.MINI)
+    assertEquals(GameType.MINI, session.getGameType())
+
+    session.setGameType(GameType.FULL)
+    assertEquals(GameType.FULL, session.getGameType())
+  }
+
+  @Test
+  fun gameType_freshSessionResetsToTheFullDefault() {
+    // A reload mid-match starts from the FULL default; the configured type
+    // is re-applied by the caller (S69 sets it from the doc before the
+    // auction), so the reset itself must not carry a stale MINI forward.
+    val session = newSession()
+    session.setGameType(GameType.MINI)
+    session.init("ranked", force = true)
+    assertEquals(GameType.FULL, session.getGameType())
+    assertEquals(18, session.getRound().maxRounds)
+  }
+
   // ── players (real only — no mock roster) ─────────────────────────
 
   @Test
