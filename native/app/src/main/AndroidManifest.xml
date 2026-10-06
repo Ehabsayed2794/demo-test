@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+  xmlns:tools="http://schemas.android.com/tools">
 
   <!-- Multiplayer is online-only (emulator in debug, Firebase in release). -->
   <uses-permission android:name="android.permission.INTERNET" />
@@ -9,6 +10,24 @@
     android:theme="@android:style/Theme.Material.NoActionBar"
     android:allowBackup="false"
     android:supportsRtl="true">
+    <!-- S25: per-build-type Crashlytics collection gate (values from the
+      crashlyticsCollectionEnabled manifestPlaceholders in
+      app/build.gradle.kts): false in debug (emulator/CI project), true in
+      qa/release (real project). -->
+    <meta-data
+      android:name="firebase_crashlytics_collection_enabled"
+      android:value="${crashlyticsCollectionEnabled}" />
+    <!-- S25: keep FirebaseModule the sole initializer. The google_app_id
+      resValue makes FirebaseOptions.fromResource() non-null, which would let
+      this auto-provider preempt MainActivity with hollow options (app id
+      only — no api key/project) and silently bypass FirebaseModule's manual
+      init, its emulator branch, and its placeholder warning. Removing it
+      preserves today's exact init order; Crashlytics still eager-initializes
+      inside the manual FirebaseApp.initializeApp via component discovery. -->
+    <provider
+      android:name="com.google.firebase.provider.FirebaseInitProvider"
+      android:authorities="${applicationId}.firebaseinitprovider"
+      tools:node="remove" />
     <activity
       android:name=".MainActivity"
       android:exported="true">
