@@ -3,6 +3,7 @@ package com.estemshan.services
 import com.estemshan.engine.BiddingIntent
 import com.estemshan.engine.Card
 import com.estemshan.engine.Deck
+import com.estemshan.engine.GameType
 import com.estemshan.engine.Play
 import com.estemshan.engine.Suit
 import com.estemshan.engine.TablePhase
@@ -151,6 +152,9 @@ class MatchService(
         players = room.players,
         creator = room.creator,
         serverTimestamp = FieldValue.serverTimestamp(),
+        // S66 (E7): the match inherits the room's configured type + mode.
+        gameType = room.gameType,
+        scoringMode = room.scoringMode,
       ))
       tx.update(roomRef, mapOf(
         "status" to RoomDoc.STATUS_IN_GAME,
@@ -564,7 +568,11 @@ class MatchService(
     reason: String,
   ): ExtendResult {
     require(matchId.isNotEmpty()) { "extendMatchRounds: matchId is required." }
-    if (!isRapidRound(completedRound)) {
+    // S66 (E7): pre-tx coarse gate over the UNION of both types' windows.
+    // FULL rejects exactly as before (same throw, same message); MINI
+    // rounds pass through to the type-aware in-tx check below, where the
+    // match's own gameType is known.
+    if (!isRapidRound(completedRound) && !isRapidRound(completedRound, GameType.MINI)) {
       throw ServiceException(INVALID_ARGUMENT,
         "extendMatchRounds: completedRound must be an integer between $RAPID_ROUND_MIN and $RAPID_ROUND_MAX.")
     }
@@ -577,6 +585,13 @@ class MatchService(
     val matchRef = matches.document(matchId)
     return runTx(db) { tx ->
       val match = readMatch(tx, matchRef) ?: return@runTx noMatchTx("extendMatchRounds")
+      // S66 (E7): type-aware window. For FULL this is exactly the pre-tx
+      // check above (same bounds, same message) — byte-identical.
+      if (!isRapidRound(completedRound, match.gameType)) {
+        return@runTx TxOutcome.Err(ServiceException(INVALID_ARGUMENT,
+          "extendMatchRounds: completedRound must be an integer between " +
+            "${match.gameType.firstFastRound} and ${match.gameType.baseRounds}."))
+      }
       if (!match.isPlayer(callingUid)) {
         return@runTx TxOutcome.Err(ServiceException(PERMISSION_DENIED,
           "extendMatchRounds: you are not a player in this match."))
@@ -585,6 +600,13 @@ class MatchService(
         return@runTx TxOutcome.Ok(ExtendResult.alreadyComplete(matchId, match.maxRounds))
       }
       if (completedRound in match.extendedRounds) {
+        return@runTx TxOutcome.Ok(ExtendResult.alreadyExtended(matchId, match.maxRounds))
+      }
+      // S66 (GM3): the extension COUNT cap — MINI allows exactly ONE
+      // extension (10 → 11 max); FULL's 14–18 window already implies five,
+      // so FULL is unchanged. Reuses the EXISTING ALREADY_EXTENDED surface,
+      // never a new reason code.
+      if (match.extendedRounds.size >= match.gameType.maxExtensions) {
         return@runTx TxOutcome.Ok(ExtendResult.alreadyExtended(matchId, match.maxRounds))
       }
       val nextVersion = match.version + 1
@@ -976,6 +998,10 @@ class MatchService(
         oldDealerFallback = oldMatch.dealer,
         serverTimestamp = FieldValue.serverTimestamp(),
         rematchOfMatchId = matchId,
+        // S66 (E7): a rematch inherits the old match's type + mode —
+        // never a client-supplied value.
+        gameType = oldMatch.gameType,
+        scoringMode = oldMatch.scoringMode,
       ))
       tx.update(voteRef, mapOf(
         "status" to VoteDoc.STATUS_NEW_MATCH_CREATED,
