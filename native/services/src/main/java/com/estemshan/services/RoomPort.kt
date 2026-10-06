@@ -1,5 +1,7 @@
 package com.estemshan.services
 
+import com.estemshan.engine.GameType
+import com.estemshan.engine.ScoringMode
 import com.estemshan.services.model.RoomDoc
 import com.estemshan.services.model.ServiceException
 
@@ -29,8 +31,17 @@ interface RoomPort {
    * Creates a private room under a fresh shareable code and seats [playerId]
    * in it. Returns the code to hand to the other players. Requires a
    * non-empty [playerId] (throws [IllegalArgumentException] otherwise).
+   *
+   * S66 (E7): the room carries its configured [gameType]/[scoringMode] so
+   * startMatch can seed the match from them. Defaults keep existing callers
+   * compiling; the :app config state supplying non-default values is S69.
    */
-  suspend fun createRoom(playerId: String, roomName: String?): String
+  suspend fun createRoom(
+    playerId: String,
+    roomName: String?,
+    gameType: GameType = GameType.FULL,
+    scoringMode: ScoringMode = ScoringMode.NORMAL,
+  ): String
 
   /**
    * Joins the room at [roomId]. A missing, closed, or full room is rejected
