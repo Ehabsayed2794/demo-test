@@ -134,6 +134,239 @@ The full design narrative, the contradiction register, and the per-screen UI imp
 
 ---
 
+## Owner amendment of record (2026-10-06): Game Type & Calculation Mode
+
+**Documentation-only. No Kotlin, no Firestore rules, no UI, no Cloud Functions have been changed.** This amendment records a FINAL owner decision set, the audit that verified it against the code, and the file-by-file plan that implements it. It changes this plan's scope, stories, and hours.
+
+The design view lives in `docs/UI_UX_ROADMAP.md` (S36, §2.4, §4b); the rules view in `docs/rules/CANONICAL_RULES.md` **Amendment A2**. This document carries the **code, architecture, security, and estimate** impact.
+
+### Decisions GM1–GM8
+
+These carry the same standing as D1–D4, V1–V5, and RD1–RD28.
+
+**Game Type**
+
+- **GM1 — Two Game Types: FULL and MINI.** FULL = 18 base rounds, rounds 14–18 Quick. MINI = 10 base rounds, rounds 1–5 normal, rounds 6–10 Quick. **Identical rules otherwise** — same 52-card deal, same auction, same estimates, same card play, same scoring, same roles, same win conditions, same flow. MINI is FULL with two numbers changed, not a second ruleset.
+- **GM2 — FULL's extension behaviour is preserved byte-for-byte.** Window stays 14–18, up to 5 extensions (18 → 23 maximum), rounds 19+ repeat the trump ladder and cannot trigger. The existing golden tests (`BiddingTest.kt:451-458`) must keep passing unaltered.
+- **GM3 — MINI allows exactly ONE extension.** Window is rounds 6–10, capped at **one extension total** (10 → 11 maximum). A second extension is rejected through the existing `ALREADY_EXTENDED` path, extended with a count guard — **not a new error surface**.
+- **GM8 — One shared GameType model; no duplication.** The engine derives base round count, first Quick Round, the fixed-trump offset, and the extension policy from a single `GameType`. FULL → 18 / 14 / up to 5; MINI → 10 / 6 / max 1. Scoring formulas stay shared and are selected through `ScoringMode`.
+
+**Calculation Mode**
+
+- **GM4 — Two Calculation Modes: NORMAL and CLASSIC.** Both formulas already exist in the engine and are **preserved unchanged** (`calculateNormalScore`, `calculateClassicScore`). The selected `ScoringMode` is wired through the session, the match document, the online flow, and the local/quick-match flow; the hard-coded `classic = false` sites are replaced by the persisted mode. Classic's escalation cap ×2 (vs Normal ×8) is already correct at `Session.kt:241-242` and must simply be reached.
+
+**Ranked interaction**
+
+- **GM5 — Ranked supports BOTH Game Types.** Ranked is **not** Full-only. `gameType` is part of ranked match creation, the persisted match state, the matchmaking state, and the RP calculation. The RD9 tier-pool rule is **orthogonal** to GameType: the server still derives the tier pool; the player's GameType choice rides along and does not narrow or widen it.
+- **GM6 — MINI Ranked RP = 50% of the FULL RP delta.** The Ranked result is computed **exactly as today first** — every modifier, every RD5 asymmetry, every threshold — and only then is the **final RP delta** multiplied by 0.5. Applies to **gains and losses** (+20 → +10, −14 → −7). **No separate Mini formula.** Thresholds, ladder, divisions, gates, progression, promotion/demotion, asymmetry, and season behaviour are **identical** between Full and Mini; nothing is compensated for the shorter match.
+- **GM7 — Defaults: FULL + NORMAL.** Joined to the RD21 defaults on S36 (MEDIUM / BALANCED / 15 s). The screen opens FULL + NORMAL every time.
+
+**Open**
+
+- **OPEN-3 — RP rounding for MINI (from GM6). CLOSED 2026-10-06: nearest integer, ties rounded AWAY FROM ZERO (symmetric).** **There was no existing RP implementation to inspect** — verified 2026-10-06: zero hits for RP / rank-points / ELO / placement / season / leaderboard across `native/` **and** `src/`, and no `functions/` directory exists. `docs/UI_UX_ROADMAP.md:2331-2334` records the same. So GM6's ×0.5 could not "respect an existing convention"; the rule is set here instead. The only in-repo precedent is `src/utils.ts:12` ("rounded half-up"), which is a **round-score** rule (Amendment A1) and does not bind RP.
+
+  **The closed rule:** RP stays an integer; after the ×0.5, round to the nearest integer with **exactly .5 rounded away from zero**, symmetrically for gains and losses.
+
+  | Full delta | ×0.5 | Rounded RP |
+  |---|---|---|
+  | +20 | +10 | **+10** (exact) |
+  | −14 | −7 | **−7** (exact) |
+  | +15 | +7.5 | **+8** |
+  | −15 | −7.5 | **−8** |
+  | +9 | +4.5 | **+5** |
+  | −9 | −4.5 | **−5** |
+
+  **The implementation trap this decision exists to catch:** `java.lang.Math.round(Double)` rounds **half up toward +∞**, so `Math.round(-7.5)` returns **−7** — asymmetric, and wrong for this decision. The correct call is **`kotlin.math.round(Double)`**, which rounds ties **away from zero** (`round(-7.5) == -8.0`), then `.toInt()`. A test asserting `−15 → −8` fails against `Math.round` and passes against `kotlin.math.round`; that asymmetry test is therefore mandatory in S47, not optional.
+
+  **Status:** closed before S47 is written, as planned. It no longer gates anything.
+
+### The audit (verified against `origin/main`, 2026-10-06)
+
+**1. Every hard-coded assumption of 18 rounds.**
+
+| Site | Form |
+|---|---|
+| `native/engine/.../Session.kt:58` | `RoundState.maxRounds: Int = 18` — the round-ceiling default |
+| `native/services/.../model/MatchModels.kt:318` | `const val DEFAULT_MAX_ROUNDS = 18` |
+| `native/services/.../MatchShapes.kt:80` | `put("maxRounds", DEFAULT_MAX_ROUNDS)` in `buildMatchFields` — the ONE match-doc writer |
+| `firestore.rules:1349` | `&& data.maxRounds == 18` in `isValidNewMatch()` |
+| `firestore.rules:480` | `&& data.maxRounds == 18` in `isValidNewRematchMatch()` |
+
+Doc prose: `UI_UX_ROADMAP.md:787, 1636`; `CANONICAL_RULES.md:21`; `01-screens.md:35`.
+
+**2. Every hard-coded assumption that Quick Rounds are 14–18.**
+
+| Site | Form |
+|---|---|
+| `native/engine/.../Bidding.kt:103` | `fun isFastRound(roundNumber: Int) = roundNumber >= 14` |
+| `native/engine/.../Bidding.kt:105` | `fixedTrumpFor(roundNumber) = FIXED_SUITS[(roundNumber - 14) % FIXED_SUITS.size]` |
+| `native/engine/.../RoundScore.kt:225` | `if (round < 14 || round > 18) return RoundExtension(false)` — extension eligibility |
+| `native/services/.../MatchShapes.kt:201` | `isRapidRound(round) = round in RAPID_ROUND_MIN..RAPID_ROUND_MAX` (14..18, from `MatchModels.kt:321-322`) |
+| `native/services/.../MatchService.kt:567` | the `isRapidRound(completedRound)` gate in `extendMatchRounds` |
+| `firestore.rules:1139` | `&& appendedRound >= 14 && appendedRound <= 18` |
+
+Consumers that inherit the boundary: `OnlineMatchViewModel.kt:512` (fast vs normal round init), `BidBrain.kt:317` (bot trump), `Bidding.kt:675` and `:705` (fast Super Call replacement trump), `RoundScore.kt:229` (the Super extension test), `ScriptedMatch.kt:225`.
+
+**3. Every extension path, and where the MINI cap is enforced.**
+
+- **`MatchService.extendMatchRounds` (`MatchService.kt:561-603`)** — the ONE place `maxRounds` ever increments. Existing guards: `isRapidRound` (:567), `isComplete` (:584), per-round idempotency `completedRound in match.extendedRounds` (:587). **There is no extension-COUNT cap today** — GM3's "Mini max 1" is a new guard here: `match.extendedRounds.size >= gameType.maxExtensions` → return `ALREADY_EXTENDED` before writing. FULL's allowance is 5, which the 14–18 window already implies; the count cap is *not* a behaviour change for FULL.
+- **`computeRoundExtension` (`RoundScore.kt:218-233`)** — decides whether a round extends at all; its `14..18` window becomes `gameType.firstFastRound..gameType.baseRounds`.
+- **`firestore.rules:1096-1141` `isValidRoundExtension()`** — the independent server-side re-check, and the enforcement that survives a malicious client. Line 1139's window becomes type-derived **and** a count cap is added: `oldData.extendedRounds.size() < (oldData.gameType == 'MINI' ? 1 : 5)`. The rules must read `gameType` off the document.
+- Client: `OnlineMatchViewModel.kt:758` reads `extension.extend` and computes `doc.maxRounds + 1`; no change needed beyond carrying the type.
+
+**4. The exact trump / fixed-suit logic that must become GameType-aware — and the crash it hides.**
+
+`Bidding.kt:105` `fixedTrumpFor(roundNumber) = FIXED_SUITS[(roundNumber - 14) % FIXED_SUITS.size]`. For **MINI round 6** this evaluates `FIXED_SUITS[(6 - 14) % 5]` = `FIXED_SUITS[-8 % 5]` = `FIXED_SUITS[-3]`. **Kotlin's `%` keeps the dividend's sign, so this is `IndexOutOfBoundsException` — a crash, not a wrong suit.** MINI cannot deal a single Quick Round until this is parameterized. The fix is `Math.floorMod(round - gameType.firstFastRound, FIXED_SUITS.size)`, which reproduces FULL exactly: 14 → Sans, 15 → Spades, 16 → Hearts, 17 → Diamonds, 18 → Clubs, 19 → Sans (`floorMod(5, 5) == 0`), satisfying every assertion at `BiddingTest.kt:451-458` unchanged. For MINI: 6 → Sans, 7 → Spades, 8 → Hearts, 9 → Diamonds, 10 → Clubs, 11 (the one extension) → Sans. The same parameterization must reach `initFastRound` (`Bidding.kt:140`), the two Super Call fallbacks (`Bidding.kt:675, 705`), `RoundScore.kt:229`, and `BidBrain.kt:317`.
+
+**5. Every place GameType must be persisted and propagated.**
+
+1. `RoomDoc.kt:8-24` + the `isValidNewRoom` allowlist (`firestore.rules:103`) — the room is created from S36, so `gameType` rides the room doc to the match.
+2. `MatchService.startMatch` (`MatchService.kt:128-165`) — today passes **no** config from the room; must read `gameType`/`scoringMode` and hand them down.
+3. `buildInitialMatchFields` / `buildMatchFields` (`MatchShapes.kt:44, 65-90`) — write `gameType` and the **derived** `maxRounds` (18 or 10).
+4. `buildRematchMatchFields` (`MatchShapes.kt:101`) — a rematch preserves the type.
+5. `MatchDoc` (`MatchModels.kt:198`) + `fromFields` (`:267+`) — parse `gameType`.
+6. `firestore.rules` `isValidNewMatch` (`:1336-1350`) and `isValidNewRematchMatch` (`:474-481`) — allowlists plus the `maxRounds == 18` hard-code (see audit point 9).
+7. `OnlineMatchViewModel` — `session.setGameType(doc.gameType)` before `initAuction`, alongside the existing `setRound(... maxRounds = doc.maxRounds)` at `:493`.
+8. `Session` — a `gameType` field feeding the `RoundState.maxRounds` default and the Quick Round boundary.
+9. **Matchmaking / Ranked (not yet built)** — `gameType` in the search request, in the server-created match, and in settlement input (GM5). Specified now so **S56 (matchmaking) and S50/S51 (settlement)** never inherit a Full-only assumption.
+10. `QuickMatchViewModel.startMatch` (`:107`) — today seeds round 1 with **no** ceiling at all; takes the type.
+
+**6. Every place ScoringMode must be persisted and propagated.**
+
+The same room → match → doc → client chain as point 5, plus:
+
+| Site | Change |
+|---|---|
+| `OnlineMatchViewModel.kt:744` | `classic = false` → `classic = session.scoringMode == ScoringMode.CLASSIC`. `escalationCap` at `:745` is **already correctly wired** and stays. |
+| `QuickMatchViewModel.kt:167` | `classic = false` → same. **Pre-existing gap fixed here:** this call site omits `escalationCap` entirely, so Classic silently keeps the Normal ×8 cap; it must pass `session.escalationCap`. |
+| `Session.freshSession()` (`Session.kt:181`) | resets `scoringMode = NORMAL` unconditionally → resets to the match's configured mode |
+| `ScriptedMatch.kt:181` | the instrumented harness already calls `setScoringMode(NORMAL)`; drives the configured mode |
+
+Both formulas themselves (`Scoring.kt:50-98`, `:100-141`) and the branch at `RoundScore.kt:157-167` are **untouched** — GM4.
+
+**7. Every Ranked / RP path that currently assumes Full-only.**
+
+**None — because no Ranked or RP path exists.** Zero RP/rank/ELO/placement/season/leaderboard code in `native/` or `src/`; no `functions/` directory (see OPEN-3). The work is therefore **making the shared substrate GameType-aware *before* S45–S58 are built**, so Ranked never acquires the assumption. The only Full-only assumptions today are in the *documents*: `UI_UX_ROADMAP.md:1636-1639` (§2.4), `:787-789` (loop counts), `:979-982` (S16), `:2470`; `CANONICAL_RULES.md:21, 58, 62, 92-93, 109`; `MatchLifecycle.md:68, 100`; `03-transactions.md:64`. Each is amended by this decision set. `UI_UX_ROADMAP.md:1658` already flagged the prerequisite independently ("`MatchDoc` has no mode field today — that is the first thing to add").
+
+**8. The exact location where the final RP delta is calculated.**
+
+**It does not exist yet.** There is no RP function, no RP field, no settlement code (see OPEN-3). So GM6's ×0.5 is recorded as an **insertion contract** for **S47 (the RP engine) and S50/S51 (settlement)** rather than a patch: compute the full Ranked result exactly as the RD4/RD5 architecture specifies — opponent strength, tier difference, outcome, placement, mixed-tier conditions, every modifier — and apply the multiplier **once, at the single authority point, after the Full-equivalent delta is final and before RP is written to the player's rank document**:
+
+```
+finalRpDelta = kotlin.math.round(fullEquivalentFinalRpDelta * (if (gameType == GameType.MINI) 0.5 else 1.0)).toInt()
+```
+
+Applied on the **backend** (RD12 correct-and-settle, RD13 idempotent settlement), never on the client, and never inside any per-round or per-component computation. **`kotlin.math.round`, not `java.lang.Math.round`** — the latter rounds −7.5 to −7 and breaks the closed rule (see OPEN-3). When `gameType == FULL` the multiplier is exactly 1.0 and `round(…).toInt()` is a no-op, so **Full's RP is bit-identical to a system with no multiplier at all**; the rounding only ever touches Mini. **S47's** settlement tests must assert both even and odd deltas in both signs (see the test plan), including the `Math.round` asymmetry test that fails against the wrong call.
+
+**9. Firestore rules changes required.**
+
+`firestore.rules` is SHA-pinned (`firestore.rules.sha256`); a rules change is a **deployment**, not just a commit, and needs the emulator suite re-run.
+
+| Function | Line | Change |
+|---|---|---|
+| `isValidNewRoom` | `:103` | add `gameType`, `scoringMode` to the `hasOnly` allowlist; accept `gameType in ['FULL','MINI']` (absent ⇒ `'FULL'`, for back-compat with rooms created before this amendment) and `scoringMode in ['NORMAL','CLASSIC']` (absent ⇒ `'NORMAL'`) |
+| `isValidNewMatch` | `:1336-1350` | add both keys to `hasOnly`; replace `data.maxRounds == 18` with a **type-derived** check: `(data.gameType == 'FULL' && data.maxRounds == 18) \|\| (data.gameType == 'MINI' && data.maxRounds == 10)`; keep `extendedRounds == []` |
+| `isValidNewRematchMatch` | `:474-481` | same allowlist + type-derived `maxRounds`; **plus** `data.gameType == oldMatch.gameType` — a rematch must inherit the type |
+| `isValidRoundExtension` | `:1139` | the `>= 14 && <= 18` window becomes type-derived (`FULL` 14–18, `MINI` 6–10) **and** add the count cap `oldData.extendedRounds.size() < (oldData.gameType == 'MINI' ? 1 : 5)` |
+
+Because absent-means-FULL back-compat is baked into the room rule, **existing rooms and matches keep working with no migration**; a Full match is byte-identical to today.
+
+**10. All roadmap / spec documents that must be amended.**
+
+1. `docs/rules/CANONICAL_RULES.md` — **Amendment A2** (the rules authority; §1 "Number of Rounds", §3 "Forced Fast Rounds", the extension-repeat note at `:109`).
+2. `docs/UI_UX_ROADMAP.md` — S36 (two new setting groups), §2.4 round-loop counts (GameType-aware), the loop-count paragraph (`:787-789`), the S16 fast-round spec (`:979-982`), §4b (GM5 Mini-in-Ranked + GM6 RP ×0.5), and the consistency-audit list.
+3. `docs/NATIVE_V1_PLAN_AND_ESTIMATE.md` — this amendment; the sunk-cost table; the E6b story table (**S47 acquires the ×0.5**, S43 and S56 acquire `gameType`); the estimate totals.
+4. `docs/architecture/MatchLifecycle.md:68, 100` and `docs/specs/03-transactions.md:64` — the 14–18 references, amended to note the type-derived boundary.
+5. `docs/architecture/FirestoreSchema.md:102` — the "up to 18 rounds" write-frequency ceiling.
+
+### Architecture: the shared GameType model
+
+```kotlin
+enum class GameType(val baseRounds: Int, val firstFastRound: Int, val maxExtensions: Int) {
+  FULL(baseRounds = 18, firstFastRound = 14, maxExtensions = 5),
+  MINI(baseRounds = 10, firstFastRound =  6, maxExtensions = 1);
+
+  fun isFastRound(round: Int): Boolean = round >= firstFastRound
+  fun isExtensionRound(round: Int): Boolean = round in firstFastRound..baseRounds
+  fun fixedTrumpFor(round: Int): Suit = FIXED_SUITS[Math.floorMod(round - firstFastRound, FIXED_SUITS.size)]
+}
+```
+
+`ScoringMode` (`Session.kt:26`) already exists and already selects the formula (`RoundScore.kt:157-167`) and the cap (`Session.kt:241-242`) — GM4 needs no new type, only wiring. **FULL preservation proof:** with `firstFastRound = 14`, `isFastRound` reduces to `round >= 14` (Bidding.kt:103), `fixedTrumpFor` reduces to the existing ladder (14→Sans … 19→Sans, satisfying `BiddingTest.kt:451-458`), `isExtensionRound` reduces to `14..18` (RoundScore.kt:225 / MatchShapes.kt:201 / firestore.rules:1139), and `maxExtensions = 5` is exactly what the 14–18 window already yields. **No FULL behaviour changes; MINI is the same code with different constants.**
+
+### File-by-file implementation plan
+
+**Phase 1 — `:engine` (S65, 10h).** New `GameType` enum (in `Bidding.kt` beside `FIXED_SUITS`, or its own file). Parameterize `isFastRound`, `fixedTrumpFor`, `initFastRound`/`initNormalRound`, and `computeRoundExtension` to take a `GameType` (kept as plain functions so `RoundScore.kt` stays I/O-free). Add `Session.gameType` feeding `RoundState.maxRounds`'s default. **No call site is changed in this phase except to pass `GameType.FULL`** — FULL stays the default everywhere until the UI exists.
+
+**Phase 2 — `:services` (S66, 12h).** `RoomDoc` + `MatchDoc` gain `gameType`/`scoringMode` (absent ⇒ FULL/NORMAL in `fromFields`, so old docs parse). `DEFAULT_MAX_ROUNDS` stays 18 as FULL's constant. `buildMatchFields` writes both fields and derives `maxRounds` from the type. `buildRematchMatchFields` inherits the old match's type. `startMatch` reads config off the room and passes it down. `extendMatchRounds` gains the `extendedRounds.size >= gameType.maxExtensions` guard, returning `ALREADY_EXTENDED`. `isRapidRound` takes the type.
+
+**Phase 3 — `firestore.rules` (S67, 6h).** The four function changes in audit point 9, with absent-means-FULL/NORMAL back-compat. Re-run the emulator suite; re-pin `firestore.rules.sha256`.
+
+**Phase 4 — `:app` (S68 + S69, 16h).** S36 gains its **fourth and fifth setting groups** — **Game Type** (Full / Mini) and **Calculation** (Normal / Classic) — using the existing `PickerRow` idiom (`ChooseLevelScreen.kt`), above the three RD21 groups, defaulting FULL + NORMAL (GM7). Config state gains `gameType`/`scoringMode`. `OnlineMatchViewModel` sets both from the doc before `initAuction` and sources `classic` from the session (`:744`). `QuickMatchViewModel` seeds the type at `:107` and passes both `classic` and `escalationCap` (`:167`).
+
+**Phase 5 — documents (4h).** CANONICAL_RULES A2, UI_UX_ROADMAP amendments, this amendment, the two architecture/spec note updates.
+
+**Sequencing consequence (the planning point):** this epic is a **prerequisite for E6b (S42–S64)** — Ranked must be GameType-aware from the first line of **S47** (the RP engine that applies GM6's ×0.5) — and for **finalizing the S36 artboard**, which now shows five groups, not three. It is scheduled **before** both.
+
+### Test plan
+
+**`:engine` (unit)**
+- **FULL golden regression (the safety net):** `BiddingTest.kt:451-458` unaltered, plus new cases asserting `GameType.FULL.fixedTrumpFor` equals the old `fixedTrumpFor` for rounds 14–23, `FULL.isFastRound` matches `round >= 14`, and `FULL.isExtensionRound` matches `14..18`. If any of these fail, FULL changed.
+- **MINI ladder:** 6 → Sans, 7 → Spades, 8 → Hearts, 9 → Diamonds, 10 → Clubs, 11 → Sans (the one extension repeating).
+- **The crash, as a test:** MINI round 6 through the old code path throws `IndexOutOfBoundsException`; through `GameType.MINI.fixedTrumpFor(6)` it returns Sans. Pin the regression.
+- **MINI extension cap:** `computeRoundExtension` returns `extend = true` for a qualifying round 6–10 with zero prior extensions, and `false` once `extendedRounds.size == 1`; FULL still extends up to 5 times (14, 15, 16, 17, 18) and never on 19+.
+- **Scoring formulas are untouched:** `ScoringTest.kt:200-202` (Classic) and the Normal suite pass without modification. `GameSessionTest.kt:102-112` already pins the escalation-cap duality — keep it green.
+
+**`:services` (unit + instrumented)**
+- `buildMatchFields` writes `maxRounds` 18 for FULL and 10 for MINI, plus both mode fields; `fromFields` parses a doc with **no** `gameType` as FULL (back-compat) and a doc with `'MINI'` as MINI.
+- `buildRematchMatchFields` copies the old match's type.
+- `extendMatchRounds`: a MINI match's **first** qualifying extension succeeds (10 → 11) and the **second** returns `ALREADY_EXTENDED` with `extended = false` — asserted on a fresh doc read, not on the returned result (`instrumented-suite-assertions`). A FULL match still reaches 23.
+- `ScriptedMatch` gains a MINI variant: 10 base rounds, Quick from 6, exactly one extension. This is the end-to-end Mini smoke test.
+
+**`firestore.rules` (emulator)**
+- A FULL match create is accepted with `maxRounds == 18`; a MINI create is accepted with `maxRounds == 10`; a MINI create claiming 18 is **denied**.
+- An extension on a MINI doc with `extendedRounds == []` is accepted; the same doc with one entry is **denied** — proving the count cap holds when the client lies.
+- A room create carrying `gameType: 'MINI'` + `scoringMode: 'CLASSIC'` is accepted; one carrying `'MEGA'` is denied.
+- The FULL paths are re-run unchanged as the regression gate.
+
+**`:app` (unit)**
+- S36 state opens FULL + NORMAL (GM7) and the two new groups are independently selectable without disturbing the RD21 trio.
+- `OnlineMatchViewModel`: a MINI doc seeds `maxRounds == 10` and resolves round 6 to `initFastRound` (not `initNormalRound`); a CLASSIC doc drives `classic = true` into `RoundScoreInput` with `escalationCap == 2`.
+- `QuickMatchViewModel`: CLASSIC now passes `escalationCap == 2` (the pre-existing gap), and a MINI quick match plays 10 rounds.
+
+**S47/S50/S51 settlement (written when E6b lands, specified now)**
+- Same Full-equivalent result, MINI delta exactly half: +20 → +10, −14 → −7.
+- **Rounding, per the closed OPEN-3 rule (nearest integer, ties away from zero):**
+  +15 → +8, −15 → −8, +9 → +5, −9 → −5. **All four tie cases are separate
+  assertions** — a tie is the only place a rounding rule can be wrong.
+- **The `Math.round` trap, as a test:** the same inputs through
+  `java.lang.Math.round` yield −7.5 → **−7** (half-up toward +∞), so a test
+  asserting `−15 → −8` fails against `Math.round` and passes against
+  `kotlin.math.round`. This test is **mandatory**, not optional — it is the
+  guard that keeps a future refactor from silently asymmetrizing Mini's losses.
+- **Full is a no-op:** with `gameType == FULL` the multiplier is exactly 1.0 and
+  the round is a no-op, asserted so Full's RP is provably bit-identical to a
+  system with no multiplier.
+- The multiplier is applied **once**, at settlement, and never in any per-round or per-component path.
+
+### Estimate impact
+
+New epic **E7 — Game Type & Calculation Mode (GM)**, placed **before** E6b:
+
+| Story | Scope | Hours |
+|---|---|---|
+| S65 | `:engine` `GameType` + parameterized fast-round/extension/trump logic + unit tests | 10 |
+| S66 | `:services` models + match/room builders + `startMatch` propagation + the MINI extension cap + tests | 12 |
+| S67 | `firestore.rules` (four functions, absent-means-FULL back-compat) + emulator re-run + re-pin | 6 |
+| S68 | S36 UI: the Game Type + Calculation groups, config state, strings | 8 |
+| S69 | `OnlineMatchViewModel` + `QuickMatchViewModel` wiring (incl. the escalationCap gap) + tests | 8 |
+| — | Documents: CANONICAL_RULES A2, UI_UX_ROADMAP, this amendment, architecture/spec notes | 4 |
+| **E7 total** | | **48** |
+
+**Totals become 1,080 pre-contingency (was 1,032) and ~1,242 after 15% (was ~1,187).** E7 does **not** add to E6b's 388h — it precedes it, and S47 absorbs the ×0.5 contract above as acceptance criteria.
+
+---
+
 ## Correction: what's actually already built (sunk, not re-estimated)
 
 Verified on `origin/main`:
@@ -149,6 +382,8 @@ Verified on `origin/main`:
 | Voice chat / WebRTC / any audio-input path | **0%** | manifest declares **only** `INTERNET` — no `RECORD_AUDIO`, no `FOREGROUND_SERVICE`; no WebRTC dep anywhere in `native/` |
 
 The critical path is **not** "write the services" — they exist. It's **wiring `:services` into `:app`** and everything platform-facing after.
+
+**2026-10-06 GM amendment — one row is missing from this table on purpose:** there is no GameType / Calculation-Mode row because **none of it is built**. The engine has one fixed 18-round structure (`Session.kt:58`, `Bidding.kt:103-105`), Classic is implemented but unreachable (`Scoring.kt:100-141` with zero production callers), and `MatchDoc` carries neither `gameType` nor `scoringMode`. That gap is epic **E7 (S65–S69)** above, and it is now on the critical path **ahead of E6b**: S63's settlement cannot apply GM6's ×0.5 to a match document that has no `gameType`.
 
 ---
 
@@ -281,8 +516,9 @@ Verified against `origin/main` before designing this — these facts drove every
 **Voice total: 158 hours** (in the Full version only — excluded from MVP; see §4).
 
 **Ranked total: 388 hours** (MVP and launch-blocking — RD25; see §F and the E6b story table).
+**GameType & Calculation total: 48 hours** (E7, S65–S69 + docs — see the 2026-10-06 amendment above; a **prerequisite** for E6b, since S43/S47/S56 consume `gameType`).
 
-**Feature total: 434 + 388 (Ranked) + 158 (voice) = 980 hours.** Adding the 12h voice store/policy deltas (§3) gives **992**; plus 40 PM = **1,032** — the number every downstream section uses. *(Before the 2026-10-05 Ranked amendment this was 592 / 604 / 644.)*
+**Feature total: 434 + 388 (Ranked) + 48 (GM) + 158 (voice) = 1,028 hours.** Adding the 12h voice store/policy deltas (§3) gives **1,040**; plus 40 PM = **1,080** — the number every downstream section uses. *(Before the 2026-10-05 Ranked amendment this was 592 / 604 / 644; before the 2026-10-06 GM amendment it was 980 / 992 / 1,032.)*
 
 ---
 
@@ -300,7 +536,7 @@ Verified against `origin/main` before designing this — these facts drove every
 | Backend development | **388** *(Ranked only)* | **Amended 2026-10-05 (RD11):** the Ranked authority layer — `functions/` module, correct-and-settle, idempotent RP application, server-side validation, placement, matchmaking pool, seasons, leaderboard. Deliberately lightweight: Cloud Functions invoked per-match, not an always-on server. `firestore.rules` stays frozen; the functions are the only legitimate Ranked write path. See §F and the appendix essay. |
 | QA / testing | 46 + 16 = 62 | JVM coverage is already excellent (12 suites, incl. the P1-3 pins). The gap is exclusively the instrumented/emulator tier. The +16 is the voice QA tier (§E), which is *counted inside the Android row above* and restated here only so QA isn't misread as shortchanged — it is not double-counted. |
 | Project management | 40 | ~7% — owner/PM overhead, store-form correspondence, account activation chasing, release coordination, **voice policy correspondence** (mic-justification + data-safety answers). |
-| **Total** | **434 + 388 (Ranked) + 158 (voice) + 12 (voice-policy) + 40 (PM) = 1,032** | *(pre-contingency; was 644 before the 2026-10-05 Ranked amendment)* |
+| **Total** | **434 + 388 (Ranked) + 48 (GM) + 158 (voice) + 12 (voice-policy) + 40 (PM) = 1,080** | *(pre-contingency; was 644 before the 2026-10-05 Ranked amendment and 1,032 before the 2026-10-06 GM amendment)* |
 
 ---
 
@@ -421,44 +657,46 @@ Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.
 
 | Scenario | Hours | Timeline | Conditions |
 |---|---|---|---|
-| **Conservative** | 1,032 + 25% = **1,290** | **~34 weeks** | Toolchain spike forces Kotlin 2.x migration; AdClock slips; bot balancing needs real playtest iteration; instrumented suite reveals a rules-fidelity bug requiring a client rework; **voice exceeds its 40h XL row** (ICE debugging on real devices is the classic 2x line); **RD26 threshold tuning takes a full playtest cycle** (R26); season-reset dry-run finds a migration defect (R27) |
-| **Realistic** | 1,032 + 15% = **1,187** | **29 weeks** | Spike stays on Kotlin 1.9.25; bots port cleanly with the SimPort seam; online wiring behaves as the JS reference did; voice mesh connects on the first 4-device attempt using a Maven-Central WebRTC republish; **the settlement layer lands on the emulator without a rules revision** (RD11's promise holds). **Recommended.** |
-| **Aggressive** | 1,032 − 10% (skip animations, minimal audio, Crashlytics only, **defer voice to v1.1**) = **929** | **~26 weeks** | Requires the toolchain spike to land clean in week 1, zero rules-fidelity surprises, and the AdMob account already activated. Voice is the cleanest single thing to cut: 170h (158 voice + 12 policy) with no gameplay dependency — **but Ranked cannot be cut (RD25), so this scenario's floor is higher than the old one's.** Cutting it maps this scenario onto the 862h no-voice baseline. Only viable if accounts are started **today** |
+| **Conservative** | 1,080 + 25% = **1,350** | **~35 weeks** | Toolchain spike forces Kotlin 2.x migration; AdClock slips; bot balancing needs real playtest iteration; instrumented suite reveals a rules-fidelity bug requiring a client rework; **voice exceeds its 40h XL row** (ICE debugging on real devices is the classic 2x line); **RD26 threshold tuning takes a full playtest cycle** (R26); season-reset dry-run finds a migration defect (R27) |
+| **Realistic** | 1,080 + 15% = **1,242** | **~30 weeks** | Spike stays on Kotlin 1.9.25; bots port cleanly with the SimPort seam; online wiring behaves as the JS reference did; voice mesh connects on the first 4-device attempt using a Maven-Central WebRTC republish; **the settlement layer lands on the emulator without a rules revision** (RD11's promise holds). **Recommended.** |
+| **Aggressive** | 1,080 − 10% (skip animations, minimal audio, Crashlytics only, **defer voice to v1.1**) = **972** | **~27 weeks** | Requires the toolchain spike to land clean in week 1, zero rules-fidelity surprises, and the AdMob account already activated. Voice is the cleanest single thing to cut: 170h (158 voice + 12 policy) with no gameplay dependency — **but neither Ranked (RD25) nor the GameType substrate (E7, a Ranked prerequisite) can be cut, so this scenario's floor is higher than the old one's.** Cutting it maps this scenario onto the 910h no-voice baseline. Only viable if accounts are started **today** |
 
 > **Voice is still the swing item — but it is no longer the only one.** It remains the only scope block that is simultaneously large (170h), non-blocking for launch, and carrying two policy surfaces. **Ranked (388h) is the new immovable block: RD25 makes it launch-blocking, so it moves the floor of every scenario.** The spread between Realistic and Aggressive is still mostly "voice or not"; the spread between this amendment and the previous plan is entirely "Ranked or not."
 
 > **Arithmetic, stated rather than hidden (2026-10-05 amendment):** all figures are recomputed from the **388h Ranked subtotal** (S42–S64, §E6b). Pre-amendment this table was 805 / 741 / 427 against 644. The old "defer voice → 474h / 13 weeks" baseline becomes **862h / ~24 weeks**, because Ranked is added to it. Do not carry the old numbers forward.
 
+> **Arithmetic, stated rather than hidden (2026-10-06 GM amendment):** all figures are recomputed again from the **48h E7 subtotal** (S65–S69 + docs, §E7 above), which lands **before** E6b because Ranked must be GameType-aware from S63's first line. The 1,032 / 1,187 / 1,290 / 862 figures above become **1,080 / 1,242 / 1,350 / 910**. Week counts scale proportionally and are rounded — the contingency percentage, not the week count, is the number with real precision. Do not carry the 2026-10-05 figures forward.
+
 ---
 
 # 9. Contingency
 
-| Contingency bucket | % of 1,032 | Hours | Why this rate |
+| Contingency bucket | % of 1,080 | Hours | Why this rate |
 |---|---|---|---|
-| Unknown requirements | 4% | 41 | **Ranked is now the largest undocumented area** (its thresholds are set but unplayed — R26) — this bucket grows with it. AI-bot scope was the previous driver (R13); voice is pinned by V1–V5 |
-| Bugs | 4% | 41 | Bot tier balance always needs more iterations than planned; **RP tuning will need a playtest cycle or two** (R26) |
-| Integration problems | 4% | 41 | The `:app`↔`:services` wiring + instrumented tier is untested territory (R8), **plus a first WebRTC integration** (R15/R16/R21), **plus a first Cloud Functions settlement layer** (R24 cold starts, R25 boundary) |
-| Rework | 2% | 21 | Toolchain decision may force a Compose-compiler migration; the WebRTC artifact choice may need swapping (R21); **a season-reset defect found in dry-run is rework by definition** (R27) |
-| Testing | 1% | 10 | Device-matrix surprises, especially RTL Arabic layouts and the speakerphone echo pass |
-| **Total contingency** | **15%** | **155** | **Conservative = 25% (258h) if the toolchain spike goes badly, voice ICE debugging runs long, or RD26 needs more than one tuning cycle** |
+| Unknown requirements | 4% | 43 | **Ranked is now the largest undocumented area** (its thresholds are set but unplayed — R26) — this bucket grows with it. AI-bot scope was the previous driver (R13); voice is pinned by V1–V5. **The GM amendment adds a second unplayed surface: MINI's pacing (10 rounds, Quick from 6) has never been played by anyone** |
+| Bugs | 4% | 43 | Bot tier balance always needs more iterations than planned; **RP tuning will need a playtest cycle or two** (R26); **MINI's one-extension cap is a new rule boundary with a rules-enforcement counterpart** (E7/S67) |
+| Integration problems | 4% | 43 | The `:app`↔`:services` wiring + instrumented tier is untested territory (R8), **plus a first WebRTC integration** (R15/R16/R21), **plus a first Cloud Functions settlement layer** (R24 cold starts, R25 boundary) |
+| Rework | 2% | 22 | Toolchain decision may force a Compose-compiler migration; the WebRTC artifact choice may need swapping (R21); **a season-reset defect found in dry-run is rework by definition** (R27) |
+| Testing | 1% | 11 | Device-matrix surprises, especially RTL Arabic layouts and the speakerphone echo pass |
+| **Total contingency** | **15%** | **162** | **Conservative = 25% (270h) if the toolchain spike goes badly, voice ICE debugging runs long, or RD26 needs more than one tuning cycle** |
 
-- **Before contingency:** **1,032 hours**
-- **After contingency (realistic):** **1,187 hours ≈ 29 weeks**
-- **After contingency (conservative):** **1,290 hours ≈ 34 weeks**
-- **If voice is deferred to v1.1:** **1,032 − 170 = 862 hours ≈ 24 weeks** — the pre-voice baseline, **now with Ranked included** (RD25 makes Ranked uncuttable)
-- *(Pre-amendment figures, for traceability only — do not carry forward: 644 / 741 / 805 / 474.)*
+- **Before contingency:** **1,080 hours**
+- **After contingency (realistic):** **1,242 hours ≈ 30 weeks**
+- **After contingency (conservative):** **1,350 hours ≈ 35 weeks**
+- **If voice is deferred to v1.1:** **1,080 − 170 = 910 hours ≈ 25 weeks** — the pre-voice baseline, **now with Ranked included** (RD25 makes Ranked uncuttable)
+- *(Pre-amendment figures, for traceability only — do not carry forward: 644 / 741 / 805 / 474 / 1,032 / 1,187.)*
 
 ---
 
 # 10. Final Executive Summary
 
-**Project scope.** Ship "Estemshan," a 4-player Egyptian trick-taking card game, as a native Android (Kotlin/Compose) app with three modes: offline vs AI bots (4 difficulty tiers + personalities), online matches with friends via room code, and offline hot-seat — plus **a full Ranked progression system** (19-rank ladder, dynamic RP, placement test, server-controlled matchmaking, 3-month seasons, seasonal leaderboard — MVP and launch-blocking per RD25), and **push-to-talk voice chat in casual rooms only** (muted by default, max 4 speakers, **never in Ranked** — RD22), fully localized in English and Arabic (EN `strings.xml` infra from S12, full `values-ar` retrofit in S41). Monetized with a single banner ad plus a one-time "Remove Ads" purchase.
+**Project scope.** Ship "Estemshan," a 4-player Egyptian trick-taking card game, as a native Android (Kotlin/Compose) app with three modes: offline vs AI bots (4 difficulty tiers + personalities), online matches with friends via room code, and offline hot-seat — plus **two selectable game options on every match** (**Game Type**: Full 18 rounds or Mini 10 rounds, Quick Rounds from 14 or 6; **Calculation**: Normal or Classic — GM1/GM4), **a full Ranked progression system** (19-rank ladder, dynamic RP, placement test, server-controlled matchmaking, 3-month seasons, seasonal leaderboard — MVP and launch-blocking per RD25, **open to both Game Types with Mini's RP delta at 50% of Full's — GM5/GM6**), and **push-to-talk voice chat in casual rooms only** (muted by default, max 4 speakers, **never in Ranked** — RD22), fully localized in English and Arabic (EN `strings.xml` infra from S12, full `values-ar` retrofit in S41). Monetized with a single banner ad plus a one-time "Remove Ads" purchase.
 
 **Where we're starting from.** The game engines, scoring, and online *service* layer are **already built and green on `main`** — including the hardest piece, reload-safe replay — and **the AI bot port is merged and wired** (`BotTier` + `BotPersonality` are reusable by Ranked placement and timeouts). Roughly **half the native v1 is done**. What's left is: wiring the online services into the app, the Ranked authority + progression layer, voice chat, and everything platform-facing.
 
 **MVP scope.** AI play + online multiplayer + **Ranked (launch-blocking)**, with monetization following as a rapid v1.0.1. Neither gameplay mode depends on ads — and neither depends on voice. **Voice is Full-version scope, deliberately outside the MVP. Ranked is not: RD25 puts it in the MVP.**
 
-**Total estimated hours.** **1,032** before contingency (434 base + **388 Ranked** + 158 voice + 12 voice-policy deltas + 40 PM), **~1,187 after** (15%). *(Pre-Ranked: 644 / ~741.)*
+**Total estimated hours.** **1,080** before contingency (434 base + **388 Ranked** + **48 GameType/Calculation (E7)** + 158 voice + 12 voice-policy deltas + 40 PM), **~1,242 after** (15%). *(Pre-Ranked: 644 / ~741; pre-GM: 1,032 / ~1,187.)*
 
 **Estimated timeline.** **29 weeks** realistic (MVP in ~20). Conservative 34 weeks if the Android toolchain forces a Kotlin migration, voice ICE debugging runs long, or RD26 threshold tuning needs extra playtest cycles. **Deferring voice to v1.1 gives a 24-week / 862-hour baseline — but Ranked stays, so the floor no longer drops to 13 weeks.**
 
@@ -522,11 +760,11 @@ One epic per phase; stories sized in hours; `S/M/L` from §2. Critical path mark
 | | S28 Compose animations (card play, trick sweep, winner) | 12 | — |
 | **E13 Release** | S29 Closed track + staged rollout + 72h Crashlytics watch | 8 | all |
 | **E6b Ranked** ⏱ | S42 `functions/` module: deploy target + emulator wiring + callable-auth + idempotency guard — lightweight (RD11/RD16) | 20 | S4 |
-| | S43 `mode` field on `MatchDoc` — **exactly `ROOM` / `RANKED`** (RD28) + separate private/password access flag + migration of in-memory mode to persisted authority | 10 | S42 |
+| | S43 `mode` field on `MatchDoc` — **exactly `ROOM` / `RANKED`** (RD28) + separate private/password access flag + migration of in-memory mode to persisted authority; **consumes `gameType`/`scoringMode` on the Ranked path (written by E7/S66 — not re-estimated here)** | 10 | S42 |
 | | S44 Ranked profile model: tier, division, RP, seasonId, highestRank, placementState, 9 stats | 14 | S43 |
 | | S45 Rank ladder definitions + Arabic title resources (EN `values`, AR `values-ar`) + rank formatting | 10 | S44 |
 | | S46 RP threshold table as tunable constants (**RD26 values closed 2026-10-05**) + rank↔RP conversion | 10 | S44 |
-| | S47 RP engine: dynamic gain/loss from RD4 inputs; tunable; unit-testable in isolation | 24 | S46 |
+| | S47 RP engine: dynamic gain/loss from RD4 inputs; tunable; unit-testable in isolation; **MINI's ×0.5 applied once to the final delta, after every RD4/RD5 input (GM6); rounding per the closed OPEN-3 — `kotlin.math.round`, ties away from zero (+15→+8, −15→−8), with the `Math.round` asymmetry test mandatory; FULL's 1.0 multiplier asserted as a no-op** | 24 | S46 |
 | | S48 Mixed-tier asymmetry (RD5) + Private ×2 cap (RD6) | 14 | S47 |
 | | S49 Demotion + one-match protection (RD7); King ceiling + leaderboard-only overflow (RD3) | 12 | S47 |
 | | S50 Settlement function: authoritative result recompute + correct-and-settle (RD12) | 26 | S42, S43 |
@@ -535,7 +773,7 @@ One epic per phase; stories sized in hours; `S/M/L` from §2. Critical path mark
 | | S53 Placement service: 3 scripted matches (Easy+Med / Med+Hard / Hard+Expert), system-controlled bots | 16 | S44 |
 | | S54 Placement scoring: engine-derived signals, 10/20/70 weights, Platinum ceiling, division lower-bound start | 20 | S53, S47 |
 | | S55 Ranked statistics accumulator: the 9 values, Public+Private, Placement excluded | 14 | S51, S44 |
-| | S56 Matchmaking: server-side eligible-pool derivation (own tier / one below), queue, search lifecycle | 30 | S44 |
+| | S56 Matchmaking: server-side eligible-pool derivation (own tier / one below), queue, search lifecycle; **`gameType` carried on the search, orthogonal to the tier pool (GM5 — the pool rule never widens or narrows for Mini)** | 30 | S44 |
 | | S57 Matchmaking anti-abuse: no client tier selection, no opt-up, pool authority (RD9) | 12 | S56 |
 | | S58 Private/Password Ranked: cross-tier allowed, password gate, Ranked integrity retained | 14 | S50, S48 |
 | | S59 Seasons: 3-month cycle, season ID, two-step reset with ladder floor, **King → Royal I**, Highest Rank preserved | 20 | S44, S49 |
@@ -545,13 +783,22 @@ One epic per phase; stories sized in hours; `S/M/L` from §2. Critical path mark
 | | S63 Abuse/edge-case coverage: forged results, replayed settlements, cross-tier injection, tie edge cases | 12 | S61 |
 | | S64 Seasonal Ranked Leaderboard: server-authoritative ordering (position, player, Tier/Rank, RP, season), King ranked by RP above the King lower bound, current player highlighted, season isolation/reset | 18 | S59 |
 | | **E6b Ranked subtotal** | **388** | |
+| **E7 GameType & Calculation** ⏱ | S65 `:engine` `GameType` enum (`baseRounds` / `firstFastRound` / `maxExtensions`); parameterize `isFastRound`, `fixedTrumpFor` (the `Math.floorMod` fix for the round-6 crash), `initFastRound`/`initNormalRound`, `computeRoundExtension`, `Session.gameType`; FULL golden regression + MINI ladder/cap tests | 10 | — |
+| | S66 `:services` — `gameType`/`scoringMode` on `RoomDoc` + `MatchDoc` (absent ⇒ FULL/NORMAL, so old docs parse); `buildMatchFields` derives `maxRounds` from the type; `buildRematchMatchFields` inherits the type; `startMatch` propagates room config; `extendMatchRounds` gains the count cap returning `ALREADY_EXTENDED` + unit tests | 12 | S65 |
+| | S67 `firestore.rules` — four function changes (room / match / rematch allowlists, type-derived `maxRounds`, Mini extension count cap), absent-means-FULL back-compat; emulator re-run + re-pin `firestore.rules.sha256` | 6 | S66 |
+| | S68 S36 Create Game UI — the **Game Type** (Full / Mini) and **Calculation** (Normal / Classic) groups atop the RD21 trio, the existing `PickerRow` idiom, config state, strings; defaults FULL + NORMAL (GM7) | 8 | S66 |
+| | S69 `OnlineMatchViewModel` + `QuickMatchViewModel` wiring — `classic` from the persisted mode (removing the two hard-coded `false`s), `escalationCap` on the quick-match path (pre-existing gap), MINI round seeding + tests | 8 | S65, S66 |
+| | Documents — `CANONICAL_RULES.md` Amendment A2, `UI_UX_ROADMAP.md` amendments, architecture/spec notes | 4 | — |
+| | **E7 GameType subtotal** | **48** | |
 | | **PM overhead** | 40 | — |
-| | **Contingency 15%** | 155 | — |
-| | **TOTAL** | **1,197** | |
+| | **Contingency 15%** | 162 | — |
+| | **TOTAL** | **1,252** | |
 
 > Story-table arithmetic, stated rather than hidden. **Pre-amendment (for traceability):** the 30 non-voice stories summed to **444h** (the 29 pre-voice stories at **432h** — a +10h decomposition granularity, since S7 is sized 26 vs its feature row's 24 and S13 is split out separately — plus S41 at **12h**) against §2's 434h feature line. The 11 voice stories summed to exactly **170h**, matching §2/§3 (158 voice + 12 policy deltas). PM (40) + 15% contingency (97) landed the table at **751**, against the §9 headline of **741** — the 10h difference was precisely that story-vs-feature drift, absorbed by contingency.
 >
 > **After the 2026-10-05 Ranked amendment:** the 23 new **E6b** stories (S42–S64) sum to exactly **388h**, matching §2's Ranked feature line (§F) with zero drift this time — the ladder, settlement, and matchmaking stories decompose cleanly against the feature rows. The table now carries 444 + 388 = **832h** non-voice stories plus **170h** voice = **1,002h** of stories; PM (40) and 15% contingency (**155**, taken on the §3 pre-contingency total of 1,032 per this table's own convention — pre-amendment it was 97 on 644) land the table at **1,197**, against the §9 headline of **1,187**. The 10h gap is exactly the pre-amendment story-vs-feature drift, unchanged in kind: the non-voice stories sum to 832h against §2's 822h non-voice feature line (+10h of decomposition granularity), and contingency amplifies it by 1.15. Stories are the *execution* view; §9 is the *estimate* view. Nothing is rounded away silently.
+>
+> **After the 2026-10-06 GM amendment:** the 5 new **E7** stories (S65–S69, plus a 4h documents row) sum to exactly **48h**, matching §2's GM feature line with zero drift. The table now carries 832 + 48 = **880h** non-voice stories plus **170h** voice = **1,050h** of stories; PM (40) and 15% contingency (**162**, on the new pre-contingency total of 1,080) land the table at **1,252**, against the §9 headline of **1,242** — the same 10h story-vs-feature drift, unchanged in kind and size. E7 is placed **after** E6b in the table only because the table is ordered by story number; **the execution order is E7 → E6b**, since S43/S47/S56 all consume `gameType`.
 >
 > **Rank-King vs Match-King, once, because it is the single easiest thing to get wrong in this amendment:** Rank King is the account's competitive ceiling (19th rung, no divisions). Match King is whoever finishes first in one match. Koz is the unique current last place in one match — not a rank at all. The `#E8A33D` gold colour in the design tokens belongs to the **Match-King badge**; the **Gold tier** must not reuse it, or "Gold" collapses into "King" in the UI.
 
@@ -716,8 +963,9 @@ Voice adds no new purchase, no new data collection, and no new server — but it
 
 ```
 RANKED SYSTEM PLANNING      — UPDATED 2026-10-05 (RD1–RD28; RD26 CLOSED, OPEN-1/OPEN-2 remain)
+GAME TYPE / CALCULATION     — ADDED 2026-10-06 (GM1–GM8, E7 S65–S69, +48h; OPEN-3 CLOSED)
 UI/UX ROADMAP               — UPDATED (§4b + contradiction register)
-CODE/ARCHITECTURE ROADMAP   — UPDATED (E6b S42–S64, R24–R29, M9–M11)
+CODE/ARCHITECTURE ROADMAP   — UPDATED (E6b S42–S64, E7 S65–S69, R24–R29, M9–M11)
 IMPLEMENTATION              — NOT STARTED
 FIGMA                       — NOT STARTED
 BATCH 2                     — NOT STARTED
@@ -725,17 +973,19 @@ BATCH 2                     — NOT STARTED
 
 **Planning only.** No code, no Kotlin/Java/TypeScript/JavaScript, no Cloud
 Functions, no Firestore rules change, no matchmaking implementation, no UI, no
-screens, no Figma. The two roadmap documents are the deliverable.
+screens, no Figma. The two roadmap documents — and, for the GM amendment,
+`docs/rules/CANONICAL_RULES.md` Amendment A2 — are the deliverable.
 
 **Where the two documents agree, and where they differ on purpose:** both carry
 the same 19-rank ladder, the same RD1–RD28 decision set, the same `mode`-first
 critical path, and the same four-tier authority model. The code roadmap owns the
-*execution* view (S42–S64, +388 h, R24–R29, M9–M11); the UI/UX roadmap owns the
+*execution* view (S42–S64 + **S65–S69**, +388 h **+48 h**, R24–R29, M9–M11); the UI/UX roadmap owns the
 *design* view (screens S45–S58, the Rank Chip and Tier Ladder components, the
 tier-token gaps, the design gates). **RD26's 19 thresholds are CLOSED in both,
 identically (2026-10-05); OPEN-1 and OPEN-2 remain open in both, identically, and
 both are non-blocking.** Neither document
-reopens a closed owner decision.
+reopens a closed owner decision. **The GM amendment (GM1–GM8) is carried in both
+identically, with A2 as the shared rule statement. **OPEN-3 — the Mini RP rounding rule — was CLOSED 2026-10-06, before S47 was written, exactly as planned: nearest integer, ties away from zero (+15 → +8, −15 → −8), implemented with `kotlin.math.round` rather than `java.lang.Math.round`.** With OPEN-3 closed, **no open item gates a Ranked story** — OPEN-1 and OPEN-2 remain open and non-blocking, and neither blocks E6b or E7.
 
 **The two small decisions the owner still owes, both on the Ranked critical path
 and both non-blocking for design work:** **OPEN-1** (reconnect after the

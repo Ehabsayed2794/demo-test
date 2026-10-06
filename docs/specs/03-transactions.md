@@ -64,6 +64,8 @@ Eligibility: fast-round Super Call (different trump) or final-round
 Sa'ayda; rounds 14–18 window only; `ALREADY_EXTENDED` idempotent.
 Any-client model (dealer-only rejected — no single point of failure).
 
+> **Game Type amendment (2026-10-06, GM2/GM3 — pointer, spec body unchanged).** The "rounds 14–18" window above is the **FULL** type. **MINI** uses rounds **6–10** and permits **exactly one extension** (a second returns `ALREADY_EXTENDED`), enforced both in `MatchService.extendMatchRounds` and in `firestore.rules`' `isValidRoundExtension()`. See `docs/rules/CANONICAL_RULES.md` **Amendment A2** and epic **E7**. This line documents the JS reference implementation, which is Full-only.
+
 ## 6. `dealRound` — `:~1991-2015`
 
 ONE transaction: `hands/p1..p4` set (13 cards each, 52 unique,

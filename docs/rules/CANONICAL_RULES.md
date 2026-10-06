@@ -18,7 +18,7 @@ This document supersedes all earlier rule sheets. Where the original specificati
 Number of Players: 4 (individual play, no partnerships).
 Deck: One complete standard deck (52 cards); 13 cards dealt to each player.
 Play Direction: Counter-clockwise.
-Number of Rounds: 18 standard rounds, plus any extension rounds created by a fast-round Super Call (see §3) or by a Sa'ayda on the final round (see §4).
+Number of Rounds: 18 standard rounds, plus any extension rounds created by a fast-round Super Call (see §3) or by a Sa'ayda on the final round (see §4). *(This is the FULL Game Type — the default. A MINI match plays 10 base rounds with Forced Fast Rounds from 6 and exactly one extension; see **Amendment A2**.)*
 Card Rank (weakest → strongest)
 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → J → Q → K → A
 Official Suit Hierarchy (strongest → weakest)
@@ -202,3 +202,44 @@ All scoring bonuses/penalties stack unless explicitly forbidden.
 - Win: **bid squared** — 8→64, 9→81, 10→100, 11→121, 12→144, 13→169. Sole winner still adds +10 (74/91/110/131/154/179).
 - Loss: **half of that, rounded half-up, flat by bid** — −32/−41/−50/−61/−72/−85 — independent of tricks taken. Sole loser takes 10 extra (−42/−51/−60/−71/−82/−95) instead of any doubling rule.
 - Everything else in Normal mode (other roles, Dash, Risk, sole-loser handling) is unchanged.
+
+---
+
+## Amendment A2 — Game Type and Calculation Mode as match options (owner decision 2026-10-06)
+
+> **Provenance:** owner decision set **GM1–GM8** (2026-10-06), recorded in `docs/NATIVE_V1_PLAN_AND_ESTIMATE.md` (epic E7, stories S65–S69) and designed in `docs/UI_UX_ROADMAP.md` (S36, §2.4, §4b). **This amendment adds a second Game Type and makes an already-implemented scoring mode selectable. It changes not one number in the rules above.**
+
+### A2.1 Game Type — FULL and MINI
+
+Two Game Types are selectable on every match, in every mode (casual rooms **and** Ranked — GM5). **MINI is not a different game. It is FULL with two numbers changed; every rule in this document applies to both identically except where A2 says otherwise.**
+
+| | FULL (the default) | MINI |
+|---|---|---|
+| Base rounds | **18** | **10** |
+| Normal rounds (full §2 phases: Avoid, Dash Call, Bidding, Confirmation, Estimates) | 1–13 | 1–5 |
+| Forced Fast Rounds (§3) | **14–18** | **6–10** |
+| Extensions | **up to 5** (18 → 23 maximum) | **exactly 1** (10 → 11 maximum) |
+
+- **The trump ladder starts Sans on the first Forced Fast Round of either type** and repeats from Sans on every extension round. Full: 14 Sans, 15 Spades, 16 Hearts, 17 Diamonds, 18 Clubs, then 19 Sans, 20 Spades, … Mini: 6 Sans, 7 Spades, 8 Hearts, 9 Diamonds, 10 Clubs, then 11 Sans — **and Mini stops there** (A2.2).
+- **Unchanged by Game Type, in both types:** 4 players, individual play, 52 cards, 13 each, 13 tricks, counter-clockwise play, dealer rotation, the minimum auction bid of 4, Super Call ≥ 8, Dash Call (max 2 players), the 13 Rule, Call Cap, Risk, With/Wazz, Sa'ayda, every scoring row, and every win condition. **MINI inherits all of it verbatim — there is no Mini-specific rule anywhere.**
+
+### A2.2 Extensions under MINI (the only structural difference)
+
+- §3's extension triggers — a fast-round Golden Super Call, and a Sa'ayda on the final round — operate exactly as written in both types, within the type's own fast window (Full 14–18, Mini 6–10).
+- **MINI permits exactly ONE extension (10 → 11 maximum).** A second extension is **rejected**; the rejection uses the existing `ALREADY_EXTENDED` outcome, so no new rule surface is introduced. **FULL is unaffected: it keeps up to 5 extensions exactly as §3 describes.**
+- Rounds past a type's ceiling cannot trigger an extension (Full 19+, Mini 11+), but are still dealt and played if an extension occurred.
+
+### A2.3 Calculation Mode — NORMAL and CLASSIC
+
+Both scoring modes in this document are **first-class and selectable on every match** (GM4):
+
+- **NORMAL** — the tables as §5 states them; **Sa'ayda escalation caps at ×8**.
+- **CLASSIC** — the Classic tables as §5 states them; **Sa'ayda escalation caps at ×2**.
+
+**Neither formula changes.** The modes are already implemented (`calculateNormalScore`, `calculateClassicScore`); this amendment only makes the selection reach the match. **Classic is not a house rule, not legacy, and not a variant — it is a peer option.**
+
+### A2.4 Ranked interaction (GM5 / GM6)
+
+- **Ranked supports both Game Types.** Ranked is not Full-only, and Mini is not a casual-only format. The matchmaking tier-pool rule is **orthogonal to Game Type** — the server derives the tier pool exactly as RD9 specifies, and the Game Type rides along without widening or narrowing it.
+- **MINI Ranked RP is 50% of FULL Ranked RP.** The full Ranked result is computed exactly as the Ranked system specifies — every input, every modifier, every mixed-tier asymmetry — and **only then** is the **final RP delta** multiplied by 0.5, for gains and losses alike (+20 → +10, −14 → −7). **There is no separate Mini RP formula, and no threshold, gate, ladder, division, progression, promotion/demotion, or season rule is adjusted to compensate for the shorter match.**
+- **Rounding of a half-delta is CLOSED (2026-10-06): nearest integer, ties rounded AWAY FROM ZERO, symmetric for gains and losses.** +15 → **+8**, −15 → **−8**, +9 → +5, −9 → −5; even deltas are exact (+20 → +10, −14 → −7). The precedent in Amendment A1 ("rounded half-up") is a round-score rule and does not bind RP — **note the difference: half-up would give −7.5 → −7, which this rule deliberately rejects.** RP is an integer, and the round happens once, at settlement, on the final delta only.

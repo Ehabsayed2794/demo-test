@@ -34,7 +34,11 @@ cost principle, **the seasonal Ranked leaderboard**, and — critically — **Ra
 is now MVP scope and launch-blocking (RD25)**. Decisions are **RD1–RD28**; **RD26
 (the 19 numeric RP thresholds) was CLOSED on 2026-10-05 with the final
 lower-bound values**, so only **OPEN-1/OPEN-2** (reconnect-after-15-timeout-removal; whether a
-Vote Kick pauses the match) stay open, both non-blocking. **This amendment is in the same standing as the
+Vote Kick pauses the match) stay open, both non-blocking. **The 2026-10-06 GM
+amendment adds OPEN-3** — the RP rounding rule for an odd Full delta under
+Mini's ×0.5 — **which was CLOSED 2026-10-06, before any settlement code was
+written: nearest integer, ties away from zero (+15 → +8, −15 → −8). No open item
+gates a Ranked story.** **This amendment is in the same standing as the
 2026-10-03 block above.** Where frozen Batch 1 text contradicted RD1–RD28, the
 contradiction register below lists the correction and the document's own
 "real contradiction" escape hatch (the Batch 1 freeze line) is invoked — nothing
@@ -43,6 +47,20 @@ S01–S44); the new Batch 2 design plan is **§4b**; the code/architecture
 counterpart is `docs/NATIVE_V1_PLAN_AND_ESTIMATE.md` (epic **E6b, stories
 S42–S64, +388 h**). **Still no code, no Figma, no Firestore rules, no Cloud
 Functions — planning only.**
+
+**A second owner amendment landed 2026-10-06: Game Type & Calculation Mode
+(GM1–GM8).** Two selectable match options — **Game Type** (Full / Mini) and
+**Calculation** (Normal / Classic) — that are persisted on the room and match
+documents and change the round count, the Quick Round boundary, the escalation
+cap, and (in Ranked) the RP delta. **Ranked supports both types (GM5) and Mini's
+RP delta is 50% of Full's (GM6).** The design impact is spread through this
+document (S36, §2.4, S14/S16, §4b.4, §4b.6, the design gates, and the
+consistency audit); the code/architecture counterpart is epic **E7, stories
+S65–S69, +48 h**, which **precedes E6b** because S43/S47/S56 consume `gameType`.
+**OPEN-3 — the RP rounding rule for odd Full deltas under GM6's ×0.5 — is CLOSED
+(2026-10-06): nearest integer, ties away from zero (+15 → +8, −15 → −8). It was
+closed before settlement was written, as planned, and now gates nothing.** **Still no code, no Figma, no Firestore rules —
+planning only.**
 
 **Delivery contract for this document (owner amendment):**
 
@@ -530,7 +548,7 @@ separate design variant of one bidding surface.
 | S13 | **Bidding — AUCTION** (raise or pass) | NEW | `AuctionControls`: tricks slider 4–13, suit picker, Pass | Min bid 4. "With" alignment hint. Top-bid display. **Amendment: timed at selected+5 s; expiry = MEDIUM-bot bid** |
 | S14 | **Bidding — CONFIRM** (caller locks the call) | NEW | `ConfirmControls`: slider `floor..13`, suit picker | **Normal rounds 1–13 only.** Raising the number frees the suit. **Amendment: timed at selected+5 s; expiry = MEDIUM-bot confirm** |
 | S15 | **Bidding — ESTIMATES** (other players estimate) | NEW | `EstimatesControls`: slider `0..cap`, forbidden-13 + With-floor hints | Call Cap, the 13 Rule, Risk Player, Normal Dash (0). **Amendment: timed at selected+5 s; expiry = MEDIUM-bot estimate** |
-| S16 | **Bidding — fast round** (rounds 14–18 variant) | VARIANT | Same composables, `initFastRound` starts at ESTIMATES | Forced trump ladder; no auction, no confirm |
+| S16 | **Bidding — fast round** (the Quick Round variant) | VARIANT | Same composables, `initFastRound` starts at ESTIMATES | Forced trump ladder; no auction, no confirm; **Full rounds 14–18, Mini rounds 6–10 (GM1)** |
 | S17 | **Bidding — Super Call** (8+ override variant) | VARIANT | Handled in engine; **no dedicated UI** | Fast round: cancels forced trump, extends the match +1 round |
 | S18 | **Bidding — General Pass / redeal** | NEW | `EmitResult.GeneralPass` handled in VM; **no UI** | All 4 pass → redeal at ×2 multiplier (capped ×8) |
 
@@ -631,12 +649,16 @@ implements against.
 **Auth states** (`AuthUiState`): `SignedOut`, `SigningIn`, `SignedIn`, `Error`.
 
 **Per-round variants that change the screen** (from `CANONICAL_RULES.md`):
-normal round (1–13) vs fast round (14–18); forced-trump ladder
-14=Sans, 15=Spades, 16=Hearts, 17=Diamonds, 18=Clubs; Super Call (bid ≥ 8);
+normal round vs fast round — **the boundary is Game Type-dependent: Full 1–13
+normal / 14–18 fast, Mini 1–5 normal / 6–10 fast (GM1)**; forced-trump ladder
+starting Sans on the first fast round (Full 14=Sans, 15=Spades, 16=Hearts,
+17=Diamonds, 18=Clubs; **Mini 6=Sans, 7=Spades, 8=Hearts, 9=Diamonds,
+10=Clubs**); Super Call (bid ≥ 8);
 Dash Call (max 2); Normal Dash (estimate 0); Risk Player (last estimator);
-With/Wazz; the 13 Rule; Call Cap; Sa'ayda escalation (×2 → ×4 → ×6 → ×8);
-round extension (19=Sans, 20=Spades, …); AVOID/void tag (suit hidden);
-scoring mode Normal vs Classic.
+With/Wazz; the 13 Rule; Call Cap; Sa'ayda escalation (×2 → ×4 → ×6 → ×8,
+**capped ×2 under Classic**); round extension (repeating the ladder from its own
+start: Full 19=Sans, 20=Spades, …; **Mini 11=Sans, and Mini stops at one**);
+AVOID/void tag (suit hidden); scoring mode Normal vs Classic.
 
 **Error/reason codes to surface** (services `Reasons`, verbatim — each needs a
 human-readable design treatment): room-side `ROOM_NOT_FOUND`, `ROOM_CLOSED`,
@@ -784,10 +806,12 @@ DISCONNECT (Rooms)                            MANUAL VOTE KICK (Ranked ONLY — 
       └── NO / expiry  ──► continue w/ bot
 ```
 
-**Loop counts the UI must communicate:** 18 standard rounds; a fast-round Super
-Call or a Round-18 Sa'ayda adds extension rounds (19, 20, … repeating the
-14–18 trump ladder). A Sa'ayda round still counts toward 18 but scores zero and
-escalates the next round's multiplier.
+**Loop counts the UI must communicate:** the match's own `maxRounds` — **18 for
+Full, 10 for Mini (GM1)** — never a hard-coded 18; a fast-round Super
+Call or a final-round Sa'ayda adds extension rounds, whose count is capped by
+Game Type (**up to 5 for Full, exactly 1 for Mini — GM2/GM3**), each repeating
+the trump ladder from its type's own start. A Sa'ayda round still counts toward
+the ceiling but scores zero and escalates the next round's multiplier.
 
 ## 2.2 Per-screen flow specification
 
@@ -953,8 +977,9 @@ what happens if another player leaves.
 - **Forward:** Locked → `ESTIMATES` (estimators start CCW after the Caller;
   Dash Callers never re-estimate).
 - **Interrupts / network / leaves:** as S13.
-- **Fast rounds (14–18):** this screen **does not exist** — no Confirmation for
-  anyone.
+- **Fast rounds:** this screen **does not exist** — no Confirmation for
+  anyone. **The boundary is Game Type-dependent — Full 14–18, Mini 6–10 (GM1) —
+  so "fast" is read off the match, never off a literal round number.**
 
 ### S15 Bidding — ESTIMATES
 
@@ -976,18 +1001,27 @@ what happens if another player leaves.
   forbidden 13-total value — each disabled with the engine reason.
 - **Interrupts / network / leaves:** as S13.
 
-### S16 Bidding — fast round (rounds 14–18)
+### S16 Bidding — fast round (the Quick Round variant)
 
 - **Sees:** A single-pass estimate per player with the **forced trump shown and
-  locked** (14 = Sans, 15 = Spades, 16 = Hearts, 17 = Diamonds, 18 = Clubs).
-- **Why:** Closes the game's second half; no auction, no Confirmation.
+  locked**, on the ladder Sans → Spades → Hearts → Diamonds → Clubs starting at
+  the match's first Quick Round. **Full (rounds 14–18): 14 = Sans, 15 = Spades,
+  16 = Hearts, 17 = Diamonds, 18 = Clubs. Mini (rounds 6–10): 6 = Sans, 7 =
+  Spades, 8 = Hearts, 9 = Diamonds, 10 = Clubs** (GM1). The screen is identical
+  in both types — only the round numbers on the ladder move, and the composable
+  must read them off the match, never off a literal 14.
+- **Why:** Closes the game's second half; no auction, no Confirmation. **In Mini
+  the second half is rounds 6–10, so the same closure arrives sooner** — the
+  screen's job is unchanged.
 - **Can do:** State one final number. No raising, no passing back and forth.
 - **Must be visible:** **Own hand.** The forced trump (prominent and
   non-editable), the round number and that it is a fast round, who has bid, and
   that the **first** bidder of the highest number becomes Caller with every
   other player on that number becoming With.
 - **Controlled by:** `initFastRound` (starts at `ESTIMATES`, `auctionTop = 13`
-  sentinel = no cap, `declaredTrump = fixedTrumpFor(round)`).
+  sentinel = no cap, `declaredTrump = gameType.fixedTrumpFor(round)` — the trump
+  ladder is type-derived, and the round-6 case that used to crash on a negative
+  modulus is fixed by the `Math.floorMod` parameterization).
 - **Forward:** All four in → DONE. A bid ≥ 8 is a **Golden Super Call** (S17).
 - **Interrupts / network / leaves:** as S13.
 
@@ -1317,15 +1351,21 @@ against.
 
 - **Sees:** One configuration screen reached from **both** "Create Room" and
   "Create Ranked Match" — there is exactly one configuration surface, not two.
-  Three setting groups: **Bot Difficulty** (Easy / Medium / Hard / Expert),
-  **Bot Personality** (the four existing personalities, presented with their
-  names and one-line flavour), **Decision Timer** (5 / 10 / 15 / 20 seconds),
-  plus a live summary of what the timer means per phase.
+  **Five** setting groups. **Game Type** (Full / Mini) and **Calculation**
+  (Normal / Classic) sit **above** the three original groups — **Bot
+  Difficulty** (Easy / Medium / Hard / Expert), **Bot Personality** (the four
+  existing personalities, presented with their names and one-line flavour),
+  **Decision Timer** (5 / 10 / 15 / 20 seconds) — plus a live summary of what
+  the timer means per phase.
 - **Why:** Configures the game before creation. The amendment makes this the
-  front door for both modes so configuration is never duplicated.
-- **Can do:** Pick one value in each group; change any of them freely before
-  confirming; back out.
-- **Must be visible:** The three groups and the **derived per-phase timers**:
+  front door for both modes so configuration is never duplicated. The 2026-10-06
+  GM amendment adds the two top groups because **Game Type and Calculation are
+  match-scoped, not player-scoped** — they change the round count, the Quick
+  Round boundary, the escalation cap, and (in Ranked) the RP delta, so they
+  belong on the one screen that creates the match.
+- **Can do:** Pick one value in each of the five groups; change any of them
+  freely before confirming; back out.
+- **Must be visible:** The five groups and the **derived per-phase timers**:
   "Card Play Ns · Dash / Bidding / Estimates N+5 s" — the +5 rule must be
   visible here, not discovered mid-match. Which mode the player is configuring
   for (Room or Ranked), and — for Ranked — that voice and the pause vote are not
@@ -1333,11 +1373,18 @@ against.
   (Tier + Division + Arabic title + RP), progress to the next rank, and any
   Ranked-specific restriction (RD9's pool rule, stated in plain language the
   player can act on — "you will be matched in your tier or the one below").**
-  **Defaults are fixed and pre-filled (RD21): MEDIUM / BALANCED / 15 s.**
-  **Private/Password Ranked is a toggle on this same screen — never a third mode
-  (RD28).**
-- **Controlled by:** new configuration state (§1.3): `botDifficulty`,
-  `botPersonality`, `decisionTimerSeconds`, `mode`, `isPrivate`/password.
+  **Defaults are fixed and pre-filled (RD21 + GM7): FULL / NORMAL / MEDIUM /
+  BALANCED / 15 s.** **Private/Password Ranked is a toggle on this same screen
+  — never a third mode (RD28).**
+  **The Game Type choice must state its consequences in one line each, not as
+  raw numbers** — Full: "18 rounds · Quick Rounds from 14 · up to 5 extensions";
+  Mini: "10 rounds · Quick Rounds from 6 · **one extension only**" (GM1–GM3).
+  **Mini is available in Ranked too** (GM5) — do not disable or hide it in the
+  Ranked state, and do not imply it is a casual-only format; the only Ranked
+  difference is the RP reward, shown at match end, not here (GM6).
+- **Controlled by:** new configuration state (§1.3): `gameType`,
+  `scoringMode`, `botDifficulty`, `botPersonality`, `decisionTimerSeconds`,
+  `mode`, `isPrivate`/password.
 - **Forward:** Confirm → Room: creates the room and goes to S06 (code share) →
   S08. Ranked: goes to **S55 Matchmaking Search** (server-controlled pool, RD9)
   → match. Private Ranked: skips the search and goes straight to a shareable
@@ -1349,8 +1396,14 @@ against.
 - **Designer note:** the four personalities and four tiers are **existing,
   reusable AI infrastructure** (§0.6-V1) — present the existing names, do not
   invent new AI behaviour, and do not imply the bots are configurable beyond
-  these three knobs.
-- **Defaults (D5 — FINAL OWNER DECISION):** **Bot Difficulty = MEDIUM**, **Bot
+  these five knobs. **The same applies to the two new groups: do not invent a
+  third Game Type or a third Calculation mode, and do not invent Mini-specific
+  rules** — Mini is Full with a shorter round count and an earlier Quick Round
+  boundary, nothing else (GM1). Present "Normal / Classic" as the two
+  calculation modes they are; **Classic's escalation cap is ×2 vs Normal's ×8**,
+  which is the only player-visible consequence and may be stated as one line.
+- **Defaults (D5 + GM7 — FINAL OWNER DECISION):** **Game Type = FULL**,
+  **Calculation = NORMAL**, **Bot Difficulty = MEDIUM**, **Bot
   Personality = BALANCED** ("Steady"), **Decision Timer = 15 seconds**. These are
   the pre-selected values every time the screen opens; the player may change any
   of them before creating the game, and the live per-phase summary must reflect
@@ -1633,12 +1686,33 @@ The flows above converge on this matrix — the columns the design cannot skip:
 
 - 4 players, individual play, no partnerships. Counter-clockwise.
 - 52-card deck, 13 cards each, 13 tricks per round.
-- 18 standard rounds; dealer rotates one seat CCW each round.
-- Rounds 1–13 = normal (auction + confirmation); 14–18 = fast (forced trump).
-- Extension rounds repeat the 14–18 ladder: 19 = Sans, 20 = Spades, 21 = Hearts,
-  22 = Diamonds, 23 = Clubs…
-- Multiplier ladder ×2 → ×4 → ×6 → ×8 (cap), reset to ×1 on any successful round.
-- Minimum auction bid 4; Super Call ≥ 8; Dash Call max 2 players.
+- **These counts are Game Type-dependent (GM1–GM3, 2026-10-06). The structure is
+  identical for both types — only three numbers move.**
+
+| | **FULL** (the default, GM7) | **MINI** |
+|---|---|---|
+| Base rounds | **18** | **10** |
+| Normal rounds (auction + confirmation) | 1–13 | 1–5 |
+| Quick Rounds (forced trump, no auction, no confirm) | **14–18** | **6–10** |
+| Extensions | **up to 5** (18 → 23 max) | **exactly 1** (10 → 11 max) |
+| Trump ladder within the Quick window | 14 Sans, 15 Spades, 16 Hearts, 17 Diamonds, 18 Clubs | 6 Sans, 7 Spades, 8 Hearts, 9 Diamonds, 10 Clubs |
+
+- In **both** types the trump ladder restarts at Sans on the first Quick Round,
+  and **extension rounds repeat the ladder from its start**: Full 19 = Sans,
+  20 = Spades, 21 = Hearts, 22 = Diamonds, 23 = Clubs; **Mini 11 = Sans**.
+- **Mini's one-extension cap is a hard rule, not a tuning knob** (GM3): a second
+  extension is rejected. Design never offers or dangles a second Mini extension.
+- Rounds past the ceiling cannot trigger an extension in either type (Full 19+,
+  Mini 11+), though they are still dealt and played if an extension occurred.
+- Dealer rotates one seat CCW each round, in both types.
+- Multiplier ladder ×2 → ×4 → ×6 → ×8 (cap under **Normal** calculation; ×2 cap
+  under **Classic** — GM4), reset to ×1 on any successful round.
+- Minimum auction bid 4; Super Call ≥ 8; Dash Call max 2 players. **Unchanged by
+  Game Type** — Mini inherits every bid and estimate rule verbatim.
+- **Design implication:** any round-count UI — the round indicator, the standings
+  progress bar, the "round N of M" readout — must read `maxRounds` off the match,
+  never a literal 18 or 10, and any Quick-Round visual (S16's forced-trump
+  treatment) must key off the match's own boundary, never `>= 14`.
 
 ## 2.5 Dependency map (amendment additions)
 
@@ -1649,7 +1723,7 @@ the amendment-relevant slice.)
 
 | Feature | Depends on | Why it blocks |
 |---|---|---|
-| **S36 Create Game** | the match/room configuration write path; the bot tier + personality values being **portable to the backend** | The three selections must reach the match document and drive bot behaviour. The AI is currently uncommitted TypeScript (§0.6-V1) — nothing can persist a "personality" the backend cannot read |
+| **S36 Create Game** | the match/room configuration write path; the bot tier + personality values being **portable to the backend**; **`gameType` + `scoringMode` being first-class fields on the room and match documents (2026-10-06 GM amendment — code E7/S66, S67)** | The **five** selections must reach the match document and drive both round structure and scoring. The AI is currently uncommitted TypeScript (§0.6-V1) — nothing can persist a "personality" the backend cannot read — and **the two new selections change the round count, the Quick Round boundary, the escalation cap, and (in Ranked) the RP delta**, so they cannot stay client-local or the four clients diverge |
 | **S37 Decision Timer** | a **server-authoritative** time source; the MEDIUM bot decision engine; synchronized match state | A client-local countdown would let four clients disagree on expiry and on whose move was made. The rematch deadline is the only existing precedent for a rules-enforced timestamp |
 | **Medium-Bot timeout decisions** | a **Kotlin port** of `evaluateBotBid` + `selectBotCard` against the engine's own types | The TS entry points (§0.6-V1) cannot be invoked from the native app; the port is the prerequisite, not an option |
 | **15-timeout automatic removal** | the timer; a per-player **match-scoped** counter that survives reconnect; **its own removal state, separate from S40 (RD20)** | The counter must outlive a process restart, so it is a document field, not memory. **It shares no state with Vote Kick** — no vote, no Round-7 gate, no cooldown. Rejoin afterwards is OPEN-1 |
@@ -2226,7 +2300,7 @@ carries the #1 requirement.
 | S13 AUCTION | 1 `NEW` | your turn (slider 4–13, suit chips, Pass) / opponent's turn; top-bid display; "With" alignment hint; hand visible |
 | S14 CONFIRM | 1 `NEW` | rounds 1–13 only; slider `floor..13`; raising frees the suit; hand visible |
 | S15 ESTIMATES | 1 `NEW` | slider `0..cap`; forbidden-13 + With-floor hints; Risk Player / Normal Dash markers; hand visible |
-| S16 fast round | 1 `VARIANT` | rounds 14–18: forced-trump ladder shown, **no auction, no confirm** — starts at ESTIMATES |
+| S16 fast round | 1 `VARIANT` | the Quick Round variant: forced-trump ladder shown, **no auction, no confirm** — starts at ESTIMATES. **Full rounds 14–18, Mini rounds 6–10 — same artboard, the ladder numbers read off the match (GM1)** |
 | S17 Super Call | 1 `VARIANT` | bid ≥ 8 state: cancels forced trump, extends the match +1 round — the extension must be visible |
 | S18 General Pass | 1 `NEW` | all-4-pass → redeal at ×2 (ladder ×2→×8 cap) |
 
@@ -2347,7 +2421,7 @@ full in **§4b** below; the artboard counts here keep the §4.5 summary honest.
 | S54 Season Overview | 1 `NEW` | season ID + remaining time; **end-of-season demotes two division steps (Gold I → Gold III), King → Royal I (RD24)**; **Highest Rank ever is shown and is NOT erased by the reset** |
 | S55 Matchmaking Search | 1 `NEW` | searching → **Match Found** → transition into match; cancel; **the pool rule stated in plain language (own tier or the one below — RD9)** |
 | S56 Matchmaking Failure / Timeout | 1 `NEW` | failed / timed out → retry or cancel |
-| S57 Ranked Match Result | 1 `NEW` | **both results in one surface:** match result (King / 2nd / 3rd / Koz) AND ranked result (**RP delta, previous rank → new rank, promotion/demotion, season info**); **mixed-tier matches show the RD5 asymmetry in the delta** |
+| S57 Ranked Match Result | 1 `NEW` | **both results in one surface:** match result (King / 2nd / 3rd / Koz) AND ranked result (**RP delta, previous rank → new rank, promotion/demotion, season info**); **mixed-tier matches show the RD5 asymmetry in the delta**; **a Mini match shows the same surface with a delta at 50% of its Full equivalent (GM6) — no badge, no disclaimer, no separate layout** |
 | S58 Seasonal Leaderboard | 1 `NEW` | position / player / Tier-Rank / RP / season; **current player's row highlighted**; **King players ranked among themselves by RP above the King lower bound**; **season-isolated — no carryover positions between seasons (RD27)** |
 
 **Variants on existing screens (no new IDs):** S03 Profile + rank + the 9 career
@@ -2377,10 +2451,14 @@ S01 → S02 → S05 → [S36 → S06 share sheet] → S08 → S28 →
   (rounds loop back to S12/S16) → S24 → S25 → S26 → S27 → S05
 ```
 
-Every arrow is a prototype connection. The round loop (S23 → S12 for rounds
-2–13, S23 → S16 for 14–18) must be wired so the 18-round structure is
+Every arrow is a prototype connection. The round loop (S23 → S12 for normal
+rounds, S23 → S16 for fast rounds — **the boundary is Game Type-dependent:
+Full 2–13 normal / 14–18 fast, Mini 2–5 normal / 6–10 fast, GM1**) must be wired
+so the round structure is
 walkable end to end — this is what makes the loop counts in §2.4 reviewable in
-Figma instead of in the imagination.
+Figma instead of in the imagination. **Wire the Full loop as the default and add
+the Mini loop as the same connections with different round numbers**, so both
+are walkable and the shared S12/S16 artboards are proven to not hard-code 18.
 
 ### 4.4.2 The four exception paths (§2.1, kept conceptually distinct)
 
@@ -2466,8 +2544,10 @@ file:
 9. **Every text colour passes 4.5:1 against `bg`, `surface`, and `surfaceHigh`.**
 10. **All numerals are Spline Sans Mono** — scores, bids, timers, codes, tallies.
 11. **S44's long-press popover does not cover the hand or swallow a play tap.**
-12. **The golden path is wired end to end, including the 18-round loop and the
-    14–18 fast-round ladder.**
+12. **The golden path is wired end to end, including the round loop and the
+    fast-round ladder — Full (18 rounds, ladder from 14) by default, and Mini
+    (10 rounds, ladder from 6, exactly one extension) as the same connections
+    with different numbers, proving the shared screens do not hard-code 18.**
 
 ---
 
@@ -2673,6 +2753,16 @@ match ends (all 18+ rounds, or early termination by removal)
   is always available; there is no uncancelable spinner.
 - The client sends a **search request only** — never a tier claim. Pool authority
   is server-side (RD9; code S57 is the anti-abuse story).
+- **Game Type rides along, and is orthogonal to the pool (GM5, 2026-10-06).**
+  The search carries the player's **Full / Mini** choice, and the server forms
+  matches for it — but the tier-pool derivation above **never widens, narrows, or
+  branches on Game Type**. Mini is a Ranked format in its own right: **do not
+  disable it, hide it, segregate it into a casual queue, or imply it is
+  unranked.** A Mini search uses the same pool rule, the same mixed-tier
+  permissions, and the same S55 plain-language statement. **The only Ranked
+  difference is the RP reward magnitude, shown at match end (§4b.6), never
+  here** — the search surface must not advertise a "smaller reward" as a
+  warning, a paywall, or a downgrade.
 
 **Mixed-tier is the normal case, so the table must say so:** the S19/S20
 mixed-tier indicator (public and private variants, §4.3.9) is a first-class
@@ -2728,6 +2818,35 @@ never lie about:
 - **No player-facing match history in MVP (RD23)** — the profile carries the 9
   career statistics instead. An **internal RP audit ledger IS required** (code
   S62), but it is not a player surface and must not be designed as one.
+
+**Mini's RP is half of Full's, and nothing else moves (GM6, 2026-10-06).** This
+is a single multiplier on the **final** delta, applied once at settlement:
+
+- **The full Ranked result is computed exactly as today first** — every RD4
+  input, every RD5 asymmetry, every modifier — and **only then** is the final
+  delta multiplied by **0.5**: `miniDelta = fullEquivalentDelta * 0.5`. Gains and
+  losses alike (+20 → +10, −14 → −7).
+- **Everything else is identical between Full and Mini and must be designed as
+  identical:** the 19-rank ladder, the 19 RD26 thresholds, divisions, gates and
+  eligibility, progression, promotion and demotion, the one-match demotion
+  protection (RD7), the mixed-tier asymmetry (RD5), the Private ×2 cap (RD6),
+  placement, and seasons (RD24). **No threshold is lowered, no gate is relaxed,
+  and nothing is compensated for the shorter match.** There is no separate Mini
+  RP formula.
+- **Design consequence — one number changes, no new surface:** S57 Ranked Match
+  Result renders the delta and its direction exactly as it does for Full. Mini
+  does not get a smaller podium, a different colour, a "reduced reward" badge, or
+  an explanatory disclaimer — the delta is simply smaller. The match-length
+  context the player already has (the round indicator) is enough.
+- **Rounding is CLOSED, and it is not a design choice (OPEN-3, closed
+  2026-10-06):** nearest integer, **ties rounded away from zero**, symmetrically
+  for gains and losses — +15 → **+8**, −15 → **−8**, +9 → +5, −9 → −5, while
+  even deltas stay exact (+20 → +10, −14 → −7). Under the `Int` convention every
+  scoring type in `:engine` uses, that is the whole rule. **Design consequence:
+  an odd-delta Mini gain or loss can show one RP more than a naive half (+15
+  shows +8, not +7), and a Mini loss is symmetric with the equivalent gain.
+  S57 renders the resulting integer exactly as it renders any other delta — no
+  asterisk, no "rounded" note, no client-side rounding of any kind.**
 
 ## 4b.7 Seasons (RD24)
 
@@ -2937,6 +3056,7 @@ Ranked feature.** The UI roadmap says the same about `mode` as the code roadmap;
 | Timeout tracking (S61) | `mode` | Counter cumulative and **private**; 15-timeout removal shares no state with Vote Kick |
 | Quick Stats (S44 UI) | statistics accumulator, profile model | Unblocked by RD11's server read path; shows the 6 short values |
 | Private Ranked (S58 story) | settlement, mixed-tier asymmetry, `mode` + private flag | `mode` stays RANKED (RD28); the flag gates access only |
+| **Game Type / Calculation (E7, S65–S69)** | **precedes every Ranked story that consumes `gameType`** — S43, S47, S56 | **The 2026-10-06 GM amendment is on the Ranked critical path.** S47 cannot apply GM6's ×0.5 and S56 cannot carry a Game Type on a match document that has no field. **E7 lands first**, and its `firestore.rules` change (the only rules write outside the Ranked epic) is re-pinned before E6b starts |
 
 ## 4b.15 Testing plan (designed now, run at the Phase 9 gate)
 
@@ -2949,6 +3069,25 @@ Ranked feature.** The UI roadmap says the same about `mode` as the code roadmap;
 - Placement: 10/20/70 weighting, Platinum ceiling, **no provisional rank shown**,
   counts toward **no** statistic.
 - Matchmaking: own tier or one below, **no opt-up**, mixed pool permitted.
+- **Game Type (GM1–GM3, added 2026-10-06):** a Full match still plays 18 rounds
+  with Quick from 14 and still extends up to 5 times — **the existing golden
+  tests are the regression gate**; a Mini match plays 10 with Quick from 6 and
+  extends **exactly once**, the second attempt returning `ALREADY_EXTENDED**
+  with `extended = false`; Mini round 6 returns Sans instead of throwing
+  `IndexOutOfBoundsException` (the crash this amendment fixes); a Mini room
+  created with `maxRounds == 18` is **denied**; a Mini extension on a doc that
+  already has one entry is **denied at the rules**, proving the cap holds when
+  the client lies.
+- **Calculation (GM4):** both formulas byte-unchanged; a Classic match's
+  escalation cap is ×2 and a Normal match's is ×8; **the pre-existing gap where
+  the quick-match path omitted `escalationCap` entirely is closed** — Classic
+  no longer silently inherits the Normal cap.
+- **Mini Ranked RP (GM6):** the same Full-equivalent result yields **half** the
+  delta (+20 → +10, −14 → −7), the multiplier is applied **once at settlement**,
+  and **all four tie cases are asserted separately (+15 → +8, −15 → −8, +9 →
+  +5, −9 → −5)** against the closed OPEN-3 rule, including the `Math.round`
+  asymmetry test (−7.5 must round to −8, not −7). RP never goes negative as a result of the
+  multiplier.
 - Season reset: two-step demotion direction (Gold I → Gold III), ladder floor,
   **King → Royal I**, career stats intact, Highest Rank intact.
 - Leaderboard: ordering is server-computed, never client-ordered; **King players
@@ -2993,6 +3132,18 @@ Additional acceptance checks, answerable by looking at the file:
     implying a third mode.**
 13. **Every Ranked threshold number in the file is the owner's closed value**
     (§4b.1) — no invented value, and nothing derived from the `design-ui` mocks.
+14. **S36 offers exactly five groups — Game Type, Calculation, Bot Difficulty,
+    Bot Personality, Decision Timer — and no third Game Type or third
+    Calculation mode exists anywhere in the file** (GM1/GM4). Mini is presented
+    as Full with a shorter count, never as a different game with its own rules.
+15. **No surface disables, hides, segregates, or disclaims Mini in the Ranked
+    state** (GM5) — and no surface advertises Mini's smaller RP reward as a
+    warning, paywall, or downgrade (GM6).
+16. **No round-count or Quick-Round visual is drawn from a literal 18 or 14** —
+    every "round N of M", progress bar, and forced-trump ladder reads the
+    match's own `maxRounds` and boundary (§2.4).
+17. **No artboard dangles a second Mini extension** — the cap is one, and it is
+    never offered (GM3).
 
 ## 4b.17 Consistency-audit additions
 
@@ -3008,11 +3159,31 @@ as Games Played (RD10) · Placement repeated every season (RD24) · Private Rank
 treated as unranked (RD6) · Ranked voice enabled (RD22) · Silver manually
 selecting a Gold pool (RD9).
 
+**Banned phrasing added by the 2026-10-06 GM amendment:** "Ranked is Full-only"
+/ "Mini is casual-only" (GM5) · a Mini-specific bid, estimate, Super Call,
+Dash, or scoring rule of any kind (GM1 — Mini inherits Full verbatim) · a
+separate Mini RP formula or any Mini compensation in thresholds, gates, or
+progression (GM6) · "up to N Mini extensions" where N > 1, or any UI that offers
+a second Mini extension (GM3) · "Classic is a house rule" / "Classic is legacy"
+(GM4 — both modes are first-class and selectable on every match) · a
+round-count or Quick-Round boundary expressed as a bare literal `18` / `14`
+rather than derived from the match's `gameType` (§2.4).
+
 **Not corrected, reported as housekeeping:** old MigrationPlan / master-plan
 references and the superseded architecture history in `docs/architecture/*` are
 **left as-is** — their historical intent is preserved unless the current roadmap
 explicitly requires correction, per owner instruction. **`firestore.rules` is
 untouched.** The non-canonical `design-ui` mocks are flagged, not rewritten.
+
+**2026-10-06 GM amendment — one narrow exception to the above:** the three
+documents whose bodies carry live, currently-misleading round boundaries
+(`docs/architecture/MatchLifecycle.md`, `docs/specs/03-transactions.md`,
+`docs/architecture/FirestoreSchema.md`) each received a **pointer note, not a
+rewrite** — the body stays Full-only (it documents the JS reference
+implementation, which is Full-only) and the note routes the reader to
+`CANONICAL_RULES.md` Amendment A2 for the type-derived boundary. This is the
+minimum that keeps a future implementer from reading a literal `14`/`18` as a
+constraint on Mini, without erasing the history those documents carry.
 
 ---
 
@@ -3020,8 +3191,9 @@ untouched.** The non-canonical `design-ui` mocks are flagged, not rewritten.
 
 ```
 RANKED SYSTEM PLANNING      — UPDATED 2026-10-05 (RD1–RD28; RD26 CLOSED, OPEN-1/OPEN-2 remain)
+GAME TYPE / CALCULATION     — ADDED 2026-10-06 (GM1–GM8, E7 S65–S69; OPEN-3 CLOSED)
 UI/UX ROADMAP               — UPDATED (§4b + contradiction register)
-CODE/ARCHITECTURE ROADMAP   — UPDATED (E6b S42–S64, R24–R29, M9–M11)
+CODE/ARCHITECTURE ROADMAP   — UPDATED (E6b S42–S64, E7 S65–S69, R24–R29, M9–M11)
 IMPLEMENTATION              — NOT STARTED
 FIGMA                       — NOT STARTED
 BATCH 2                     — NOT STARTED
@@ -3035,7 +3207,13 @@ design gates); the code roadmap owns the *execution* view (stories S42–S64,
 +388 h, risks R24–R29, milestones M9–M11). **RD26's 19 thresholds are CLOSED in
 both, identically (2026-10-05, Bronze III 0 → King 3,000); OPEN-1 and OPEN-2
 remain open in both, identically.** Neither document reopens a closed owner
-decision.
+decision. **The 2026-10-06 GM amendment is carried in both identically too** —
+GM1–GM8 in the code roadmap's decision block, the same eight in this document's
+S36/§2.4/§4b, and the shared rule statement in `docs/rules/CANONICAL_RULES.md`
+**Amendment A2**. **OPEN-3 — the Mini RP rounding rule — is CLOSED in both
+identically (2026-10-06, before S47 was written): nearest integer, ties away
+from zero (+15 → +8, −15 → −8), via `kotlin.math.round`. With it closed, no open
+item gates any Ranked story; OPEN-1 and OPEN-2 remain open and gate nothing.**
 
 ---
 
