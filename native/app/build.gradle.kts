@@ -3,6 +3,17 @@ import java.util.Properties
 plugins {
   id("com.android.application")
   id("org.jetbrains.kotlin.android")
+  // S25: field-crash visibility. Crashlytics Gradle plugin 3.0.8 — requires
+  // AGP 8.1+ (pinned 8.13.2) and Gradle 8.0+ (pinned 8.14.3); verified
+  // against CrashlyticsPlugin.validateDependencies and the Firebase docs, so
+  // no toolchain change. The version is pinned HERE rather than the root
+  // build file so the S25 diff stays inside native/app/**. The
+  // google-services plugin stays absent by design (S3): safe because every
+  // build type has minify off, so the plugin never registers the upload
+  // tasks that require it (CrashlyticsPlugin.registerTasks only registers
+  // UploadMappingFileTask when mappingFileUploadEnabled.getOrElse(
+  // isMinifyEnabled)); google_app_id is injected per build type below.
+  id("com.google.firebase.crashlytics") version "3.0.8"
 }
 
 // Phase 1: same applicationId as the Capacitor shell (com.estemshan.game)
@@ -30,6 +41,16 @@ fun firebaseValue(property: String, env: String, default: String): String =
   firebaseProps.getProperty(property)
     ?: System.getenv(env)?.takeIf { it.isNotBlank() }
     ?: default
+
+// S25: the single source for the Firebase Android app id. Feeds BOTH the
+// FIREBASE_APP_ID BuildConfig field (read by FirebaseModule) and the
+// google_app_id string resource per build type (read by Crashlytics) — one
+// val, so the two can never drift apart.
+val firebaseAppId = firebaseValue(
+  "firebase.applicationId",
+  "FIREBASE_APP_ID",
+  "1:261597513798:android:00000000000000000000000000000000",
+)
 
 @Suppress("UnstableApiUsage")
 android {
@@ -65,8 +86,9 @@ android {
     buildConfigField(
       "String",
       "FIREBASE_APP_ID",
-      "\"${firebaseValue("firebase.applicationId", "FIREBASE_APP_ID",
-        "1:261597513798:android:00000000000000000000000000000000")}\"",
+      // S25: via the shared firebaseAppId val (single source with the
+      // google_app_id resValue below) — value unchanged.
+      "\"$firebaseAppId\"",
     )
   }
 
@@ -102,6 +124,15 @@ android {
       // Release talks to the real project; no google-services.json is
       // committed — FirebaseOptions are built in code (FirebaseModule).
       buildConfigField("boolean", "USE_EMULATOR", "true")
+      // S25: no crash collection in debug (emulator/CI project — nothing
+      // may leave the device). Wired to the manifest meta-data
+      // firebase_crashlytics_collection_enabled via placeholder.
+      manifestPlaceholders["crashlyticsCollectionEnabled"] = "false"
+      // S25: google_app_id WITHOUT the google-services plugin. Debug targets
+      // the dummy emulator project — the exact id FirebaseModule builds its
+      // debug FirebaseOptions with — so every reader sees the same project.
+      // Collection is disabled above, so nothing is ever reported.
+      resValue("string", "google_app_id", "1:000000000000:android:0000000000000000000000")
     }
     // S21 prerequisite — the human-QA build. Same REAL Firebase project as
     // release (USE_EMULATOR false, so FirebaseModule builds the real
@@ -116,6 +147,11 @@ android {
       buildConfigField("boolean", "USE_EMULATOR", "false")
       isMinifyEnabled = false
       isDebuggable = true
+      // S25: qa reports to the REAL project — collection on, and google_app_id
+      // from the shared firebaseAppId val (same source as FIREBASE_APP_ID,
+      // never a second copy).
+      manifestPlaceholders["crashlyticsCollectionEnabled"] = "true"
+      resValue("string", "google_app_id", firebaseAppId)
       // AGP's debug key, generated on demand, so assembleQa always yields
       // an installable APK. Deliberately NOT the production keystore: a
       // tester build is not a signed release.
@@ -132,6 +168,9 @@ android {
     release {
       buildConfigField("boolean", "USE_EMULATOR", "false")
       isMinifyEnabled = false
+      // S25: release reports to the REAL project — same wiring as qa.
+      manifestPlaceholders["crashlyticsCollectionEnabled"] = "true"
+      resValue("string", "google_app_id", firebaseAppId)
       signingConfig = if (releaseStoreFile != null) {
         signingConfigs.getByName("release")
       } else {
@@ -165,6 +204,9 @@ dependencies {
   implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
   implementation("com.google.firebase:firebase-auth-ktx")
   implementation("com.google.firebase:firebase-firestore-ktx")
+  // S25: crash reporting. Version comes from the BOM above — no explicit
+  // version. The -ktx artifact is deprecated upstream, so the base one.
+  implementation("com.google.firebase:firebase-crashlytics")
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 
   val composeBom = platform("androidx.compose:compose-bom:2024.10.01")
