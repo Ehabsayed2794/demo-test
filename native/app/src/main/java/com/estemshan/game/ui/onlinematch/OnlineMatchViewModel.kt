@@ -15,6 +15,7 @@ import com.estemshan.engine.RoundResult
 import com.estemshan.engine.RoundScoreInput
 import com.estemshan.engine.RoundScoreResult
 import com.estemshan.engine.RoundState
+import com.estemshan.engine.ScoringMode
 import com.estemshan.engine.SessionPlayer
 import com.estemshan.engine.SessionRoom
 import com.estemshan.engine.TablePhase
@@ -500,16 +501,22 @@ class OnlineMatchViewModel(
 
   /**
    * Fresh auction for the current round: the fixed-trump Estimates phase for
-   * a Rapid/Fast round (14+), the full Dash→Auction→Confirm→Estimates flow
-   * otherwise. The current multiplier is carried in — escalation survives.
+   * a Rapid/Fast round (FULL 14+, MINI 6+), the full Dash→Auction→Confirm→
+   * Estimates flow otherwise. The current multiplier is carried in —
+   * escalation survives.
    */
   private fun initAuction(doc: MatchDoc, dealerSeat: String, seats: List<String>) {
+    // S69 (E7): the document is the authority — seed the session's type +
+    // mode from it before the auction starts, and resolve the fast path
+    // from the same type. Read the doc, never invent config.
+    session.setGameType(doc.gameType)
+    session.setScoringMode(doc.scoringMode)
     val round = doc.currentRound
     val multiplier = session.getRound().multiplier
     session.clearBiddingState()
     session.clearPlayState()
     session.initializeBiddingState(
-      if (isFastRound(round)) initFastRound(round, dealerSeat, seats, multiplier)
+      if (isFastRound(round, doc.gameType)) initFastRound(round, dealerSeat, seats, multiplier)
       else initNormalRound(round, dealerSeat, seats, multiplier),
     )
   }
@@ -741,13 +748,20 @@ class OnlineMatchViewModel(
         withPlayers = cfg.withPlayers,
         multiplier = cfg.multiplier,
         riskPlayerId = cfg.riskId,
-        classic = false,
+        // S69 (E7): the mode comes from the session, which initAuction seeded
+        // from the match document. escalationCap was already correct.
+        classic = session.getScoringMode() == ScoringMode.CLASSIC,
         escalationCap = session.escalationCap,
       ),
     )
 
     val callerSucceeded = cfg.callerId?.let { result.breakdown[it]?.succeeded } ?: false
-    val extension = computeRoundExtension(cfg.round, cfg.callerId, cfg.trump, callerSucceeded, result.isSaayda)
+    // S69 (E7): the extension window is the match's own type (MINI 6–10,
+    // FULL 14–18) — without this a MINI match could never extend online.
+    val extension = computeRoundExtension(
+      cfg.round, cfg.callerId, cfg.trump, callerSucceeded, result.isSaayda,
+      gameType = doc.gameType,
+    )
 
     val totals = accumulateMatchScores(session.getMatchScores(), result.deltas)
     session.setMatchScores(totals)
