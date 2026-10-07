@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="970" height="450" viewBox="0 0 970 450" role="img" aria-label="You ready · 3/4 ready">
+    <title>You ready · 3/4 ready</title>
+    <defs>
+      <linearGradient id="tableWood" x1="0" y1="0" x2="0.9" y2="1"><stop stop-color="#4A2B17"/><stop offset=".48" stop-color="#2A1A10"/><stop offset="1" stop-color="#120E0A"/></linearGradient>
+      <linearGradient id="goldEdge" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#F2CF83"/><stop offset=".48" stop-color="#E8A33D"/><stop offset="1" stop-color="#8B5A25"/></linearGradient>
+      <radialGradient id="ambient" cx="50%" cy="48%" r="72%"><stop stop-color="#75451E" stop-opacity=".22"/><stop offset=".7" stop-color="#27190F" stop-opacity=".11"/><stop offset="1" stop-color="#0D0A07" stop-opacity="0"/></radialGradient>
+      <radialGradient id="entryGlow" cx="50%" cy="42%" r="52%"><stop stop-color="#E8A33D" stop-opacity=".24"/><stop offset="1" stop-color="#E8A33D" stop-opacity="0"/></radialGradient>
+      <pattern id="grain" width="36" height="36" patternUnits="userSpaceOnUse"><path d="M3 7h1M19 4h1M30 18h1M8 29h1M26 32h1" stroke="#E8A33D" stroke-opacity=".08" stroke-width="1"/><path d="M12 17h4M24 10h3M4 22h3" stroke="#F0EADA" stroke-opacity=".025" stroke-width="1"/></pattern>
+      <filter id="glow" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="8" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    </defs>
+    <g id="Screen_Background">
+      <rect x="0" y="0" width="970" height="450" rx="0" fill="#0D0A07" stroke="none" stroke-width="1" />
+      <rect x="0" y="0" width="970" height="450" fill="url(#ambient)"/>
+      <rect x="0" y="0" width="970" height="450" fill="url(#grain)" opacity=".5"/>
+      <rect x="10" y="10" width="950" height="430" rx="18" fill="none" stroke="#6D512B" stroke-width="0.9" stroke-opacity=".36"/>
+      <path d="M28 74H942" stroke="#E8A33D" stroke-opacity=".08"/>
+    </g><g id="Room_Header">
+      <rect x="25" y="20" width="75" height="28" rx="8" fill="#17130E" stroke="#765526" stroke-width="0.8" stroke-opacity=".65"/>
+      <path d="M43 34h-11m0 0 5-5m-5 5 5 5" fill="none" stroke="#E8A33D" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="55" y="38" font-family="Spline Sans Mono, monospace" font-size="8" font-weight="600" letter-spacing=".08em" fill="#F0EADA" >LEAVE</text>
+      <text x="123" y="34" font-family="Marcellus, Georgia, serif" font-size="19" font-weight="400" letter-spacing=".14em" fill="#F0EADA" >WAITING ROOM</text>
+      <text x="124" y="51" font-family="Spline Sans Mono, monospace" font-size="7" font-weight="500" letter-spacing=".16em" fill="#A89F8E" >PRIVATE CAIRO TABLE</text>
+      <rect x="330" y="23" width="42" height="24" rx="12" fill="#241B10" stroke="#A8742A" stroke-width="0.8" />
+      <text x="351" y="39" font-family="Spline Sans Mono, monospace" font-size="9" font-weight="700" letter-spacing=".02em" fill="#E8A33D" text-anchor="middle">4/4</text>
+      <rect x="627" y="21" width="152" height="29" rx="8" fill="#17130E" stroke="#574122" stroke-width="0.75" />
+      <text x="638" y="32" font-family="Spline Sans Mono, monospace" font-size="6" font-weight="600" letter-spacing=".1em" fill="#A89F8E" >ROOM CODE</text>
+      <text x="638" y="44" font-family="Spline Sans Mono, monospace" font-size="10" font-weight="700" letter-spacing=".13em" fill="#E8A33D" >X7K2PQ</text>
+      <rect x="786" y="21" width="77" height="29" rx="8" fill="#17130E" stroke="#574122" stroke-width="0.75" />
+      <path d="M800 31h9v9h-9z M802 29h9v9" fill="none" stroke="#E8A33D" stroke-width="1"/>
+      <text x="821" y="39" font-family="Spline Sans Mono, monospace" font-size="7" font-weight="600" letter-spacing=".06em" fill="#F0EADA" >COPY</text>
+      <rect x="869" y="21" width="76" height="29" rx="8" fill="#17130E" stroke="#574122" stroke-width="0.75" />
+      <path d="M884 32l7-4 7 4v6l-7 4-7-4z M891 28v9 M884 32l7 4 7-4" fill="none" stroke="#E8A33D" stroke-width=".9"/>
+      <text x="905" y="39" font-family="Spline Sans Mono, monospace" font-size="7" font-weight="600" letter-spacing=".05em" fill="#F0EADA" >SHARE</text>
+      <path d="M25 62H945" stroke="#E8A33D" stroke-opacity=".22"/>
+    </g><g id="Club_Table">
+      <ellipse cx="485" cy="249" rx="218" ry="95" fill="url(#tableWood)" stroke="url(#goldEdge)" stroke-width="3"/>
+      <ellipse cx="485" cy="249" rx="205" ry="84" fill="none" stroke="#E8A33D" stroke-opacity=".36" stroke-width="1.1"/>
+      <ellipse cx="485" cy="249" rx="185" ry="67" fill="none" stroke="#D6B06E" stroke-opacity=".13" stroke-width=".9"/>
+      <path d="M312 249c50-26 101-39 173-39s123 13 173 39c-50 25-101 38-173 38s-123-13-173-38Z" fill="none" stroke="#F0EADA" stroke-opacity=".075" stroke-width="1"/>
+      <text x="485" y="189" font-family="Spline Sans Mono, monospace" font-size="6" font-weight="600" letter-spacing=".22em" fill="#D9B97E" text-anchor="middle">PRIVATE TABLE</text>
+      <g id="Center_Card_Deck" transform="translate(485 251)">
+      <rect x="-20" y="-25" width="29" height="42" rx="3" transform="rotate(-14)" fill="#1B140D" stroke="#A8742A" stroke-width="1.2"/>
+      <rect x="-6" y="-28" width="29" height="42" rx="3" transform="rotate(10)" fill="#21180E" stroke="#E8A33D" stroke-width="1.3"/>
+      <path d="M8-18l8 8-8 8-8-8Z" fill="none" stroke="#E8A33D" stroke-width="1.2"/>
+      <circle cx="8" cy="-10" r="2" fill="#E8A33D"/>
+    </g>
+      <text x="485" y="309" font-family="Marcellus, Georgia, serif" font-size="7" font-weight="400" letter-spacing=".11em" fill="#D9B97E" text-anchor="middle">GOOD COMPANY · GREAT HANDS</text>
+    </g><g id="Seat_P3_Noura_A">
+      <rect x="394" y="94" width="182" height="52" rx="11" fill="#17130E" stroke="#8D6429" stroke-width="1" stroke-opacity=".58"/>
+      <circle cx="417" cy="120.0" r="14" fill="#29231A" stroke="#E8A33D" stroke-opacity=".65" stroke-width="1.2"/>
+      <text x="417" y="124.0" font-family="Marcellus, Georgia, serif" font-size="11" font-weight="600" letter-spacing="0" fill="#F0EADA" text-anchor="middle">N</text>
+      <text x="438" y="113" font-family="Saira, Arial, sans-serif" font-size="9" font-weight="700" letter-spacing=".02em" fill="#F0EADA" >P3 · Noura_A</text>
+      <text x="438" y="129" font-family="Spline Sans Mono, monospace" font-size="7" font-weight="600" letter-spacing=".05em" fill="#E8A33D" >✓ READY</text>
+      
+    </g><g id="Seat_P2_Omar_K">
+      <rect x="38" y="226" width="188" height="54" rx="11" fill="#17130E" stroke="#8D6429" stroke-width="1" stroke-opacity=".58"/>
+      <circle cx="61" cy="253.0" r="14" fill="#29231A" stroke="#E8A33D" stroke-opacity=".65" stroke-width="1.2"/>
+      <text x="61" y="257.0" font-family="Marcellus, Georgia, serif" font-size="11" font-weight="600" letter-spacing="0" fill="#F0EADA" text-anchor="middle">O</text>
+      <text x="82" y="245" font-family="Saira, Arial, sans-serif" font-size="9" font-weight="700" letter-spacing=".02em" fill="#F0EADA" >P2 · Omar_K</text>
+      <text x="82" y="261" font-family="Spline Sans Mono, monospace" font-size="7" font-weight="600" letter-spacing=".05em" fill="#E8A33D" >✓ READY</text>
+      
+    </g><g id="Seat_P4_Youssef_M">
+      <rect x="744" y="226" width="188" height="54" rx="11" fill="#17130E" stroke="#8D6429" stroke-width="1" stroke-opacity=".58"/>
+      <circle cx="767" cy="253.0" r="14" fill="#29231A" stroke="#E8A33D" stroke-opacity=".65" stroke-width="1.2"/>
+      <text x="767" y="257.0" font-family="Marcellus, Georgia, serif" font-size="11" font-weight="600" letter-spacing="0" fill="#F0EADA" text-anchor="middle">Y</text>
+      <text x="788" y="245" font-family="Saira, Arial, sans-serif" font-size="9" font-weight="700" letter-spacing=".02em" fill="#F0EADA" >P4 · Youssef_M</text>
+      <text x="788" y="261" font-family="Spline Sans Mono, monospace" font-size="7" font-weight="600" letter-spacing=".05em" fill="#A89F8E" >NOT READY</text>
+      
+    </g><g id="Seat_YOU_Khaled_X">
+      <rect x="391" y="323" width="188" height="54" rx="11" fill="#17130E" stroke="#8D6429" stroke-width="1" stroke-opacity=".58"/>
+      <circle cx="414" cy="350.0" r="14" fill="#29231A" stroke="#E8A33D" stroke-opacity=".65" stroke-width="1.2"/>
+      <text x="414" y="354.0" font-family="Marcellus, Georgia, serif" font-size="11" font-weight="600" letter-spacing="0" fill="#F0EADA" text-anchor="middle">K</text>
+      <text x="435" y="342" font-family="Saira, Arial, sans-serif" font-size="9" font-weight="700" letter-spacing=".02em" fill="#F0EADA" >YOU · Khaled_X</text>
+      <text x="435" y="358" font-family="Spline Sans Mono, monospace" font-size="7" font-weight="600" letter-spacing=".05em" fill="#E8A33D" >✓ READY</text>
+      <path d="M556 340l4 3 4-7 4 7 4-3-2 10h-14Z" fill="none" stroke="#E8A33D" stroke-width="1.1"/>
+    </g><g id="Readiness_Footer">
+      <path d="M28 384H942" stroke="#E8A33D" stroke-opacity=".18"/>
+      <text x="40" y="404" font-family="Marcellus, Georgia, serif" font-size="11" font-weight="400" letter-spacing=".035em" fill="#F0EADA" >3/4 players ready</text>
+      <text x="40" y="420" font-family="Saira, Arial, sans-serif" font-size="8" font-weight="500" letter-spacing=".02em" fill="#A89F8E" >Waiting for everyone at the table.</text>
+      <rect x="743" y="393" width="198" height="34" rx="9" fill="#20180F" stroke="#A8742A" stroke-width="0.9" />
+      <text x="842" y="414" font-family="Spline Sans Mono, monospace" font-size="9" font-weight="700" letter-spacing=".08em" fill="#E8A33D" text-anchor="middle">CANCEL READY</text>
+    </g></svg>
