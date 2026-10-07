@@ -4,6 +4,8 @@ import com.estemshan.engine.Bid
 import com.estemshan.engine.BidType
 import com.estemshan.engine.BiddingIntent
 import com.estemshan.engine.BiddingOutcome
+import com.estemshan.engine.GameType
+import com.estemshan.engine.ScoringMode
 import com.estemshan.engine.Suit
 import com.estemshan.game.ui.bidding.BiddingViewModel
 import com.estemshan.game.ui.table.TableViewModel
@@ -228,9 +230,81 @@ class QuickMatchViewModelTest {
     assertEquals("the match seed moved mid-match", seed, qvm.matchSeed.value)
   }
 
+  // ==========================================================================
+  //  S69 (E7) — game type + calculation mode reach the quick match.
+  // ==========================================================================
+
+  /**
+   * Pins the S69 cap fix: two stacked sa'aydas under CLASSIC arm ×2, not
+   * ×4 — then an exact round scores the Classic formula at that cap
+   * (caller 25, others 15/14/25, all ×2). Under the old bug (classic
+   * hard-coded false, no cap) the same script banks 88/48/… at ×4 and
+   * the Normal deltas, so this fails without the fix.
+   */
   @Test
-  fun aRedealNeverLandsOnAnotherRoundsDeal() {
-    // The redeal stride (500) must clear the round stride: round 1's first
+  fun classicCapsEscalationAt2() {
+    val qvm = QuickMatchViewModel()
+    qvm.startMatch(scoringMode = ScoringMode.CLASSIC)
+    assertEquals(ScoringMode.CLASSIC, qvm.scoringMode.value)
+
+    val saayda = BiddingOutcome(
+      trump = Suit.SPADES,
+      callerId = "p1",
+      withPlayers = emptyList(),
+      estimates = mapOf("p1" to 4, "p2" to 3, "p3" to 3, "p4" to 3),
+      dashCallers = emptyList(),
+      riskPlayerId = "p4",
+      leaderId = "p1",
+    )
+    val saaydaTricks = mapOf("p1" to 2, "p2" to 1, "p3" to 5, "p4" to 0)
+    repeat(2) {
+      qvm.onBiddingComplete(saayda)
+      qvm.onTableDone(qvm.onBiddingComplete(saayda).copy(), saaydaTricks)
+      qvm.nextRound()
+    }
+    assertEquals("sa'aydas score zero under both modes",
+      mapOf("p1" to 0, "p2" to 0, "p3" to 0, "p4" to 0), qvm.totals.value)
+
+    val exact = BiddingOutcome(
+      trump = Suit.SPADES,
+      callerId = "p1",
+      withPlayers = emptyList(),
+      estimates = mapOf("p1" to 2, "p2" to 2, "p3" to 1, "p4" to 2),
+      dashCallers = emptyList(),
+      riskPlayerId = "p4",
+      leaderId = "p1",
+    )
+    qvm.onBiddingComplete(exact)
+    qvm.onTableDone(
+      qvm.onBiddingComplete(exact).copy(),
+      mapOf("p1" to 2, "p2" to 2, "p3" to 1, "p4" to 2),
+    )
+    assertEquals("Classic deltas at the ×2 cap",
+      mapOf("p1" to 50, "p2" to 30, "p3" to 28, "p4" to 50), qvm.totals.value)
+  }
+
+  @Test
+  fun miniQuickMatchPlaysExactly10Rounds() {
+    val qvm = QuickMatchViewModel()
+    qvm.startMatch(matchSeed = 7L, gameType = GameType.MINI)
+    assertEquals(GameType.MINI, qvm.gameType.value)
+    assertEquals(10, qvm.maxRounds)
+    repeat(30) { qvm.nextRound() }
+    assertEquals("a MINI match ends after round 10", 10, qvm.round.value)
+  }
+
+  @Test
+  fun fullQuickMatchStillCapsAt18() {
+    val qvm = QuickMatchViewModel()
+    qvm.startMatch(matchSeed = 7L)
+    assertEquals(GameType.FULL, qvm.gameType.value)
+    assertEquals(18, qvm.maxRounds)
+    repeat(30) { qvm.nextRound() }
+    assertEquals("a FULL match ends after round 18", 18, qvm.round.value)
+  }
+
+  @Test
+  fun aRedealNeverLandsOnAnotherRoundsDeal() {    // The redeal stride (500) must clear the round stride: round 1's first
     // redeal has to be a different hand from round 2's opening deal. A bug
     // that collides them would silently re-deal a hand the table has seen.
     val redeal = QuickMatchViewModel().apply {

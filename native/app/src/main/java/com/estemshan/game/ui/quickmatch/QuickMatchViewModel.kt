@@ -9,8 +9,10 @@ import com.estemshan.engine.BiddingOutcome
 import com.estemshan.engine.Card
 import com.estemshan.engine.DEFAULT_SEATS
 import com.estemshan.engine.Dealer
+import com.estemshan.engine.GameType
 import com.estemshan.engine.RoundCfg
 import com.estemshan.engine.RoundScoreInput
+import com.estemshan.engine.ScoringMode
 import com.estemshan.engine.accumulateMatchScores
 import com.estemshan.engine.calculateRoundScore
 import com.estemshan.engine.nextSeat
@@ -74,6 +76,21 @@ class QuickMatchViewModel : ViewModel() {
   private val _matchSeed = MutableStateFlow(Random.Default.nextLong())
   val matchSeed: StateFlow<Long> = _matchSeed.asStateFlow()
 
+  /**
+   * S69 (E7): this match's shape + calculation mode. FULL + NORMAL by
+   * default (GM7); the S36 config screen will supply them when it exists
+   * (S68) — until then every caller takes the defaults and FULL behaves
+   * exactly as before (GM2).
+   */
+  private val _gameType = MutableStateFlow(GameType.FULL)
+  val gameType: StateFlow<GameType> = _gameType.asStateFlow()
+
+  private val _scoringMode = MutableStateFlow(ScoringMode.NORMAL)
+  val scoringMode: StateFlow<ScoringMode> = _scoringMode.asStateFlow()
+
+  /** The round ceiling: FULL 18, MINI 10. */
+  val maxRounds: Int get() = _gameType.value.baseRounds
+
   /** How many times the current round has been re-dealt (a general pass). */
   private var redealCount: Int = 0
 
@@ -101,6 +118,8 @@ class QuickMatchViewModel : ViewModel() {
   fun startMatch(
     roster: BotRoster = BotRoster.HUMANS_ONLY,
     matchSeed: Long = Random.Default.nextLong(),
+    gameType: GameType = GameType.FULL,
+    scoringMode: ScoringMode = ScoringMode.NORMAL,
   ) {
     _matchSeed.value = matchSeed
     redealCount = 0
@@ -111,6 +130,8 @@ class QuickMatchViewModel : ViewModel() {
     _totals.value = DEFAULT_SEATS.associateWith { 0 }
     _standings.value = null
     _roster.value = roster
+    _gameType.value = gameType
+    _scoringMode.value = scoringMode
     hands = Dealer.dealHands(dealSeed())
     _biddingKey.value++
   }
@@ -154,6 +175,11 @@ class QuickMatchViewModel : ViewModel() {
 
   /** Table done: scores the round, arms the next multiplier, banks totals. */
   fun onTableDone(cfg: RoundCfg, tricksWon: Map<String, Int>) {
+    // S69 (E7): the configured mode drives the formula AND its escalation
+    // cap (CLASSIC caps ×2, NORMAL ×8 — Session.kt's mapping, repeated here
+    // because this offline driver owns no Session). Previously classic was
+    // hard-coded false with no cap at all, so Classic silently kept ×8.
+    val classic = _scoringMode.value == ScoringMode.CLASSIC
     val result = calculateRoundScore(
       RoundScoreInput(
         round = cfg.round,
@@ -164,7 +190,8 @@ class QuickMatchViewModel : ViewModel() {
         withPlayers = cfg.withPlayers,
         multiplier = scoreMultiplier,
         riskPlayerId = cfg.riskId,
-        classic = false,
+        classic = classic,
+        escalationCap = if (classic) 2 else 8,
       ),
     )
     scoreMultiplier = result.nextMultiplier
@@ -174,6 +201,9 @@ class QuickMatchViewModel : ViewModel() {
   }
 
   fun nextRound() {
+    // S69 (E7): the match ends at its ceiling (FULL 18, MINI 10) — past it
+    // there is no next round, only the final standings.
+    if (_round.value >= maxRounds) return
     _round.value = _round.value + 1
     redealCount = 0
     _dealer.value = nextSeat(seats, _dealer.value)

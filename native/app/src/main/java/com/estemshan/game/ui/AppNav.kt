@@ -28,6 +28,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.estemshan.engine.GameType
+import com.estemshan.engine.ScoringMode
 import com.estemshan.game.data.AuthUiState
 import com.estemshan.game.ui.chooselevel.ChooseLevelScreen
 import com.estemshan.game.ui.chooselevel.ChooseLevelViewModel
@@ -137,7 +139,9 @@ fun EstemshanNav() {
             onDismissCreatedCode = lobbyVm::dismissCreatedCode,
             onClearJoinError = lobbyVm::clearJoinError,
             onQuickMatch = {
-              qvm.startMatch()
+              // S69: explicit FULL + NORMAL — S68's config screen supplies
+              // real values here when it exists.
+              qvm.startMatch(gameType = GameType.FULL, scoringMode = ScoringMode.NORMAL)
               nav.navigate(QUICKMATCH_GRAPH)
             },
             onPlayVsAi = { nav.navigate(Routes.CHOOSE_LEVEL) },
@@ -211,7 +215,13 @@ fun EstemshanNav() {
             // the driver is armed off it, so this is where a tuned chair
             // becomes an opponent that actually plays that way.
             onStartMatch = {
-              qvm.startMatch(chooseVm.roster())
+              // S69: explicit FULL + NORMAL — S68's config screen supplies
+              // real values here when it exists.
+              qvm.startMatch(
+                roster = chooseVm.roster(),
+                gameType = GameType.FULL,
+                scoringMode = ScoringMode.NORMAL,
+              )
               nav.navigate(QUICKMATCH_GRAPH)
             },
           )

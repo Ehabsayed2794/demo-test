@@ -132,6 +132,10 @@ fun NavGraphBuilder.quickMatchGraph(nav: NavController, qvm: QuickMatchViewModel
 
     composable(QUICK_STANDINGS) {
       val standings by qvm.standings.collectAsStateWithLifecycle()
+      // S69 (E7): at the ceiling (FULL 18, MINI 10) the match is over —
+      // the button retires instead of looping into an 11th/19th round.
+      val round by qvm.round.collectAsStateWithLifecycle()
+      val gameType by qvm.gameType.collectAsStateWithLifecycle()
       EstemshanTheme {
         Column(Modifier.fillMaxSize()) {
           Box(Modifier.weight(1f)) {
@@ -144,6 +148,7 @@ fun NavGraphBuilder.quickMatchGraph(nav: NavController, qvm: QuickMatchViewModel
                 popUpTo(QUICK_STANDINGS) { inclusive = true }
               }
             },
+            enabled = round < gameType.baseRounds,
             modifier = Modifier.fillMaxWidth().padding(16.dp),
           ) {
             Text("Next round")
