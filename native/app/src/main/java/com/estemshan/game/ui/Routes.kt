@@ -19,6 +19,8 @@ object Routes {
   const val TABLE = "table"
   const val STANDINGS = "standings"
   const val CHOOSE_LEVEL = "choose_level"
+  /** S36 — the Create Game configuration screen the lobby's Create Room opens. */
+  const val CREATE_GAME = "create_game"
   const val PROFILE = "profile"
   const val SETTINGS = "settings"
 }
