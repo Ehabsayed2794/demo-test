@@ -36,7 +36,7 @@ class SoundManagerTest {
     f.sounds.trickWon()
     f.sounds.bidSubmitted()
     f.sounds.roundScored()
-    f.sounds.matchWonIfFinal(round = 18, maxRounds = 18)
+    f.sounds.roundScoredOrMatchWon(round = 18, maxRounds = 18)
     f.sounds.tapped()
     assertTrue("off must silence every hook", f.player.played.isEmpty())
   }
@@ -64,25 +64,37 @@ class SoundManagerTest {
   @Test
   fun matchWinFiresOnceAtTheFinalStandingsNotPerRound() {
     val f = Fixture()
-    // Standings arrive every round — only the ceiling passes the gate.
-    for (round in 1..18) f.sounds.matchWonIfFinal(round, 18)
-    assertEquals(listOf(SfxClip.MATCH_WIN), f.player.played)
+    // Standings arrive every round — every round chimes, only the ceiling
+    // fans out.
+    for (round in 1..18) f.sounds.roundScoredOrMatchWon(round, 18)
+    assertEquals(
+      "17 chimes then one fanfare, in order",
+      List(17) { SfxClip.ROUND_SCORE } + SfxClip.MATCH_WIN,
+      f.player.played,
+    )
   }
 
   @Test
   fun matchWinRespectsMiniCeiling() {
     val f = Fixture()
-    f.sounds.matchWonIfFinal(round = 9, maxRounds = 10)
-    assertTrue(f.player.played.isEmpty())
-    f.sounds.matchWonIfFinal(round = 10, maxRounds = 10)
-    assertEquals(listOf(SfxClip.MATCH_WIN), f.player.played)
+    f.sounds.roundScoredOrMatchWon(round = 9, maxRounds = 10)
+    assertEquals(listOf(SfxClip.ROUND_SCORE), f.player.played)
+    f.sounds.roundScoredOrMatchWon(round = 10, maxRounds = 10)
+    assertEquals(listOf(SfxClip.ROUND_SCORE, SfxClip.MATCH_WIN), f.player.played)
   }
 
   @Test
-  fun round10OfFullIsNotFinal() {
+  fun round10OfFullChimesItIsNotTheMatchEnd() {
     val f = Fixture()
-    f.sounds.matchWonIfFinal(round = 10, maxRounds = 18)
-    assertTrue(f.player.played.isEmpty())
+    f.sounds.roundScoredOrMatchWon(round = 10, maxRounds = 18)
+    assertEquals(listOf(SfxClip.ROUND_SCORE), f.player.played)
+  }
+
+  @Test
+  fun theFinalRoundIsTheFanfareAloneNeverChimePlusFanfare() {
+    val f = Fixture()
+    f.sounds.roundScoredOrMatchWon(round = 18, maxRounds = 18)
+    assertEquals("the ceiling is the fanfare only", listOf(SfxClip.MATCH_WIN), f.player.played)
   }
 
   @Test

@@ -99,12 +99,14 @@ class SoundManager(
   fun roundScored() = play(SfxClip.ROUND_SCORE)
 
   /**
-   * The match ended — fires at most once: callers invoke this on every
-   * standings arrival and only the final round passes the gate. MINI ends
-   * at 10, FULL at 18 (both are [maxRounds]).
+   * A scored round's standings arrived. Every round before the ceiling
+   * chimes; the ceiling round is the match-win fanfare instead, so the two
+   * never fire together. Callers hit this per standings arrival (both
+   * flows), and the [round] cap keeps it once per round. MINI ends at 10,
+   * FULL at 18 (both are [maxRounds]).
    */
-  fun matchWonIfFinal(round: Int, maxRounds: Int) {
-    if (round >= maxRounds) play(SfxClip.MATCH_WIN)
+  fun roundScoredOrMatchWon(round: Int, maxRounds: Int) {
+    if (round >= maxRounds) play(SfxClip.MATCH_WIN) else play(SfxClip.ROUND_SCORE)
   }
 
   /** A primary-button tap. */
