@@ -52,6 +52,7 @@ import com.estemshan.engine.emitPlay
 import com.estemshan.engine.initTable
 import com.estemshan.engine.isLegal
 import com.estemshan.engine.resolveTrick
+import com.estemshan.game.ui.sound.LocalSfx
 import com.estemshan.game.ui.theme.EstemshanMotion
 import com.estemshan.game.ui.theme.EstemshanTheme
 import kotlinx.coroutines.delay
@@ -89,8 +90,12 @@ fun TableScreen(
 ) {
   // The 900 ms trick-resolution beat (S28: deliberate, not a transition).
   // The sweep/highlight animate *within* it; this delay is unchanged.
+  // S27: the win sound fires as the beat STARTS (the trick was just won) —
+  // the delay and the resolve after it are untouched.
   if (state.phase == TablePhase.RESOLVING) {
+    val sfx = LocalSfx.current
     LaunchedEffect(state.trickNo) {
+      sfx.trickWon()
       delay(900)
       onResolve()
     }

@@ -48,6 +48,8 @@ import com.estemshan.game.ui.quickmatch.quickMatchGraph
 import com.estemshan.game.ui.room.RoomScreen
 import com.estemshan.game.ui.room.RoomViewModel
 import com.estemshan.game.ui.settings.SettingsRoute
+import com.estemshan.game.ui.sound.LocalSfx
+import com.estemshan.game.ui.sound.ProvideSoundManager
 import com.estemshan.game.ui.splash.SplashScreen
 import com.estemshan.game.ui.splash.SplashViewModel
 import com.estemshan.game.ui.standings.FinalStandingsScreen
@@ -68,6 +70,8 @@ fun EstemshanNav() {
   val qvm: QuickMatchViewModel = viewModel()
 
   EstemshanTheme {
+    // S27: one app-scoped SoundManager for every screen below (toggle-aware).
+    ProvideSoundManager {
     // Edge-to-side (targetSdk 36): keep every screen clear of the status
     // bar, gesture nav bar, and any display cutout. Applied once at the
     // root so individual screens stay written against the full window.
@@ -115,6 +119,8 @@ fun EstemshanNav() {
         val lobbyVm: LobbyViewModel = viewModel()
         val lobbyState by lobbyVm.state.collectAsStateWithLifecycle()
         val uid = (authState as? AuthUiState.SignedIn)?.uid
+        // S27: tap sounds on the lobby's primary buttons (toggle-aware).
+        val sfx = LocalSfx.current
         // The reconnect read, seeded once per signed-in arrival: a live
         // currentMatchId is what turns the lobby's Resume entry on.
         LaunchedEffect(uid) { uid?.let { lobbyVm.loadResume(it) } }
@@ -135,23 +141,25 @@ fun EstemshanNav() {
           LobbyScreen(
             state = lobbyState,
             uid = uid,
-            onCreateRoom = { nav.navigate(Routes.CREATE_GAME) },
-            onJoinRoom = { code -> uid?.let { lobbyVm.joinRoom(it, code) } },
+            onCreateRoom = { sfx.tapped(); nav.navigate(Routes.CREATE_GAME) },
+            onJoinRoom = { code -> sfx.tapped(); uid?.let { lobbyVm.joinRoom(it, code) } },
             onLeaveRoom = { uid?.let { lobbyVm.leaveRoom(it) } },
             onDismissCreatedCode = lobbyVm::dismissCreatedCode,
             onClearJoinError = lobbyVm::clearJoinError,
             onQuickMatch = {
+              sfx.tapped()
               // S69: explicit FULL + NORMAL — S68's config screen supplies
               // real values here when it exists.
               qvm.startMatch(gameType = GameType.FULL, scoringMode = ScoringMode.NORMAL)
               nav.navigate(QUICKMATCH_GRAPH)
             },
-            onPlayVsAi = { nav.navigate(Routes.CHOOSE_LEVEL) },
+            onPlayVsAi = { sfx.tapped(); nav.navigate(Routes.CHOOSE_LEVEL) },
             // The resume entry's one navigation — the id comes from the
             // state, and the view model forgets it so backing out of the
             // match does not immediately re-offer it.
             onResumeMatch = {
               val matchId = lobbyState.resumableMatchId ?: return@LobbyScreen
+              sfx.tapped()
               lobbyVm.clearResume()
               nav.navigate(onlineMatchRoute(matchId))
             },
@@ -172,6 +180,8 @@ fun EstemshanNav() {
         val roomVm: RoomViewModel = viewModel()
         val roomState by roomVm.state.collectAsStateWithLifecycle()
         val uid = (authState as? AuthUiState.SignedIn)?.uid
+        // S27: tap sound on the ready toggle (the room's start).
+        val sfx = LocalSfx.current
         // The room's code arrives as a nav arg, so this is the one place that
         // seeds the screen: open() sets roomCode, and the view model's own
         // guard on it makes a recomposition a no-op instead of a restart. The
@@ -196,7 +206,8 @@ fun EstemshanNav() {
             state = roomState,
             uid = uid,
             onRefresh = roomVm::refresh,
-            onToggleReady = { uid?.let { roomVm.toggleReady(it) } },
+            // S27: the ready toggle IS the room's start — the primary tap.
+            onToggleReady = { sfx.tapped(); uid?.let { roomVm.toggleReady(it) } },
             onLeave = {
               uid?.let { roomVm.leave(it) }
               nav.navigate(Routes.LOBBY) { popUpTo(Routes.ROOM_PATH) { inclusive = true } }
@@ -299,6 +310,7 @@ fun EstemshanNav() {
           },
         )
       }
+    }
     }
   }
 }
