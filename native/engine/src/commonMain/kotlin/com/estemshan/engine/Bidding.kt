@@ -125,7 +125,7 @@ enum class GameType(val baseRounds: Int, val firstFastRound: Int, val maxExtensi
   fun isExtensionRound(round: Int): Boolean = round in firstFastRound..baseRounds
 
   /**
-   * The fixed trump ladder for a Quick round. [Math.floorMod] is
+   * The fixed trump ladder for a Quick round. [floorMod] is
    * load-bearing: Kotlin's `%` keeps the dividend's sign, so the
    * pre-GameType indexing (`(round - 14) % FIXED_SUITS.size`) threw
    * IndexOutOfBoundsException on any round below the ladder's start —
@@ -135,7 +135,15 @@ enum class GameType(val baseRounds: Int, val firstFastRound: Int, val maxExtensi
    * the [BiddingTest] golden cases are unchanged.
    */
   fun fixedTrumpFor(round: Int): Suit =
-    FIXED_SUITS[Math.floorMod(round - firstFastRound, FIXED_SUITS.size)]
+    FIXED_SUITS[floorMod(round - firstFastRound, FIXED_SUITS.size)]
+
+  /**
+   * Folds a negative remainder positive. Kotlin's `%` keeps the dividend's
+   * sign, so this is the identity java.lang.Math.floorMod implements;
+   * kotlin.math has no floorMod and the engine now compiles to JS/Node as
+   * well as JVM (ADR 0002), so the two-line form lives here.
+   */
+  private fun floorMod(x: Int, y: Int): Int = ((x % y) + y) % y
 }
 
 /** Legacy parameterized form — delegates to [GameType.isFastRound]. */

@@ -8,5 +8,8 @@ plugins {
   id("com.android.application") version "8.13.2" apply false
   id("org.jetbrains.kotlin.android") version "1.9.25" apply false
   // Pure-JVM engine module (no Android): same Kotlin, testable anywhere.
+  // Now multiplatform (JVM + JS/Node) so the Functions layer can share the
+  // engine — see docs/adr/0002-functions-runtime.md.
   kotlin("jvm") version "1.9.25" apply false
+  kotlin("multiplatform") version "1.9.25" apply false
 }
