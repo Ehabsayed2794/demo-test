@@ -8,10 +8,12 @@ import com.estemshan.engine.Card
 import com.estemshan.engine.DECK_SUITS
 import com.estemshan.engine.EmitResult
 import com.estemshan.engine.GameSession
+import com.estemshan.engine.GameType
 import com.estemshan.engine.PlayCard
 import com.estemshan.engine.PlayEmit
 import com.estemshan.engine.RANKS
 import com.estemshan.engine.RoundCfg
+import com.estemshan.engine.ScoringMode
 import com.estemshan.engine.Suit
 import com.estemshan.engine.TablePhase
 import com.estemshan.engine.TableState
@@ -111,6 +113,10 @@ class OnlineMatchViewModelTest {
    *  tests assert on are the adapter's own diagnostics. */
   private val adapters = mutableMapOf<String, MatchAdapter>()
 
+  /** The session each view model drives, keyed by uid — S69 asserts the
+   *  document-seeded type/mode/cap through these. */
+  private val sessions = mutableMapOf<String, GameSession>()
+
   /**
    * One seat's whole online stack: its OWN [GameSession] and its OWN
    * [MatchAdapter] (the per-process engines and registries are per
@@ -124,6 +130,7 @@ class OnlineMatchViewModelTest {
     heartbeat: Heartbeat = Heartbeat.None,
   ): OnlineMatchViewModel {
     val session = GameSession()
+    sessions[uid] = session
     // The production wiring: the adapter replays into a bridge around the
     // SAME GameSession the view model drives — a second instance would never
     // agree with the VM's own reads (OnlineServices.session vs sessionPort).
@@ -162,6 +169,69 @@ class OnlineMatchViewModelTest {
     biddingLog = emptyList(),
     gameState = GameState.NOT_DEALT,
   )
+
+  // ═══════════════════════════════════════════════════════════════════
+  // S69 (E7) — the document seeds the session's type, mode and ceiling
+  // ═══════════════════════════════════════════════════════════════════
+
+  /**
+   * A MINI document at round 6 seeds maxRounds 10 into the session and
+   * resolves the auction to the FAST path — under FULL's window round 6
+   * would open a normal Dash auction, so ESTIMATES proves the doc's type
+   * reached the session through initAuction.
+   */
+  @Test
+  fun miniDocSeedsMaxRounds10AndFastPathAtRound6() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastRoundDoc().copy(
+        currentRound = 6,
+        maxRounds = 10,
+        gameType = GameType.MINI,
+      )
+      val vm = makeVm("uid-a", Dispatchers.Main)
+      vm.start("m-mini")
+      advanceUntilIdle()
+
+      broadcast("m-mini")
+      val session = sessions.getValue("uid-a")
+      assertEquals(GameType.MINI, session.getGameType())
+      assertEquals("a MINI doc seeds maxRounds 10", 10, session.getRound().maxRounds)
+      assertEquals("MINI round 6 resolves to the fast path",
+        BiddingPhase.ESTIMATES, biddingOf(vm.state.value).subPhase)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * A CLASSIC document seeds the session's scoring mode (cap ×2) — the two
+   * facts scoreAndAdvance reads into RoundScoreInput (classic = mode is
+   * CLASSIC, escalationCap straight from the session).
+   */
+  @Test
+  fun classicDocSeedsSessionScoringModeAndCap() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastRoundDoc().copy(scoringMode = ScoringMode.CLASSIC)
+      val vm = makeVm("uid-a", Dispatchers.Main)
+      vm.start("m-classic")
+      advanceUntilIdle()
+
+      broadcast("m-classic")
+      val session = sessions.getValue("uid-a")
+      assertEquals(ScoringMode.CLASSIC, session.getScoringMode())
+      assertEquals("CLASSIC caps escalation at 2", 2, session.escalationCap)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
 
   /** Hand the store's current document to every subscriber, then let the
    *  view models' pipelines drain — what a Firestore tick followed by the
