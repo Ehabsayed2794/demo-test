@@ -100,7 +100,7 @@ service cloud.firestore {
 
     function isValidNewRoom() {
       let data = request.resource.data;
-      return data.keys().hasOnly(['creator', 'players', 'readyPlayers', 'status', 'name', 'createdAt', 'updatedAt'])
+      return data.keys().hasOnly(['creator', 'players', 'readyPlayers', 'status', 'name', 'gameType', 'scoringMode', 'createdAt', 'updatedAt'])
              && data.creator is string
              && data.creator == request.auth.uid
              && data.players is list
@@ -112,7 +112,11 @@ service cloud.firestore {
              && data.readyPlayers is list
              && data.readyPlayers.size() == 0
              && data.status is string
-             && data.status == 'waiting';
+             && data.status == 'waiting'
+             // S67: the room carries its configured gameType/scoringMode
+             // to the match; absent ⇒ FULL/NORMAL (back-compat).
+             && isValidGameType(data)
+             && isValidScoringMode(data);
     }
 
     // A list changed by exactly the acting user adding or removing
@@ -338,6 +342,54 @@ service cloud.firestore {
     // transaction room update (or vice versa) fails on at least one
     // side — this is what makes the atomic-transaction requirement
     // rules-enforced, not just a JS-layer convention.
+    // ── S67 (E7, Game Type & Calculation Mode) ───────────────────────
+    // The four helpers below are the rules-layer mirror of the :engine
+    // GameType enum (FULL baseRounds 18 / firstFastRound 14 /
+    // maxExtensions 5; MINI 10 / 6 / 1). Every one is written so a doc
+    // written BEFORE S67 — with NO gameType field — behaves exactly as
+    // FULL: the amendment's absent-means-FULL back-compat, which is why
+    // no existing room or match needs a migration and a Full match stays
+    // byte-identical to today. `.get(k, null)` (not bare `data.gameType`)
+    // so an absent key is a clean null rather than a key-error.
+    //
+    // baseRoundsOf: the ceiling a FRESH match of this type starts at.
+    function baseRoundsOf(data) {
+      return data.get('gameType', null) == 'MINI' ? 10 : 18;
+    }
+
+    // firstFastRoundOf: the lower bound of the Rapid Rounds window, the
+    // only rounds ever eligible to extend maxRounds (FULL 14, MINI 6).
+    function firstFastRoundOf(data) {
+      return data.get('gameType', null) == 'MINI' ? 6 : 14;
+    }
+
+    // maxExtensionsOf: how many extensions a match may ever record. FULL
+    // is 5 — exactly what its 14–18 window's five distinct rounds already
+    // imply, so this cap is unreachable for Full and changes nothing.
+    // MINI is exactly ONE (10 → 11 max), the GM3 boundary.
+    function maxExtensionsOf(data) {
+      return data.get('gameType', null) == 'MINI' ? 1 : 5;
+    }
+
+    // effectiveGameType: the type a doc counts as, absent ⇒ FULL. Used
+    // by the rematch inheritance check so a pre-S67 old match (no field)
+    // rematches as FULL — exactly as MatchDoc.fromFields parses it.
+    function effectiveGameType(data) {
+      return data.get('gameType', null) == 'MINI' ? 'MINI' : 'FULL';
+    }
+
+    // When gameType/scoringMode are present at all they must be a real
+    // enum name, so a client can never store a match the :services
+    // parser would silently read as FULL (absent stays legal: back-compat
+    // for the room/match writers predating S67).
+    function isValidGameType(data) {
+      return !('gameType' in data) || data.gameType in ['FULL', 'MINI'];
+    }
+
+    function isValidScoringMode(data) {
+      return !('scoringMode' in data) || data.scoringMode in ['NORMAL', 'CLASSIC'];
+    }
+
     function isRoomReadyForMatchStart(room) {
       return room.players.size() > 0 && room.readyPlayers.hasAll(room.players);
     }
@@ -473,11 +525,14 @@ service cloud.firestore {
       return hasRematchField
              && data.keys().hasOnly(['roomId', 'players', 'status', 'createdAt', 'currentRound', 'dealer', 'turn', 'gameState',
                                    'seats', 'version', 'biddingOpen', 'bids', 'lastBidSeat', 'cardLog', 'lastCardSeat', 'cardPhase',
-                                   'biddingLog', 'maxRounds', 'extendedRounds', 'rematchOfMatchId'])
+                                   'biddingLog', 'maxRounds', 'extendedRounds', 'rematchOfMatchId', 'gameType', 'scoringMode'])
              && request.auth.uid in data.players
              && data.status == 'starting'
              && data.currentRound == 1
-             && data.maxRounds == 18
+             // S67: the ceiling is derived from the match's own gameType
+             // (FULL 18, MINI 10) — a pre-S67 doc has no gameType and
+             // counts as FULL (18), byte-identical to today.
+             && data.maxRounds == baseRoundsOf(data)
              && data.extendedRounds == []
              && data.dealer in data.players
              && data.turn in data.players
@@ -492,6 +547,13 @@ service cloud.firestore {
              && vote.status == 'ALL_YES'
              && vote.newMatchId == null
              && data.roomId == oldMatch.roomId
+             // S67: a rematch inherits the OLD match's type (and its
+             // mode) — never a client-supplied value. effectiveGameType
+             // on both sides so a pre-S67 old match (no field ⇒ FULL)
+             // still rematches as a Full match.
+             && effectiveGameType(oldMatch) == effectiveGameType(data)
+             && isValidGameType(data)
+             && isValidScoringMode(data)
              // `seats`/`players` copied VERBATIM from the vote's own,
              // already-authoritative (parent-derived, never client-
              // supplied) seats map — closes "arbitrary UID injection"
@@ -1136,7 +1198,15 @@ service cloud.firestore {
              // before, byte-for-byte — no security invariant changed.
              && (oldRounds.size() == 0 ? true : newRounds[0:oldRounds.size()] == oldRounds)
              && appendedRound is int
-             && appendedRound >= 14 && appendedRound <= 18
+             // S67: the Rapid Rounds window is type-derived (FULL 14–18,
+             // MINI 6–10); a pre-S67 match has no gameType ⇒ FULL ⇒ the
+             // exact same 14–18 bounds.
+             && appendedRound >= firstFastRoundOf(oldData) && appendedRound <= baseRoundsOf(oldData)
+             // S67 (GM3): the extension COUNT cap — MINI allows exactly
+             // ONE extension (10 → 11 max). FULL's cap is 5, which its
+             // 14–18 window already implies (five distinct qualifying
+             // rounds at most), so Full is unchanged.
+             && oldRounds.size() < maxExtensionsOf(oldData)
              && !(appendedRound in oldRounds);
     }
 
@@ -1335,19 +1405,23 @@ service cloud.firestore {
         let room = get(/databases/$(database)/documents/rooms/$(data.roomId)).data;
         return data.keys().hasOnly(['roomId', 'players', 'status', 'createdAt', 'currentRound', 'dealer', 'turn', 'gameState',
                                      'seats', 'version', 'biddingOpen', 'bids', 'lastBidSeat', 'cardLog', 'lastCardSeat', 'cardPhase',
-                                     'biddingLog', 'maxRounds', 'extendedRounds'])
+                                     'biddingLog', 'maxRounds', 'extendedRounds', 'gameType', 'scoringMode'])
                && data.roomId is string
                && data.players is list
                && data.players.size() > 0
                && request.auth.uid in data.players
                && data.status == 'starting'
                && data.currentRound == 1
-               // Match Completion sprint: the AUTHORITATIVE round ceiling
-               // always starts at 18, with no extensions recorded yet —
-               // isValidRoundExtension() below is the ONLY other write
-               // this collection permits for these two fields.
-               && data.maxRounds == 18
+               // Match Completion sprint + S67: the AUTHORITATIVE round
+               // ceiling always starts at the match's own type's base
+               // (FULL 18, MINI 10; a pre-S67 doc has no gameType ⇒ 18),
+               // with no extensions recorded yet — isValidRoundExtension()
+               // below is the ONLY other write this collection permits
+               // for these two fields.
+               && data.maxRounds == baseRoundsOf(data)
                && data.extendedRounds == []
+               && isValidGameType(data)
+               && isValidScoringMode(data)
                && data.dealer in data.players
                && data.turn in data.players
                && exists(/databases/$(database)/documents/rooms/$(data.roomId))
