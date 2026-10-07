@@ -33,6 +33,8 @@ import com.estemshan.engine.ScoringMode
 import com.estemshan.game.data.AuthUiState
 import com.estemshan.game.ui.chooselevel.ChooseLevelScreen
 import com.estemshan.game.ui.chooselevel.ChooseLevelViewModel
+import com.estemshan.game.ui.creategame.CreateGameScreen
+import com.estemshan.game.ui.creategame.CreateGameViewModel
 import com.estemshan.game.ui.lobby.LobbyScreen
 import com.estemshan.game.ui.lobby.LobbyViewModel
 import com.estemshan.game.ui.login.LoginViewModel
@@ -133,7 +135,7 @@ fun EstemshanNav() {
           LobbyScreen(
             state = lobbyState,
             uid = uid,
-            onCreateRoom = { uid?.let { lobbyVm.createRoom(it) } },
+            onCreateRoom = { nav.navigate(Routes.CREATE_GAME) },
             onJoinRoom = { code -> uid?.let { lobbyVm.joinRoom(it, code) } },
             onLeaveRoom = { uid?.let { lobbyVm.leaveRoom(it) } },
             onDismissCreatedCode = lobbyVm::dismissCreatedCode,
@@ -224,6 +226,52 @@ fun EstemshanNav() {
               )
               nav.navigate(QUICKMATCH_GRAPH)
             },
+          )
+        }
+      }
+      composable(Routes.CREATE_GAME) {
+        // S36 shares the LOBBY's own view model rather than a second
+        // instance: createRoom is the lobby's action and the created-code
+        // handoff (S06) is keyed on its state, so "which room am I in" keeps
+        // exactly one owner. Scoping to the lobby's back-stack entry — not
+        // the nav host — keeps that state's lifetime tied to the lobby, so a
+        // sign-out that pops it still clears it.
+        val lobbyVm: LobbyViewModel = viewModel(
+          viewModelStoreOwner = nav.getBackStackEntry(Routes.LOBBY),
+        )
+        val lobbyState by lobbyVm.state.collectAsStateWithLifecycle()
+        val createVm: CreateGameViewModel = viewModel()
+        val createState by createVm.state.collectAsStateWithLifecycle()
+        val uid = (authState as? AuthUiState.SignedIn)?.uid
+        // The room the player was already seated at when they opened this
+        // screen, if any. A create sets a different code, so this is what
+        // separates a real create from having arrived already seated.
+        val initialRoomCode = remember { lobbyState.roomCode }
+        // A create that landed puts a roomCode in the lobby state, so pop
+        // back to the lobby: its created-code dialog is the host's chance to
+        // read the code out (S06), and its own effect then opens the room.
+        // Until a create lands the player stays here, selections intact.
+        LaunchedEffect(lobbyState.roomCode) {
+          if (lobbyState.roomCode != null && lobbyState.roomCode != initialRoomCode) {
+            nav.popBackStack()
+          }
+        }
+        EstemshanTheme {
+          CreateGameScreen(
+            state = createState,
+            busy = lobbyState.busy,
+            createError = lobbyState.createError,
+            onGameType = createVm::onGameType,
+            onScoringMode = createVm::onScoringMode,
+            onBotTier = createVm::onBotTier,
+            onBotPersonality = createVm::onBotPersonality,
+            onDecisionTimerSeconds = createVm::onDecisionTimerSeconds,
+            onCreateRoom = {
+              uid?.let {
+                lobbyVm.createRoom(it, createState.gameType, createState.scoringMode)
+              }
+            },
+            onCancel = { nav.popBackStack() },
           )
         }
       }

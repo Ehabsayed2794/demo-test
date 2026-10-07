@@ -120,4 +120,48 @@
     to S41 with the rest of the online strings.
   -->
   <string name="online_opponent_away">Opponent appears away</string>
+
+  <!-- S36 — Create Game: the host's five match-scoped selections. -->
+  <string name="create_game_title">Create Game</string>
+  <string name="create_game_subtitle">Configure · Private room</string>
+  <!-- The five group headings, in the order the screen presents them. -->
+  <string name="create_game_section_game_type">Game Type</string>
+  <string name="create_game_section_calculation">Calculation</string>
+  <string name="create_game_section_bot_difficulty">Bot Difficulty</string>
+  <string name="create_game_section_bot_personality">Bot Personality</string>
+  <string name="create_game_section_decision_timer">Decision Timer</string>
+  <!--
+    The two Game Types. The detail line states each one's consequences in one
+    line (GM1–GM3) rather than raw numbers the player must interpret; the
+    values come from GameType so the text can never drift from the rules.
+  -->
+  <string name="create_game_option_full">Full</string>
+  <string name="create_game_option_mini">Mini</string>
+  <!-- %1$d rounds, %2$d first Quick round, %3$d extension cap (FULL only). -->
+  <string name="create_game_full_detail">%1$d rounds · Quick Rounds from %2$d · up to %3$d extensions</string>
+  <!-- %1$d rounds, %2$d first Quick round; MINI allows exactly one extension. -->
+  <string name="create_game_mini_detail">%1$d rounds · Quick Rounds from %2$d · one extension only</string>
+  <!--
+    The two Calculation Modes. The escalation cap is the only player-visible
+    difference (GM4), so it is the only thing stated.
+  -->
+  <string name="create_game_option_normal">Normal</string>
+  <string name="create_game_option_classic">Classic</string>
+  <string name="create_game_normal_detail">Escalation cap ×8</string>
+  <string name="create_game_classic_detail">Escalation cap ×2</string>
+  <!-- The Decision Timer group: one label per choice, in seconds. -->
+  <string name="create_game_timer_seconds">%1$d s</string>
+  <!-- The live per-phase summary; the +5 rule must be visible here, not in-play. -->
+  <string name="create_game_timer_summary">Time per decision</string>
+  <string name="create_game_timer_summary_hint">Card play uses the selected time; Dash, Bidding, and Estimates get an extra %1$d s.</string>
+  <!-- The four phases, in match order. -->
+  <string name="create_game_phase_dash">Dash</string>
+  <string name="create_game_phase_bidding">Bidding</string>
+  <string name="create_game_phase_estimates">Estimates</string>
+  <string name="create_game_phase_card_play">Card Play</string>
+  <!-- Confirm creates the room with these settings; the code is shared next. -->
+  <string name="create_game_confirm">Confirm · Create Room</string>
+  <string name="create_game_cancel">Cancel</string>
+  <!-- A create that failed at the transport; the selections are kept. -->
+  <string name="create_game_error">Couldn\'t create the room. Check your connection and try again.</string>
 </resources>

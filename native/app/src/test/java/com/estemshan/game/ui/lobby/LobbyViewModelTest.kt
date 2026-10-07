@@ -77,7 +77,7 @@ class LobbyViewModelTest {
   fun createReturnsACodeAnotherPlayerCanJoin() = runTest {
     openLobby()
 
-    vm.createRoom(me)
+    vm.createRoom(me, GameType.FULL, ScoringMode.NORMAL)
     advanceUntilIdle()
 
     val code = vm.state.value.roomCode
@@ -103,12 +103,12 @@ class LobbyViewModelTest {
     // room, so the busy guard has to drop the second one. The fake is
     // otherwise synchronous — without holding the first call mid-flight there
     // is no busy window for a second tap to land in.
-    vm.createRoom(me)
+    vm.createRoom(me, GameType.FULL, ScoringMode.NORMAL)
     advanceUntilIdle()
     assertTrue("the first create is in flight", vm.state.value.busy)
 
     // The second tap arrives while the first is still in flight.
-    vm.createRoom(me)
+    vm.createRoom(me, GameType.FULL, ScoringMode.NORMAL)
     advanceUntilIdle()
 
     rooms.releaseCreate()
@@ -117,6 +117,39 @@ class LobbyViewModelTest {
     assertEquals("exactly one room was created — the second tap was dropped",
       1, rooms.createCalls.get())
     assertEquals("one room exists", 1, rooms.codes.size)
+  }
+
+  @Test
+  fun createCarriesTheConfiguredTypeAndModeOntoTheRoom() = runTest {
+    openLobby()
+
+    // S68 (E7): the host's S36 selections ride the room document to the
+    // match (S66), so a configured match is the match that starts. MINI +
+    // CLASSIC are the non-defaults — the values FULL/NORMAL cannot reach by
+    // accident, since they are also every default in the chain.
+    vm.createRoom(me, GameType.MINI, ScoringMode.CLASSIC)
+    advanceUntilIdle()
+
+    val code = vm.state.value.roomCode
+    assertNotNull("creating returned a room code", code)
+    assertEquals("the room keeps the configured Game Type",
+      GameType.MINI, rooms.room(code!!).gameType)
+    assertEquals("the room keeps the configured Calculation Mode",
+      ScoringMode.CLASSIC, rooms.room(code).scoringMode)
+  }
+
+  @Test
+  fun aFailedCreateKeepsTheLobbyOpenAndSurfacesAReason() = runTest {
+    openLobby()
+    rooms.failNextCreate()
+
+    vm.createRoom(me, GameType.MINI, ScoringMode.CLASSIC)
+    advanceUntilIdle()
+
+    assertNull("no room was created", vm.state.value.roomCode)
+    assertFalse("the failed create is not still busy", vm.state.value.busy)
+    assertTrue("the failure is surfaced as a reason to retry",
+      vm.state.value.createError)
   }
 
   // ==========================================================================
@@ -261,6 +294,11 @@ class LobbyViewModelTest {
 
     fun releaseCreate() { createGate.complete(Unit) }
 
+    /** Make the next createRoom throw, once — a transport failure, the shape
+     *  RoomService surfaces when the write is refused or unreachable. */
+    fun failNextCreate() { failNext = true }
+    private var failNext = false
+
     /** The room at [code], as RoomService would have stored it. */
     fun room(code: String): RoomDoc = rooms.getValue(normalizeRoomCode(code))
 
@@ -285,6 +323,10 @@ class LobbyViewModelTest {
     ): String {
       createGate.await()
       createCalls.incrementAndGet()
+      if (failNext) {
+        failNext = false
+        throw ServiceException(Reasons.UNAVAILABLE, "create failed")
+      }
       // Deterministic 6-char uppercase codes: unique, so the collision retry
       // the real generator needs never applies here.
       val code = "ROOM%02d".format(nextCode++)

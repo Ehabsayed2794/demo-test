@@ -65,15 +65,24 @@ class LobbyViewModel(
   /**
    * Create a private room and show its code to share. A double-tap while one
    * is in flight would open a second room, so a busy lobby ignores the tap.
+   *
+   * S68 (E7): [gameType]/[scoringMode] are the host's S36 selections. They
+   * ride the room document to the match (S66), so the configured match is the
+   * one that starts — not a default the host never picked. A create that
+   * fails at the transport never made a room, so nothing has to be torn down:
+   * the player keeps every selection and gets a reason to retry (S36's
+   * network-loss rule) instead of a crash.
    */
-  fun createRoom(playerId: String) {
+  fun createRoom(playerId: String, gameType: GameType, scoringMode: ScoringMode) {
     if (_state.value.busy) return
     launch {
-      _state.value = _state.value.copy(busy = true, joinError = null)
-      // S66: explicit FULL/NORMAL — the configured values come from S69's
-      // config state, which does not exist yet.
-      val code = rooms.createRoom(playerId, null, GameType.FULL, ScoringMode.NORMAL)
-      _state.value = _state.value.copy(busy = false, roomCode = code, createdCode = code)
+      _state.value = _state.value.copy(busy = true, joinError = null, createError = false)
+      try {
+        val code = rooms.createRoom(playerId, null, gameType, scoringMode)
+        _state.value = _state.value.copy(busy = false, roomCode = code, createdCode = code)
+      } catch (e: Exception) {
+        _state.value = _state.value.copy(busy = false, createError = true)
+      }
     }
   }
 
@@ -163,6 +172,9 @@ data class LobbyUiState(
   val createdCode: String? = null,
   /** Why the last join failed, or null. */
   val joinError: LobbyJoinError? = null,
+  /** A create that failed at the transport — the selections survive it, so
+   *  the player retries rather than re-picking everything (S36). */
+  val createError: Boolean = false,
   /**
    * A live match this player is part of (players/{uid}.currentMatchId), or
    * null — the lobby's reconnect entry. Cleared once taken.
