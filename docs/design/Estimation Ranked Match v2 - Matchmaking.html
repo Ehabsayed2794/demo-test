@@ -1,0 +1,103 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="design_doc_mode" content="canvas"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Estimation Ranked Match v2 - Matchmaking (S55 / S56)</title>
+<link href="https://fonts.googleapis.com/css2?family=Marcellus&family=Saira:wght@400;500;600;700&family=Spline+Sans+Mono:wght@400;500;600;700&family=Noto+Naskh+Arabic:wght@500;600&display=swap" rel="stylesheet">
+<style>
+:root{--accent:#E8A33D;--accent-hi:#F4B860;--accent-dim:#A8742A;--accent-lo:#7A5A1A;--ink:#F0EADA;--ink-dim:#A89F8E;--ink-faint:#8A8272;--bg:#0D0A07;--panel:#17130E;--line:rgba(255,240,210,.07);--pill:#1D1A16;--error:#F25555;--mono:"Spline Sans Mono",monospace;--serif:"Marcellus",serif;--sans:"Saira",sans-serif}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#2a2622;font-family:var(--sans);color:var(--ink)}
+a{color:var(--accent)}a:hover{color:var(--accent-hi)}
+.lab{position:absolute;font:600 13px var(--mono);letter-spacing:.12em;color:#d9d2c2;text-transform:uppercase}
+.scr{position:absolute;width:932px;height:430px;overflow:hidden;border-radius:20px;color:var(--ink);background:radial-gradient(140% 65% at 50% -18%,rgba(141,84,32,.33),transparent 70%),linear-gradient(180deg,#171008 0%,var(--bg) 48%,#080604 100%)}
+.scr:before{content:"";position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(90deg,rgba(0,0,0,.16) 0 9px,transparent 9px 15px,rgba(0,0,0,.1) 15px 26px);-webkit-mask-image:radial-gradient(130% 60% at 50% -10%,#000,transparent 75%);mask-image:radial-gradient(130% 60% at 50% -10%,#000,transparent 75%)}
+.top{position:absolute;top:16px;left:26px;right:26px;display:flex;justify-content:space-between;align-items:center}
+.kick{font:500 10px var(--mono);letter-spacing:.18em;color:var(--ink-faint);text-transform:uppercase}
+h1{font:400 22px/1 var(--serif);letter-spacing:.05em;margin-top:4px}
+.chip{display:flex;align-items:center;gap:8px;height:30px;padding:0 12px;border-radius:15px;background:var(--pill);border:1px solid var(--line);font:600 11px var(--mono);letter-spacing:.12em;color:var(--ink)}
+.chip i{width:7px;height:7px;border-radius:50%;background:var(--accent)}.chip.s i{animation:p 1.4s infinite}.chip.f i{background:var(--error)}.chip b{font-weight:500;color:var(--ink-dim)}
+@keyframes p{50%{opacity:.25}}
+.panel{position:absolute;left:26px;right:26px;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.rank{top:74px;height:84px;display:flex;align-items:center}
+.me{width:218px;height:100%;display:flex;align-items:center;gap:12px;padding:0 16px;border-right:1px solid var(--line)}
+.shield{width:40px;height:46px;flex:none;clip-path:polygon(50% 0,100% 22%,100% 64%,50% 100%,0 64%,0 22%);background:linear-gradient(180deg,var(--accent-hi),var(--accent) 55%,var(--accent-lo));display:grid;place-items:center;box-shadow:0 0 18px rgba(232,163,61,.27);font:16px var(--serif);color:#2a1d0c}
+.me small{display:block;font:600 9px var(--mono);letter-spacing:.14em;color:var(--ink-faint);margin-bottom:4px}
+.me b{display:block;font:400 18px/1 var(--serif);letter-spacing:.04em}
+.me span{display:block;margin-top:3px;font:600 15px/1.2 "Noto Naskh Arabic",serif;color:var(--ink-dim)}
+.lad{flex:1;display:grid;grid-template-columns:repeat(7,1fr);padding:0 14px;align-self:stretch;position:relative}
+.nd{display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:7px;padding-bottom:14px;position:relative}
+.nd:before{content:"";position:absolute;left:0;right:0;bottom:36px;height:2px;background:rgba(255,240,210,.08)}
+.nd.pool:before{background:var(--accent-dim)}.nd.cur:before{background:linear-gradient(90deg,var(--accent-dim),var(--accent))}
+.nd.pool:first-child:before,.nd:first-child:before{left:50%}.nd:last-child:before{right:50%}
+.dot{width:12px;height:12px;border-radius:50%;background:var(--bg);border:2px solid var(--ink-faint);position:relative;z-index:1;margin-bottom:12px}
+.pool .dot{border-color:var(--accent-dim)}.cur .dot{background:var(--accent);border-color:var(--accent-hi);box-shadow:0 0 10px rgba(232,163,61,.6)}
+.nd em{font:500 10px var(--mono);font-style:normal;letter-spacing:.04em;color:var(--ink-faint)}.pool em{color:var(--ink-dim)}.cur em{color:var(--accent);font-weight:700}
+.br{position:absolute;top:10px;font:600 8.5px var(--mono);letter-spacing:.14em;color:var(--accent);text-align:center;border-bottom:1px solid var(--accent-dim);padding-bottom:3px}
+.seats{top:170px;height:128px;display:grid;grid-template-columns:repeat(4,1fr);gap:10px;background:none;border:0}
+.seat{background:var(--panel);border:1px solid var(--line);border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px}
+.av{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;position:relative}
+.you .av{background:var(--pill);border:2px solid var(--accent);font:20px var(--serif);color:var(--accent-hi)}
+.you{border-color:rgba(232,163,61,.45);background:linear-gradient(rgba(232,163,61,.1),rgba(232,163,61,.1)),var(--panel)}
+.emp .av{border:2px dashed var(--ink-faint)}.emp .av:after{content:"";position:absolute;inset:-7px;border-radius:50%;border:2px solid transparent;border-top-color:var(--accent);animation:r 1.6s linear infinite}
+@keyframes r{to{transform:rotate(360deg)}}
+.seat span{font:500 12px var(--sans);color:var(--ink-dim)}.you span{color:var(--ink);font-weight:600}
+.dim .seat{opacity:.4}.dim .emp .av:after{display:none}
+.msg{top:170px;height:128px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center;padding:0 60px;border-color:rgba(242,85,85,.4)}
+.msg h2{font:400 22px/1 var(--serif);letter-spacing:.04em}.msg p{font-size:13px;line-height:1.45;color:var(--ink-dim);max-width:520px}
+.msg .x{width:30px;height:30px;border-radius:50%;border:2px solid var(--error);display:grid;place-items:center;font:600 14px var(--mono);color:var(--ink)}
+.notes{top:308px;left:26px;right:26px;position:absolute;display:flex;flex-direction:column;gap:7px}
+.n{display:flex;gap:9px;align-items:center;font-size:13px;color:var(--ink-dim)}.n b{font-weight:600;color:var(--ink)}.n i{font-style:normal;color:var(--accent);font-size:12px;width:14px;text-align:center}
+.act{position:absolute;left:26px;right:26px;bottom:0;height:56px;display:flex;align-items:center;justify-content:flex-end;gap:10px;border-top:1px solid var(--line)}
+.act .hint{margin-right:auto;font:500 11px var(--mono);letter-spacing:.06em;color:var(--ink-faint)}
+.btn{height:38px;padding:0 22px;border-radius:10px;border:1px solid var(--line);background:rgba(8,6,4,.4);color:var(--ink);font:600 13px var(--sans);letter-spacing:.03em;cursor:pointer}
+.btn:hover{border-color:rgba(232,163,61,.4);color:var(--accent-hi)}
+.btn.p{background:linear-gradient(180deg,var(--accent-hi),var(--accent));color:#2a1d0c;border-color:transparent}.btn.p:hover{color:#2a1d0c;filter:brightness(1.06)}
+.doc{position:absolute;width:560px;background:#17130E;border:1px solid var(--line);border-radius:12px;padding:22px 24px;font-size:13px;line-height:1.5;color:var(--ink)}
+.doc h3{font:400 20px var(--serif);letter-spacing:.04em;margin-bottom:12px}.doc h4{font:600 10px var(--mono);letter-spacing:.14em;color:var(--accent);margin:14px 0 6px;text-transform:uppercase}
+.doc table{border-collapse:collapse;width:100%}.doc td,.doc th{border-top:1px solid var(--line);padding:6px 8px 6px 0;text-align:left;vertical-align:top}.doc th{font:600 10px var(--mono);color:var(--ink-faint);letter-spacing:.1em}
+.doc td:first-child{font:500 11px var(--mono);color:var(--ink-dim);width:150px}.doc li{margin:0 0 5px 16px;color:var(--ink-dim)}.doc li b{color:var(--ink)}
+.doc code{font:11px var(--mono);color:var(--accent-hi)}
+</style></head><body>
+<script>
+const T=["Bronze","Silver","Gold","Platinum","Diamond","Royal","King"],CUR=2;
+const ladder=`<div class="lad"><div class="br" style="left:calc(14px + (100% - 28px)/7*${CUR?CUR-.5:0});width:calc((100% - 28px)/7*${CUR?1:.5})">YOUR POOL</div>${T.map((t,i)=>`<div class="nd ${i==CUR?'cur pool':i==CUR-1?'pool':''}"><div class="dot"></div><em>${t}</em></div>`).join('')}</div>`;
+const head=(t,chip)=>`<div class="top"><div><div class="kick">Ranked · Solo</div><h1>${t}</h1></div>${chip}</div><div class="panel rank"><div class="me"><div class="shield">G</div><div><small>YOUR RANK</small><b>Gold</b><span lang="ar" dir="rtl">معلم</span></div></div>${ladder}</div>`;
+const notes=`<div class="notes"><div class="n"><i>◈</i><span><b>You will be matched in your tier or the one below.</b></span></div><div class="n"><i>○</i><span>Ranked matches do not include voice chat or the pause vote.</span></div></div>`;
+const seats=(c)=>`<div class="panel seats ${c||''}"><div class="seat you"><div class="av">Y</div><span>You</span></div>${'<div class="seat emp"><div class="av"></div><span>Waiting for a player</span></div>'.repeat(3)}</div>`;
+const fail=(h,p)=>`<div class="panel msg"><div class="x">!</div><h2>${h}</h2><p>${p}</p></div>`;
+const F=[
+['SEARCHING (S55)',60,head('Finding a match','<div class="chip s"><i></i>SEARCHING <b>0:24</b></div>')+seats()+notes+`<div class="act"><span class="hint">Cancel is always available.</span><button class="btn">Cancel Search</button></div>`],
+['FAILED / TIMED OUT (S56): timed out',560,head('Ranked Match','<div class="chip f"><i></i>TIMED OUT</div>')+fail('No match found','We could not find players for your Ranked pool in time. Try again or cancel.')+notes+`<div class="act"><button class="btn">Cancel</button><button class="btn p">Try Again</button></div>`],
+['FAILED / TIMED OUT (S56): failed',1060,head('Ranked Match','<div class="chip f"><i></i>FAILED</div>')+fail('Matchmaking failed','Something went wrong while searching. Try again or cancel.')+notes+`<div class="act"><button class="btn">Cancel</button><button class="btn p">Try Again</button></div>`]];
+document.write(F.map(f=>`<div class="lab" style="left:40px;top:${f[1]-26}px">${f[0]}</div><div class="scr" style="left:40px;top:${f[1]}px">${f[2]}</div>`).join(''));
+</script>
+<div class="doc" style="left:1010px;top:34px"><h3>Exact copy</h3><table>
+<tr><th>ELEMENT</th><th>TEXT</th></tr>
+<tr><td>Kicker</td><td>Ranked · Solo</td></tr>
+<tr><td>Title, searching</td><td>Finding a match</td></tr>
+<tr><td>Title, S56</td><td>Ranked Match</td></tr>
+<tr><td>Status chip</td><td>SEARCHING 0:24 · TIMED OUT · FAILED</td></tr>
+<tr><td>Rank label</td><td>YOUR RANK</td></tr>
+<tr><td>Rank name / Arabic</td><td>Gold / معلم (sample, bound to server rank; RD1 title)</td></tr>
+<tr><td>Ladder</td><td>Bronze · Silver · Gold · Platinum · Diamond · Royal · King</td></tr>
+<tr><td>Pool bracket</td><td>YOUR POOL</td></tr>
+<tr><td>Seats</td><td>You · Waiting for a player (×3)</td></tr>
+<tr><td>Pool rule</td><td>You will be matched in your tier or the one below.</td></tr>
+<tr><td>Capability note</td><td>Ranked matches do not include voice chat or the pause vote.</td></tr>
+<tr><td>Searching hint</td><td>Cancel is always available.</td></tr>
+<tr><td>Searching action</td><td>Cancel Search</td></tr>
+<tr><td>Timed out</td><td>No match found<br>We could not find players for your Ranked pool in time. Try again or cancel.</td></tr>
+<tr><td>Failed</td><td>Matchmaking failed<br>Something went wrong while searching. Try again or cancel.</td></tr>
+<tr><td>S56 actions</td><td>Try Again (primary) · Cancel</td></tr></table></div>
+<div class="doc" style="left:1010px;top:800px"><h3>Design note</h3>
+<h4>Mapping</h4><ul>
+<li><b>Flow:</b> S36 Ranked → Confirm → this screen (S55) → Match Found, or S56. This page has no configuration; Game Type, Calculation, Bot Difficulty, Personality and Timer stay on S36.</li>
+<li><b>Lifecycle:</b> SEARCHING → FAILED / TIMED OUT → Try Again (back to SEARCHING) or Cancel. Cancel exists in every state, so there is no uncancelable spinner.</li>
+<li><b>Pool (RD9):</b> the ladder is read-only. It highlights the player's tier and the one below as the server-derived pool. No selector, no opt-up, no Skill Band.</li>
+<li><b>Human vs human:</b> empty seats read "Waiting for a player". No bot appears in Ranked.</li>
+<li><b>Capabilities:</b> one line stating no voice chat and no pause vote. No Spectate, Chat or Mic controls.</li>
+<li><b>No invented data:</b> no queue size, wait estimate, RP, season or timeout length. Only the elapsed timer, which the client can measure.</li></ul>
+<h4>Tokens</h4><p style="color:var(--ink-dim)">All colors and fonts come from the existing page: Background, Panel, Pill, Ink, InkDim, InkFaint, Accent family, Error #F25555 (dot, border and icon on S56 only). No new tokens. The one addition is the Arabic face (Noto Naskh Arabic) for the rank title; native should use its system Arabic face.</p>
+<h4>Open items for review</h4><ul>
+<li>"Gold" and "معلم" are samples bound to server rank. Arabic titles per UI_UX_ROADMAP.md RD1: مبتدئ, لاعب, معلم, وزير, أمير, سلطان, ملك.</li>
+<li>Cancel on S56 returns to S36 (Ranked state), the config the player launched from, so Game Type can be adjusted and the search retried. Lobby is reserved for terminal match outcomes.</li>
+<li>Match Found (MATCH_FOUND) is a separate screen and is not drawn here.</li>
+<li>The elapsed timer and the three Waiting seats are the only live elements. The timer is elapsed only, never a countdown; the pool resolver publishes no ETA.</li></ul></div>
+</body></html>
