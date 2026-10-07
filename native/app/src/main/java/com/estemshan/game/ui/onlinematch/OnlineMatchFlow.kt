@@ -35,6 +35,7 @@ import com.estemshan.engine.initNormalRound
 import com.estemshan.engine.initTable
 import com.estemshan.game.R
 import com.estemshan.game.ui.bidding.BiddingScreen
+import com.estemshan.game.ui.sound.LocalSfx
 import com.estemshan.game.ui.standings.FinalStandingsScreen
 import com.estemshan.game.ui.standings.buildStandings
 import com.estemshan.game.ui.table.TableScreen
@@ -97,9 +98,15 @@ fun OnlineMatchScreen(vm: OnlineMatchViewModel, onLeft: () -> Unit) {
   val state by vm.state.collectAsStateWithLifecycle()
   val reconnecting by vm.reconnecting.collectAsStateWithLifecycle()
   val opponentAway by vm.opponentAway.collectAsStateWithLifecycle()
+  // S27: card snap per play, tick per bid submit.
+  val sfx = LocalSfx.current
 
   LaunchedEffect(state) {
     if (state is MatchUiState.NotInMatch) onLeft()
+  }
+  // S27: a scored round landed — the round-score chime, once per round.
+  LaunchedEffect(state) {
+    if (state is MatchUiState.RoundStandings) sfx.roundScored()
   }
 
   Box(Modifier.fillMaxSize()) {
@@ -114,7 +121,7 @@ fun OnlineMatchScreen(vm: OnlineMatchViewModel, onLeft: () -> Unit) {
           rejection = s.rejection,
           forbidden = s.forbidden,
           floor = s.floor,
-          onIntent = vm::submitBidding,
+          onIntent = { intent -> sfx.bidSubmitted(); vm.submitBidding(intent) },
         )
       }
       is MatchUiState.Table -> EstemshanTheme {
@@ -124,7 +131,7 @@ fun OnlineMatchScreen(vm: OnlineMatchViewModel, onLeft: () -> Unit) {
           state = s.state,
           userSeat = s.userSeat,
           rejection = s.rejection,
-          onPlay = { _, card -> vm.playCard(card) },
+          onPlay = { _, card -> sfx.cardPlaced(); vm.playCard(card) },
           onResolve = vm::resolve,
         )
       }

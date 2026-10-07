@@ -24,6 +24,7 @@ import com.estemshan.engine.TablePhase
 import com.estemshan.game.ui.Routes
 import com.estemshan.game.ui.bidding.BiddingScreen
 import com.estemshan.game.ui.bidding.BiddingViewModel
+import com.estemshan.game.ui.sound.LocalSfx
 import com.estemshan.game.ui.standings.FinalStandingsScreen
 import com.estemshan.game.ui.table.TableScreen
 import com.estemshan.game.ui.table.TableViewModel
@@ -48,6 +49,8 @@ fun NavGraphBuilder.quickMatchGraph(nav: NavController, qvm: QuickMatchViewModel
       val parent = remember(nav) { nav.getBackStackEntry(QUICKMATCH_GRAPH) }
       val bvm: BiddingViewModel = viewModel(parent)
       val tvm: TableViewModel = viewModel(parent)
+      // S27: tap per submit, chime when the auction completes the round.
+      val sfx = LocalSfx.current
       val round by qvm.round.collectAsStateWithLifecycle()
       val dealer by qvm.dealer.collectAsStateWithLifecycle()
       val mult by qvm.biddingMultiplier.collectAsStateWithLifecycle()
@@ -72,6 +75,7 @@ fun NavGraphBuilder.quickMatchGraph(nav: NavController, qvm: QuickMatchViewModel
       LaunchedEffect(outcome) {
         val o = outcome
         if (o != null) {
+          sfx.roundScored()
           val cfg = qvm.onBiddingComplete(o)
           tvm.startRound(cfg, qvm.seats)
           nav.navigate(Routes.TABLE) {
@@ -90,7 +94,7 @@ fun NavGraphBuilder.quickMatchGraph(nav: NavController, qvm: QuickMatchViewModel
             rejection = rejection,
             forbidden = turn?.let { bvm.forbiddenFor(it) },
             floor = turn?.let { bvm.withFloorOf(it) },
-            onIntent = bvm::submit,
+            onIntent = { intent -> sfx.bidSubmitted(); bvm.submit(intent) },
           )
         }
       }
@@ -106,6 +110,8 @@ fun NavGraphBuilder.quickMatchGraph(nav: NavController, qvm: QuickMatchViewModel
       DisposableEffect(Unit) { onDispose { qvm.detachBots() } }
       val tState by tvm.state.collectAsStateWithLifecycle()
       val tRejection by tvm.rejection.collectAsStateWithLifecycle()
+      // S27: the played card's snap.
+      val sfx = LocalSfx.current
 
       EstemshanTheme {
         val s = tState
@@ -123,7 +129,7 @@ fun NavGraphBuilder.quickMatchGraph(nav: NavController, qvm: QuickMatchViewModel
             state = s,
             userSeat = turn ?: qvm.seats[0],
             rejection = tRejection,
-            onPlay = { seat, card -> tvm.play(seat, card) },
+            onPlay = { seat, card -> sfx.cardPlaced(); tvm.play(seat, card) },
             onResolve = { tvm.resolve() },
           )
         }
@@ -136,6 +142,14 @@ fun NavGraphBuilder.quickMatchGraph(nav: NavController, qvm: QuickMatchViewModel
       // the button retires instead of looping into an 11th/19th round.
       val round by qvm.round.collectAsStateWithLifecycle()
       val gameType by qvm.gameType.collectAsStateWithLifecycle()
+      // S27: the win fanfare — once, at the FINAL standings only. Standings
+      // arrive every round, so the gate lives in matchWonIfFinal (round >=
+      // ceiling); the capped nextRound + disabled button below mean no
+      // second arrival can re-fire it.
+      val sfx = LocalSfx.current
+      LaunchedEffect(standings) {
+        if (standings != null) sfx.matchWonIfFinal(round, gameType.baseRounds)
+      }
       EstemshanTheme {
         Column(Modifier.fillMaxSize()) {
           Box(Modifier.weight(1f)) {
