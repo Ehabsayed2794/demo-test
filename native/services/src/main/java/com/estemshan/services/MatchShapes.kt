@@ -1,17 +1,16 @@
 package com.estemshan.services
 
+import com.estemshan.engine.GameType
+import com.estemshan.engine.ScoringMode
 import com.estemshan.engine.Suit
 import com.estemshan.services.model.BiddingActionInput
 import com.estemshan.services.model.BiddingLogEntry
 import com.estemshan.services.model.CardLogEntry
-import com.estemshan.services.model.DEFAULT_MAX_ROUNDS
 import com.estemshan.services.model.GameState
 import com.estemshan.services.model.MatchDoc
 import com.estemshan.services.model.MAX_BID_VALUE
 import com.estemshan.services.model.MAX_RANK_VALUE
 import com.estemshan.services.model.MIN_RANK_VALUE
-import com.estemshan.services.model.RAPID_ROUND_MAX
-import com.estemshan.services.model.RAPID_ROUND_MIN
 import com.estemshan.services.model.SEAT_IDS
 import com.estemshan.services.model.StoredCard
 import com.estemshan.services.model.roundOf
@@ -47,6 +46,8 @@ fun buildInitialMatchFields(
   creator: String?,
   serverTimestamp: Any,
   rematchOfMatchId: String? = null,
+  gameType: GameType = GameType.FULL,
+  scoringMode: ScoringMode = ScoringMode.NORMAL,
 ): Map<String, Any?> {
   val seats = buildSeatMap(players)
   val dealer = initialDealer(players, creator)
@@ -58,6 +59,8 @@ fun buildInitialMatchFields(
     turn = dealer,
     rematchOfMatchId = rematchOfMatchId,
     serverTimestamp = serverTimestamp,
+    gameType = gameType,
+    scoringMode = scoringMode,
   )
 }
 
@@ -70,6 +73,8 @@ private fun buildMatchFields(
   turn: String?,
   serverTimestamp: Any,
   rematchOfMatchId: String?,
+  gameType: GameType = GameType.FULL,
+  scoringMode: ScoringMode = ScoringMode.NORMAL,
 ): Map<String, Any?> = buildMap {
   put("roomId", roomId)
   if (rematchOfMatchId != null) put("rematchOfMatchId", rematchOfMatchId)
@@ -77,7 +82,11 @@ private fun buildMatchFields(
   put("status", MatchDoc.STATUS_STARTING)
   put("createdAt", serverTimestamp)
   put("currentRound", 1)
-  put("maxRounds", DEFAULT_MAX_ROUNDS)
+  // S66 (E7): the ceiling is type-derived (FULL 18, MINI 10); the type and
+  // mode ride the doc so every reader (and S67's rules) sees them.
+  put("maxRounds", gameType.baseRounds)
+  put("gameType", gameType.name)
+  put("scoringMode", scoringMode.name)
   put("extendedRounds", emptyList<Int>())
   put("dealer", dealer)
   put("turn", turn)
@@ -96,7 +105,8 @@ private fun buildMatchFields(
 /**
  * Rematch match doc — seats/players copied VERBATIM from the vote's own
  * seats map (itself copied from the original match), never from a
- * client-supplied list (match-service.js:2371-2404).
+ * client-supplied list (match-service.js:2371-2404). The type and mode are
+ * inherited from the OLD match by the caller (S66) — never client-supplied.
  */
 fun buildRematchMatchFields(
   roomId: String,
@@ -104,6 +114,8 @@ fun buildRematchMatchFields(
   oldDealerFallback: String?,
   serverTimestamp: Any,
   rematchOfMatchId: String,
+  gameType: GameType = GameType.FULL,
+  scoringMode: ScoringMode = ScoringMode.NORMAL,
 ): Map<String, Any?> {
   val players = SEAT_IDS.filter { seats.containsKey(it) }.map { seats.getValue(it) }
   return buildMatchFields(
@@ -114,6 +126,8 @@ fun buildRematchMatchFields(
     turn = players.firstOrNull() ?: oldDealerFallback,
     serverTimestamp = serverTimestamp,
     rematchOfMatchId = rematchOfMatchId,
+    gameType = gameType,
+    scoringMode = scoringMode,
   )
 }
 
@@ -196,9 +210,11 @@ fun isValidGenericBiddingAction(action: BiddingActionInput?): Boolean {
 
 /**
  * Rapid Rounds window (rules §5): the ONLY rounds eligible to extend
- * maxRounds, whatever the current ceiling has grown to.
+ * maxRounds, whatever the current ceiling has grown to. S66 (E7): the
+ * window is type-derived — FULL reduces to 14..18, byte-identical.
  */
-fun isRapidRound(round: Int): Boolean = round in RAPID_ROUND_MIN..RAPID_ROUND_MAX
+fun isRapidRound(round: Int, gameType: GameType = GameType.FULL): Boolean =
+  round in gameType.firstFastRound..gameType.baseRounds
 
 /**
  * The two values extendMatchRounds() accepts as a qualifying reason

@@ -2,6 +2,8 @@ package com.estemshan.game.ui.lobby
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.estemshan.engine.GameType
+import com.estemshan.engine.ScoringMode
 import com.estemshan.game.data.OnlineServices
 import com.estemshan.services.PlayerPort
 import com.estemshan.services.RoomPort
@@ -68,7 +70,9 @@ class LobbyViewModel(
     if (_state.value.busy) return
     launch {
       _state.value = _state.value.copy(busy = true, joinError = null)
-      val code = rooms.createRoom(playerId, null)
+      // S66: explicit FULL/NORMAL — the configured values come from S69's
+      // config state, which does not exist yet.
+      val code = rooms.createRoom(playerId, null, GameType.FULL, ScoringMode.NORMAL)
       _state.value = _state.value.copy(busy = false, roomCode = code, createdCode = code)
     }
   }

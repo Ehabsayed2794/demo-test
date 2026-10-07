@@ -1,9 +1,16 @@
 package com.estemshan.services.model
 
+import com.estemshan.engine.GameType
+import com.estemshan.engine.ScoringMode
+
 /**
  * Parsed view of rooms/{roomId}. Field shape mirrors
  * design-ui/room-service.js exactly (creator / players / readyPlayers),
  * re-synced to docs/architecture/FirestoreSchema.md in Sprint 3.3.
+ *
+ * S66 (E7): carries the room's configured [gameType]/[scoringMode] so
+ * startMatch can seed the match from them. Absent in an old doc ⇒ FULL /
+ * NORMAL (no migration).
  */
 data class RoomDoc(
   val name: String?,
@@ -16,6 +23,8 @@ data class RoomDoc(
    *  match-start attempt it triggered, so a caller can observe success or
    *  failure without setReady itself rejecting on a start failure. */
   val matchStart: MatchStartResult? = null,
+  val gameType: GameType = GameType.FULL,
+  val scoringMode: ScoringMode = ScoringMode.NORMAL,
 ) {
 
   val isFull: Boolean get() = players.size >= MAX_PLAYERS
@@ -46,8 +55,20 @@ data class RoomDoc(
         readyPlayers = (fields["readyPlayers"] as? List<*>)?.mapNotNull { it as? String }
           ?: emptyList(),
         matchId = fields["matchId"] as? String,
+        gameType = parseGameType(fields["gameType"]),
+        scoringMode = parseScoringMode(fields["scoringMode"]),
       )
     }
+
+    /** Absent or unrecognised ⇒ FULL: rooms created before S66 parse. */
+    fun parseGameType(value: Any?): GameType =
+      (value as? String)?.let { runCatching { GameType.valueOf(it) }.getOrNull() }
+        ?: GameType.FULL
+
+    /** Absent or unrecognised ⇒ NORMAL: rooms created before S66 parse. */
+    fun parseScoringMode(value: Any?): ScoringMode =
+      (value as? String)?.let { runCatching { ScoringMode.valueOf(it) }.getOrNull() }
+        ?: ScoringMode.NORMAL
   }
 }
 

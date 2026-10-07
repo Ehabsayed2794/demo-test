@@ -1,5 +1,7 @@
 package com.estemshan.game.ui.lobby
 
+import com.estemshan.engine.GameType
+import com.estemshan.engine.ScoringMode
 import com.estemshan.services.PlayerPort
 import com.estemshan.services.RoomPort
 import com.estemshan.services.model.Reasons
@@ -275,7 +277,12 @@ class LobbyViewModelTest {
       )
     }
 
-    override suspend fun createRoom(playerId: String, roomName: String?): String {
+    override suspend fun createRoom(
+      playerId: String,
+      roomName: String?,
+      gameType: GameType,
+      scoringMode: ScoringMode,
+    ): String {
       createGate.await()
       createCalls.incrementAndGet()
       // Deterministic 6-char uppercase codes: unique, so the collision retry
@@ -288,6 +295,8 @@ class LobbyViewModelTest {
         players = listOf(playerId),
         readyPlayers = emptyList(),
         matchId = null,
+        gameType = gameType,
+        scoringMode = scoringMode,
       )
       return code
     }

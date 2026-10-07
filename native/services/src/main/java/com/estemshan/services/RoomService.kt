@@ -1,5 +1,7 @@
 package com.estemshan.services
 
+import com.estemshan.engine.GameType
+import com.estemshan.engine.ScoringMode
 import com.estemshan.services.model.MatchStartResult
 import com.estemshan.services.model.Reasons
 import com.estemshan.services.model.ROOM_CODE_ALPHABET
@@ -40,15 +42,22 @@ class RoomService(
    * Firestore auto-ID so creation never fails. readyPlayers starts empty
    * — creating a room does not imply being ready.
    */
-  override suspend fun createRoom(playerId: String, roomName: String?): String {
+  override suspend fun createRoom(
+    playerId: String,
+    roomName: String?,
+    gameType: GameType,
+    scoringMode: ScoringMode,
+  ): String {
     require(playerId.isNotEmpty()) { "createRoom: playerId is required." }
-    return tryCreateRoomWithCode(playerId, roomName, ROOM_CODE_MAX_ATTEMPTS)
+    return tryCreateRoomWithCode(playerId, roomName, ROOM_CODE_MAX_ATTEMPTS, gameType, scoringMode)
   }
 
   private suspend fun tryCreateRoomWithCode(
     playerId: String,
     roomName: String?,
     attemptsLeft: Int,
+    gameType: GameType,
+    scoringMode: ScoringMode,
   ): String {
     val room = hashMapOf(
       "name" to roomName,
@@ -56,6 +65,10 @@ class RoomService(
       "creator" to playerId,
       "players" to listOf(playerId),
       "readyPlayers" to emptyList<String>(),
+      // S66 (E7): the room carries its configured type + mode so startMatch
+      // can seed the match from them (absent ⇒ FULL/NORMAL on read).
+      "gameType" to gameType.name,
+      "scoringMode" to scoringMode.name,
       "createdAt" to FieldValue.serverTimestamp(),
       "updatedAt" to FieldValue.serverTimestamp(),
     )
@@ -69,7 +82,7 @@ class RoomService(
     val code = generateRoomCode()
     val ref = rooms.document(code)
     if (ref.getBlocking().exists()) {
-      return tryCreateRoomWithCode(playerId, roomName, attemptsLeft - 1)
+      return tryCreateRoomWithCode(playerId, roomName, attemptsLeft - 1, gameType, scoringMode)
     }
     ref.set(room).await()
     syncProfile(playerId, code)
