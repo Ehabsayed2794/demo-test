@@ -34,13 +34,19 @@ kotlin {
         // deprecated-but-working config(). Bump both together once a
         // firebase-tools that no longer calls config() is pinned.
         implementation(npm("firebase-functions", "6.6.0"))
-        // firebase-admin is deliberately absent here: S42's scaffold
-        // (callable-auth + idempotency + a deploy target) never touches
-        // Firestore. The Admin SDK arrives with S50's settlement, which is
-        // what actually needs to bypass the frozen firestore.rules — and it
-        // will pick a version compatible with whatever firebase-functions is
-        // pinned to then, so declaring it now would only bake in a guess
-        // (6.6.0 peers with firebase-admin ^13, and 7.x with ^14).
+        // firebase-admin, pinned to the same 13.10.0 that the peer range on
+        // firebase-functions 6.6.0 admits. Not here for S42's own code — the
+        // scaffold never touches Firestore — but because firebase-functions
+        // hard-requires "firebase-admin/app-check" at the TOP of
+        // lib/common/providers/https.js, so merely loading a callable pulls it
+        // in. Kotlin/JS installs npm deps with yarn classic, which unlike npm
+        // never auto-installs peer dependencies (it only warns), so leaving
+        // admin out made :functions:jsNodeTest die with
+        // "Cannot find module 'firebase-admin/app-check'" — locally it kept
+        // passing only because a stale UP-TO-DATE cache hid it.
+        // S50's settlement will use this same dependency for the real
+        // rules-bypassing writes; bump both pins together (see above).
+        implementation(npm("firebase-admin", "13.10.0"))
         // The idempotency guard's once-only semantics are suspend-based;
         // Kotlin/JS maps suspend to Promises, which onCall handles natively.
         implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
