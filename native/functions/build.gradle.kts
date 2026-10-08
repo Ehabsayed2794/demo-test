@@ -3,6 +3,8 @@
 // Kotlin/JS on the Node.js runtime. Depends on :engine so settlement re-runs
 // the ACTUAL rules engine instead of a re-implementation (RD12). Invoked once
 // per match, never always-on (RD11); deliberately lightweight (RD16).
+import org.jetbrains.kotlin.gradle.targets.js.nodejs.NodeJsRootExtension
+
 plugins {
   kotlin("multiplatform")
 }
@@ -24,8 +26,21 @@ kotlin {
         // 2nd-gen callables + the Admin SDK. Admin bypasses firestore.rules,
         // which stays byte-identical — the Functions are the only legitimate
         // Ranked write path (plan §"What is NOT included").
-        implementation(npm("firebase-functions", "7.4.0"))
-        implementation(npm("firebase-admin", "14.5.0"))
+        // Pinned to the 6.x line, not 7.x: the pinned firebase-tools (13.35.1)
+        // emulator unconditionally calls functions.config() while setting up
+        // its config proxy (functionsEmulatorRuntime.js), and 7.x made that
+        // call THROW — the worker dies with "Failed to load function" and
+        // every callable returns deadline-exceeded. 6.6.0 still ships the
+        // deprecated-but-working config(). Bump both together once a
+        // firebase-tools that no longer calls config() is pinned.
+        implementation(npm("firebase-functions", "6.6.0"))
+        // firebase-admin is deliberately absent here: S42's scaffold
+        // (callable-auth + idempotency + a deploy target) never touches
+        // Firestore. The Admin SDK arrives with S50's settlement, which is
+        // what actually needs to bypass the frozen firestore.rules — and it
+        // will pick a version compatible with whatever firebase-functions is
+        // pinned to then, so declaring it now would only bake in a guess
+        // (6.6.0 peers with firebase-admin ^13, and 7.x with ^14).
         // The idempotency guard's once-only semantics are suspend-based;
         // Kotlin/JS maps suspend to Promises, which onCall handles natively.
         implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
@@ -40,4 +55,20 @@ kotlin {
       }
     }
   }
+}
+
+// The Node version Kotlin/JS pins for the JS target.
+//
+// Its default (22.0.0) is too old for firebase-admin's transitive tree —
+// jwks-rsa requires ^22.12.0 and yarn's engine check aborts :kotlinNpmInstall
+// outright. firebase-admin is how the Ranked write path bypasses the frozen
+// firestore.rules (RD14), so it is not optional. 22.14.0 is the newest 22.x
+// that satisfies it, and matches the engines.node pin in package.json.
+//
+// This is a root-level setting (NodeJsRootExtension is the shared spec for
+// every JS target) but lives here because the extension only exists once a JS
+// target has been configured — :engine is configured first, so by the time
+// this script runs it is already present.
+rootProject.extensions.configure<NodeJsRootExtension> {
+  nodeVersion = "22.14.0"
 }

@@ -19,13 +19,16 @@ package com.estemshan.functions
 
 // ---- firebase-functions/v2/https ------------------------------------------
 
-external object Https {
-  /**
-   * Defines a 2nd-gen callable. The returned value is exported from this
-   * module (see Functions.kt) so the Firebase CLI picks it up.
-   */
-  fun onCall(handler: (CallableRequest) -> Any?): dynamic
-}
+/**
+ * Defines a 2nd-gen callable. The returned value is exported from this
+ * module (see Functions.kt) so the Firebase CLI picks it up.
+ *
+ * `onCall` is a top-level export of firebase-functions/v2/https, not a member
+ * of an `Https` namespace — declaring it as an `external object` member makes
+ * Kotlin read `require(...).Https.onCall`, which is `undefined` at runtime and
+ * fails lazily, only when the callable is first touched.
+ */
+external fun onCall(handler: (CallableRequest) -> Any?): dynamic
 
 /** The request the callable receives. `auth` is null for unauthenticated calls. */
 external interface CallableRequest {

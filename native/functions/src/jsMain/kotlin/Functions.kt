@@ -10,7 +10,7 @@
 
 import com.estemshan.engine.Dealer
 import com.estemshan.functions.CallableAuth
-import com.estemshan.functions.Https
+import com.estemshan.functions.onCall
 import kotlin.js.json
 
 /**
@@ -26,7 +26,7 @@ import kotlin.js.json
  */
 @JsExport
 @JsName("engineSmoke")
-val engineSmoke = Https.onCall { request ->
+val engineSmoke = onCall { request ->
   val uid = CallableAuth.requireUid(request)
 
   val hands = Dealer.dealHands(seed = SMOKE_SEED)
