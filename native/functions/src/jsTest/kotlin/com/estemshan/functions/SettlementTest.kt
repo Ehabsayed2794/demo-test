@@ -295,7 +295,7 @@ class SettlementTest {
   @Test
   fun agreedWhenClaimMatchesRecompute() {
     val decision = Settlement.recompute(converged(listOf(round1Golden())))
-    assertIs<SettleDecision.Agreed>(decision)
+    assertTrue(decision is SettleDecision.Agreed, "expected Agreed but was $decision")
     assertEquals(mapOf("p1" to 25, "p2" to 13, "p3" to 12, "p4" to 14), decision.recomputed.finalScores)
     assertEquals(listOf("p1"), decision.recomputed.winnerIds)
   }
@@ -304,7 +304,7 @@ class SettlementTest {
   fun correctedWhenClaimDisagrees() {
     val forged = matchFields(finalScores = mapOf("p1" to 25, "p2" to 23, "p3" to 12, "p4" to 14))
     val decision = Settlement.recompute(converged(listOf(round1Golden()), forged))
-    assertIs<SettleDecision.Corrected>(decision)
+    assertTrue(decision is SettleDecision.Corrected, "expected Corrected but was $decision")
     // The recomputed value is what settles — p2 drops back to 13.
     assertEquals(mapOf("p1" to 25, "p2" to 13, "p3" to 12, "p4" to 14), decision.recomputed.finalScores)
     assertEquals(listOf("p1"), decision.recomputed.winnerIds)
@@ -327,7 +327,7 @@ class SettlementTest {
     )
     val round = archived(1, winners, "SPADES", actions, mapOf("p3" to 5, "p4" to 2))
     val decision = Settlement.recompute(converged(listOf(round)))
-    assertIs<SettleDecision.Corrected>(decision)
+    assertTrue(decision is SettleDecision.Corrected, "expected Corrected but was $decision")
     assertEquals(mapOf("p1" to 25, "p2" to 33, "p3" to 25, "p4" to 12), decision.recomputed.finalScores)
     assertEquals(listOf("p2"), decision.recomputed.winnerIds)
   }
@@ -340,7 +340,7 @@ class SettlementTest {
     val winners = listOf("p1", "p1", "p1", "p1", "p2", "p2", "p2", "p3", "p3", "p4", "p4", "p4", "p4")
     val round = archived(14, winners, "SANS", emptyList(), mapOf("p1" to 4, "p2" to 3, "p3" to 2, "p4" to 3))
     val scored = Settlement.scoreRound(shellMatch(), round, "p1", 1, 8)
-      ?: throw AssertionError("fast round did not score")
+    assertTrue(scored != null, "fast round did not score")
     assertEquals(mapOf("p1" to 24, "p2" to 13, "p3" to 12, "p4" to -11), scored.deltas)
   }
 
@@ -373,7 +373,7 @@ class SettlementTest {
       winnerIds = listOf("p2"),
     )
     val decision = Settlement.recompute(converged(listOf(r1, r2), fields))
-    assertIs<SettleDecision.Agreed>(decision)
+    assertTrue(decision is SettleDecision.Agreed, "expected Agreed but was $decision")
     assertEquals(mapOf("p1" to -2, "p2" to 46, "p3" to 26, "p4" to 26), decision.recomputed.finalScores)
     assertEquals(listOf("p2"), decision.recomputed.winnerIds)
   }
@@ -597,17 +597,16 @@ class SettlementTest {
       archives = mapOf("1" to rawRound(golden, parts.plays, parts.actions)),
     )
     val response = settleOnce(db, settleRequest("u1", "m1"))
-    assertEquals(true, response["ok"])
-    assertEquals(true, response["corrected"])
-    @Suppress("UNCHECKED_CAST")
-    assertEquals(mapOf("p1" to 25, "p2" to 13, "p3" to 12, "p4" to 14), response["finalScores"] as Map<String, Int>)
+    assertTrue(response["ok"] == true, "expected ok response but was $response")
+    assertTrue(response["corrected"] == true, "expected corrected response but was $response")
+    assertEquals(mapOf("p1" to 25, "p2" to 13, "p3" to 12, "p4" to 14), response["finalScores"])
     assertEquals(1, db.corrections)
     assertEquals(1, db.claims)
 
     // Replay: recorded outcome returns, nothing rewrites.
     val replay = settleOnce(db, settleRequest("u2", "m1"))
-    assertEquals(true, replay["replayed"])
-    assertEquals(true, replay["corrected"])
+    assertTrue(replay["replayed"] == true, "expected replay but was $replay")
+    assertTrue(replay["corrected"] == true, "expected corrected replay but was $replay")
     assertEquals(1, db.corrections)
     assertEquals(1, db.claims)
     assertEquals(2, db.txRuns)
@@ -622,7 +621,7 @@ class SettlementTest {
       archives = mapOf("1" to rawRound(golden, parts.plays, parts.actions)),
     )
     val response = settleOnce(db, settleRequest("u1", "m1"))
-    assertEquals(false, response["corrected"])
+    assertTrue(response["corrected"] == false, "expected agreed response but was $response")
     assertEquals(0, db.corrections)
     assertEquals(1, db.claims)
   }
