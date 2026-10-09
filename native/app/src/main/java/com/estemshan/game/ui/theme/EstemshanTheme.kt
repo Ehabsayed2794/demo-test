@@ -25,6 +25,13 @@ object EstemshanColors {
   val GoldDim = Color(0xFFA8742A)
   val Ink = Color(0xFFF0EADA)
   val InkDim = Color(0xFFA89F8E)
+  // S57 annotation 02 (design-ui/standings-ranked-result): inkFaint is the
+  // corrected #8A8272 (was #6F685B). Used for faint labels in the Ranked
+  // block only; InkDim above is untouched.
+  val InkFaint = Color(0xFF8A8272)
+  // S57: --legal #69C87E from table-system.css (RP-gain value). Local to
+  // the Ranked rewards strip; no other screen reads it.
+  val Legal = Color(0xFF69C87E)
   val Error = Color(0xFFF25555)
 }
 
