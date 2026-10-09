@@ -3,6 +3,8 @@ package com.estemshan.game.ui.room
 import com.estemshan.engine.GameType
 import com.estemshan.engine.MatchMode
 import com.estemshan.engine.ScoringMode
+import com.estemshan.engine.bot.BotPersonality
+import com.estemshan.engine.bot.BotTier
 import com.estemshan.services.RoomPort
 import com.estemshan.services.model.MatchStartResult
 import com.estemshan.services.model.Reasons
@@ -246,6 +248,9 @@ class RoomViewModelTest {
       scoringMode: ScoringMode,
       mode: MatchMode,
       rankDown: Boolean,
+      botTier: BotTier,
+      botPersonality: BotPersonality,
+      decisionTimerSeconds: Int,
     ): String {
       createCalls.incrementAndGet()
       val code = "ROOM%02d".format(rooms.size)
@@ -260,6 +265,9 @@ class RoomViewModelTest {
         scoringMode = scoringMode,
         mode = mode,
         rankDown = rankDown,
+        botTier = botTier,
+        botPersonality = botPersonality,
+        decisionTimerSeconds = decisionTimerSeconds,
       )
       return code
     }

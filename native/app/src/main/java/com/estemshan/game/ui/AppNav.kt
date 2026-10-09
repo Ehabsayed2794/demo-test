@@ -281,9 +281,15 @@ fun EstemshanNav() {
             onCreateRoom = {
               uid?.let {
                 // S43: explicit ROOM + not-rank-down — no Ranked creation
-                // UI exists yet (E6b future).
-                lobbyVm.createRoom(it, createState.gameType, createState.scoringMode,
-                  MatchMode.ROOM, false)
+                // UI exists yet (E6b future). RD21: the S36 trio rides the
+                // room to the match, so the configured match is the one
+                // that starts.
+                lobbyVm.createRoom(
+                  it, createState.gameType, createState.scoringMode,
+                  MatchMode.ROOM, false,
+                  createState.botTier, createState.botPersonality,
+                  createState.decisionTimerSeconds,
+                )
               }
             },
             onCancel = { nav.popBackStack() },

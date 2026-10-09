@@ -3,6 +3,9 @@ package com.estemshan.services
 import com.estemshan.engine.GameType
 import com.estemshan.engine.MatchMode
 import com.estemshan.engine.ScoringMode
+import com.estemshan.engine.bot.BotPersonality
+import com.estemshan.engine.bot.BotTier
+import com.estemshan.services.model.DEFAULT_DECISION_TIMER_SECONDS
 import com.estemshan.services.model.RoomDoc
 import com.estemshan.services.model.ServiceException
 
@@ -40,6 +43,9 @@ interface RoomPort {
    * S43 (E6b, RD28 final): the room carries its authority [mode] (ROOM |
    * RANKED | UNRANKED, default ROOM) plus the private-access [rankDown]
    * flag (default false). Rank-down is RANKED + rankDown, never a mode.
+   *
+   * RD21: the room carries the host's bot configuration (defaults
+   * MEDIUM / BALANCED / 15 s) so startMatch can seed the match from it.
    */
   suspend fun createRoom(
     playerId: String,
@@ -48,6 +54,9 @@ interface RoomPort {
     scoringMode: ScoringMode = ScoringMode.NORMAL,
     mode: MatchMode = MatchMode.ROOM,
     rankDown: Boolean = false,
+    botTier: BotTier = BotTier.MEDIUM,
+    botPersonality: BotPersonality = BotPersonality.BALANCED,
+    decisionTimerSeconds: Int = DEFAULT_DECISION_TIMER_SECONDS,
   ): String
 
   /**

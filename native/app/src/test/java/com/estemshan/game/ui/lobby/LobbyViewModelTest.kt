@@ -3,6 +3,8 @@ package com.estemshan.game.ui.lobby
 import com.estemshan.engine.GameType
 import com.estemshan.engine.MatchMode
 import com.estemshan.engine.ScoringMode
+import com.estemshan.engine.bot.BotPersonality
+import com.estemshan.engine.bot.BotTier
 import com.estemshan.services.PlayerPort
 import com.estemshan.services.RoomPort
 import com.estemshan.services.model.Reasons
@@ -154,6 +156,28 @@ class LobbyViewModelTest {
     assertEquals("the room keeps the authority mode",
       MatchMode.RANKED, rooms.room(code!!).mode)
     assertTrue("the room keeps the rank-down flag", rooms.room(code).rankDown)
+  }
+
+  @Test
+  fun createCarriesTheBotTrioOntoTheRoom() = runTest {
+    openLobby()
+
+    // RD21: the S36 trio rides the same create path. Non-defaults throughout
+    // — MEDIUM/BALANCED/15s are every default in the chain and prove nothing.
+    vm.createRoom(
+      me, GameType.FULL, ScoringMode.NORMAL, MatchMode.ROOM, false,
+      BotTier.EXPERT, BotPersonality.TRICKSTER, 20,
+    )
+    advanceUntilIdle()
+
+    val code = vm.state.value.roomCode
+    assertNotNull("creating returned a room code", code)
+    assertEquals("the room keeps the host's tier",
+      BotTier.EXPERT, rooms.room(code!!).botTier)
+    assertEquals("the room keeps the host's personality",
+      BotPersonality.TRICKSTER, rooms.room(code).botPersonality)
+    assertEquals("the room keeps the host's decision timer",
+      20, rooms.room(code).decisionTimerSeconds)
   }
 
   @Test
@@ -340,6 +364,9 @@ class LobbyViewModelTest {
       scoringMode: ScoringMode,
       mode: MatchMode,
       rankDown: Boolean,
+      botTier: BotTier,
+      botPersonality: BotPersonality,
+      decisionTimerSeconds: Int,
     ): String {
       createGate.await()
       createCalls.incrementAndGet()
@@ -361,6 +388,9 @@ class LobbyViewModelTest {
         scoringMode = scoringMode,
         mode = mode,
         rankDown = rankDown,
+        botTier = botTier,
+        botPersonality = botPersonality,
+        decisionTimerSeconds = decisionTimerSeconds,
       )
       return code
     }

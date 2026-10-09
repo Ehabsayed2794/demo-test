@@ -3,6 +3,8 @@ package com.estemshan.services.model
 import com.estemshan.engine.GameType
 import com.estemshan.engine.MatchMode
 import com.estemshan.engine.ScoringMode
+import com.estemshan.engine.bot.BotPersonality
+import com.estemshan.engine.bot.BotTier
 
 /**
  * Parsed view of rooms/{roomId}. Field shape mirrors
@@ -16,6 +18,11 @@ import com.estemshan.engine.ScoringMode
  * S43 (E6b, RD28 final): carries the authority [mode] (ROOM | RANKED |
  * UNRANKED — absent ⇒ ROOM) plus the private-access [rankDown] flag.
  * Rank-down is RANKED + rankDown, never a fourth mode.
+ *
+ * RD21: carries the host's bot configuration — [botTier] /
+ * [botPersonality] / [decisionTimerSeconds] — so startMatch can seed the
+ * match from it and every seat (and the eventual bot-seat fallback) agrees.
+ * Absent in an old doc ⇒ MEDIUM / BALANCED / 15 s (no migration).
  */
 data class RoomDoc(
   val name: String?,
@@ -32,6 +39,9 @@ data class RoomDoc(
   val scoringMode: ScoringMode = ScoringMode.NORMAL,
   val mode: MatchMode = MatchMode.ROOM,
   val rankDown: Boolean = false,
+  val botTier: BotTier = BotTier.MEDIUM,
+  val botPersonality: BotPersonality = BotPersonality.BALANCED,
+  val decisionTimerSeconds: Int = DEFAULT_DECISION_TIMER_SECONDS,
 ) {
 
   val isFull: Boolean get() = players.size >= MAX_PLAYERS
@@ -66,6 +76,9 @@ data class RoomDoc(
         scoringMode = parseScoringMode(fields["scoringMode"]),
         mode = parseMatchMode(fields["mode"]),
         rankDown = fields["rankDown"] as? Boolean ?: false,
+        botTier = parseBotTier(fields["botTier"]),
+        botPersonality = parseBotPersonality(fields["botPersonality"]),
+        decisionTimerSeconds = parseDecisionTimerSeconds(fields["decisionTimerSeconds"]),
       )
     }
 
@@ -87,6 +100,34 @@ data class RoomDoc(
     fun parseMatchMode(value: Any?): MatchMode =
       (value as? String)?.let { runCatching { MatchMode.valueOf(it) }.getOrNull() }
         ?: MatchMode.ROOM
+
+    /**
+     * Absent or unrecognised ⇒ MEDIUM: rooms created before the trio's
+     * persistence parse (RD21's default). Unrecognised never throws — a
+     * bogus fifth value reads as MEDIUM client-side while firestore.rules
+     * denies writing it.
+     */
+    fun parseBotTier(value: Any?): BotTier =
+      (value as? String)?.let { runCatching { BotTier.valueOf(it) }.getOrNull() }
+        ?: BotTier.MEDIUM
+
+    /** Absent or unrecognised ⇒ BALANCED (RD21's default). */
+    fun parseBotPersonality(value: Any?): BotPersonality =
+      (value as? String)?.let { runCatching { BotPersonality.valueOf(it) }.getOrNull() }
+        ?: BotPersonality.BALANCED
+
+    /**
+     * Absent, non-numeric, or outside RD21's 5..20 s window ⇒ 15 s. A
+     * present-but-out-of-range value is treated as missing rather than
+     * clamped, mirroring the unrecognised-enum contract above: the write is
+     * denied at the rules layer, and a read can never surface a timer the
+     * host never picked.
+     */
+    fun parseDecisionTimerSeconds(value: Any?): Int {
+      val seconds = roundOf(value) ?: return DEFAULT_DECISION_TIMER_SECONDS
+      return if (seconds in MIN_DECISION_TIMER_SECONDS..MAX_DECISION_TIMER_SECONDS) seconds
+      else DEFAULT_DECISION_TIMER_SECONDS
+    }
   }
 }
 
