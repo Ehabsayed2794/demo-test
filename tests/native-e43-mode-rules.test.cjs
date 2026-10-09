@@ -180,7 +180,7 @@ async function main() {
   // R3. createRematchMatch — the mode is INHERITED, never chosen
   // ════════════════════════════════════════════════════════════════
   await testEnv.withSecurityRulesDisabled(async function (ctx) {
-    await seed(ctx.firestore(), "matches/m-old-ranked", {
+    await seed(ctx.firestore(), "matches/m-old-s43ranked", {
       roomId: "room-rem", players: PLAYERS.slice(), status: "complete",
       createdAt: 1, currentRound: 18, maxRounds: 18, extendedRounds: [],
       dealer: uidA, turn: uidA, seats: Object.assign({}, SEATS), version: 5,
@@ -190,13 +190,13 @@ async function main() {
       winnerIds: [uidA], finalScores: { p1: 100, p2: 80, p3: 70, p4: 60 },
       completedRound: 18, gameType: "FULL", scoringMode: "NORMAL", mode: "RANKED"
     });
-    await seed(ctx.firestore(), "matches/m-old-ranked/rematchVote/current", {
-      matchId: "m-old-ranked", seats: Object.assign({}, SEATS),
+    await seed(ctx.firestore(), "matches/m-old-s43ranked/rematchVote/current", {
+      matchId: "m-old-s43ranked", seats: Object.assign({}, SEATS),
       votes: { p1: "YES", p2: "YES", p3: "YES", p4: "YES" },
       status: "ALL_YES", newMatchId: null, createdAt: new Date(), version: 5
     });
     // A pre-S43 old match: NO mode field at all.
-    await seed(ctx.firestore(), "matches/m-old-plain", {
+    await seed(ctx.firestore(), "matches/m-old-s43plain", {
       roomId: "room-rem", players: PLAYERS.slice(), status: "complete",
       createdAt: 1, currentRound: 18, maxRounds: 18, extendedRounds: [],
       dealer: uidA, turn: uidA, seats: Object.assign({}, SEATS), version: 5,
@@ -206,8 +206,8 @@ async function main() {
       winnerIds: [uidA], finalScores: { p1: 100, p2: 80, p3: 70, p4: 60 },
       completedRound: 18, gameType: "FULL", scoringMode: "NORMAL"
     });
-    await seed(ctx.firestore(), "matches/m-old-plain/rematchVote/current", {
-      matchId: "m-old-plain", seats: Object.assign({}, SEATS),
+    await seed(ctx.firestore(), "matches/m-old-s43plain/rematchVote/current", {
+      matchId: "m-old-s43plain", seats: Object.assign({}, SEATS),
       votes: { p1: "YES", p2: "YES", p3: "YES", p4: "YES" },
       status: "ALL_YES", newMatchId: null, createdAt: new Date(), version: 5
     });
@@ -229,20 +229,20 @@ async function main() {
   }
 
   await okSucceeds("R3.1 POSITIVE: a RANKED match rematches as RANKED (inherited)",
-    A.firestore().collection("matches").doc("m-rem-ok")
-      .set(validRematch("m-old-ranked", "RANKED")));
+    A.firestore().collection("matches").doc("m-s43rem-ok")
+      .set(validRematch("m-old-s43ranked", "RANKED")));
 
   await okFails("R3.2 NEGATIVE: a RANKED match cannot rematch as ROOM (mode is inherited, not chosen)",
-    A.firestore().collection("matches").doc("m-rem-bad")
-      .set(validRematch("m-old-ranked", "ROOM")));
+    A.firestore().collection("matches").doc("m-s43rem-bad")
+      .set(validRematch("m-old-s43ranked", "ROOM")));
 
   await okFails("R3.3 NEGATIVE: a RANKED match cannot rematch with NO mode (absent ⇒ ROOM ≠ RANKED)",
-    A.firestore().collection("matches").doc("m-rem-bad2")
-      .set(validRematch("m-old-ranked", undefined)));
+    A.firestore().collection("matches").doc("m-s43rem-bad2")
+      .set(validRematch("m-old-s43ranked", undefined)));
 
   await okSucceeds("R3.4 POSITIVE: a pre-S43 old match (no mode) rematches as ROOM on both sides",
-    A.firestore().collection("matches").doc("m-rem-plain")
-      .set(validRematch("m-old-plain", undefined)));
+    A.firestore().collection("matches").doc("m-s43rem-plain")
+      .set(validRematch("m-old-s43plain", undefined)));
 
   console.log("\n=== RESULTS ===\n" + pass + " passed, " + fail + " failed");
   if (fail > 0) process.exitCode = 1;
