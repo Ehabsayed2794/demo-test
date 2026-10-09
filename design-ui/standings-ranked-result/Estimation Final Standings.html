@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"></meta>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"></meta>
+<title>Estimation — Final Standings</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"></link>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous"></link>
+<link href="https://fonts.googleapis.com/css2?family=Marcellus&amp;family=Saira:wght@400;500;600;700&amp;family=Spline+Sans+Mono:wght@500;600;700&amp;display=swap" rel="stylesheet"></link>
+<link rel="stylesheet" href="table-system.css"></link>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #stage { position: fixed; inset: 0; display: grid; place-items: center; background: #000; }
+  #tbl { transform-origin: center center; box-shadow: 0 30px 90px rgba(0,0,0,0.7); }
+
+  /* ── modal ─────────────────────────────────────────────────────── */
+  .tbl .res-modal {
+    position: absolute; inset: 16px; border-radius: 18px; z-index: 5;
+    background: linear-gradient(180deg, #1b150e, #120d08);
+    border: 1px solid color-mix(in oklch, var(--accent) 24%, var(--panel-line));
+    box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255,240,210,0.05);
+    padding: 16px 18px 14px; display: flex; flex-direction: column; overflow: hidden;
+  }
+  .tbl .res-modal::before {
+    content: ""; position: absolute; top: -40px; left: 50%; transform: translateX(-50%);
+    width: 460px; height: 200px; pointer-events: none;
+    background: radial-gradient(60% 70% at 50% 30%, color-mix(in oklch, var(--accent) 26%, transparent), transparent 70%);
+  }
+
+  /* title row */
+  .tbl .res-titlebar { position: relative; display: flex; align-items: center; justify-content: center; height: 38px; flex: none; }
+  .tbl .res-title { font-family: var(--serif); font-size: 26px; letter-spacing: 0.06em; color: var(--ink); display: flex; align-items: center; gap: 12px; }
+  .tbl .res-title::before, .tbl .res-title::after { content: "♛"; font-size: 15px; color: var(--accent); opacity: 0.7; }
+  .tbl .res-seg { position: absolute; right: 0; top: 4px; display: inline-flex; border: 1px solid var(--panel-line); border-radius: 9px; overflow: hidden; background: rgba(0,0,0,0.3); }
+  .tbl .res-seg button { padding: 6px 12px; font-family: var(--mono); font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; background: transparent; border: none; color: var(--ink-faint); cursor: pointer; transition: all 0.12s ease; white-space: nowrap; }
+  .tbl .res-seg button.on { background: color-mix(in oklch, var(--accent) 18%, transparent); color: var(--accent); }
+  .tbl .res-restart { position: absolute; left: 0; top: 2px; }
+
+  /* body: ranked list + stats */
+  .tbl .res-body { display: flex; gap: 16px; flex: 1; margin-top: 12px; min-height: 0; }
+  .tbl .res-list { display: flex; flex-direction: column; gap: 9px; flex: 1.55; justify-content: center; }
+
+  .tbl .res-row { display: flex; align-items: center; gap: 13px; padding: 0 15px; height: 58px; border-radius: 13px; background: rgba(0,0,0,0.26); border: 1px solid var(--panel-line); transform: translateY(14px); }
+  .tbl .res-row.in { animation: rowIn 0.4s cubic-bezier(.2,.8,.2,1) both; animation-delay: var(--d, 0s); }
+  @keyframes rowIn { from { transform: translateY(14px); } to { transform: translateY(0); } }
+  .tbl .res-row .rank { width: 38px; flex: none; font-family: var(--mono); font-size: 12px; font-weight: 700; letter-spacing: 0.04em; color: var(--ink-faint); text-align: center; }
+  .tbl .res-row .rank.crown { font-size: 22px; color: var(--accent); }
+  .tbl .res-row .av-ring { width: 40px; height: 40px; }
+  .tbl .res-row .avatar { font-size: 15px; }
+  .tbl .res-row .row-name { flex: 1; display: flex; align-items: baseline; gap: 9px; }
+  .tbl .res-row .rn-name { font-family: var(--serif); font-size: 18px; letter-spacing: 0.02em; color: var(--ink); }
+  .tbl .res-row .you-tag { font-family: var(--mono); font-size: 8.5px; font-weight: 700; letter-spacing: 0.1em; color: var(--accent); }
+  .tbl .res-row .champ-tag { font-family: var(--mono); font-size: 8.5px; font-weight: 700; letter-spacing: 0.1em; color: var(--ink-dim); }
+  .tbl .res-row .role-tag { font-family: var(--mono); font-size: 8.5px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-dim); }
+  .tbl .res-row .role-tag.king { color: var(--accent-hi); text-shadow: 0 0 10px color-mix(in oklch, var(--accent) 45%, transparent); }
+  .tbl .res-row .rank.kooz { width: 38px; height: 38px; padding: 0; background: none; border: none; box-shadow: none; display: grid; place-items: center; }
+  .tbl .res-row .rank.kooz svg { width: 30px; height: 30px; filter: drop-shadow(0 1px 2px rgba(0,0,0,0.45)); }
+  .tbl .res-row .row-score { font-family: var(--mono); font-size: 26px; font-weight: 700; color: var(--ink); line-height: 1; }
+
+  .tbl .res-row.win {
+    background: linear-gradient(100deg, color-mix(in oklch, var(--accent) 20%, #1a130c), rgba(0,0,0,0.2));
+    border-color: color-mix(in oklch, var(--accent) 60%, transparent);
+    box-shadow: 0 0 26px color-mix(in oklch, var(--accent) 22%, transparent), inset 0 0 24px color-mix(in oklch, var(--accent) 8%, transparent);
+  }
+  .tbl .res-row.win .av-ring { background: linear-gradient(160deg, #FFE09A, var(--accent) 55%, var(--accent-dim)); }
+  .tbl .res-row.win .row-score { color: var(--accent-hi); }
+  .tbl .res-row.win .rank.crown { transform: scale(1); }
+  .tbl .res-row.win.crowned .rank.crown { animation: crownPop 0.55s cubic-bezier(.2,1.3,.4,1) both; }
+  @keyframes crownPop { 0% { transform: scale(0.3) rotate(-18deg); } 60% { transform: scale(1.25) rotate(6deg); } 100% { transform: scale(1) rotate(0); } }
+  .tbl .res-row.isyou:not(.win) { border-color: color-mix(in oklch, var(--accent) 26%, var(--panel-line)); }
+
+  /* stats panel */
+  .tbl .res-stats { flex: 1; background: var(--panel); border: 1px solid var(--panel-line); border-radius: 14px; padding: 14px 16px; display: flex; flex-direction: column; gap: 9px; }
+  .tbl .res-stats .stat-head { font-family: var(--mono); font-size: 9px; font-weight: 700; letter-spacing: 0.16em; color: var(--ink-faint); margin-bottom: 2px; }
+  .tbl .res-stats .stat-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+  .tbl .res-stats .sl { font-family: var(--sans); font-size: 12px; color: var(--ink-dim); }
+  .tbl .res-stats .sv { font-family: var(--mono); font-size: 13px; color: var(--ink); white-space: nowrap; }
+  .tbl .res-stats .sv .sep { color: var(--ink-faint); }
+  .tbl .res-stats .sv b { font-weight: 700; }
+  .tbl .res-stats .pos { color: var(--legal); }
+  .tbl .res-stats .neg { color: var(--error); }
+  .tbl .res-stats .stat-divider { height: 1px; background: var(--panel-line); margin: 3px 0; }
+
+  /* rewards strip */
+  .tbl .res-rewards { display: flex; gap: 12px; margin-top: 12px; flex: none; }
+  .tbl .rw-chip { flex: 1; display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-radius: 12px; background: var(--pill); border: 1px solid var(--panel-line); }
+  .tbl .rw-chip.muted { opacity: 0.45; }
+  .tbl .rw-ico { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-family: var(--mono); font-size: 10px; font-weight: 700; flex: none; }
+  .tbl .rw-ico.xp { background: color-mix(in oklch, var(--info) 24%, #11140f); color: #9fd0f5; }
+  .tbl .rw-ico.coin { background: color-mix(in oklch, var(--accent) 22%, #1a130c); color: var(--accent-hi); font-size: 14px; }
+  .tbl .rw-ico.crown { background: color-mix(in oklch, var(--accent) 22%, #1a130c); color: var(--accent-hi); font-size: 13px; }
+  .tbl .rw-val { font-family: var(--mono); font-size: 16px; font-weight: 700; color: var(--ink); }
+  .tbl .rw-lab { font-family: var(--mono); font-size: 9px; font-weight: 600; letter-spacing: 0.06em; color: var(--ink-faint); margin-left: auto; }
+
+  /* footer */
+  .tbl .res-footer { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex: none; }
+  .tbl .btn-foot { height: 42px; padding: 0 18px; border-radius: 11px; border: 1px solid var(--panel-line); background: var(--pill); color: var(--ink-dim); font-family: var(--sans); font-size: 13.5px; font-weight: 600; letter-spacing: 0.02em; cursor: pointer; transition: all 0.13s ease; }
+  .tbl .btn-foot:hover { border-color: var(--accent-dim); color: var(--accent); }
+  .tbl .btn-foot:active { transform: scale(0.975); }
+  .tbl .btn-foot.primary { background: linear-gradient(180deg, var(--accent-hi), var(--accent)); color: #2a1d0c; border: none; box-shadow: 0 4px 16px color-mix(in oklch, var(--accent) 32%, transparent); }
+  .tbl .btn-foot.primary:hover { background: linear-gradient(180deg, #F8C878, var(--accent-hi)); color: #2a1d0c; }
+  .tbl .foot-right { margin-left: auto; display: flex; gap: 10px; }
+
+  /* graph overlay */
+  .tbl .res-graph { position: absolute; inset: 14px; z-index: 20; display: none; flex-direction: column; gap: 8px; padding: 14px 16px; border-radius: 16px; background: linear-gradient(180deg, #1e1912, var(--panel)); border: 1px solid color-mix(in oklch, var(--accent) 30%, var(--panel-line)); box-shadow: var(--shadow-lg); }
+  .tbl .res-graph.show { display: flex; }
+  .tbl .graph-head { display: flex; align-items: center; gap: 14px; }
+  .tbl .graph-head .gh-title { font-family: var(--serif); font-size: 18px; color: var(--ink); }
+  .tbl .graph-legend { display: flex; gap: 14px; }
+  .tbl .graph-legend .lg-item { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 10px; color: var(--ink-dim); }
+  .tbl .graph-legend .lg-item i { width: 12px; height: 3px; border-radius: 2px; }
+  .tbl .graph-close { margin-left: auto; height: 30px; padding: 0 13px; border-radius: 9px; border: 1px solid var(--panel-line); background: var(--pill); color: var(--ink-dim); font-family: var(--mono); font-size: 10px; font-weight: 600; cursor: pointer; }
+  .tbl .graph-close:hover { color: var(--accent); border-color: var(--accent-dim); }
+  .tbl .graph-svg { flex: 1; width: 100%; min-height: 0; }
+  .tbl .graph-svg .gx { fill: var(--ink-faint); font-family: var(--mono); font-size: 11px; }
+</style>
+<link rel="stylesheet" href="ranked-result.css">
+</head>
+<body>
+<div id="stage">
+  <main id="tbl" class="tbl" data-screen-label="Final Standings">
+    <div class="res-modal">
+
+      <div class="res-titlebar">
+        <div class="res-title" id="resTitle">Game Result</div>
+        <div class="res-seg">
+          <button data-out="win">You Win</button>
+          <button data-out="loss">You Lose</button>
+        </div>
+      </div>
+
+      <div class="res-body">
+        <div class="res-list" id="list"></div>
+        <div class="res-stats" id="stats"></div>
+      </div>
+
+      <div class="res-rewards" id="rewards"></div>
+
+      <div class="res-footer">
+        <button class="btn-foot" id="lobbyBtn">‹ Lobby</button>
+        <button class="btn-foot" id="graphBtn">Graph ▾</button>
+        <div class="foot-right">
+          <button class="btn-foot" id="shareBtn">Share</button>
+          <button class="btn-foot primary" id="rankedHomeBtn">Return to Ranked</button>
+        </div>
+      </div>
+
+      <div class="res-graph" id="graph"></div>
+
+    </div>
+  </main>
+</div>
+
+<aside class="annotations">
+  <div class="annotation-heading"><span>IMPLEMENTATION NOTES / RANKED RESULT</span><strong id="sampleState">Bound sample</strong></div>
+  <div class="annotation-grid">
+    <section><h2>01 / Source bindings</h2><p>Rank &amp; Arabic title → server rank. Previous/new RP and delta → RP engine, not match scores. Every displayed rank and RP number is a bound sample until connected.</p><p>Season → season doc {id, start, end}. SAMPLE-S12 · 1 Jul–1 Oct 2026 is a three-month bound sample; no season document exists yet. Match scores and summary are illustrative preview fixtures.</p></section>
+    <section><h2>02 / Exact token corrections</h2><p>inkFaint: #6F685B → #8A8272<br>crimson: #C14026 → error #F25555<br>goldDim: #A67A2A → #A8742A</p><p>goldDim is border/ring only in the Ranked block. Rank King has no crown or divisions. Match King keeps the crown; Koz keeps the original mug.</p></section>
+    <section><h2>03 / Validate &amp; connect</h2><p>Click You Win repeatedly: same-tier promotion → higher-tier promotion → Mini → King ceiling → Match King / Gold → tied first → mixed-tier win directions. Click You Lose: division demotion → floor → mixed-tier loss. All are bound samples.</p><p id="navigationBinding">Return to Ranked → S45 Ranked Home (host navigation binding; destination not supplied). Lobby, Graph and Share are unchanged.</p></section>
+  </div>
+</aside>
+
+<template id="__bundler_thumbnail" data-bg-color="#0D0A07">
+  <svg viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg">
+    <rect x="200" y="180" width="800" height="440" rx="30" fill="#17130E" stroke="#B08D57" stroke-width="5"></rect>
+    <text x="600" y="420" font-family="Georgia, serif" font-size="170" fill="#E8A33D" text-anchor="middle">♛</text>
+  </svg>
+</template>
+
+<script>
+  function fitStage() {
+    const tbl = document.getElementById("tbl");
+    const s = Math.min(window.innerWidth / 960, document.getElementById("stage").clientHeight / 540, 1.2);
+    tbl.style.transform = "scale(" + s + ")";
+  }
+  window.addEventListener("resize", fitStage);
+  window.addEventListener("DOMContentLoaded", fitStage);
+</script>
+<script src="game-state.js"></script>
+<script src="session.js"></script>
+<script src="scoring-engine.js"></script>
+<script src="ranked-result.js"></script>
+<script src="standings-render.js?v=1"></script>
+<script src="standings-engine.js?v=1"></script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+/* Local extension of the supplied standings system; no new tokens. */
+html, body { overflow: auto; background: var(--bg); }
+#stage { position: relative; height: max(560px, 75vh); background: var(--bg); }
+.tbl .row-name { flex-wrap: wrap; gap: 3px 7px; min-width: 0; }
+.tbl .res-title:not(.match-king)::before, .tbl .res-title:not(.match-king)::after { content: none; }
+.tbl .tier-chip { display: inline-block; border: 1px solid var(--accent-dim); color: var(--ink); border-radius: 6px; padding: 3px 7px; font: 10px var(--sans); white-space: nowrap; }
+.tbl .row-name .tier-chip { font-size: 9px; }
+.tbl .rw-chip { flex-direction: column; align-items: flex-start; justify-content: center; gap: 5px; min-width: 0; }
+.tbl .rw-lab { margin-left: 0; }
+.tbl .rp-chip { flex: 1.05; position: relative; padding-right: 58px; }
+.tbl .rp-chip .rw-val { position: absolute; right: 14px; top: 12px; font-size: 23px; color: var(--legal); }
+.tbl .rp-chip .negative { color: var(--error); }
+.tbl .transition-chip { flex: 1.5; }
+.tbl .season-chip { flex: .85; }
+.tbl .rank-detail { font: 10px/1.55 var(--sans); color: var(--ink-dim); }
+.tbl .rank-path { display: flex; align-items: center; gap: 6px; color: var(--ink-dim); }
+.tbl .promoted { animation: rankUp .35s ease-out both; }
+.tbl .demoted { animation: rankDown .35s ease-out both; }
+@keyframes rankUp { from { transform: translateY(5px); box-shadow: 0 0 8px color-mix(in oklch, var(--accent-dim) 25%, transparent); } to { transform: translateY(0); } }
+@keyframes rankDown { from { transform: translateY(-5px); border-color: var(--error); } to { transform: translateY(0); } }
+.annotations { max-width: 1152px; margin: 0 auto; padding: 24px 28px 32px; color: var(--ink-dim); border-top: 1px solid var(--panel-line); font: 12px/1.7 var(--sans); }
+.annotation-heading { display: flex; justify-content: space-between; gap: 16px; font: 10px var(--mono); letter-spacing: .08em; color: var(--ink-faint); }
+.annotation-heading strong { color: var(--ink); font-weight: 500; }
+.annotation-grid { display: grid; grid-template-columns: 1.2fr 1fr 1.2fr; gap: 32px; margin-top: 20px; }
+.annotations h2 { font: 11px var(--mono); color: var(--ink); margin: 0 0 10px; }
+.annotations p { margin: 0 0 8px; }
+@media (max-width: 700px) { #stage { height: 62vw; min-height: 0; } .annotation-grid { grid-template-columns: 1fr; gap: 16px; } .annotation-heading { flex-direction: column; } }
+@media (prefers-reduced-motion: reduce) { .tbl .res-row.in, .tbl .res-row.win.crowned .rank.crown, .tbl .promoted, .tbl .demoted { animation-duration: .01ms; animation-delay: 0s; } }
