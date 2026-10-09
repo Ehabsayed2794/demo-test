@@ -25,6 +25,17 @@ package com.estemshan.engine
  */
 enum class ScoringMode { NORMAL, CLASSIC }
 
+/**
+ * S43 (E6b, RD28 final): the persisted authority key gating voice, Vote
+ * Kick, disconnect/pause, settlement, and Ranked statistics. Exactly
+ * ROOM | RANKED | UNRANKED — never the legacy WHO-you-play labels
+ * ("ranked" | "ai" | "friends"), which stay a separate free string and
+ * are NOT the authority. Rank-down is NOT a fourth value: it is RANKED
+ * plus the room's private-access flag. UNRANKED is first-class, not
+ * ROOM + a marker. Plain enum: multiplatform-safe (JVM + JS targets).
+ */
+enum class MatchMode { ROOM, RANKED, UNRANKED }
+
 enum class HandAuthority { LOCAL, FIRESTORE }
 
 /**
@@ -126,6 +137,11 @@ fun interface RemoteMatchSync {
 data class SessionSnapshot(
   val matchId: String,
   val mode: String?,
+  /**
+   * S43: the persisted authority, seeded from the match document (never
+   * the legacy free string above). Absent on the doc ⇒ ROOM.
+   */
+  val matchMode: MatchMode = MatchMode.ROOM,
   val scoringMode: ScoringMode,
   val room: SessionRoom,
   val dealerId: String?,
@@ -144,6 +160,13 @@ class GameSession(
 
   private var matchId: String = "m-" + clock()
   private var mode: String? = null
+  /**
+   * S43: the authority key, seeded from the persisted match document.
+   * The legacy [mode] free string ("ranked" | "ai" | "friends") is WHO
+   * you play and is deliberately NOT migrated into this — it stays a
+   * label, never a gate.
+   */
+  private var matchMode: MatchMode = MatchMode.ROOM
   private var scoringMode: ScoringMode = ScoringMode.NORMAL
   private var gameType: GameType = GameType.FULL
   private var players: List<SessionPlayer> = emptyList()
@@ -179,6 +202,9 @@ class GameSession(
   private fun freshSession(matchMode: String?) {
     matchId = "m-" + clock()
     mode = matchMode
+    // Qualified: the parameter above keeps the legacy label's name so
+    // every existing caller compiles unchanged.
+    this.matchMode = MatchMode.ROOM
     scoringMode = ScoringMode.NORMAL
     gameType = GameType.FULL
     players = emptyList()
@@ -221,6 +247,7 @@ class GameSession(
   fun snapshot(): SessionSnapshot = SessionSnapshot(
     matchId = matchId,
     mode = mode,
+    matchMode = matchMode,
     scoringMode = scoringMode,
     room = room,
     dealerId = dealerId,
@@ -234,6 +261,14 @@ class GameSession(
 
   fun getMatchId(): String = matchId
   fun getMode(): String? = mode
+
+  // ── match authority ──────────────────────────────────────────────
+  // S43 (E6b, RD28): ROOM | RANKED | UNRANKED, seeded from the persisted
+  // match document by the caller above (ViewModel / services). Fresh
+  // sessions reset to ROOM. Every gate built on this needs an explicit
+  // UNRANKED branch — it is first-class, never ROOM + a marker.
+  fun getMatchMode(): MatchMode = matchMode
+  fun setMatchMode(mode: MatchMode) { matchMode = mode }
 
   // ── scoring ruleset ──────────────────────────────────────────────
   // Orthogonal to `mode` (ranked/ai/friends is WHO you play, not how
