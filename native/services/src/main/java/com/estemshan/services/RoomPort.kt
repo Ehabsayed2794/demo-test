@@ -1,6 +1,7 @@
 package com.estemshan.services
 
 import com.estemshan.engine.GameType
+import com.estemshan.engine.MatchMode
 import com.estemshan.engine.ScoringMode
 import com.estemshan.services.model.RoomDoc
 import com.estemshan.services.model.ServiceException
@@ -35,12 +36,18 @@ interface RoomPort {
    * S66 (E7): the room carries its configured [gameType]/[scoringMode] so
    * startMatch can seed the match from them. Defaults keep existing callers
    * compiling; the :app config state supplying non-default values is S69.
+   *
+   * S43 (E6b, RD28 final): the room carries its authority [mode] (ROOM |
+   * RANKED | UNRANKED, default ROOM) plus the private-access [rankDown]
+   * flag (default false). Rank-down is RANKED + rankDown, never a mode.
    */
   suspend fun createRoom(
     playerId: String,
     roomName: String?,
     gameType: GameType = GameType.FULL,
     scoringMode: ScoringMode = ScoringMode.NORMAL,
+    mode: MatchMode = MatchMode.ROOM,
+    rankDown: Boolean = false,
   ): String
 
   /**

@@ -155,6 +155,8 @@ class MatchService(
         // S66 (E7): the match inherits the room's configured type + mode.
         gameType = room.gameType,
         scoringMode = room.scoringMode,
+        // S43 (E6b): the match inherits the room's authority mode.
+        mode = room.mode,
       ))
       tx.update(roomRef, mapOf(
         "status" to RoomDoc.STATUS_IN_GAME,
@@ -999,9 +1001,11 @@ class MatchService(
         serverTimestamp = FieldValue.serverTimestamp(),
         rematchOfMatchId = matchId,
         // S66 (E7): a rematch inherits the old match's type + mode —
-        // never a client-supplied value.
+        // never a client-supplied value. S43: the authority mode
+        // inherits the same way.
         gameType = oldMatch.gameType,
         scoringMode = oldMatch.scoringMode,
+        mode = oldMatch.mode,
       ))
       tx.update(voteRef, mapOf(
         "status" to VoteDoc.STATUS_NEW_MATCH_CREATED,
