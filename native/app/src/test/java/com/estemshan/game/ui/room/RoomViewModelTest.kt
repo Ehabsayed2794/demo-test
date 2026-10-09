@@ -1,6 +1,7 @@
 package com.estemshan.game.ui.room
 
 import com.estemshan.engine.GameType
+import com.estemshan.engine.MatchMode
 import com.estemshan.engine.ScoringMode
 import com.estemshan.services.RoomPort
 import com.estemshan.services.model.MatchStartResult
@@ -243,6 +244,8 @@ class RoomViewModelTest {
       roomName: String?,
       gameType: GameType,
       scoringMode: ScoringMode,
+      mode: MatchMode,
+      rankDown: Boolean,
     ): String {
       createCalls.incrementAndGet()
       val code = "ROOM%02d".format(rooms.size)
@@ -255,6 +258,8 @@ class RoomViewModelTest {
         matchId = null,
         gameType = gameType,
         scoringMode = scoringMode,
+        mode = mode,
+        rankDown = rankDown,
       )
       return code
     }

@@ -29,6 +29,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.estemshan.engine.GameType
+import com.estemshan.engine.MatchMode
 import com.estemshan.engine.ScoringMode
 import com.estemshan.game.data.AuthUiState
 import com.estemshan.game.ui.chooselevel.ChooseLevelScreen
@@ -279,7 +280,10 @@ fun EstemshanNav() {
             onDecisionTimerSeconds = createVm::onDecisionTimerSeconds,
             onCreateRoom = {
               uid?.let {
-                lobbyVm.createRoom(it, createState.gameType, createState.scoringMode)
+                // S43: explicit ROOM + not-rank-down — no Ranked creation
+                // UI exists yet (E6b future).
+                lobbyVm.createRoom(it, createState.gameType, createState.scoringMode,
+                  MatchMode.ROOM, false)
               }
             },
             onCancel = { nav.popBackStack() },

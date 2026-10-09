@@ -509,8 +509,10 @@ class OnlineMatchViewModel(
     // S69 (E7): the document is the authority — seed the session's type +
     // mode from it before the auction starts, and resolve the fast path
     // from the same type. Read the doc, never invent config.
+    // S43 (E6b): the authority mode seeds the same way.
     session.setGameType(doc.gameType)
     session.setScoringMode(doc.scoringMode)
+    session.setMatchMode(doc.mode)
     val round = doc.currentRound
     val multiplier = session.getRound().multiplier
     session.clearBiddingState()
