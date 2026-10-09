@@ -100,7 +100,7 @@ service cloud.firestore {
 
     function isValidNewRoom() {
       let data = request.resource.data;
-      return data.keys().hasOnly(['creator', 'players', 'readyPlayers', 'status', 'name', 'gameType', 'scoringMode', 'createdAt', 'updatedAt'])
+      return data.keys().hasOnly(['creator', 'players', 'readyPlayers', 'status', 'name', 'gameType', 'scoringMode', 'mode', 'rankDown', 'createdAt', 'updatedAt'])
              && data.creator is string
              && data.creator == request.auth.uid
              && data.players is list
@@ -113,10 +113,16 @@ service cloud.firestore {
              && data.readyPlayers.size() == 0
              && data.status is string
              && data.status == 'waiting'
-             // S67: the room carries its configured gameType/scoringMode
-             // to the match; absent ⇒ FULL/NORMAL (back-compat).
-             && isValidGameType(data)
-             && isValidScoringMode(data);
+              // S67: the room carries its configured gameType/scoringMode
+              // to the match; absent ⇒ FULL/NORMAL (back-compat).
+              && isValidGameType(data)
+              && isValidScoringMode(data)
+              // S43 (E6b, RD28 final): the room carries its authority mode
+              // (ROOM | RANKED | UNRANKED, absent ⇒ ROOM) plus the
+              // private-access rankDown flag (absent ⇒ false, must be bool
+              // when present). Rank-down is RANKED + rankDown, never a mode.
+              && isValidMode(data)
+              && isValidRankDown(data);
     }
 
     // A list changed by exactly the acting user adding or removing
@@ -390,6 +396,31 @@ service cloud.firestore {
       return !('scoringMode' in data) || data.scoringMode in ['NORMAL', 'CLASSIC'];
     }
 
+    // S43 (E6b, RD28 final): the authority key ROOM | RANKED | UNRANKED.
+    // Same absent-ok contract as isValidGameType: a doc written before
+    // S43 has no mode field and counts as ROOM (no migration), while a
+    // present field must be exactly one of the three — a bogus fourth
+    // value is denied, never silently read as ROOM.
+    function isValidMode(data) {
+      return !('mode' in data) || data.mode in ['ROOM', 'RANKED', 'UNRANKED'];
+    }
+
+    // S43: the room's private-access flag. Absent ⇒ false (back-compat);
+    // present ⇒ must actually be a bool, so a client can never store a
+    // rankDown the :services parser would read differently.
+    function isValidRankDown(data) {
+      return !('rankDown' in data) || data.rankDown is bool;
+    }
+
+    // effectiveMode: the mode a doc counts as, absent/unrecognised ⇒
+    // ROOM. Used by the rematch inheritance check so a pre-S43 old match
+    // (no field) rematches as ROOM — exactly as MatchDoc.fromFields
+    // parses it.
+    function effectiveMode(data) {
+      let m = data.get('mode', null);
+      return m in ['ROOM', 'RANKED', 'UNRANKED'] ? m : 'ROOM';
+    }
+
     function isRoomReadyForMatchStart(room) {
       return room.players.size() > 0 && room.readyPlayers.hasAll(room.players);
     }
@@ -523,9 +554,9 @@ service cloud.firestore {
       let oldMatch = hasRematchField ? get(/databases/$(database)/documents/matches/$(data.rematchOfMatchId)).data : null;
       let vote = hasRematchField ? get(/databases/$(database)/documents/matches/$(data.rematchOfMatchId)/rematchVote/current).data : null;
       return hasRematchField
-             && data.keys().hasOnly(['roomId', 'players', 'status', 'createdAt', 'currentRound', 'dealer', 'turn', 'gameState',
-                                   'seats', 'version', 'biddingOpen', 'bids', 'lastBidSeat', 'cardLog', 'lastCardSeat', 'cardPhase',
-                                   'biddingLog', 'maxRounds', 'extendedRounds', 'rematchOfMatchId', 'gameType', 'scoringMode'])
+              && data.keys().hasOnly(['roomId', 'players', 'status', 'createdAt', 'currentRound', 'dealer', 'turn', 'gameState',
+                                    'seats', 'version', 'biddingOpen', 'bids', 'lastBidSeat', 'cardLog', 'lastCardSeat', 'cardPhase',
+                                    'biddingLog', 'maxRounds', 'extendedRounds', 'rematchOfMatchId', 'gameType', 'scoringMode', 'mode'])
              && request.auth.uid in data.players
              && data.status == 'starting'
              && data.currentRound == 1
@@ -547,13 +578,19 @@ service cloud.firestore {
              && vote.status == 'ALL_YES'
              && vote.newMatchId == null
              && data.roomId == oldMatch.roomId
-             // S67: a rematch inherits the OLD match's type (and its
-             // mode) — never a client-supplied value. effectiveGameType
-             // on both sides so a pre-S67 old match (no field ⇒ FULL)
-             // still rematches as a Full match.
-             && effectiveGameType(oldMatch) == effectiveGameType(data)
-             && isValidGameType(data)
-             && isValidScoringMode(data)
+              // S67: a rematch inherits the OLD match's type (and its
+              // mode) — never a client-supplied value. effectiveGameType
+              // on both sides so a pre-S67 old match (no field ⇒ FULL)
+              // still rematches as a Full match.
+              && effectiveGameType(oldMatch) == effectiveGameType(data)
+              && isValidGameType(data)
+              && isValidScoringMode(data)
+              // S43: a rematch inherits the OLD match's authority mode —
+              // never a client-supplied value. effectiveMode on both
+              // sides so a pre-S43 old match (no field ⇒ ROOM) still
+              // rematches as a Room match.
+              && effectiveMode(oldMatch) == effectiveMode(data)
+              && isValidMode(data)
              // `seats`/`players` copied VERBATIM from the vote's own,
              // already-authoritative (parent-derived, never client-
              // supplied) seats map — closes "arbitrary UID injection"
@@ -1405,7 +1442,7 @@ service cloud.firestore {
         let room = get(/databases/$(database)/documents/rooms/$(data.roomId)).data;
         return data.keys().hasOnly(['roomId', 'players', 'status', 'createdAt', 'currentRound', 'dealer', 'turn', 'gameState',
                                      'seats', 'version', 'biddingOpen', 'bids', 'lastBidSeat', 'cardLog', 'lastCardSeat', 'cardPhase',
-                                     'biddingLog', 'maxRounds', 'extendedRounds', 'gameType', 'scoringMode'])
+                                     'biddingLog', 'maxRounds', 'extendedRounds', 'gameType', 'scoringMode', 'mode'])
                && data.roomId is string
                && data.players is list
                && data.players.size() > 0
@@ -1418,10 +1455,13 @@ service cloud.firestore {
                // with no extensions recorded yet — isValidRoundExtension()
                // below is the ONLY other write this collection permits
                // for these two fields.
-               && data.maxRounds == baseRoundsOf(data)
-               && data.extendedRounds == []
-               && isValidGameType(data)
-               && isValidScoringMode(data)
+                && data.maxRounds == baseRoundsOf(data)
+                && data.extendedRounds == []
+                && isValidGameType(data)
+                && isValidScoringMode(data)
+                // S43: the authority key rides every match create (absent
+                // ⇒ ROOM, back-compat for pre-S43 docs).
+                && isValidMode(data)
                && data.dealer in data.players
                && data.turn in data.players
                && exists(/databases/$(database)/documents/rooms/$(data.roomId))
