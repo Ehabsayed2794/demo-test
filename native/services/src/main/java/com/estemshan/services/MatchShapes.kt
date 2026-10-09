@@ -4,11 +4,14 @@ import com.estemshan.engine.GameType
 import com.estemshan.engine.MatchMode
 import com.estemshan.engine.ScoringMode
 import com.estemshan.engine.Suit
+import com.estemshan.engine.bot.BotPersonality
+import com.estemshan.engine.bot.BotTier
 import com.estemshan.services.model.BiddingActionInput
 import com.estemshan.services.model.BiddingLogEntry
 import com.estemshan.services.model.CardLogEntry
 import com.estemshan.services.model.GameState
 import com.estemshan.services.model.MatchDoc
+import com.estemshan.services.model.DEFAULT_DECISION_TIMER_SECONDS
 import com.estemshan.services.model.MAX_BID_VALUE
 import com.estemshan.services.model.MAX_RANK_VALUE
 import com.estemshan.services.model.MIN_RANK_VALUE
@@ -50,6 +53,9 @@ fun buildInitialMatchFields(
   gameType: GameType = GameType.FULL,
   scoringMode: ScoringMode = ScoringMode.NORMAL,
   mode: MatchMode = MatchMode.ROOM,
+  botTier: BotTier = BotTier.MEDIUM,
+  botPersonality: BotPersonality = BotPersonality.BALANCED,
+  decisionTimerSeconds: Int = DEFAULT_DECISION_TIMER_SECONDS,
 ): Map<String, Any?> {
   val seats = buildSeatMap(players)
   val dealer = initialDealer(players, creator)
@@ -64,6 +70,9 @@ fun buildInitialMatchFields(
     gameType = gameType,
     scoringMode = scoringMode,
     mode = mode,
+    botTier = botTier,
+    botPersonality = botPersonality,
+    decisionTimerSeconds = decisionTimerSeconds,
   )
 }
 
@@ -79,6 +88,9 @@ private fun buildMatchFields(
   gameType: GameType = GameType.FULL,
   scoringMode: ScoringMode = ScoringMode.NORMAL,
   mode: MatchMode = MatchMode.ROOM,
+  botTier: BotTier = BotTier.MEDIUM,
+  botPersonality: BotPersonality = BotPersonality.BALANCED,
+  decisionTimerSeconds: Int = DEFAULT_DECISION_TIMER_SECONDS,
 ): Map<String, Any?> = buildMap {
   put("roomId", roomId)
   if (rematchOfMatchId != null) put("rematchOfMatchId", rematchOfMatchId)
@@ -94,6 +106,11 @@ private fun buildMatchFields(
   // S43 (E6b): the authority key rides every match doc (rematches inherit
   // it from the old match — never client-supplied).
   put("mode", mode.name)
+  // RD21: the host's bot configuration rides every match doc the same way
+  // (rematches inherit it from the old match — never client-supplied).
+  put("botTier", botTier.name)
+  put("botPersonality", botPersonality.name)
+  put("decisionTimerSeconds", decisionTimerSeconds)
   put("extendedRounds", emptyList<Int>())
   put("dealer", dealer)
   put("turn", turn)
@@ -114,7 +131,8 @@ private fun buildMatchFields(
  * seats map (itself copied from the original match), never from a
  * client-supplied list (match-service.js:2371-2404). The type and mode are
  * inherited from the OLD match by the caller (S66) — never client-supplied.
- * S43: the authority mode inherits the same way.
+ * S43: the authority mode inherits the same way. RD21: the bot trio
+ * (tier / personality / decision timer) inherits the same way too.
  */
 fun buildRematchMatchFields(
   roomId: String,
@@ -125,6 +143,9 @@ fun buildRematchMatchFields(
   gameType: GameType = GameType.FULL,
   scoringMode: ScoringMode = ScoringMode.NORMAL,
   mode: MatchMode = MatchMode.ROOM,
+  botTier: BotTier = BotTier.MEDIUM,
+  botPersonality: BotPersonality = BotPersonality.BALANCED,
+  decisionTimerSeconds: Int = DEFAULT_DECISION_TIMER_SECONDS,
 ): Map<String, Any?> {
   val players = SEAT_IDS.filter { seats.containsKey(it) }.map { seats.getValue(it) }
   return buildMatchFields(
@@ -138,6 +159,9 @@ fun buildRematchMatchFields(
     gameType = gameType,
     scoringMode = scoringMode,
     mode = mode,
+    botTier = botTier,
+    botPersonality = botPersonality,
+    decisionTimerSeconds = decisionTimerSeconds,
   )
 }
 

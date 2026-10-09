@@ -100,7 +100,7 @@ service cloud.firestore {
 
     function isValidNewRoom() {
       let data = request.resource.data;
-      return data.keys().hasOnly(['creator', 'players', 'readyPlayers', 'status', 'name', 'gameType', 'scoringMode', 'mode', 'rankDown', 'createdAt', 'updatedAt'])
+      return data.keys().hasOnly(['creator', 'players', 'readyPlayers', 'status', 'name', 'gameType', 'scoringMode', 'mode', 'rankDown', 'botTier', 'botPersonality', 'decisionTimerSeconds', 'createdAt', 'updatedAt'])
              && data.creator is string
              && data.creator == request.auth.uid
              && data.players is list
@@ -122,7 +122,11 @@ service cloud.firestore {
               // private-access rankDown flag (absent ⇒ false, must be bool
               // when present). Rank-down is RANKED + rankDown, never a mode.
               && isValidMode(data)
-              && isValidRankDown(data);
+              && isValidRankDown(data)
+              // RD21: the host's bot trio (absent ⇒ MEDIUM/BALANCED/15s).
+              && isValidBotTier(data)
+              && isValidBotPersonality(data)
+              && isValidDecisionTimer(data);
     }
 
     // A list changed by exactly the acting user adding or removing
@@ -421,6 +425,50 @@ service cloud.firestore {
       return m in ['ROOM', 'RANKED', 'UNRANKED'] ? m : 'ROOM';
     }
 
+    // RD21: the room/match bot configuration — skill tier, style, and the
+    // per-decision timer. Same absent-ok contract as isValidGameType: a doc
+    // written before the trio's persistence has none of these fields and
+    // counts as MEDIUM / BALANCED / 15s (no migration), while a present
+    // field must be exactly one of the enum names — a bogus value is
+    // denied, never silently read as the default.
+    function isValidBotTier(data) {
+      return !('botTier' in data) || data.botTier in ['EASY', 'MEDIUM', 'HARD', 'EXPERT'];
+    }
+
+    function isValidBotPersonality(data) {
+      return !('botPersonality' in data) || data.botPersonality in ['BALANCED', 'AGGRESSIVE', 'CONSERVATIVE', 'TRICKSTER'];
+    }
+
+    // The timer is bounded rather than enumerated (RD21 offers 5/10/15/20s):
+    // the window is what a client cannot exceed. `is int` rejects a float or
+    // a string the parser would read as the default.
+    function isValidDecisionTimer(data) {
+      return !('decisionTimerSeconds' in data)
+             || (data.decisionTimerSeconds is int
+                 && data.decisionTimerSeconds >= 5
+                 && data.decisionTimerSeconds <= 20);
+    }
+
+    // effectiveBotTier / effectiveBotPersonality / effectiveDecisionTimer:
+    // the value a doc counts as, absent/unrecognised ⇒ the RD21 default.
+    // Used by the rematch inheritance check so a pre-RD21 old match (no
+    // fields) rematches as MEDIUM/BALANCED/15s — exactly as
+    // MatchDoc.fromFields parses it.
+    function effectiveBotTier(data) {
+      let t = data.get('botTier', null);
+      return t in ['EASY', 'MEDIUM', 'HARD', 'EXPERT'] ? t : 'MEDIUM';
+    }
+
+    function effectiveBotPersonality(data) {
+      let p = data.get('botPersonality', null);
+      return p in ['BALANCED', 'AGGRESSIVE', 'CONSERVATIVE', 'TRICKSTER'] ? p : 'BALANCED';
+    }
+
+    function effectiveDecisionTimer(data) {
+      let t = data.get('decisionTimerSeconds', null);
+      return (t is int && t >= 5 && t <= 20) ? t : 15;
+    }
+
     function isRoomReadyForMatchStart(room) {
       return room.players.size() > 0 && room.readyPlayers.hasAll(room.players);
     }
@@ -556,7 +604,7 @@ service cloud.firestore {
       return hasRematchField
               && data.keys().hasOnly(['roomId', 'players', 'status', 'createdAt', 'currentRound', 'dealer', 'turn', 'gameState',
                                     'seats', 'version', 'biddingOpen', 'bids', 'lastBidSeat', 'cardLog', 'lastCardSeat', 'cardPhase',
-                                    'biddingLog', 'maxRounds', 'extendedRounds', 'rematchOfMatchId', 'gameType', 'scoringMode', 'mode'])
+                                    'biddingLog', 'maxRounds', 'extendedRounds', 'rematchOfMatchId', 'gameType', 'scoringMode', 'mode', 'botTier', 'botPersonality', 'decisionTimerSeconds'])
              && request.auth.uid in data.players
              && data.status == 'starting'
              && data.currentRound == 1
@@ -591,6 +639,16 @@ service cloud.firestore {
               // rematches as a Room match.
               && effectiveMode(oldMatch) == effectiveMode(data)
               && isValidMode(data)
+              // RD21: a rematch inherits the OLD match's bot trio — never
+              // a client-supplied value. effective* on both sides so a
+              // pre-RD21 old match (no fields ⇒ MEDIUM/BALANCED/15s) still
+              // rematches as the default on both sides.
+              && effectiveBotTier(oldMatch) == effectiveBotTier(data)
+              && isValidBotTier(data)
+              && effectiveBotPersonality(oldMatch) == effectiveBotPersonality(data)
+              && isValidBotPersonality(data)
+              && effectiveDecisionTimer(oldMatch) == effectiveDecisionTimer(data)
+              && isValidDecisionTimer(data)
              // `seats`/`players` copied VERBATIM from the vote's own,
              // already-authoritative (parent-derived, never client-
              // supplied) seats map — closes "arbitrary UID injection"
@@ -1442,7 +1500,7 @@ service cloud.firestore {
         let room = get(/databases/$(database)/documents/rooms/$(data.roomId)).data;
         return data.keys().hasOnly(['roomId', 'players', 'status', 'createdAt', 'currentRound', 'dealer', 'turn', 'gameState',
                                      'seats', 'version', 'biddingOpen', 'bids', 'lastBidSeat', 'cardLog', 'lastCardSeat', 'cardPhase',
-                                     'biddingLog', 'maxRounds', 'extendedRounds', 'gameType', 'scoringMode', 'mode'])
+                                     'biddingLog', 'maxRounds', 'extendedRounds', 'gameType', 'scoringMode', 'mode', 'botTier', 'botPersonality', 'decisionTimerSeconds'])
                && data.roomId is string
                && data.players is list
                && data.players.size() > 0
@@ -1462,6 +1520,11 @@ service cloud.firestore {
                 // S43: the authority key rides every match create (absent
                 // ⇒ ROOM, back-compat for pre-S43 docs).
                 && isValidMode(data)
+                // RD21: the host's bot trio rides every match create (absent
+                // ⇒ MEDIUM/BALANCED/15s, back-compat for pre-RD21 docs).
+                && isValidBotTier(data)
+                && isValidBotPersonality(data)
+                && isValidDecisionTimer(data)
                && data.dealer in data.players
                && data.turn in data.players
                && exists(/databases/$(database)/documents/rooms/$(data.roomId))

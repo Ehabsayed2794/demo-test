@@ -3,6 +3,8 @@ package com.estemshan.services
 import com.estemshan.engine.GameType
 import com.estemshan.engine.MatchMode
 import com.estemshan.engine.ScoringMode
+import com.estemshan.engine.bot.BotPersonality
+import com.estemshan.engine.bot.BotTier
 import com.estemshan.services.model.MatchStartResult
 import com.estemshan.services.model.Reasons
 import com.estemshan.services.model.ROOM_CODE_ALPHABET
@@ -50,10 +52,14 @@ class RoomService(
     scoringMode: ScoringMode,
     mode: MatchMode,
     rankDown: Boolean,
+    botTier: BotTier,
+    botPersonality: BotPersonality,
+    decisionTimerSeconds: Int,
   ): String {
     require(playerId.isNotEmpty()) { "createRoom: playerId is required." }
     return tryCreateRoomWithCode(
       playerId, roomName, ROOM_CODE_MAX_ATTEMPTS, gameType, scoringMode, mode, rankDown,
+      botTier, botPersonality, decisionTimerSeconds,
     )
   }
 
@@ -65,6 +71,9 @@ class RoomService(
     scoringMode: ScoringMode,
     mode: MatchMode,
     rankDown: Boolean,
+    botTier: BotTier,
+    botPersonality: BotPersonality,
+    decisionTimerSeconds: Int,
   ): String {
     val room = hashMapOf(
       "name" to roomName,
@@ -80,6 +89,11 @@ class RoomService(
       // startMatch can seed the match from them (absent ⇒ ROOM/false).
       "mode" to mode.name,
       "rankDown" to rankDown,
+      // RD21: the host's bot configuration so startMatch can seed the match
+      // from it (absent ⇒ MEDIUM/BALANCED/15s on read).
+      "botTier" to botTier.name,
+      "botPersonality" to botPersonality.name,
+      "decisionTimerSeconds" to decisionTimerSeconds,
       "createdAt" to FieldValue.serverTimestamp(),
       "updatedAt" to FieldValue.serverTimestamp(),
     )
@@ -95,6 +109,7 @@ class RoomService(
     if (ref.getBlocking().exists()) {
       return tryCreateRoomWithCode(
         playerId, roomName, attemptsLeft - 1, gameType, scoringMode, mode, rankDown,
+        botTier, botPersonality, decisionTimerSeconds,
       )
     }
     ref.set(room).await()

@@ -157,6 +157,10 @@ class MatchService(
         scoringMode = room.scoringMode,
         // S43 (E6b): the match inherits the room's authority mode.
         mode = room.mode,
+        // RD21: the match inherits the room's bot configuration.
+        botTier = room.botTier,
+        botPersonality = room.botPersonality,
+        decisionTimerSeconds = room.decisionTimerSeconds,
       ))
       tx.update(roomRef, mapOf(
         "status" to RoomDoc.STATUS_IN_GAME,
@@ -1002,10 +1006,14 @@ class MatchService(
         rematchOfMatchId = matchId,
         // S66 (E7): a rematch inherits the old match's type + mode —
         // never a client-supplied value. S43: the authority mode
-        // inherits the same way.
+        // inherits the same way. RD21: the bot trio inherits the same
+        // way too.
         gameType = oldMatch.gameType,
         scoringMode = oldMatch.scoringMode,
         mode = oldMatch.mode,
+        botTier = oldMatch.botTier,
+        botPersonality = oldMatch.botPersonality,
+        decisionTimerSeconds = oldMatch.decisionTimerSeconds,
       ))
       tx.update(voteRef, mapOf(
         "status" to VoteDoc.STATUS_NEW_MATCH_CREATED,

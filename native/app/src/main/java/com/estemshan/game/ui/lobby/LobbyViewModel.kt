@@ -5,9 +5,12 @@ import androidx.lifecycle.viewModelScope
 import com.estemshan.engine.GameType
 import com.estemshan.engine.MatchMode
 import com.estemshan.engine.ScoringMode
+import com.estemshan.engine.bot.BotPersonality
+import com.estemshan.engine.bot.BotTier
 import com.estemshan.game.data.OnlineServices
 import com.estemshan.services.PlayerPort
 import com.estemshan.services.RoomPort
+import com.estemshan.services.model.DEFAULT_DECISION_TIMER_SECONDS
 import com.estemshan.services.model.Reasons
 import com.estemshan.services.model.ServiceException
 import com.estemshan.services.model.normalizeRoomCode
@@ -77,6 +80,10 @@ class LobbyViewModel(
    * S43 (E6b): [mode]/[rankDown] ride along the same way. No mode UI
    * exists yet (Ranked creation is E6b future), so callers pass the
    * defaults explicitly — plain ROOM rooms until then.
+   *
+   * RD21: the host's bot trio rides along too — the S36 screen's
+   * difficulty / personality / timer selections, which the room carries to
+   * the match so every seat plays the same configured match.
    */
   fun createRoom(
     playerId: String,
@@ -84,12 +91,18 @@ class LobbyViewModel(
     scoringMode: ScoringMode,
     mode: MatchMode = MatchMode.ROOM,
     rankDown: Boolean = false,
+    botTier: BotTier = BotTier.MEDIUM,
+    botPersonality: BotPersonality = BotPersonality.BALANCED,
+    decisionTimerSeconds: Int = DEFAULT_DECISION_TIMER_SECONDS,
   ) {
     if (_state.value.busy) return
     launch {
       _state.value = _state.value.copy(busy = true, joinError = null, createError = false)
       try {
-        val code = rooms.createRoom(playerId, null, gameType, scoringMode, mode, rankDown)
+        val code = rooms.createRoom(
+          playerId, null, gameType, scoringMode, mode, rankDown,
+          botTier, botPersonality, decisionTimerSeconds,
+        )
         _state.value = _state.value.copy(busy = false, roomCode = code, createdCode = code)
       } catch (e: Exception) {
         _state.value = _state.value.copy(busy = false, createError = true)

@@ -7,6 +7,8 @@ import com.estemshan.engine.RANKS
 import com.estemshan.engine.Rank
 import com.estemshan.engine.ScoringMode
 import com.estemshan.engine.Suit
+import com.estemshan.engine.bot.BotPersonality
+import com.estemshan.engine.bot.BotTier
 
 /**
  * Stored card shape: { suit, rank: { v, s } }. Mirrors
@@ -237,6 +239,17 @@ data class MatchDoc(
    * allowlist. Matches never carry rankDown: that flag lives on rooms.
    */
   val mode: MatchMode = MatchMode.ROOM,
+  /**
+   * RD21: the match's bot configuration — skill tier, style, and the
+   * per-decision timer. Inherited from the room at startMatch and from the
+   * old match at createRematchMatch, never client-supplied on a match. Absent
+   * in a doc written before the trio's persistence ⇒ MEDIUM / BALANCED /
+   * [DEFAULT_DECISION_TIMER_SECONDS] (no migration). Serialized as the enum
+   * names — the values firestore.rules' allowlist accepts.
+   */
+  val botTier: BotTier = BotTier.MEDIUM,
+  val botPersonality: BotPersonality = BotPersonality.BALANCED,
+  val decisionTimerSeconds: Int = DEFAULT_DECISION_TIMER_SECONDS,
 ) {
 
   /** The match is over, terminal: status never moves complete → anything. */
@@ -329,6 +342,9 @@ data class MatchDoc(
         gameType = RoomDoc.parseGameType(fields["gameType"]),
         scoringMode = RoomDoc.parseScoringMode(fields["scoringMode"]),
         mode = RoomDoc.parseMatchMode(fields["mode"]),
+        botTier = RoomDoc.parseBotTier(fields["botTier"]),
+        botPersonality = RoomDoc.parseBotPersonality(fields["botPersonality"]),
+        decisionTimerSeconds = RoomDoc.parseDecisionTimerSeconds(fields["decisionTimerSeconds"]),
       )
     }
   }
@@ -348,6 +364,18 @@ const val MIN_RANK_VALUE = 2
 const val MAX_RANK_VALUE = 14
 
 const val REMATCH_VOTE_DURATION_SECONDS = 30L
+
+/** RD21's Decision Timer default (seconds) — the value a doc written before
+ *  the trio's persistence counts as, and the S36 Create Game screen's
+ *  pre-fill. One owner so the parser default and the UI default cannot drift. */
+const val DEFAULT_DECISION_TIMER_SECONDS = 15
+
+/** The bounds of RD21's Decision Timer group (5 / 10 / 15 / 20 s). A value
+ *  outside this window is denied by firestore.rules' isValidDecisionTimer()
+ *  and reads back as the default, so a client can never store a timer the
+ *  parser would silently read as something else. */
+const val MIN_DECISION_TIMER_SECONDS = 5
+const val MAX_DECISION_TIMER_SECONDS = 20
 
 /** matches/{id}/roundArchive/{round} — write-once, deterministic id. */
 data class RoundArchiveDoc(
