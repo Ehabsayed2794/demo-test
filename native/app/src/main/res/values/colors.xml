@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  S24 — brand tokens as platform resources. The single authority is
+  EstemshanColors in ui/theme/EstemshanTheme.kt; these hexes mirror it so
+  the manifest theme and launcher icon read as the same product. If a
+  token changes there, change it here too (XML cannot read Kotlin).
+-->
+<resources>
+  <color name="estemshan_background">#0D0A07</color>
+  <color name="estemshan_surface">#17130E</color>
+  <color name="estemshan_surface_high">#1D1912</color>
+  <color name="estemshan_gold">#E8A33D</color>
+  <color name="estemshan_gold_dim">#A8742A</color>
+  <color name="estemshan_ink">#F0EADA</color>
+  <color name="estemshan_ink_dim">#A89F8E</color>
+  <color name="estemshan_error">#F25555</color>
+</resources>

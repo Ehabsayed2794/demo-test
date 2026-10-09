@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  S24 — adaptive launcher icon (minSdk 26, so no legacy PNGs needed).
+  Near-black felt + the gold spade foreground.
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+  <background android:drawable="@color/estemshan_background" />
+  <foreground android:drawable="@drawable/ic_launcher_foreground" />
+</adaptive-icon>

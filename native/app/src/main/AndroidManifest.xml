@@ -6,8 +6,10 @@
   <uses-permission android:name="android.permission.INTERNET" />
 
   <application
-    android:label="Estemshan"
-    android:theme="@android:style/Theme.Material.NoActionBar"
+    android:label="@string/app_name"
+    android:icon="@mipmap/ic_launcher"
+    android:roundIcon="@mipmap/ic_launcher_round"
+    android:theme="@style/Theme.Estemshan"
     android:allowBackup="false"
     android:supportsRtl="true">
     <!-- S25: per-build-type Crashlytics collection gate (values from the
