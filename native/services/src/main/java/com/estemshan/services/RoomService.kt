@@ -1,6 +1,7 @@
 package com.estemshan.services
 
 import com.estemshan.engine.GameType
+import com.estemshan.engine.MatchMode
 import com.estemshan.engine.ScoringMode
 import com.estemshan.services.model.MatchStartResult
 import com.estemshan.services.model.Reasons
@@ -47,9 +48,13 @@ class RoomService(
     roomName: String?,
     gameType: GameType,
     scoringMode: ScoringMode,
+    mode: MatchMode,
+    rankDown: Boolean,
   ): String {
     require(playerId.isNotEmpty()) { "createRoom: playerId is required." }
-    return tryCreateRoomWithCode(playerId, roomName, ROOM_CODE_MAX_ATTEMPTS, gameType, scoringMode)
+    return tryCreateRoomWithCode(
+      playerId, roomName, ROOM_CODE_MAX_ATTEMPTS, gameType, scoringMode, mode, rankDown,
+    )
   }
 
   private suspend fun tryCreateRoomWithCode(
@@ -58,6 +63,8 @@ class RoomService(
     attemptsLeft: Int,
     gameType: GameType,
     scoringMode: ScoringMode,
+    mode: MatchMode,
+    rankDown: Boolean,
   ): String {
     val room = hashMapOf(
       "name" to roomName,
@@ -69,6 +76,10 @@ class RoomService(
       // can seed the match from them (absent ⇒ FULL/NORMAL on read).
       "gameType" to gameType.name,
       "scoringMode" to scoringMode.name,
+      // S43 (E6b): the authority mode + the private-access flag so
+      // startMatch can seed the match from them (absent ⇒ ROOM/false).
+      "mode" to mode.name,
+      "rankDown" to rankDown,
       "createdAt" to FieldValue.serverTimestamp(),
       "updatedAt" to FieldValue.serverTimestamp(),
     )
@@ -82,7 +93,9 @@ class RoomService(
     val code = generateRoomCode()
     val ref = rooms.document(code)
     if (ref.getBlocking().exists()) {
-      return tryCreateRoomWithCode(playerId, roomName, attemptsLeft - 1, gameType, scoringMode)
+      return tryCreateRoomWithCode(
+        playerId, roomName, attemptsLeft - 1, gameType, scoringMode, mode, rankDown,
+      )
     }
     ref.set(room).await()
     syncProfile(playerId, code)

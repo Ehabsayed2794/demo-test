@@ -1,6 +1,7 @@
 package com.estemshan.services.model
 
 import com.estemshan.engine.GameType
+import com.estemshan.engine.MatchMode
 import com.estemshan.engine.ScoringMode
 
 /**
@@ -11,6 +12,10 @@ import com.estemshan.engine.ScoringMode
  * S66 (E7): carries the room's configured [gameType]/[scoringMode] so
  * startMatch can seed the match from them. Absent in an old doc ⇒ FULL /
  * NORMAL (no migration).
+ *
+ * S43 (E6b, RD28 final): carries the authority [mode] (ROOM | RANKED |
+ * UNRANKED — absent ⇒ ROOM) plus the private-access [rankDown] flag.
+ * Rank-down is RANKED + rankDown, never a fourth mode.
  */
 data class RoomDoc(
   val name: String?,
@@ -25,6 +30,8 @@ data class RoomDoc(
   val matchStart: MatchStartResult? = null,
   val gameType: GameType = GameType.FULL,
   val scoringMode: ScoringMode = ScoringMode.NORMAL,
+  val mode: MatchMode = MatchMode.ROOM,
+  val rankDown: Boolean = false,
 ) {
 
   val isFull: Boolean get() = players.size >= MAX_PLAYERS
@@ -57,6 +64,8 @@ data class RoomDoc(
         matchId = fields["matchId"] as? String,
         gameType = parseGameType(fields["gameType"]),
         scoringMode = parseScoringMode(fields["scoringMode"]),
+        mode = parseMatchMode(fields["mode"]),
+        rankDown = fields["rankDown"] as? Boolean ?: false,
       )
     }
 
@@ -69,6 +78,15 @@ data class RoomDoc(
     fun parseScoringMode(value: Any?): ScoringMode =
       (value as? String)?.let { runCatching { ScoringMode.valueOf(it) }.getOrNull() }
         ?: ScoringMode.NORMAL
+
+    /**
+     * Absent or unrecognised ⇒ ROOM: rooms/matches created before S43
+     * parse. Unrecognised never throws — a bogus fourth value reads as
+     * ROOM client-side while firestore.rules denies writing it.
+     */
+    fun parseMatchMode(value: Any?): MatchMode =
+      (value as? String)?.let { runCatching { MatchMode.valueOf(it) }.getOrNull() }
+        ?: MatchMode.ROOM
   }
 }
 

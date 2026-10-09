@@ -1,6 +1,7 @@
 package com.estemshan.game.ui.lobby
 
 import com.estemshan.engine.GameType
+import com.estemshan.engine.MatchMode
 import com.estemshan.engine.ScoringMode
 import com.estemshan.services.PlayerPort
 import com.estemshan.services.RoomPort
@@ -136,6 +137,23 @@ class LobbyViewModelTest {
       GameType.MINI, rooms.room(code!!).gameType)
     assertEquals("the room keeps the configured Calculation Mode",
       ScoringMode.CLASSIC, rooms.room(code).scoringMode)
+  }
+
+  @Test
+  fun createCarriesModeAndRankDownOntoTheRoom() = runTest {
+    openLobby()
+
+    // S43 (E6b): the authority mode + the private-access flag ride the
+    // same create path as the S68 selections. Non-defaults throughout —
+    // ROOM/false are every default in the chain and prove nothing.
+    vm.createRoom(me, GameType.MINI, ScoringMode.CLASSIC, MatchMode.RANKED, true)
+    advanceUntilIdle()
+
+    val code = vm.state.value.roomCode
+    assertNotNull("creating returned a room code", code)
+    assertEquals("the room keeps the authority mode",
+      MatchMode.RANKED, rooms.room(code!!).mode)
+    assertTrue("the room keeps the rank-down flag", rooms.room(code).rankDown)
   }
 
   @Test
@@ -320,6 +338,8 @@ class LobbyViewModelTest {
       roomName: String?,
       gameType: GameType,
       scoringMode: ScoringMode,
+      mode: MatchMode,
+      rankDown: Boolean,
     ): String {
       createGate.await()
       createCalls.incrementAndGet()
@@ -339,6 +359,8 @@ class LobbyViewModelTest {
         matchId = null,
         gameType = gameType,
         scoringMode = scoringMode,
+        mode = mode,
+        rankDown = rankDown,
       )
       return code
     }

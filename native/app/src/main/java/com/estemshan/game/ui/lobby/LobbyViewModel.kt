@@ -3,6 +3,7 @@ package com.estemshan.game.ui.lobby
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.estemshan.engine.GameType
+import com.estemshan.engine.MatchMode
 import com.estemshan.engine.ScoringMode
 import com.estemshan.game.data.OnlineServices
 import com.estemshan.services.PlayerPort
@@ -72,13 +73,23 @@ class LobbyViewModel(
    * fails at the transport never made a room, so nothing has to be torn down:
    * the player keeps every selection and gets a reason to retry (S36's
    * network-loss rule) instead of a crash.
+   *
+   * S43 (E6b): [mode]/[rankDown] ride along the same way. No mode UI
+   * exists yet (Ranked creation is E6b future), so callers pass the
+   * defaults explicitly — plain ROOM rooms until then.
    */
-  fun createRoom(playerId: String, gameType: GameType, scoringMode: ScoringMode) {
+  fun createRoom(
+    playerId: String,
+    gameType: GameType,
+    scoringMode: ScoringMode,
+    mode: MatchMode = MatchMode.ROOM,
+    rankDown: Boolean = false,
+  ) {
     if (_state.value.busy) return
     launch {
       _state.value = _state.value.copy(busy = true, joinError = null, createError = false)
       try {
-        val code = rooms.createRoom(playerId, null, gameType, scoringMode)
+        val code = rooms.createRoom(playerId, null, gameType, scoringMode, mode, rankDown)
         _state.value = _state.value.copy(busy = false, roomCode = code, createdCode = code)
       } catch (e: Exception) {
         _state.value = _state.value.copy(busy = false, createError = true)

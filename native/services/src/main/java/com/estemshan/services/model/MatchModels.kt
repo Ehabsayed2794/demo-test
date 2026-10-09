@@ -2,6 +2,7 @@ package com.estemshan.services.model
 
 import com.estemshan.engine.Card
 import com.estemshan.engine.GameType
+import com.estemshan.engine.MatchMode
 import com.estemshan.engine.RANKS
 import com.estemshan.engine.Rank
 import com.estemshan.engine.ScoringMode
@@ -228,6 +229,14 @@ data class MatchDoc(
    */
   val gameType: GameType = GameType.FULL,
   val scoringMode: ScoringMode = ScoringMode.NORMAL,
+  /**
+   * S43 (E6b, RD28 final): the authority key gating voice, Vote Kick,
+   * disconnect/pause, settlement, and Ranked statistics. Absent in a doc
+   * written before S43 ⇒ ROOM (no migration). Serialized as the enum
+   * name ('ROOM' | 'RANKED' | 'UNRANKED') — the values S43's rules
+   * allowlist. Matches never carry rankDown: that flag lives on rooms.
+   */
+  val mode: MatchMode = MatchMode.ROOM,
 ) {
 
   /** The match is over, terminal: status never moves complete → anything. */
@@ -319,6 +328,7 @@ data class MatchDoc(
         completedRound = (fields["completedRound"] as? Long)?.toInt(),
         gameType = RoomDoc.parseGameType(fields["gameType"]),
         scoringMode = RoomDoc.parseScoringMode(fields["scoringMode"]),
+        mode = RoomDoc.parseMatchMode(fields["mode"]),
       )
     }
   }

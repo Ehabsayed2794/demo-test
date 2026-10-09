@@ -1,6 +1,7 @@
 package com.estemshan.services
 
 import com.estemshan.engine.GameType
+import com.estemshan.engine.MatchMode
 import com.estemshan.engine.ScoringMode
 import com.estemshan.engine.Suit
 import com.estemshan.services.model.BiddingActionInput
@@ -48,6 +49,7 @@ fun buildInitialMatchFields(
   rematchOfMatchId: String? = null,
   gameType: GameType = GameType.FULL,
   scoringMode: ScoringMode = ScoringMode.NORMAL,
+  mode: MatchMode = MatchMode.ROOM,
 ): Map<String, Any?> {
   val seats = buildSeatMap(players)
   val dealer = initialDealer(players, creator)
@@ -61,6 +63,7 @@ fun buildInitialMatchFields(
     serverTimestamp = serverTimestamp,
     gameType = gameType,
     scoringMode = scoringMode,
+    mode = mode,
   )
 }
 
@@ -75,6 +78,7 @@ private fun buildMatchFields(
   rematchOfMatchId: String?,
   gameType: GameType = GameType.FULL,
   scoringMode: ScoringMode = ScoringMode.NORMAL,
+  mode: MatchMode = MatchMode.ROOM,
 ): Map<String, Any?> = buildMap {
   put("roomId", roomId)
   if (rematchOfMatchId != null) put("rematchOfMatchId", rematchOfMatchId)
@@ -87,6 +91,9 @@ private fun buildMatchFields(
   put("maxRounds", gameType.baseRounds)
   put("gameType", gameType.name)
   put("scoringMode", scoringMode.name)
+  // S43 (E6b): the authority key rides every match doc (rematches inherit
+  // it from the old match — never client-supplied).
+  put("mode", mode.name)
   put("extendedRounds", emptyList<Int>())
   put("dealer", dealer)
   put("turn", turn)
@@ -107,6 +114,7 @@ private fun buildMatchFields(
  * seats map (itself copied from the original match), never from a
  * client-supplied list (match-service.js:2371-2404). The type and mode are
  * inherited from the OLD match by the caller (S66) — never client-supplied.
+ * S43: the authority mode inherits the same way.
  */
 fun buildRematchMatchFields(
   roomId: String,
@@ -116,6 +124,7 @@ fun buildRematchMatchFields(
   rematchOfMatchId: String,
   gameType: GameType = GameType.FULL,
   scoringMode: ScoringMode = ScoringMode.NORMAL,
+  mode: MatchMode = MatchMode.ROOM,
 ): Map<String, Any?> {
   val players = SEAT_IDS.filter { seats.containsKey(it) }.map { seats.getValue(it) }
   return buildMatchFields(
@@ -128,6 +137,7 @@ fun buildRematchMatchFields(
     rematchOfMatchId = rematchOfMatchId,
     gameType = gameType,
     scoringMode = scoringMode,
+    mode = mode,
   )
 }
 
