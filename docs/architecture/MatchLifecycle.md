@@ -105,6 +105,30 @@ NEXT ROUND                                              MATCH END
 - **Round End → Next Round is a batched, not incremental, transition.** `GameSession.nextRound()` already resets four separate sub-objects (`hands`, `dealState`, `playState`, `biddingState`) in one call. The Firestore equivalent must be a single document update (or a transaction), never four separate writes — partial application of this transition (e.g. `playState` reset but `hands` not yet cleared) is a state a live opponent's client could actually observe mid-write and misrender. This is a concrete argument for **using Firestore transactions for every multi-field lifecycle transition**, not just for the matchmaking race case already flagged in `RoomLifecycle.md`.
 - **Abandonment is a lifecycle state, not just "the player left."** A `matches/{matchId}` document needs an implicit `ABANDONED` state reachable from any of DEALING/PLAY/AUCTION/etc. when a seated player's presence heartbeat (see `PlayerLifecycle.md`) goes stale past a threshold. This should resolve to either "pause and wait for reconnect" (short absence) or "end match, distribute partial results" (long absence) — see `RoomLifecycle.md`'s Reconnection Strategy for the presence mechanism this depends on.
 
+> **2026-10-06 planning note — `mode` gates two of these transitions (RD28 as
+> amended).** The native model makes `mode` a persisted authority field with
+> three values — `ROOM` | `RANKED` | `UNRANKED` — and it reads the lifecycle in
+> two places this document currently treats as uniform:
+>
+> - **The pause/reconnect branch above is `mode`-gated.** "Pause and wait for
+>   reconnect" is available in `ROOM` **and `UNRANKED`** (via the Disconnect
+>   Vote — one question, once per disconnect event); it is **absent in
+>   `RANKED`**, where the bot simply continues. A Ranked match is never
+>   pausable. Unranked gets the vote even though its remaining seats may be
+>   pooled strangers.
+> - **MATCH END forks by mode.** A `RANKED` match runs settlement (correct and
+>   settle, idempotent — RD12/RD13) and applies RP plus the nine career
+>   statistics; `ROOM` and `UNRANKED` record **neither**. An Unranked match is
+>   not a Room for this purpose by inheritance — it is an explicit third branch —
+>   but the outcome is the same: no Ranked write at MATCH END.
+> - **One pre-match transition is new:** the host-only Ranked→Unranked
+>   conversion ("Play Unranked," offered when a friend's join is refused with
+>   `RANK_INCOMPATIBLE` under RD29) moves `mode: RANKED` → `UNRANKED`, clears the
+>   access credential, and is idempotent and pre-match only. It is a mode
+>   *transition on the document*, which is why `mode` must be persisted rather
+>   than derived in memory — the roster, the voice gate, and the Vote Kick gate
+>   all read it after the switch.
+
 ## Archival
 
 Once `MATCH END` is reached, the match document has two possible futures:

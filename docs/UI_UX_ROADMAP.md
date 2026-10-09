@@ -184,29 +184,34 @@ against it, and Phases 3–9 must inherit it. **Nothing here is implemented unle
 > Wherever a rule below carries a *(D# — CLOSED)* tag, that value is final and no
 > longer a design variable.
 
-**One shared mode model.** Rooms and Ranked Matches are **one game**, not two.
-The rules, flow, timers, bot behaviour, timeout behaviour, inactivity behaviour,
-automatic 15-timeout removal, ranking badges, and statistics are all shared.
-**The intentional product differences are: voice chat and the Disconnect/Pause
-Vote — both Rooms-only — plus Manual Vote Kick, which is Ranked-only (RD18).**
+**One shared mode model.** Rooms, Ranked Matches, and Unranked Matches are
+**one game**, not three. The rules, flow, timers, bot behaviour, timeout
+behaviour, inactivity behaviour, automatic 15-timeout removal, ranking badges,
+and statistics-track behaviour are all shared. **The intentional product
+differences are: voice chat — Rooms-only, NOT Unranked (2026-10-06); the
+Disconnect/Pause Vote — Rooms and Unranked, not Ranked; and Manual Vote Kick,
+which is Ranked-only (RD18) and therefore present in Rank-down too.**
 *(Owner correction of record: any earlier statement that voice is the sole
-difference is superseded; the 2026-10-05 RD18 amendment additionally moves Manual
-Vote Kick out of the shared column into Ranked-only.)*
+difference is superseded; the 2026-10-05 RD18 amendment additionally moves
+Manual Vote Kick out of the shared column into Ranked-only; the 2026-10-06
+amendment makes Unranked a first-class `mode` and removes voice from it.)*
 
-| Capability | Room | Ranked Match |
-|---|---|---|
-| Game rules, rounds, scoring | identical | identical |
-| Create Game configuration screen | same screen (S36) | same screen (S36) |
-| Bot difficulty / personality / timers | yes | yes |
-| Medium-Bot decision on timeout | yes | yes |
-| Inactivity bot takeover + return | yes | yes |
-| **Manual Vote Kick** | **no — RD18, Ranked ONLY** | **yes** |
-| **Automatic 15-timeout removal** | yes | yes |
-| Dynamic King/Koz badges | yes | yes |
-| Ranked progression / RP / seasons | no | yes |
-| **Ranked statistics (the 9 career values)** | no | yes |
-| **Push-to-Talk voice (Waiting Room + in-match)** | **yes** | **no** |
-| **Disconnect / pause vote** | **yes** | **no** |
+| Capability | Room | Ranked Match | Unranked Match |
+|---|---|---|---|
+| Game rules, rounds, scoring | identical | identical | identical |
+| Create Game configuration screen | same screen (S36) | same screen (S36) | same screen (S36) |
+| Bot difficulty / personality / timers | yes | yes | yes |
+| Medium-Bot decision on timeout | yes | yes | yes |
+| Inactivity bot takeover + return | yes | yes | yes |
+| **Manual Vote Kick** | **no — RD18, Ranked ONLY** | **yes (incl. Rank-down)** | **no** |
+| **Automatic 15-timeout removal** | yes | yes | yes |
+| Dynamic King/Koz badges | yes | yes | yes |
+| Ranked progression / RP / seasons | no | yes | **no** |
+| **Ranked statistics (the 9 career values)** | no | yes | **no** |
+| **Push-to-Talk voice (Waiting Room + in-match)** | **yes** | **no** | **no — 2026-10-06** |
+| **Disconnect / pause vote** | **yes** | **no** | **yes** |
+| **Seat filling from a shared pool** | **no — invite/code only** | solo: matchmaking (RD9); party: friends within RD29 | **yes — shared rank-blind pool, bots after 4 min** |
+| **Access credential (password)** | optional code | optional (Rank-down) | **no** |
 
 **A. Create Game screen (S36).** "Create Room" and "Create Ranked Match" open
 the **same** screen — there are not two configuration surfaces. It configures,
@@ -311,13 +316,15 @@ are invented anywhere.**
 > eligibility (S40), the state model (`kozSeatId: String?`, null on a tie — §1.3),
 > and the testing gate (Phase 9).
 
-**G. Disconnect Vote — Rooms only.** When a player actually disconnects: the bot
-immediately takes the seat, and **in Rooms only** the remaining eligible **human**
-players get exactly one vote, one question — **"Pause game until the player
-connect"**, YES/NO. The disconnected player does not vote; bots do not vote; 3
-remaining eligible humans, **2 YES needed**. The vote is shown **once per
-disconnect event**. **Expiry with no decision = NO.** NO majority or expiry →
-continue with the bot.
+**G. Disconnect Vote — not Ranked (Rooms and Unranked).** When a player
+actually disconnects: the bot immediately takes the seat, and **in Rooms and
+Unranked only** the remaining eligible **human** players get exactly one vote,
+one question — **"Pause game until the player connect"**, YES/NO. The
+disconnected player does not vote; bots do not vote; 3 remaining eligible
+humans, **2 YES needed**. The vote is shown **once per disconnect event**.
+**Expiry with no decision = NO.** NO majority or expiry → continue with the bot.
+**A Ranked match (solo or Rank-down) is never pausable — `mode` gates it
+(RD28 as amended 2026-10-06).**
 
 > **The pause is bounded (D9 — FINAL OWNER DECISION).** A YES majority pauses the
 > match — but only for a **maximum of 2 minutes**. At the end of that window the
@@ -363,8 +370,10 @@ card play. Same underlying data source as the Profile.
 
 **J. Push-to-Talk — Rooms only, still deferred.** Press-and-hold → mic active;
 release → inactive. Locations: **Waiting Room** and **during the match**. Never
-Ranked. Implementation (including microphone permission work) stays in its later
-phase; this roadmap only records the scope.
+Ranked, **and never Unranked (2026-10-06) — including at a table whose remaining
+seats were filled from the shared pool by strangers**; voice is a Rooms-only
+capability and Unranked is not a Room. Implementation (including microphone
+permission work) stays in its later phase; this roadmap only records the scope.
 
 **The four ways a seat can leave its human — do not merge these.** The owner's
 final instruction is that these remain conceptually distinct everywhere they
@@ -374,12 +383,12 @@ appear (state model, UI, flow, copy):
 |---|---|---|---|---|---|
 | **A. TIMEOUT** | A decision timer expired | The **MEDIUM** bot, for that one decision | One decision | **Yes — the player never leaves the seat** | **Yes — +1, match-wide** |
 | **B. INACTIVE** | 50 s genuinely inactive while online | The configured bot takes the seat | Until the player returns | **Yes — the human regains the seat on return** | No |
-| **C. DISCONNECT** | Connection lost | The configured bot takes the seat; **Rooms** may then vote to pause | Until reconnect, or until the table votes CONTINUE | **Yes** — and in Rooms the table may wait up to 2 min, then decide again | No |
+| **C. DISCONNECT** | Connection lost | The configured bot takes the seat; **Rooms and Unranked** may then vote to pause | Until reconnect, or until the table votes CONTINUE | **Yes** — and in Rooms/Unranked the table may wait up to 2 min, then decide again | No |
 | **D. VOTE KICK** | A vote succeeded (manual or the 15th timeout) | The table | **Permanent** | **No — never** | No |
 
 Only A increments the timeout counter. Only D is permanent. B and C both allow
 return and are distinguished by *why* the seat emptied (idle vs. unreachable) —
-which is also why C carries the Rooms-only vote and B does not.
+which is also why C carries the not-Ranked vote and B does not.
 
 ### 0.6 Repository verification for the amendment — what actually exists
 
@@ -534,7 +543,7 @@ game-state variant needs designing; `N/A` = no visual design needed.
 | S07 | **Join Room** dialog (enter code) | NEW | Yes — `lobby_join_dialog_*` strings + error set | Errors: empty / not-found / full / closed / generic |
 | S08 | **Waiting Room** (roster + ready) | **DONE (owner)** | `RoomScreen.kt` on phase5 branches | **Do not redesign.** Code card, player rows, ready toggle, leave |
 | S09 | *Game Mode Selection* | N/A | — | **Superseded by the amendment** — the mode choice is now expressed inside S36 (bot difficulty / personality / timer), not a separate screen |
-| S10 | **Create Ranked Match** → S36 | NEW | No | **REVERSED — no longer deferred.** Per the amendment, "Create Ranked Match" opens the **same** S36 Create Game screen as Create Room. The differences are what S36 does on Confirm (matchmaking vs. room creation), the Rooms-only capabilities in §0.5, and that **S36 in Ranked mode shows the player's current Rank chip + RP and the Ranked-specific warnings** (§4b). **RD28: Private/Password Ranked is not a third mode — it is RANKED + a private access flag on the same screen** |
+| S10 | **Create Ranked Match** → S36 | NEW | No | **REVERSED — no longer deferred.** Per the amendment, "Create Ranked Match" opens the **same** S36 Create Game screen as Create Room. The differences are what S36 does on Confirm (matchmaking vs. room creation), the Rooms-only capabilities in §0.5, and that **S36 in Ranked mode shows the player's current Rank chip + RP and the Ranked-specific warnings** (§4b). **RD28 as amended 2026-10-06: `mode` is `ROOM` \| `RANKED` \| `UNRANKED` — three values. Rank-down (the renamed Private/Password entry) is NOT a mode: it is `RANKED` + a private access flag on the same screen. Unranked IS a mode value, the third** |
 | S11 | *Shop / Missions* | N/A | — | **DEFERRED** — post-core program. Unaffected by the amendment. **Season is NO LONGER deferred — RD24 makes it MVP, see S54 in §4b. Only Shop/Missions stay here** |
 
 ### C. The match — bidding (per round)
@@ -605,8 +614,8 @@ per row — several of these are overlays on existing screens, not destinations.
 | S37 | **Decision Timer ring** | Overlay (on S12–S15, S19/S20) | NEW | No | Per-decision countdown. Card Play = selected; Dash/Bidding/Estimates = selected + 5 s. No timer exists today (§0.6-V2); must be synchronized, not client-cosmetic — the rematch deadline is the only precedent |
 | S38 | **Timeout — bot decided** | Feedback state | NEW | No | Shown when a human's timer expires and the MEDIUM bot acts for them: what was decided, by whom, and that it counts toward the 15-timeout total. **The 15-timeout total is its own automatic-removal mechanism (RD20) — separate from Vote Kick (RD18).** The count is private: never shown to opponents, only to the player themselves |
 | S39 | **Inactive — bot takeover** | Persistent banner + seat chip | NEW | No | 50 s of genuine inactivity → seat is bot-controlled. Player may return and reclaim the SAME seat; the bot stands down. **Distinct from S30/S31 (disconnect), from Vote Kick (permanent, no rejoin), and from the 15-timeout automatic removal (rejoin status OPEN-1)** |
-| S40 | **Vote Kick panel** (manual) | Modal — **Ranked ONLY (RD18)** | NEW | No | **NOT available in Rooms.** Manual only — the automatic 15-timeout removal is a separate mechanism and gets its own feedback state, not this panel. Round 8+ (Round 7 must have FULLY completed), target = the current UNIQUE Koz, target excluded, 2 YES of 3 eligible. Purpose = griefing/abuse, not normal mistakes. Shows reason/purpose, live tally, eligible-voter count, success/failure. **The target is frozen for the vote's duration — the unique-Koz target cannot change mid-vote (OPEN-2).** Failure = 5-round cooldown on that same target only. Success = permanent removal, bot takes the seat, no rejoin, Koz recorded |
-| S41 | **Disconnect Vote panel** | Modal — **Rooms only** | NEW | No | One question: "Pause game until the player connect". Disconnected player excluded; 2 YES of 3; **expiry = NO**; shown **once per disconnect event**. **Impossible in Ranked — `mode` gates it (RD28)** |
+| S40 | **Vote Kick panel** (manual) | Modal — **Ranked ONLY (RD18)** | NEW | No | **NOT available in Rooms or Unranked** (`mode` gates it: `RANKED` only — Rank-down included, being `mode: RANKED` + a private flag). Manual only — the automatic 15-timeout removal is a separate mechanism and gets its own feedback state, not this panel. Round 8+ (Round 7 must have FULLY completed), target = the current UNIQUE Koz, target excluded, 2 YES of 3 eligible. Purpose = griefing/abuse, not normal mistakes. Shows reason/purpose, live tally, eligible-voter count, success/failure. **The target is frozen for the vote's duration — the unique-Koz target cannot change mid-vote (OPEN-2).** Failure = 5-round cooldown on that same target only. Success = permanent removal, bot takes the seat, no rejoin, Koz recorded |
+| S41 | **Disconnect Vote panel** | Modal — **not Ranked** | NEW | No | One question: "Pause game until the player connect". Disconnected player excluded; 2 YES of 3; **expiry = NO**; shown **once per disconnect event**. **Available in Rooms and in Unranked; impossible in Ranked — `mode` gates it (RD28 as amended 2026-10-06)** |
 | S42 | **Paused — waiting for reconnect** | Full-table state — **Rooms only** | NEW | No | Reached only on a YES majority in S41. Match resumes when the disconnected player reconnects; bot stands down. A NO majority or expiry continues with the bot instead |
 | S43 | **King / Koz badges** | Persistent overlay (on S19–S23) | NEW | No | Crown for current 1st place (one per tied player — multiple Kings allowed), Koz badge for current last. Update live as scores change. Tied last place = no unique Koz = manual Vote Kick unavailable, and the UI must say so. **These are MATCH titles, not Ranked tiers — Match King ≠ Rank King (RD8), and Koz is not a rank at all. The crown must stay visually distinct from the Gold-tier rank chip (§4b token work)** |
 | S44 | **Quick Stats popover** | Bottom sheet / popover (on S19–S23) | NEW | No | **Long-press** a player's avatar → the **SHORT** version of their Ranked statistics — exactly six values (RD23): **Rank, Games, King %, 2nd %, 3rd %, Koz %** — never the full Profile. Same data source as S03. Must not block card play or swallow the play gesture. **Unblocked by RD11: the server read path supplies it** (the old §0.6-V4 blocker — `players/{uid}` owner-read-only — is resolved by the Ranked profile's own server-side read, not by loosening the frozen rules) |
@@ -697,11 +706,11 @@ grow, cross-checked against source per the amendment's instruction:
   `failedVoteKickCooldown: { targetSeat, blockedUntilRound }` — **5 rounds**,
   measured in rounds, in authoritative match state, **not reset by the target
   reconnecting or becoming active** (D8).
-- **Disconnect Vote** (new, **Rooms only**): `OPEN` → `PASSED` (pause) /
-  `FAILED_NO` / `FAILED_TIMEOUT` (**both failure states mean "continue with the
-  bot"**). One question, one vote, **once per disconnect event** — a flag must
-  suppress a repeat while the same disconnect persists.
-- **Match pause** (new, **Rooms only**): `RUNNING` → `PAUSED_AWAITING_RECONNECT`
+- **Disconnect Vote** (new, **not Ranked — Rooms and Unranked**): `OPEN` →
+  `PASSED` (pause) / `FAILED_NO` / `FAILED_TIMEOUT` (**both failure states mean
+  "continue with the bot"**). One question, one vote, **once per disconnect
+  event** — a flag must suppress a repeat while the same disconnect persists.
+- **Match pause** (new, **not Ranked — Rooms and Unranked**): `RUNNING` → `PAUSED_AWAITING_RECONNECT`
   → `RUNNING` (player reconnects, bot stands down). Never reached automatically.
   **The pause is bounded (D9 — FINAL): a 2-minute `pauseDeadline` starts when the
   pause begins; at expiry a second vote opens** — `CONTINUE_OR_WAIT` with values
@@ -718,13 +727,16 @@ grow, cross-checked against source per the amendment's instruction:
   carries the target seat and whose stats are being shown.
 - **Create Game configuration** (new): `botDifficulty` (Easy/Medium/Hard/Expert),
   `botPersonality` (the four), `decisionTimerSeconds` (5/10/15/20), `mode`
-  (`ROOM` | `RANKED` — **exactly two values, RD28**), and a separate
-  `isPrivate`/password flag for Private Ranked (**not a third mode**).
+  (`ROOM` | `RANKED` | `UNRANKED` — **three values as amended 2026-10-06;
+  originally two per RD28**), and a separate `isPrivate`/password flag for
+  Rank-down (**not a mode — a `RANKED` configuration**).
   **Defaults are now CLOSED (RD21): MEDIUM, BALANCED, 15 s.** RD21 also fixes
   the per-phase derivation: Dash/Bidding/Estimates = base + 5, Card Play = base.
   **`mode` is the authority key** — it gates Vote Kick (Ranked-only, RD18),
-  voice (Rooms-only, RD22), settlement, and Ranked statistics, so the UI must
-  treat it as load-bearing, not cosmetic.
+  voice (Rooms-only, RD22; **not Unranked either**, 2026-10-06), settlement,
+  and Ranked statistics, so the UI must treat it as load-bearing, not
+  cosmetic. **Every `mode`-gated surface has three branches as of 2026-10-06,
+  not two** (§4b.4b table).
 - **Matchmaking search** (new, §4b S55/S56): `IDLE` → `SEARCHING` →
   `MATCH_FOUND` → (transition into match) or `FAILED`/`TIMED_OUT` → `IDLE`.
   The client may only *request* a search; the server derives the eligible pool
@@ -745,18 +757,33 @@ App launch ──► S01 Splash ──► S02 Login (or straight to Lobby if sig
         └──► Create Ranked ──► S36 Create Game (SAME screen, Ranked state)
                                      │  shows current Rank chip + RP (§4b)
                                      ▼
-                          S55 Matchmaking Search (server-controlled, RD9)
-                                     │  own tier or exactly one below
-                                     ▼
-                          S56 Failure / Timeout ──► retry or cancel
-                                     │
-                                     ▼
-                                     │
-                                     │  (all ready + actor is creator)
-                                     ▼
-                          [match starts automatically — no Start button]
-                                     │
-   ┌─────────────────────────────────┴─────────────────────────────────┐
+                     ┌──────────── MATCH TYPE (three entries, 2026-10-06) ───────────┐
+                     │                                                              │
+                  Ranked ──► S55 Matchmaking Search (server-controlled, RD9)          │
+                  (solo)        │  own tier or exactly one below                       │
+                                ▼                                                     │
+                     S56 Failure / Timeout ──► retry or cancel                        │
+                     │                                                               │
+                  Rank-down (Ranked + private flag) ──► code/invite (shareable)        │
+                  (with friends)      │  RD29 gate at JOIN, server-side:              │
+                                      │  tiers within one of the creator              │
+                                      ├── eligible ──► S08 Waiting Room (Ranked)      │
+                                      └── ineligible ──► DENY: RANK_INCOMPATIBLE      │
+                                              └── host's S08 offers [Play Unranked]   │
+                                                    └──► conversion ──► Unranked      │
+                     │                                                               │
+                  Unranked ──► friends join (rank-blind — any tiers together) ──►     │
+                  (mode: UNRANKED)                                                   │
+                       └──► remaining seats offered to the shared Unranked pool       │
+                            ├── humans fill them ──► S08 Waiting Room (Unranked)      │
+                            └── 4 min timeout ──► configured bots take the seats      │
+                                     │                                                 │
+                                     ▼                                                 │
+                                     │  (all ready + actor is creator)                 │
+                                     ▼                                                 │
+                          [match starts automatically — no Start button]               │
+                                     │                                                 │
+   ┌─────────────────────────────────┴─────────────────────────────────────────────────┘
    │  ROUND LOOP (rounds 1..18, +extension rounds)                     │
    │  Every decision below is timed (S37); expiry = a MEDIUM-bot move   │
    │                                                                    │
@@ -916,6 +943,25 @@ what happens if another player leaves.
   roster updates. Host leaves → creator passes to `players.first()`. Last out →
   room `closed`. **A 2- or 3-player start is valid** — the UI must not imply 4
   are required, and no AI seat is fabricated to fill gaps.
+
+> **2026-10-06 amendment — an Unranked variant, not a redesign.** The
+> "no AI seat is fabricated to fill gaps" line above is now **scoped to the
+> invite-only Room path**. The **Unranked** match type (§4b.4b) fills its
+> remaining seats from the **shared rank-blind Unranked pool** — humans first,
+> **configured bots only after a 4 minute fill timeout (owner value,
+> 2026-10-06)** — so an Unranked waiting room shows three seat states the
+> invite-only Room never shows: **claimed by a friend**, **open to the pool
+> (waiting for a human, with the 4-minute countdown visible)**, and
+> **bot-occupied-after-timeout** (labelled as a bot, at the configured
+> difficulty). The room-code card, the roster, the host badge, and the
+> no-Start-button rule are all unchanged. **A Rank-down Ranked room that
+> receives a `RANK_INCOMPATIBLE` join additionally surfaces a host-only
+> [Play Unranked] affordance** (§4b.4c) — the failed join is shown with the
+> tier difference stated in plain language, and the conversion is pre-match
+> only. **The Unranked waiting room carries no voice control (S35) and no Vote
+> Kick entry (S40).** This is a state addition to a design-complete screen,
+> following the same amendment pattern the RD decision set already used to add
+> rank to the roster rows.
 
 ### S12 Bidding — DASH
 
@@ -1334,10 +1380,13 @@ what happens if another player leaves.
   and the Waiting Room (pre-game). **Not the Lobby, not menus.**
 - **Controlled by:** nothing yet — no implementation exists and none starts
   until the UI/UX plan and Figma design are complete, per the owner decision.
-- **Amendment — scope now fixed:** **Rooms only, never Ranked**, in exactly the
-  two places above. So the state list gains a hard `mode == ROOM` precondition:
-  in a Ranked match the control is not present at all, and "unavailable" is a
-  Room-only state (mic permission denied), never a Ranked one.
+- **Amendment — scope now fixed:** **Rooms only, never Ranked, never Unranked
+  (2026-10-06)**, in exactly the two places above. So the state list gains a
+  hard `mode == ROOM` precondition: in a Ranked or Unranked match the control is
+  not present at all, and "unavailable" is a Room-only state (mic permission
+  denied), never a Ranked or Unranked one. **Unranked tables include pooled
+  strangers and still carry no voice — this is a deliberate product decision,
+  not an oversight, and the artboard must not imply the control is coming.**
 
 ---
 
@@ -1351,6 +1400,11 @@ against.
 
 - **Sees:** One configuration screen reached from **both** "Create Room" and
   "Create Ranked Match" — there is exactly one configuration surface, not two.
+  **The match-type choice is three entries, not a binary toggle (2026-10-06):
+  *Ranked* (solo Auto-Match), *Rank-down* (play Ranked with friends within the
+  RD29 tier gap — the owner's chosen product name for the entry formerly called
+  "Private/Password Ranked", 2026-10-06), and *Unranked* (rank-blind — any ranks
+  together, no RP).**
   **Five** setting groups. **Game Type** (Full / Mini) and **Calculation**
   (Normal / Classic) sit **above** the three original groups — **Bot
   Difficulty** (Easy / Medium / Hard / Expert), **Bot Personality** (the four
@@ -1367,15 +1421,29 @@ against.
   freely before confirming; back out.
 - **Must be visible:** The five groups and the **derived per-phase timers**:
   "Card Play Ns · Dash / Bidding / Estimates N+5 s" — the +5 rule must be
-  visible here, not discovered mid-match. Which mode the player is configuring
-  for (Room or Ranked), and — for Ranked — that voice and the pause vote are not
-  part of this match. **In the Ranked state: the player's current Rank chip
-  (Tier + Division + Arabic title + RP), progress to the next rank, and any
-  Ranked-specific restriction (RD9's pool rule, stated in plain language the
-  player can act on — "you will be matched in your tier or the one below").**
+  visible here, not discovered mid-match. Which match type the player is
+  configuring for, and — for **any Ranked entry** — that voice and the pause
+  vote are not part of this match. **In the Unranked state: voice is absent
+  too** (2026-10-06) — push-to-talk is a Rooms-only capability, so the Unranked
+  state's copy states the absence the same way the Ranked state does. **In
+  either Ranked state: the player's
+  current Rank chip** (Tier + Division + Arabic title + RP), progress to the
+  next rank, and any Ranked-specific restriction (RD9's pool rule, stated in
+  plain language the player can act on — "you will be matched in your tier or
+  the one below"). **An unplaced player's Rank chip reads Bronze III as a real
+  rank, never "no tier" — placement is optional (RD30, 2026-10-06).** **In the
+  Unranked state: the mode is rank-blind by design — "any ranks play together;
+  no Ranked points are awarded, no Ranked statistics are recorded" — and empty
+  seats are offered to other human
+  players from the shared Unranked pool, with **configured bots taking over only
+  after a 4 minute wait**.
+  No rank chip, no RD9 pool statement, and no "mismatched ranks" warning: the
+  absence of a gate is the mode's definition, not a malfunction (R31).**
   **Defaults are fixed and pre-filled (RD21 + GM7): FULL / NORMAL / MEDIUM /
-  BALANCED / 15 s.** **Private/Password Ranked is a toggle on this same screen
-  — never a third mode (RD28).**
+  BALANCED / 15 s.** **The match-type choice is three entries — Ranked /
+  Rank-down / Unranked (2026-10-06). Rank-down is a toggle on this same screen —
+  `RANKED` + a private access flag, never a mode of its own — while Unranked is
+  the third `mode` value (RD28 as amended).**
   **The Game Type choice must state its consequences in one line each, not as
   raw numbers** — Full: "18 rounds · Quick Rounds from 14 · up to 5 extensions";
   Mini: "10 rounds · Quick Rounds from 6 · **one extension only**" (GM1–GM3).
@@ -1384,11 +1452,19 @@ against.
   difference is the RP reward, shown at match end, not here (GM6).
 - **Controlled by:** new configuration state (§1.3): `gameType`,
   `scoringMode`, `botDifficulty`, `botPersonality`, `decisionTimerSeconds`,
-  `mode`, `isPrivate`/password.
+  `matchType` (`RANKED_SOLO` / `RANKED_PARTY` / `UNRANKED` — the product-layer
+  choice), `mode` (the authority key: `RANKED` for the first two, `UNRANKED` for
+  Unranked — RD28 as amended 2026-10-06), `isPrivate`/password.
 - **Forward:** Confirm → Room: creates the room and goes to S06 (code share) →
-  S08. Ranked: goes to **S55 Matchmaking Search** (server-controlled pool, RD9)
-  → match. Private Ranked: skips the search and goes straight to a shareable
-  code/invite, cross-tier allowed (RD6).
+  S08. Ranked (solo): goes to **S55 Matchmaking Search** (server-controlled
+  pool, RD9) → match. Rank-down: goes straight to a shareable
+  code/invite, **cross-tier within RD29 — one tier from the creator or less,
+  checked server-side at join** (the earlier "cross-tier allowed (RD6)" is
+  repealed). Unranked: friends join rank-blind, remaining seats are offered to
+  the shared Unranked pool (humans first; **configured bots only after a 4
+  minute fill timeout**), then S08. **Private/Password applies to the Rank-down
+  entry only — Unranked carries no access credential (a password gates nothing
+  once rank is irrelevant).**
 - **Interrupts:** None — this is pre-match.
 - **Network loss:** Create fails with a reason code; the selections must persist
   so the player does not re-pick them.
@@ -1496,11 +1572,12 @@ against.
   **not** normal gameplay mistakes and **not** auto-detected.
 - **Ranked ONLY, manual ONLY (RD18 — this corrects the frozen Batch 1 heading,
   which read "manual + automatic … in both Rooms and Ranked").** The panel
-  **never appears in a Room match**; the entry point is absent, not disabled, and
-  the `mode` field is the gate (RD28). **The frozen text's "automatic" flavour —
-  raised by the game on the 15th timeout — is a different mechanism entirely
-  (RD20): it has no panel, no vote, no Round-7 gate, no Koz target, and no
-  cooldown.** It is specified at §0.5-C and S38, never here. The two systems
+  **never appears in a Room or Unranked match**; the entry point is absent, not
+  disabled, and the `mode` field is the gate (RD28 as amended 2026-10-06 —
+  `RANKED` only, which includes Rank-down). **The frozen text's "automatic"
+  flavour — raised by the game on the 15th timeout — is a different mechanism
+  entirely (RD20): it has no panel, no vote, no Round-7 gate, no Koz target, and
+  no cooldown.** It is specified at §0.5-C and S38, never here. The two systems
   share no state, no UI, and no test.
 - **Can do:** An eligible player votes YES or NO, **once, and it cannot be
   changed** (the rematch vote's immutability rule). The **target does not vote
@@ -1538,13 +1615,14 @@ against.
   and never inherits a direction (D7)** — the seat simply leaves the eligible
   set, and the majority is recomputed over the remaining human voters.
 
-### S41 Disconnect Vote — *Rooms only*
+### S41 Disconnect Vote — *not Ranked (Rooms and Unranked)*
 
 - **Sees:** A modal with **exactly one question: "Pause game until the player
   connects"**, YES / NO, the live tally, and a countdown. The disconnected
   player does not see it (and would not vote).
-- **Why:** In a Room, friends can decide to wait for the fourth; in Ranked the
-  question does not exist and the bot simply continues.
+- **Why:** In a Room, friends can decide to wait for the fourth; in Unranked the
+  same applies to a table that may mix friends and pooled strangers; in Ranked
+  the question does not exist and the bot simply continues.
 - **Can do:** Vote YES or NO, once — **human voters only (D7)**. **The vote
   appears exactly once per disconnect event** — the panel must not re-ask while
   the same disconnect persists.
@@ -1772,10 +1850,10 @@ design dependency · 👤 owner decision needed.
 | Quick Stats long-press popover | 🎨 + ⚙️ | S44 — **blocked**: `players/{uid}` is `get: if isOwner(uid)` (§0.6-V4); another player's stats are unreadable today |
 | Push-to-Talk (Rooms only) | 🖌 + 👤 | Documented only, by owner decision. No implementation; no microphone work in this phase |
 | Create Room and Ranked sharing one Create Game screen | 🎨 + ⚙️ | S36 does not exist; no configuration is captured before match creation today |
-| **`mode` field on the match document (RD28)** | ⚙️ | **`MatchDoc` has no `mode` field today** (§0.6-V5); `mode` is in-memory only. It is the authority key that gates Vote Kick, settlement, and Ranked statistics — exactly `ROOM` / `RANKED`; private Ranked is `RANKED` + an access flag, **never a third mode**. On the critical path for nearly every Ranked surface (code S43) |
+| **`mode` field on the match document (RD28)** | ⚙️ | **`MatchDoc` has no `mode` field today** (§0.6-V5); `mode` is in-memory only. It is the authority key that gates Vote Kick, voice, settlement, and Ranked statistics — **`ROOM` / `RANKED` / `UNRANKED` as amended 2026-10-06**; Rank-down is `RANKED` + a private flag, **never a mode**. On the critical path for nearly every Ranked surface (code S43). **Every `mode` switch site must be audited for the third value** (§4b.4b) |
 | **19-rank ladder + Arabic titles (RD1/RD2)** | ⚙️ + 🖌 | No tier/division/RP anywhere in `native/`. 6 tiers × 3 divisions + King; **I > II > III**; EN + Arabic titles are product identity, 1:1 — مبتدئ / لاعب / معلم / وزير / أمير / سلطان / ملك |
 | **RP engine + thresholds (RD3/RD4/RD26)** | ⚙️ | Dynamic RP (opponent strength, tier difference, outcome, placement, mixed-tier conditions); RP ≥ 0; engine independent of the threshold constants. **The 19 thresholds are CLOSED (RD26, 2026-10-05) — the UI binds the real numbers, which stay tunable behind the engine seam** |
-| **Mixed-tier asymmetry + private cap (RD5/RD6)** | ⚙️ | Higher-tier win → reduced reward; higher-tier loss → loss multiplied; lower-tier beats higher tier → increased reward. Private Ranked: same rules, **hard ×2 cap on the loss multiplier**, any tier mix |
+| **Mixed-tier asymmetry + private cap (RD5/RD6)** | ⚙️ | Higher-tier win → reduced reward; higher-tier loss → loss multiplied; lower-tier beats higher tier → increased reward. Rank-down (formerly Private Ranked): same rules, **hard ×2 cap on the loss multiplier**, any tier mix **within RD29 — one tier apart or less (amended 2026-10-06; the "any tier mix" clause is repealed)** |
 | **Placement (RD10)** | ⚙️ + 🎨 | Once per account, never per season; 3 scripted matches (Easy+Medium / Medium+Hard / Hard+Expert); 10/20/70 weights; **Platinum ceiling**; counts toward **no** statistic |
 | **Settlement / correct-and-settle (RD12/RD13)** | ⚙️ | No `functions/` module exists at all. The client's `finalScores` is recomputed and **corrected**, not trusted and not merely rejected; idempotent, authenticated, retry-resistant. `firestore.rules` already denies progression writes, so the Functions are the only legitimate write path — **the rules stay untouched** |
 | **Seasons + two-step reset (RD24)** | ⚙️ + 🎨 | No season code; 3-month cycle; end-of-season demotes **two division steps** (Gold I → Gold III), floored at the ladder bottom, **King → Royal I**; **career stats never reset**; Highest Rank ever is preserved |
@@ -1846,14 +1924,18 @@ named here as FIXED** rather than silently repaired. The final owner decisions
 | 46 | **15-timeout automatic removal is NOT Vote Kick (RD20)** | ✅ **FIXED:** the frozen text's "S40 automatic flavour" is removed from S40 and specified as its own mechanism at §0.5-C, §2.1, §2.3, §2.5, §2.6, and S38 — no vote, no Round-7 gate, no Koz target, no cooldown, and the two share no state, UI, or test |
 | 47 | **The timeout counter is private (RD20)** | ✅ Opponents never see a count or a progress-toward-15 indicator; only the player's own count is shown, and only to them (S38, §1.3) |
 | 48 | **Exactly 9 career statistics (RD23)** — never "10 values" | ✅ §0.5-H names all nine; Public + Private Ranked included, **Placement excluded**; long-press shows the six short values only (S44) |
-| 49 | **`mode` has exactly two values (RD28)** | ✅ `ROOM` / `RANKED`; private Ranked is `RANKED` + an access flag, never a third mode (§1.3, S36, S40) |
+| 49 | **`mode` values (RD28)** | ✅ `ROOM` / `RANKED` as written 2026-10-05; **amended 2026-10-06 to `ROOM` / `RANKED` / `UNRANKED`** — Unranked is a first-class independent mode by owner decision, not `ROOM` + a marker. Rank-down is a `RANKED` configuration (private flag), never a mode. Every mode-gated surface now has three branches (§1.3, §4b.4b, S36, S40) |
+| 49b | **Voice is Rooms-only — Unranked has no voice (RD22 + 2026-10-06)** | ✅ The 2026-10-05 amendment read RD22 as "Rooms-only" with two modes; with `UNRANKED` first-class, **push-to-talk is `ROOM`-only and explicitly absent in `UNRANKED`**, including at a table with pooled strangers (§4b.4b table). Corrected at §1.3, S36, S35, and the ranked/Unranked voice-absence artboards |
 | 50 | **Ladder is 6 tiers × 3 divisions + King = 19 ranks (RD1)** | ✅ Never "7 tiers × 3 divisions"; King has no divisions; I > II > III (RD2); Arabic titles are product identity, 1:1 (S46, §4b) |
 | 51 | **Seasons are MVP (RD24)** — S11's "DEFERRED" applied to Season | ✅ **FIXED:** Season moved out of DEFERRED (S11 row); only Shop/Missions remain deferred. Two-step reset, King → Royal I, career stats and Highest Rank untouched |
 | 52 | **Ranked is launch-blocking MVP scope (RD25)** | ✅ Every post-v1 statement about Ranked/matchmaking/RP/seasons in this document is corrected; the code roadmap carries epic E6b (S42–S64) |
-| 53 | **Voice never in Ranked (RD22)** | ✅ S35 and the Disconnect/pause vote stay Rooms-only; the ranked-absence variants are required artboards (§4.3.9) |
+| 53 | **Voice never in Ranked (RD22)** | ✅ S35 and the Disconnect/pause vote stay Rooms-only; the ranked-absence variants are required artboards (§4.3.9). **Amended 2026-10-06: voice is absent from Unranked too — push-to-talk is `ROOM`-only, and an Unranked table with pooled strangers carries no mic control (item 49b)** |
 | 54 | **Gold ≠ Match-King (token risk)** | ✅ Called out as a token gap (§4.1.4 #5) and in §4b: `#E8A33D` is the **Match-King badge** colour; the **Gold tier** must not reuse the crown or the gold-for-King semantic |
 | 55 | **No threshold number is invented (RD26)** | ✅ **CLOSED 2026-10-05:** the ladder carries the owner's 19 final lower-bound values (§4b.1); the non-canonical `design-ui` mocks (`Gold III` 1240 > `Gold I` 980, nonexistent `Platinum IV`) are flagged as legacy data and derived from nowhere |
 | 56 | **A Vote Kick vote cannot change target mid-vote (OPEN-2)** | ✅ Recorded as an open owner decision, not silently assumed; the frozen text's "match state must not advance" assertion is downgraded to "not established" (S40) |
+| 57 | **RD6's "any tiers together" is REPEALED (2026-10-06, owner decision)** | ✅ **FIXED as an explicit repeal, not a silent edit.** RD6, RD28, and §4b.5 all said a Bronze and a King may share a private Ranked table. The mixed-rank-friends decision forbids it: Rank-down now admits tiers **within RD29** (one tier apart or less), the join is refused with `RANK_INCOMPATIBLE` before the seat is taken, and the pair is offered Unranked (§4b.4b). The ×2 private loss cap survives, scoped to the narrowed band. **This repeals a recorded FINAL decision by explicit owner instruction — it is written as an amendment everywhere, never as an unnoticed edit** |
+| 58 | **RD10's placement was an implicit prerequisite; RD30 makes it optional (2026-10-06)** | ✅ **REFRAMED, not reversed.** The placement mechanics (3 matches, 10/20/70, Platinum ceiling, once per account, no statistics) are unchanged; what changes is that skipping it is a legitimate Bronze III start rather than a blocked state. The "permanent and irreversible" clause survives as a rule of the account — placement cannot be started later — and copy must never read that as a penalty (§4b.4, S45/S47) |
+| 59 | **`mode` was two values; it is now three (RD28 amended 2026-10-06)** | ✅ **FIXED by owner decision.** The 2026-10-05 amendment wrote `mode ∈ {ROOM, RANKED}` and proposed Unranked as `ROOM` + a marker; the 2026-10-06 decision rejects that framing — Unranked is a first-class independent `mode: UNRANKED`. Every mode-gated surface in this document now carries an explicit third branch (§0.5 capability table, §4b.4b table, S35, S40, S41, S42). Rank-down remains a `RANKED` configuration, never a mode |
 
 **One residual tension the owner should know about (not a contradiction):** rule
 23 says an inactive seat uses the **configured** difficulty, while rule 22 says
@@ -2377,9 +2459,9 @@ S36 is specified in §4.3.2. The remaining eight:
 | S37 Timer Ring | component (§4.2.2) | running / low-time / expired; shown on S12–S15 at +5 s and S19/S20 at base |
 | S38 Timeout — bot decided | 1 `NEW` toast | what was decided, by whom ("Medium bot"), and **that it counts toward 15** — without revealing *any other* player's count (D6) |
 | S39 Inactivity banner | 1 `NEW` | 50 s inactive → **persistent** banner + seat chip showing bot control; **return-and-reclaim state** (bot stands down, same seat); **distinct from disconnect, from the 15-timeout automatic removal (rejoin = OPEN-1), and from Vote Kick (permanent, no rejoin)** |
-| S40 Vote Kick panel | 1 `NEW` modal — **Ranked ONLY (RD18)** | **manual only** — Round 8+ (Round 7 fully complete), unique-Koz target, target excluded, 2-of-3; **purpose = griefing/abuse, not normal mistakes**; live tally over eligible humans only — **bots excluded from the denominator (D7)**; **the target is frozen for the vote's duration (OPEN-2)**; result states: success (permanent, no rejoin, Koz recorded) / failed-no / failed-timeout → **5-round cooldown on the same target only (D8)**. **The automatic 15-timeout removal is NOT drawn here — it is a separate mechanism (RD20) and gets its own feedback state, not a vote panel** |
-| S41 Disconnect Vote | 1 `NEW` modal | **Rooms only — impossible in Ranked (RD28 `mode` gate).** One question — "Pause game until the player connect"; disconnected player excluded; **expiry = NO**; **once per disconnect event** |
-| S42 Paused | 1 `NEW` full-table state | **Rooms only.** `PAUSED_AWAITING_RECONNECT` with a visible **2-minute** deadline; reconnect → resume, bot stands down; at expiry → the **CONTINUE_OR_WAIT** vote; **WAIT capped at 2 cycles, then CONTINUE-only (D9 FINAL)** — the artboard must show the "second WAIT" state and the CONTINUE-only state, not just the first vote |
+| S40 Vote Kick panel | 1 `NEW` modal — **Ranked ONLY (RD18)** | **manual only** — Round 8+ (Round 7 fully complete), unique-Koz target, target excluded, 2-of-3; **purpose = griefing/abuse, not normal mistakes**; live tally over eligible humans only — **bots excluded from the denominator (D7)**; **the target is frozen for the vote's duration (OPEN-2)**; result states: success (permanent, no rejoin, Koz recorded) / failed-no / failed-timeout → **5-round cooldown on the same target only (D8)**. **The automatic 15-timeout removal is NOT drawn here — it is a separate mechanism (RD20) and gets its own feedback state, not a vote panel**. **Absent in both `ROOM` and `UNRANKED` — Rank-down is `RANKED`, so the panel is present there** |
+| S41 Disconnect Vote | 1 `NEW` modal | **Not Ranked — available in Rooms and Unranked (RD28 `mode` gate, amended 2026-10-06).** One question — "Pause game until the player connect"; disconnected player excluded; **expiry = NO**; **once per disconnect event** |
+| S42 Paused | 1 `NEW` full-table state | **Not Ranked — Rooms and Unranked.** `PAUSED_AWAITING_RECONNECT` with a visible **2-minute** deadline; reconnect → resume, bot stands down; at expiry → the **CONTINUE_OR_WAIT** vote; **WAIT capped at 2 cycles, then CONTINUE-only (D9 FINAL)** — the artboard must show the "second WAIT" state and the CONTINUE-only state, not just the first vote |
 | S43 King / Koz badges | component + overlay | crown per tied 1st-place player (**multiple Kings**), Koz badge for current last; **tied last place = no unique Koz = Vote Kick unavailable, and the UI must say so**; recomputed on every score change |
 | S44 Quick Stats popover | 1 `NEW` sheet | **long-press** an avatar → the **six short Ranked stats only** (RD23: Rank, Games, King %, 2nd %, 3rd %, Koz %); **must not block or swallow a card-play gesture**; **unblocked by RD11 — the Ranked profile's server read path supplies the data** (the old §0.6-V4 blocker is resolved without touching the frozen rules) |
 
@@ -2409,9 +2491,9 @@ full in **§4b** below; the artboard counts here keep the §4.5 summary honest.
 
 | ID | Artboards | States / variants |
 |---|---|---|
-| S45 Ranked Home / Overview | 1 `NEW` | entry point; current Rank chip + RP + progress; **two paths: "Test my level" (placement) or "Start from Bronze" (permanent, irreversible — RD10)**; season indicator |
-| S46 Tier & Division presentation | 1 `NEW` component | **6 tiers × 3 divisions + King = 19 rungs** (never "7 tiers × 3"); **King has NO divisions**; EN + Arabic titles (مبتدئ / لاعب / معلم / وزير / أمير / سلطان / ملك); current rung highlighted; **RD26's 19 lower-bound RP values rendered (Bronze III 0 → King 3,000, §4b.1), never invented numbers** |
-| S47 Placement Introduction | 1 `NEW` | the two-path choice; **"Start from Bronze" must state it is permanent — no placement later (RD10)** |
+| S45 Ranked Home / Overview | 1 `NEW` | entry point; current Rank chip + RP + progress; **two paths: "Test my level" (placement) or "Start from Bronze" (permanent, irreversible — RD10)**; season indicator. **2026-10-06 (RD30): placement is optional and declining it is not a penalty — "Start from Bronze" hands the player a real Bronze III rank they climb from; the copy must not read as a downgrade** |
+| S46 Tier & Division presentation | 1 `NEW` component | **6 tiers × 3 divisions + King = 19 rungs** (never "7 tiers × 3"); **King has NO divisions**; EN + Arabic titles (مبتدئ / لاعب / معلم / وزير / أمير / سلطان / ملك); current rung highlighted; **RD26's 19 lower-bound RP values rendered (Bronze III 0 → King 3,000, §4b.1), never invented numbers**; **an unplaced player's rung is Bronze III — never a "no tier" placeholder (RD30)** |
+| S47 Placement Introduction | 1 `NEW` | the two-path choice; **"Start from Bronze" must state it is permanent — no placement later (RD10)**; **2026-10-06 (RD30): framed as optional from the first frame — the player is choosing how to start, not being warned off a mistake** |
 | S48 Placement Match Progress | 1 `NEW` | **only "Placement 1/3 → 2/3 → 3/3" — a provisional rank is NEVER shown** (RD10); bot difficulty/personality are not selectable and not shown |
 | S49 Placement Result / "Calculating Rank" | 1 `NEW` | calculating state → reveal |
 | S50 Rank Reveal | 1 `NEW` | Tier + Division + Arabic title + RP + progress indicator |
@@ -2428,13 +2510,32 @@ full in **§4b** below; the artboard counts here keep the §4.5 summary honest.
 stats + Highest Rank; S05 Lobby + rank chip; S08 Waiting Room + rank on roster
 rows; the `Seat` identity card + a rank slot; S19/S20 + mixed-tier indicator
 (public and private); S44 + short stats (above); S36 Ranked mode state + S36
-private-ranked variant (password + cross-tier roster); and **ranked-absence
-variants** — S35 voice and S41 Disconnect Vote are enforced *absent* by `mode`,
-so their "not available" state never needs drawing, only the gate.
+private-ranked variant (password + roster of ranks **within one tier — RD29,
+2026-10-06**); and **ranked-absence variants** — S35 voice and S41 Disconnect
+Vote are enforced *absent* by `mode`, so their "not available" state never
+needs drawing, only the gate.
 
-**≈22 new frames + 2 new components (Rank Chip, Tier Ladder).** S58's row states
-(current-player highlight, King-ordered, season-scoped) extend S58, not a new
-screen.
+**2026-10-06 additions (RD29/RD30 — variants and one new frame, no new
+screens):**
+
+- **S36** gains the **Unranked match-type state** — the three-entry choice
+  (Ranked solo / Rank-down Ranked / Unranked), the rank-blind mode note, and
+  the "no Ranked points" statement. No rank chip in this state.
+- **S07 Join Dialog** gains a **`RANK_INCOMPATIBLE` error state** alongside
+  `EMPTY / NOT_FOUND / FULL / CLOSED / GENERIC` — copy states the tier gap in
+  plain language and ends on "the host can switch this game to Unranked,"
+  never on the refusal.
+- **S08 Waiting Room** gains the **Unranked variant** — three seat states
+  (friend-claimed / open-to-the-pool / bot-after-timeout) and the host-only
+  **[Play Unranked]** affordance on a `RANK_INCOMPATIBLE` join (§4b.4c).
+- **1 `NEW` artboard frame:** the **"Play Unranked" conversion prompt** shown to
+  the host (the tier difference stated, the consequences of Unranked stated —
+  no RP, **no voice**, no Ranked statistics, ranks mixed — and a
+  confirm/cancel pair).
+
+**≈23 new frames + 2 new components (Rank Chip, Tier Ladder)** — the +1 is the
+conversion prompt above. S58's row states (current-player highlight,
+King-ordered, season-scoped) extend S58, not a new screen.
 
 ---
 
@@ -2498,7 +2599,8 @@ long-press popover never swallowing a tap intended as a play.
 | G. Voice | 1 | S35 — documented only |
 | H. Amendment | 8 | S37 (component), S38, S39, S40, S41, S42, S43 (component), S44 |
 | **I. Ranked progression (2026-10-05, RD1–RD28)** | **14 new (S45–S58) + ≈22 variant frames** | §4.3.9 above and §4b below; **+2 components: Rank Chip, Tier Ladder** |
-| **Total new artboards** | **≈ 63** (was ≈ 40) | plus the §4.2 component library and the two new Ranked components |
+| **J. RD29/RD30 amendment (2026-10-06, mixed-rank friends & Unranked)** | **1 new frame + 4 variant states** | the "Play Unranked" conversion prompt (new — tier difference stated, and the consequences stated as **no RP, no voice, no Ranked statistics**); S36's Unranked match-type state (with the 4-minute fill countdown); S07's `RANK_INCOMPATIBLE` error; S08's Unranked seat states + host-only [Play Unranked]; S45/S47 optional-placement copy. **No new screens, no new components.** ⚠️ **Voice: Unranked has NO push-to-talk control — do not draw the S35 FAB in the Unranked waiting room or table (2026-10-06).** |
+| **Total new artboards** | **≈ 64** (was ≈ 63 pre-RD29, ≈ 40 pre-Ranked) | plus the §4.2 component library and the two new Ranked components |
 
 ---
 
@@ -2772,27 +2874,169 @@ surface explains it:**
 | Direction | RP effect (RD5) |
 |---|---|
 | Higher-tier player **wins** | reward **reduced** |
-| Higher-tier player **loses** | loss **multiplied** (×2 hard cap in Private — RD6) |
+| Higher-tier player **loses** | loss **multiplied** (×2 hard cap in Rank-down — RD6 as amended) |
 | Lower-tier player **beats** a higher-tier opponent | reward **increased** |
 
 All three directions are design inputs — the deltas are asymmetric on purpose,
-and S57 must render the direction, not just the number.
+and S57 must render the direction, not just the number. **Scoped 2026-10-06:**
+this table applies to public matchmaking and to within-one-tier Rank-down
+matches only — two or more tiers apart can no longer reach a Ranked table
+(RD29), and the mixed-tier indicator's private variant now shows ranks within
+one tier, never a Bronze-and-King spread.
+
+**RD29 — Ranked party eligibility (2026-10-06). Friends playing Ranked
+together.** This is the rule the mixed-rank-friends decision adds, and it
+reuses exactly one existing constant — the one-tier boundary from RD9 — and
+nothing else.
+
+- **The rule:** two players may be in the same Ranked party iff their **tiers
+  differ by at most one tier**, applied **against the creator** (every joining
+  member must be within one tier of the creator). Division gaps within a tier
+  are always eligible (Gold I + Gold III: eligible); one tier apart is
+  eligible (Gold + Silver); **two or more tiers apart is ineligible** (Gold +
+  Bronze). King: one tier below is Royal, so King + Royal is eligible and King
+  + Platinum is not.
+- **Symmetric, deliberately.** RD9's "a lower-tier player cannot opt up" has no
+  meaning between two consenting friends — a Silver host may invite a Gold
+  friend and vice versa. **RD9's asymmetry is preserved for solo Auto-Match,
+  which this decision does not touch.**
+- **Compared by tier, never by 19-rank index** — RD9 is written in tiers and
+  King has no divisions.
+- **The check runs at JOIN, server-side, and only there.** A friend's rank is
+  not known at S36 confirm time (no friend is selected yet), and a client
+  cannot read another player's profile at all (`players/{uid}` is owner-read
+  only, `firestore.rules:67-68`). The function returns allow/deny + a
+  plain-language reason — never the other player's RP. **Pool derivation for
+  solo matchmaking and party eligibility for friends are two different checks
+  reading the same tier value; do not merge them into one resolver.**
+- **The statement the whole rule exists to make:** *Ranked-ineligible does not
+  mean "cannot play together."* An ineligible pair is blocked from **Ranked**
+  and offered **Unranked** — see §4b.4b below. **No refusal in this flow is a
+  dead end, and the artboard must never read as one.**
+
+**RD30 — placement is optional (2026-10-06, owner wording verbatim):**
+
+> *"Placement is optional and must be explicitly chosen. If a player skips
+> placement, the account starts at Bronze III as a real Ranked tier and follows
+> normal Ranked progression. Once placement is skipped, placement cannot be
+> started later on that account."*
+
+An unplaced player therefore holds **Bronze III as a real starting tier**, never
+a "no tier" placeholder, and can play Ranked without completing placement.
+**This removes the edge case from RD29 and RD9 alike: every player always
+resolves to a tier**, so the rank chip, the solo pool, and the party check all
+read one uniform value. The Rank Chip component (§4b.13) renders Bronze III for
+an unplaced player — no provisional state, no "Unranked" label. **The final
+clause is a rule of the account, not a penalty**: skipping placement is a
+legitimate Bronze start, and nothing in the copy may read as a punishment for
+having chosen it.
+
+### 4b.4b Unranked — the rank-blind mode (2026-10-06)
+
+**Unranked is a normal match type on S36, not a temporary exception and not an
+apology for a refusal.** It is reached two ways and both land in the same
+experience:
+
+1. **Directly from S36** — pick *Unranked* in the match-type choice. This path
+   is the proof that it is a first-class mode.
+2. **Via the conversion offer** — after a `RANK_INCOMPATIBLE` join, the host's
+   S08 offers **[Play Unranked]** (§4b.4c).
+
+**The owner's rule, recorded precisely:**
+
+- **One shared Unranked pool, not a separate solo Unranked queue.** A party of
+  friends and a solo player drawing Unranked are served by the same pool.
+- **Rank-blind.** "A King, Diamond, Gold, Bronze, etc. can all enter the same
+  Unranked match." **RD9 and RD29 do not apply here at all.**
+- **Humans fill the seats.** The remaining 1–2 seats are offered to available
+  human players from the pool, regardless of rank.
+- **Bots are only a timeout fallback**, never the primary fill — reusing the
+  S61 online-bot-seat mechanism at the configured S36 difficulty/personality.
+  **The timeout is 4 minutes** (owner decision, 2026-10-06): after 4 minutes
+  with a seat unfilled, configured bots take the remaining seats and the match
+  starts. The waiting room must show this deadline counting down so the wait
+  reads as a timer, not an indefinite hang.
+
+**Authority: Unranked is `mode: UNRANKED`** — a first-class, independent mode
+(RD28 as amended 2026-10-06: `mode ∈ {ROOM, RANKED, UNRANKED}`). It is **not**
+`ROOM` plus a marker: the owner's decision is that Unranked is a normal,
+independent game mode, and the authority key reflects that. The consequences
+are stated per-rule, not inherited: **no settlement, no RP, no Ranked
+statistics, no Vote Kick, and no push-to-talk voice** (voice is invite-only
+Rooms, RD22 as amended). S41/S42's disconnect vote and pause remain available.
+
+**Every mode-gated surface must therefore handle `UNRANKED` explicitly** — this
+is the cost of the first-class mode, and it is deliberate: with three values,
+no rule resolves by accident. The mapping the design must render:
+
+| Rule | `ROOM` | `RANKED` | `UNRANKED` |
+|---|---|---|---|
+| RD15 progression / RP | no | yes | **no** |
+| RD18 Vote Kick | no | yes | **no** |
+| RD22 push-to-talk voice | yes | no | **no** |
+| RD23 career statistics | no | yes | **no** |
+| S41/S42 disconnect vote + pause | yes | yes | **yes** |
+| Settlement (RD12/RD13) | no | yes | **no** |
+| GameType / scoring (GM1–GM8) | both | both | **both** |
+
+**Unranked is not a low-security Room.** A Room is invite-only, code-shared,
+fills no seat from a pool, and permits a 2–3 player start; Unranked fills its
+remaining seats from the shared pool and starts only when full (friends +
+pool/bot seats). The design consequence: **Unranked needs its own mode label
+and seat-fill states drawn, and every mode-gated surface needs its `UNRANKED`
+branch verified** — voice most of all, since a pooled-stranger table without
+voice is a deliberate product choice, not an oversight.
+
+### 4b.4c The conversion — "Play Unranked" (2026-10-06)
+
+```
+Friend's join to a Rank-down Ranked room ──► RD29 check, server-side
+        ├── eligible ──► admit ──► S08 (Ranked variant; roster shows both ranks)
+        └── ineligible ──► DENY: RANK_INCOMPATIBLE
+                ├── joiner's S07 dialog: the reason in plain language +
+                │   "the host can switch this game to Unranked"
+                └── host's S08: the failed join + the tier difference
+                          └── [ Play Unranked ] ──► convert
+                                  │  host only; status == WAITING; pre-match only
+                                  │  mode → UNRANKED;
+                                  │  access flag cleared; rank gate dropped
+                                  │  idempotent; seated players keep their seats
+                                  ▼
+                          Unranked — the denied friend re-enters the same code,
+                          remaining seats go to the shared pool
+```
+
+**The host is the only actor** (RD21/S36 make mode the host's config; the
+joining friend is informed, not the actor). The conversion is idempotent and
+**never mid-match**. This prompt is a new artboard frame, and the S07 join
+dialog gains a `RANK_INCOMPATIBLE` state alongside `EMPTY / NOT_FOUND / FULL /
+CLOSED / GENERIC` — its copy must state the tier gap in plain language and end
+on the Unranked option, never on the refusal.
 
 ## 4b.5 Private / Password Ranked (RD6)
 
-**Not a third mode (RD28).** Private Ranked is **`RANKED` + a private/password
-access flag** — the mode stays `RANKED`, RP is awarded, statistics accumulate,
-Vote Kick is available, and settlement is identical.
+**Not a third mode (RD28 as amended 2026-10-06: `mode ∈ {ROOM, RANKED,
+UNRANKED}`).** Rank-down is **`RANKED` + a private/password access flag** — the
+mode stays `RANKED`, RP is awarded, statistics accumulate, Vote Kick is
+available, and settlement is identical. **On S36 this is the "Rank-down" entry
+of the three-way match-type choice (owner's product name, 2026-10-06); it is a
+Ranked configuration, never a separate mode.**
 
-- **Any tiers together — no restriction at all.** A Bronze and a King may share a
-  private table.
+- **Any tiers *within RD29* — one tier apart or less (amended 2026-10-06).**
+  The earlier "any tiers together — no restriction at all. A Bronze and a King
+  may share a private table" is **repealed** by the owner's mixed-rank-friends
+  decision; such a pair is now offered Unranked instead (§4b.4b).
 - It is a **true Ranked match**, not casual and not unranked.
 - **The same mixed-tier rules as public (RD5) apply, with a hard ×2 cap on the
-  loss multiplier — never more than ×2.**
+  loss multiplier — never more than ×2.** The ×2 cap is unchanged; only the
+  tier band it applies within was narrowed.
 - **Access only.** The password gates entry; it gates nothing about the outcome.
 - **Design consequence:** the S36 private-ranked variant (password field +
-  cross-tier roster) is one artboard variant, not a new screen; the roster must be
-  able to show visibly different tiers without implying they are mismatched.
+  roster of ranks within one tier) is one artboard variant, not a new screen;
+  the roster must be able to show visibly different tiers without implying they
+  are mismatched — **and a roster spanning two or more tiers is now a broken
+  state that cannot occur, since the join is refused before the seat is
+  taken.**
 
 ## 4b.6 RP architecture
 
@@ -2932,12 +3176,20 @@ layout:
   Match-King crown** (§4b.1, §4.1.4 #5).
 - **S19/S20 + mixed-tier indicator** — public and private variants.
 - **S44 + short stats** — the popover reads the six short values.
-- **S36 Ranked mode state + private-ranked variant** — one screen, two modes, and
-  the private variant adds the password field and the cross-tier roster.
+- **S36 Ranked mode state + Rank-down variant** — one screen, the match-type
+  choice, and the Rank-down variant adds the password field and a **roster of
+  ranks within one tier** (RD29; the pre-amendment cross-tier roster is
+  repealed — a two-tier-apart join is refused before the seat is taken).
+- **S36 Unranked state (2026-10-06)** — the third match type: no rank chip, no
+  pool statement, no "mismatched ranks" warning, and the 4-minute fill countdown.
 - **Ranked-absence variants (enforced by `mode`):** **S35 voice and S41 Disconnect
   Vote must be visibly absent in the Ranked flows** — not disabled, not greyed,
   **absent** (RD22/RD28). These are required artboards in §4.3.9, and they are
-  the easiest thing to forget.
+  the easiest thing to forget. **The same discipline now applies to Unranked
+  (2026-10-06): S35 voice is absent there too — including at a table whose
+  remaining seats were filled by pooled strangers — while S41's Disconnect Vote
+  is present. A `mode`-gated control absent in one mode and present in another
+  is a required artboard pair, never an omission.**
 
 ## 4b.11 The authority model — where Ranked trust lives
 
@@ -3052,11 +3304,13 @@ Ranked feature.** The UI roadmap says the same about `mode` as the code roadmap;
 | Matchmaking (S56/S57) | authoritative rank (server-side), `mode` = RANKED | Pool derivation reads server-side rank, never a client claim |
 | Leaderboard (S64) | seasons, RP engine | Ordering is server-computed; King's ordering key is RP |
 | Season reset (S59) | profile model, RP engine | **One-way data migration — emulator dry-run required (R27)** |
-| Vote Kick (S60) | `mode` = RANKED, Koz tracking | Target frozen for the vote's duration (OPEN-2). Never in Rooms |
+| Vote Kick (S60) | `mode` = RANKED, Koz tracking | Target frozen for the vote's duration (OPEN-2). Never in Rooms or Unranked |
 | Timeout tracking (S61) | `mode` | Counter cumulative and **private**; 15-timeout removal shares no state with Vote Kick |
 | Quick Stats (S44 UI) | statistics accumulator, profile model | Unblocked by RD11's server read path; shows the 6 short values |
-| Private Ranked (S58 story) | settlement, mixed-tier asymmetry, `mode` + private flag | `mode` stays RANKED (RD28); the flag gates access only |
+| Private Ranked (S58 story) | settlement, mixed-tier asymmetry, `mode` + private flag | `mode` stays RANKED (RD28); the flag gates access only. Now named **Rank-down** and bounded by RD29 |
 | **Game Type / Calculation (E7, S65–S69)** | **precedes every Ranked story that consumes `gameType`** — S43, S47, S56 | **The 2026-10-06 GM amendment is on the Ranked critical path.** S47 cannot apply GM6's ×0.5 and S56 cannot carry a Game Type on a match document that has no field. **E7 lands first**, and its `firestore.rules` change (the only rules write outside the Ranked epic) is re-pinned before E6b starts |
+| **Ranked party eligibility (S70)** | the S42 functions module (the check is server-side; a client cannot read another player's rank) | RD29, applied against the creator's tier; denies with `RANK_INCOMPATIBLE`. Depends on S42 + S44 only — **parallel to the Ranked core, not on its critical path** |
+| **Unranked mode (S71)** | S70 (the conversion), S56 (the search-lifecycle shape the pool reuses), S61 (the online-bot-seat mechanism), S68 | `mode` = UNRANKED as a first-class value (2026-10-06). **Every `mode`-gated surface gains a third branch** — voice absent, Vote Kick absent, disconnect/pause present, no settlement, no statistics, no RP. Pool is rank-blind; bots only after the 4 minute timeout |
 
 ## 4b.15 Testing plan (designed now, run at the Phase 9 gate)
 
@@ -3097,6 +3351,27 @@ Ranked feature.** The UI roadmap says the same about `mode` as the code roadmap;
 - Vote Kick: Ranked-only enforced by `mode`; Round-7-complete gate; tied-last
   blocks it; 2-of-3 passes; 5-round same-target cooldown; success = permanent +
   no rejoin + recorded Koz.
+- **Party eligibility (RD29, added 2026-10-06):** same tier or exactly one apart
+  from the creator admits (Gold I + Gold III eligible; Gold + Silver eligible;
+  King + Royal eligible); **two or more tiers apart is denied with
+  `RANK_INCOMPATIBLE`** (Gold + Bronze denied; King + Platinum denied); the
+  check is symmetric for friends (unlike RD9 solo, which stays asymmetric);
+  **the denied joiner is never shown the host's RP**, only the outcome and the
+  plain-language reason; an unplaced joiner resolves to Bronze III (RD30) and is
+  compared as such.
+- **Unranked mode (added 2026-10-06):** `mode` on the match document is
+  `UNRANKED` — **not `ROOM` plus a marker**; a finished Unranked match writes
+  **no RP delta and no Ranked statistics** (assert all nine career values
+  unchanged); **no Vote Kick panel can be raised** (the entry point is absent,
+  not disabled); **no push-to-talk control is present**; the disconnect/pause
+  vote **is** available, proving `mode` was not collapsed to `ROOM`; **rank-blind
+  seating is asserted — a King and a Bronze III hold seats at the same table**;
+  the remaining seats are offered to the shared pool first and **only after the
+  4 minute timeout do configured bots take them**; the host-only
+  Ranked→Unranked conversion is **idempotent** (a second call is a no-op),
+  **pre-match only** (a conversion attempt on a started match is denied), and
+  **clears the access credential** so the denied friend re-enters on the same
+  code.
 - **15-timeout automatic removal fires with NO vote, NO Round-7 gate, NO Koz
   requirement, and does not consume or reset the Vote Kick cooldown — the two
   mechanisms never interfere.**
@@ -3128,8 +3403,13 @@ Additional acceptance checks, answerable by looking at the file:
 10. **S58's King band is a single RP-ordered group; the current player's row is
     highlighted; nothing carries over between seasons.**
 11. **S35 and S41 are visibly ABSENT in the Ranked flows** — not disabled.
-12. **Private Ranked adds a password field and a cross-tier roster without
-    implying a third mode.**
+12. **Rank-down adds a password field and a roster of ranks within one tier**
+    (RD29 — never a cross-tier spread, and never implying a mode of its own;
+    the "cross-tier roster" of the pre-amendment design is repealed, since a
+    join two tiers apart is refused before the seat is taken).
+13. **Unranked has no password, no voice, no Vote Kick, and no rank chip**
+    (2026-10-06) — and its roster may show any tier mix, since rank-blind mixing
+    is the mode's definition.
 13. **Every Ranked threshold number in the file is the owner's closed value**
     (§4b.1) — no invented value, and nothing derived from the `design-ui` mocks.
 14. **S36 offers exactly five groups — Game Type, Calculation, Bot Difficulty,
@@ -3200,17 +3480,24 @@ BATCH 2                     — NOT STARTED
 ```
 
 **Where the two documents agree, and where they differ on purpose:** both carry
-the same 19-rank ladder, the same RD1–RD28 decision set, the same `mode`-first
+the same 19-rank ladder, the same RD1–RD28 decision set **as amended 2026-10-06
+(RD6 narrowed to within-RD29, RD22 voice pulled from Unranked, RD28 opened to
+three `mode` values, RD29/RD30 added)**, the same `mode`-first
 critical path, and the same four-tier authority model. The UI/UX roadmap owns the
 *design* view (screens S45–S58, the two new components, the token gaps, the
-design gates); the code roadmap owns the *execution* view (stories S42–S64,
-+388 h, risks R24–R29, milestones M9–M11). **RD26's 19 thresholds are CLOSED in
+design gates); the code roadmap owns the *execution* view (stories S42–S64
+**+ S65–S69 + S70–S71**,
++388 h **+48 h +44 h**, risks R24–**R32**, milestones M9–M11). **RD26's 19 thresholds are CLOSED in
 both, identically (2026-10-05, Bronze III 0 → King 3,000); OPEN-1 and OPEN-2
 remain open in both, identically.** Neither document reopens a closed owner
 decision. **The 2026-10-06 GM amendment is carried in both identically too** —
 GM1–GM8 in the code roadmap's decision block, the same eight in this document's
 S36/§2.4/§4b, and the shared rule statement in `docs/rules/CANONICAL_RULES.md`
-**Amendment A2**. **OPEN-3 — the Mini RP rounding rule — is CLOSED in both
+**Amendment A2**. **The 2026-10-06 RD29/RD30 amendment is carried in both
+identically as well** — the same one-tier party boundary, the same Bronze III
+resolution for an unplaced player, the same 4-minute pool timeout, and the same
+`mode ∈ {ROOM, RANKED, UNRANKED}` model with **no voice in Unranked** — with
+**Amendment A3** as the shared rule statement. **OPEN-3 — the Mini RP rounding rule — is CLOSED in both
 identically (2026-10-06, before S47 was written): nearest integer, ties away
 from zero (+15 → +8, −15 → −8), via `kotlin.math.round`. With it closed, no open
 item gates any Ranked story; OPEN-1 and OPEN-2 remain open and gate nothing.**
