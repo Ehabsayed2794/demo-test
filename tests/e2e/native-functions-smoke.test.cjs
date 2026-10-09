@@ -75,6 +75,38 @@ function probePort(port, label, attempts) {
   });
 }
 
+// The emulator's HTTP port answers BEFORE the Kotlin/JS module finishes
+// loading and firebase-tools discovers its triggers: until discovery
+// completes, every call returns functions/not-found with an empty registry
+// ("valid functions are:" — observed for ~5s on a warm machine, longer on a
+// cold CI runner). No port probe can see that, so this waits for the
+// callable itself. The unauthenticated denial is both the readiness signal
+// and check [1]'s assertion, so it returns the error code for the first
+// response that is NOT not-found.
+async function waitForTrigger(callable, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let last;
+  while (Date.now() < deadline) {
+    try {
+      await callable({});
+      // An unauthenticated call succeeding would itself be a bug — let the
+      // caller's check report it instead of looping here.
+      return "callable-answered";
+    } catch (err) {
+      const code = (err && err.code) || "unknown";
+      if (code !== "functions/not-found") return code;
+      last = err;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+  throw new Error(
+    "engineSmoke was never registered within " + timeoutMs +
+    "ms (last error: " + (last && last.message) + "). The Functions emulator " +
+    "port was open, so the Kotlin/JS module likely failed to load or failed " +
+    "to export a callable the CLI discovers — read the emulator log.",
+  );
+}
+
 async function main() {
   const up = await probePort(FUNCTIONS_PORT, "Functions emulator", 120);
   if (!up) {
@@ -95,18 +127,14 @@ async function main() {
   const smoke = httpsCallable(functions, FN_NAME);
 
   // 1. An unauthenticated call must be denied before the engine ever runs.
+  //    waitForTrigger also blocks until the module has loaded and registered.
   console.log("\n[1] unauthenticated engineSmoke is denied:");
-  try {
-    await smoke({});
-    check("denies an unauthenticated call", false, "the call succeeded without a signed-in user");
-  } catch (err) {
-    const code = err && err.code;
-    check(
-      "denies with the unauthenticated code",
-      code === "functions/unauthenticated",
-      "got " + code + " (" + (err && err.message) + ")",
-    );
-  }
+  const denial = await waitForTrigger(smoke, 60000);
+  check(
+    "denies with the unauthenticated code",
+    denial === "functions/unauthenticated",
+    "got " + denial,
+  );
 
   // 2. Signed in, the real engine runs under Node.
   console.log("\n[2] authenticated engineSmoke runs the real engine:");
