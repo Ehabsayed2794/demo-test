@@ -138,7 +138,7 @@ data class SessionSnapshot(
 )
 
 class GameSession(
-  private val clock: () -> Long = { System.currentTimeMillis() },
+  private val clock: () -> Long = { nowMillis() },
   private val remoteSync: RemoteMatchSync? = null,
 ) {
 
