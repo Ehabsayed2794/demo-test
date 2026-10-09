@@ -19,6 +19,7 @@ const kotlin = require(BUNDLE);
 
 const callables = {
   engineSmoke: kotlin.engineSmoke,
+  settleMatch: kotlin.settleMatch,
 };
 
 for (const [name, fn] of Object.entries(callables)) {
