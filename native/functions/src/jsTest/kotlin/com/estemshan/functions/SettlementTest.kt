@@ -83,10 +83,12 @@ class SettlementTest {
 
   /**
    * Builds 52 plays for 13 tricks: [winners] is the winner seat per
-   * trick in play order (must total the intended tricksWon). Winners
-   * take the highest remaining card of the winning suit (trump, or led
-   * when trump is SANS); every other slot takes the lowest card that
-   * cannot beat it. Led suit cycles S/H/D/C; play order is p1..p4.
+   * trick in play order (must total the intended tricksWon). Two
+   * phases, so filler assignment can never starve a future winner:
+   * first every winner takes the highest remaining card of the
+   * winning suit (trump, or led when trump is SANS), then every other
+   * slot takes the lowest remaining card that cannot beat its trick's
+   * winner. Led suit cycles S/H/D/C; play order is p1..p4.
    */
   private fun playsFor(winners: List<String>, trump: String, round: Int): List<Map<String, Any?>> {
     require(winners.size == 13)
@@ -96,11 +98,15 @@ class SettlementTest {
       pools[suit] = ArrayDeque((14 downTo 2).toList())
     }
     val ledCycle = listOf("SPADES", "HEARTS", "DIAMONDS", "CLUBS")
+    val winSuitOf = winners.indices.map { if (trump == "SANS") ledCycle[it % 4] else trump }
+    val winValue = HashMap<Int, Int>()
+    for (trick in winners.indices) {
+      winValue[trick] = pools.getValue(winSuitOf[trick]).removeFirst()
+    }
     val plays = ArrayList<Map<String, Any?>>()
     winners.forEachIndexed { trick, winner ->
-      val led = ledCycle[trick % 4]
-      val winSuit = if (trump == "SANS") led else trump
-      val winV = pools.getValue(winSuit).removeFirst()
+      val winSuit = winSuitOf[trick]
+      val winV = winValue.getValue(trick)
       for (seat in order) {
         if (seat == winner) {
           plays.add(card(seat, winSuit, winV, round))
@@ -110,8 +116,7 @@ class SettlementTest {
             .minByOrNull { it.value.last() }
             ?: pools.entries.first { it.value.isNotEmpty() }
           val suit = fallback.key
-          val v = if (suit == winSuit) fallback.value.removeLast() else fallback.value.removeLast()
-          plays.add(card(seat, suit, v, round))
+          plays.add(card(seat, suit, fallback.value.removeLast(), round))
         }
       }
     }
@@ -128,7 +133,9 @@ class SettlementTest {
     players: List<String> = listOf("u1", "u2", "u3", "u4"),
     dealer: Any? = "u1",
     completedRound: Any? = 1,
-    maxRounds: Any? = 18,
+    // Synthetic shortened matches: completedRound ends the match, so the
+    // default pairs 1/1 (mirrors endMatch's completedRound+1 > maxRounds).
+    maxRounds: Any? = 1,
     finalScores: Any? = mapOf("p1" to 25, "p2" to 13, "p3" to 12, "p4" to 14),
     winnerIds: Any? = listOf("p1"),
     version: Any? = 7,
@@ -361,6 +368,7 @@ class SettlementTest {
     val fields = matchFields(
       dealer = "u2",
       completedRound = 2,
+      maxRounds = 2,
       finalScores = mapOf("p1" to -2, "p2" to 46, "p3" to 26, "p4" to 26),
       winnerIds = listOf("p2"),
     )
