@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  S24 — the app's platform theme. This is a Compose-only app (no layout
+  XML anywhere), so the platform theme's only runtime effects are the
+  window background and the system bars — everything in-app comes from
+  EstemshanTheme.kt's darkColorScheme. Hence the parent stays the platform
+  Material theme (today's parent, zero visual delta) with the brand bars
+  set explicitly, and NO com.google.android.material dependency is pulled
+  in just for theme attrs nothing reads.
+-->
+<resources>
+  <style name="Theme.Estemshan" parent="@android:style/Theme.Material.NoActionBar">
+    <!-- Kills the white launch flash: first frame is already near-black. -->
+    <item name="android:windowBackground">@color/estemshan_background</item>
+    <item name="android:statusBarColor">@color/estemshan_background</item>
+    <item name="android:navigationBarColor">@color/estemshan_background</item>
+    <!-- Light icons on the near-black bars, matching the dark theme. -->
+    <item name="android:windowLightStatusBar">false</item>
+    <item name="android:windowLightNavigationBar">false</item>
+  </style>
+</resources>

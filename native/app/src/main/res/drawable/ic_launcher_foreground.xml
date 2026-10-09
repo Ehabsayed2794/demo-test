@@ -1,0 +1,19 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+  android:width="108dp"
+  android:height="108dp"
+  android:viewportWidth="108"
+  android:viewportHeight="108">
+  <!--
+    S24 — launcher foreground: a gold spade (the trick-taking mark) built
+    from primitives, centered in the 66 dp safe circle. Per the plan an
+    icon-generator asset is acceptable at v1; this hand vector holds the
+    same standing — the owner can swap licensed artwork here later.
+  -->
+  <path
+    android:fillColor="@color/estemshan_gold"
+    android:pathData="M54,30 L38,58 L70,58 Z
+      M35.5,52 a10,10 0 1,0 20,0 a10,10 0 1,0 -20,0
+      M52.5,52 a10,10 0 1,0 20,0 a10,10 0 1,0 -20,0
+      M51.5,58 h5 v11 h-5 Z
+      M47,73 L61,73 L57,68 L51,68 Z" />
+</vector>

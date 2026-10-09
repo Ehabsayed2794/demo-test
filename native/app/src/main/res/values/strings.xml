@@ -10,6 +10,9 @@
   resources.
 -->
 <resources>
+  <!-- S24: the manifest label reads this (was hardcoded). Proper noun, never translated. -->
+  <string name="app_name" translatable="false">Estemshan</string>
+
   <string name="choose_level_title">Choose Level</string>
   <string name="choose_level_subtitle">Seat your opponents, then sit down.</string>
   <string name="choose_level_presets">Preset tables</string>
