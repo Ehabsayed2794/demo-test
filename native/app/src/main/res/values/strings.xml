@@ -167,4 +167,40 @@
   <string name="create_game_cancel">Cancel</string>
   <!-- A create that failed at the transport; the selections are kept. -->
   <string name="create_game_error">Couldn\'t create the room. Check your connection and try again.</string>
+
+  <!--
+    S55/S56 — the Ranked solo search screen. Copy is verbatim from
+    docs/design/Estimation Ranked Match v2 - Matchmaking (standalone).html;
+    the ladder's seven tiers and their RD1 Arabic titles are product
+    identity and live in RankTiers.kt with the engine-facing model, not here.
+  -->
+  <!-- Kicker + titles: the searching title is active, the S56 one is inert. -->
+  <string name="matchmaking_kicker">Ranked · Solo</string>
+  <string name="matchmaking_title_searching">Finding a match</string>
+  <string name="matchmaking_title_result">Ranked Match</string>
+  <!-- The status chip; the elapsed time the client measures follows it. -->
+  <string name="matchmaking_status_searching">SEARCHING</string>
+  <string name="matchmaking_status_timed_out">TIMED OUT</string>
+  <string name="matchmaking_status_failed">FAILED</string>
+  <!-- The player\'s own rank block, and the bracket spanning the RD9 pool. -->
+  <string name="matchmaking_rank_label">YOUR RANK</string>
+  <string name="matchmaking_pool_label">YOUR POOL</string>
+  <!-- The four seats: the player, then the three the pool has to fill. -->
+  <string name="matchmaking_seat_you">You</string>
+  <string name="matchmaking_seat_waiting">Waiting for a player</string>
+  <!-- The two notes; the first states the RD9 pool rule in plain language. -->
+  <string name="matchmaking_note_pool">You will be matched in your tier or the one below.</string>
+  <string name="matchmaking_note_capabilities">Ranked matches do not include voice chat or the pause vote.</string>
+  <!-- The searching action; the hint is why cancel is never withheld. -->
+  <string name="matchmaking_hint_cancel_always">Cancel is always available.</string>
+  <string name="matchmaking_action_cancel_search">Cancel Search</string>
+  <!-- The S56 actions; Try Again is primary, Cancel returns to S36. -->
+  <string name="matchmaking_action_cancel">Cancel</string>
+  <string name="matchmaking_action_try_again">Try Again</string>
+  <!-- Timed out: the pool had no takers in time. -->
+  <string name="matchmaking_timed_out_title">No match found</string>
+  <string name="matchmaking_timed_out_body">We could not find players for your Ranked pool in time. Try again or cancel.</string>
+  <!-- Failed: the search itself broke; nothing about the pool is implied. -->
+  <string name="matchmaking_failed_title">Matchmaking failed</string>
+  <string name="matchmaking_failed_body">Something went wrong while searching. Try again or cancel.</string>
 </resources>

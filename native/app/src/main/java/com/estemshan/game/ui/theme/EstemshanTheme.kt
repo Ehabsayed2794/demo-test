@@ -69,6 +69,13 @@ object EstemshanColors {
   // the Ranked rewards strip; no other screen reads it.
   val Legal = Color(0xFF69C87E)
   val Error = Color(0xFFF25555)
+
+  /**
+   * The bottom of the gold ramp — the matchmaking spec's `--accent-lo`
+   * #7A5A1A, which the S57 tokens above stop short of. S55's rank shield
+   * shades GoldHi → Gold → this; no other screen reads it. Additive only.
+   */
+  val GoldDeep = Color(0xFF7A5A1A)
 }
 
 private val EstemshanScheme = darkColorScheme(
