@@ -80,6 +80,20 @@ class RankedProfileTest {
   }
 
   @Test
+  fun placementCanBeStartedOnlyFromAnAccountThatNeverDecided() {
+    // RD10 + RD30: only NOT_STARTED may enter placement. Once skipped it can
+    // never start later (RD30); once complete or underway it never repeats
+    // (RD10 — once per account, never per season).
+    for (state in PlacementState.entries) {
+      val profile = RankedProfile(seasonId = season, placementState = state)
+      assertEquals(state == PlacementState.NOT_STARTED, canStartPlacement(profile))
+    }
+    // The RD30 path itself closes the door behind it.
+    assertFalse(canStartPlacement(skipPlacement(season)))
+    assertFalse(canStartPlacement(beginPlacement(season)))
+  }
+
+  @Test
   fun beginPlacementEntersThreeMatchStateAtHiddenBronzeIII() {
     val placing = beginPlacement(season)
     assertEquals(PlacementState.IN_PROGRESS, placing.placementState)

@@ -91,6 +91,15 @@ fun hasSkippedPlacement(profile: RankedProfile): Boolean =
   profile.placementState == PlacementState.SKIPPED
 
 /**
+ * RD10 + RD30: the S45 two-path choice may still offer placement. Only a
+ * account that has never decided can start it — once skipped, placement
+ * cannot be started later (RD30); once finished or underway, it never
+ * repeats (RD10: once per account, never per season).
+ */
+fun canStartPlacement(profile: RankedProfile): Boolean =
+  profile.placementState == PlacementState.NOT_STARTED
+
+/**
  * RD10 — enter the three scripted placement matches from a fresh account. The
  * account sits at an unplaced Bronze III that is NEVER displayed (S48 shows
  * only 1/3 → 3/3; a provisional rank is never teased); the rank stays hidden
