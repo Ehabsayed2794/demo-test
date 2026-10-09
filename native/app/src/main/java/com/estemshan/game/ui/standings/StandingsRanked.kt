@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -19,10 +18,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.estemshan.engine.rankLabel
 import com.estemshan.engine.resolveRanked
+import com.estemshan.game.ui.theme.BodyFamily
 import com.estemshan.game.ui.theme.EstemshanColors
+import com.estemshan.game.ui.theme.MonoFamily
 
 /**
  * S57 — the Ranked half of the Final Standings screen.
@@ -106,9 +110,46 @@ fun formatRpDelta(delta: Int): String = when {
 fun sampleSeason(): RankedSeasonUiState =
   RankedSeasonUiState(id = "SAMPLE-S12", start = "2026-07-01", end = "2026-10-01")
 
-/** The tier chip beside your name — your NEW rank, formatted by label(). */
+// ── Exact ranked-block text specs (ranked-result.css, px → sp 1:1) ──
+
+/** .rw-lab — mono 9px/600, letter-spacing .06em, ink-faint. */
+private val RewardLabelStyle = TextStyle(
+  fontFamily = MonoFamily,
+  fontWeight = FontWeight.SemiBold,
+  fontSize = 9.sp,
+  letterSpacing = 0.54.sp,
+  color = EstemshanColors.InkFaint,
+)
+
+/** .rank-detail — Saira 10px, line-height 1.55, ink-dim. */
+private val RankDetailStyle = TextStyle(
+  fontFamily = BodyFamily,
+  fontSize = 10.sp,
+  lineHeight = 15.5.sp,
+  color = EstemshanColors.InkDim,
+)
+
+/** .rp-chip .rw-val — mono 23px/700. */
+private fun rpValueStyle(negative: Boolean) = TextStyle(
+  fontFamily = MonoFamily,
+  fontWeight = FontWeight.Bold,
+  fontSize = 23.sp,
+  color = if (negative) EstemshanColors.Error else EstemshanColors.Legal,
+)
+
+/** .tier-chip — Saira 10px ink (9px beside a row name). */
+private fun tierChipStyle(size: Int) = TextStyle(
+  fontFamily = BodyFamily,
+  fontSize = size.sp,
+  color = EstemshanColors.Ink,
+)
+
+/**
+ * The tier chip beside your name — your NEW rank, formatted by label().
+ * Exact .tier-chip: GoldDim 1dp border, 6dp radius, 7×3dp padding.
+ */
 @Composable
-fun TierChip(label: String, modifier: Modifier = Modifier) {
+fun TierChip(label: String, fontSize: Int = 10, modifier: Modifier = Modifier) {
   Surface(
     modifier = modifier
       .testTag("tierChip")
@@ -119,8 +160,9 @@ fun TierChip(label: String, modifier: Modifier = Modifier) {
     Text(
       label,
       modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
-      style = MaterialTheme.typography.labelLarge,
-      color = MaterialTheme.colorScheme.onSurface,
+      style = tierChipStyle(fontSize),
+      maxLines = 1,
+      softWrap = false,
     )
   }
 }
@@ -145,61 +187,46 @@ fun RankedRewardsStrip(
       .testTag("rankedRewards"),
     horizontalArrangement = Arrangement.spacedBy(12.dp),
   ) {
-    // ── RANKED RP ──
+    // ── RANKED RP (.rp-chip: flex 1.05, value absolute top-right) ──
     Surface(
-      modifier = Modifier.weight(1.05f),
-      color = MaterialTheme.colorScheme.surfaceVariant,
+      modifier = Modifier
+        .weight(1.05f)
+        .border(1.dp, EstemshanColors.PanelLine, RoundedCornerShape(12.dp)),
+      color = EstemshanColors.Pill,
       shape = RoundedCornerShape(12.dp),
     ) {
-      Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp)) {
-        Text(
-          "RANKED RP",
-          style = MaterialTheme.typography.labelLarge,
-          color = EstemshanColors.InkFaint,
-        )
+      Column(
+        Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+      ) {
+        Text("RANKED RP", style = RewardLabelStyle)
         Text(
           formatRpDelta(displayedDelta),
           modifier = Modifier.testTag("rpDelta"),
-          style = MaterialTheme.typography.headlineMedium,
-          color = if (displayedDelta < 0) {
-            MaterialTheme.colorScheme.error
-          } else {
-            EstemshanColors.Legal
-          },
+          style = rpValueStyle(displayedDelta < 0),
         )
-        Text(
-          "${ranked.rp} RP",
-          style = MaterialTheme.typography.bodyMedium,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Text("${ranked.rp} RP", style = RankDetailStyle)
         if (ranked.reason != null) {
-          Text(
-            ranked.reason,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-          )
+          Text(ranked.reason, style = RankDetailStyle)
         }
         if (ranked.ceiling) {
-          Text(
-            "Above 3,000 RP · leaderboard-only",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-          )
+          Text("Above 3,000 RP · leaderboard-only", style = RankDetailStyle)
         }
       }
     }
-    // ── RANK TRANSITION ──
+    // ── RANK TRANSITION (.transition-chip: flex 1.5) ──
     Surface(
-      modifier = Modifier.weight(1.5f),
-      color = MaterialTheme.colorScheme.surfaceVariant,
+      modifier = Modifier
+        .weight(1.5f)
+        .border(1.dp, EstemshanColors.PanelLine, RoundedCornerShape(12.dp)),
+      color = EstemshanColors.Pill,
       shape = RoundedCornerShape(12.dp),
     ) {
-      Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp)) {
-        Text(
-          "RANK TRANSITION",
-          style = MaterialTheme.typography.labelLarge,
-          color = EstemshanColors.InkFaint,
-        )
+      Column(
+        Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+      ) {
+        Text("RANK TRANSITION", style = RewardLabelStyle)
         Row(
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -207,8 +234,7 @@ fun RankedRewardsStrip(
           TierChip(ranked.previousRankLabel)
           Text(
             "→",
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = RankDetailStyle,
           )
           val nextModifier = if (rankResolved) {
             Modifier.testTag(
@@ -232,7 +258,7 @@ fun RankedRewardsStrip(
               .graphicsLayer(scaleX = resolveScale, scaleY = resolveScale)
               .then(
               if (rankResolved && ranked.movement < 0) {
-                Modifier.border(1.dp, MaterialTheme.colorScheme.error, RoundedCornerShape(6.dp))
+                Modifier.border(1.dp, EstemshanColors.Error, RoundedCornerShape(6.dp))
               } else {
                 Modifier.border(1.dp, EstemshanColors.GoldDim, RoundedCornerShape(6.dp))
               },
@@ -243,39 +269,35 @@ fun RankedRewardsStrip(
             Text(
               ranked.nextRankLabel,
               modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
-              style = MaterialTheme.typography.labelLarge,
-              color = when {
-                rankResolved && ranked.movement < 0 -> MaterialTheme.colorScheme.error
-                rankResolved && ranked.movement > 0 -> EstemshanColors.Legal
-                else -> MaterialTheme.colorScheme.onSurface
-              },
+              style = tierChipStyle(10).copy(
+                color = when {
+                  rankResolved && ranked.movement < 0 -> EstemshanColors.Error
+                  rankResolved && ranked.movement > 0 -> EstemshanColors.Legal
+                  else -> EstemshanColors.Ink
+                },
+              ),
+              maxLines = 1,
+              softWrap = false,
             )
           }
         }
       }
     }
-    // ── SEASON ──
+    // ── SEASON (.season-chip: flex .85) ──
     Surface(
-      modifier = Modifier.weight(0.85f),
-      color = MaterialTheme.colorScheme.surfaceVariant,
+      modifier = Modifier
+        .weight(0.85f)
+        .border(1.dp, EstemshanColors.PanelLine, RoundedCornerShape(12.dp)),
+      color = EstemshanColors.Pill,
       shape = RoundedCornerShape(12.dp),
     ) {
-      Column(Modifier.padding(horizontal = 14.dp, vertical = 9.dp)) {
-        Text(
-          "SEASON",
-          style = MaterialTheme.typography.labelLarge,
-          color = EstemshanColors.InkFaint,
-        )
-        Text(
-          ranked.season.id,
-          style = MaterialTheme.typography.bodyMedium,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-          "${ranked.season.start} → ${ranked.season.end}",
-          style = MaterialTheme.typography.bodyMedium,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+      Column(
+        Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
+      ) {
+        Text("SEASON", style = RewardLabelStyle)
+        Text(ranked.season.id, style = RankDetailStyle)
+        Text("${ranked.season.start} → ${ranked.season.end}", style = RankDetailStyle)
       }
     }
   }

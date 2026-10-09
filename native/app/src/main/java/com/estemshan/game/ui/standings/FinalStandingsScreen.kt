@@ -6,7 +6,11 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -14,11 +18,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Button
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -28,12 +36,23 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.estemshan.game.R
+import com.estemshan.game.ui.theme.BodyFamily
+import com.estemshan.game.ui.theme.DisplayFamily
 import com.estemshan.game.ui.theme.EstemshanColors
 import com.estemshan.game.ui.theme.EstemshanTheme
+import com.estemshan.game.ui.theme.MonoFamily
 import kotlinx.coroutines.delay
 
 /**
@@ -134,16 +153,29 @@ private fun RankedFinalStandings(
   ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
       // Title crowns appear ONLY for Match King (RD8) — never for Rank
-      // King, never for every outcome as the old title did.
+      // King, never for every outcome as the old title did. Crown glyph
+      // matches the titlebar ::before/::after: 15sp gold at 70%.
       if (userIsMatchKing) {
         Text(
           "♛ ",
           modifier = Modifier.testTag("matchKingCrownTitle"),
-          style = MaterialTheme.typography.headlineMedium,
-          color = EstemshanColors.Gold,
+          style = TextStyle(
+            fontFamily = DisplayFamily,
+            fontSize = 15.sp,
+            color = EstemshanColors.Gold.copy(alpha = 0.7f),
+          ),
         )
       }
-      Text(state.title, style = MaterialTheme.typography.headlineMedium)
+      // .res-title — Marcellus 26sp, letter-spacing .06em.
+      Text(
+        state.title,
+        style = TextStyle(
+          fontFamily = DisplayFamily,
+          fontSize = 26.sp,
+          letterSpacing = 1.56.sp,
+          color = EstemshanColors.Ink,
+        ),
+      )
     }
     Spacer(Modifier.height(16.dp))
     LazyColumn(
@@ -185,12 +217,41 @@ private fun RankedFinalStandings(
       rankResolved = rankResolved,
     )
     Spacer(Modifier.height(16.dp))
-    Button(
-      onClick = onReturnToRanked,
-      modifier = Modifier.fillMaxWidth().testTag("returnToRanked"),
-    ) {
-      Text("Return to Ranked")
-    }
+    // .btn-foot.primary — 42dp gold gradient CTA, host-callback seam.
+    ReturnToRankedButton(onReturnToRanked)
+  }
+}
+
+/**
+ * Exact primary CTA: 42dp tall, 11dp radius, vertical GoldHi→Gold
+ * gradient, #2a1d0c Saira 600 13.5sp at .02em letter-spacing.
+ */
+@Composable
+private fun ReturnToRankedButton(onClick: () -> Unit) {
+  Box(
+    modifier = Modifier
+      .fillMaxWidth()
+      .height(42.dp)
+      .clip(RoundedCornerShape(11.dp))
+      .background(
+        Brush.verticalGradient(
+          listOf(EstemshanColors.GoldHi, EstemshanColors.Gold),
+        ),
+      )
+      .clickable(onClick = onClick)
+      .testTag("returnToRanked"),
+    contentAlignment = Alignment.Center,
+  ) {
+    Text(
+      "Return to Ranked",
+      style = TextStyle(
+        fontFamily = BodyFamily,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 13.5.sp,
+        letterSpacing = 0.27.sp,
+        color = EstemshanColors.OnGold,
+      ),
+    )
   }
 }
 
@@ -216,49 +277,100 @@ private fun RankedStandingRowCard(
     tween(durationMillis = 550, easing = RankedReveal.EaseOutCubic),
     label = "crownPop",
   )
-  val nameColor = if (row.isWinner) {
-    MaterialTheme.colorScheme.primary
-  } else {
-    MaterialTheme.colorScheme.onSurface
-  }
-  Row(
+  // Exact .res-row: 58dp tall, 15dp side padding, 13dp radius,
+  // black-26 fill, panel-line hairline. Win rows take the gold-tinted
+  // gradient + 60%-gold border; your non-winning row takes the 26% one.
+  val isYou = tierChip != null
+  Surface(
     modifier = Modifier.fillMaxWidth(),
-    horizontalArrangement = Arrangement.SpaceBetween,
-    verticalAlignment = Alignment.CenterVertically,
+    shape = RoundedCornerShape(13.dp),
+    color = Color.Transparent,
+    border = BorderStroke(
+      1.dp,
+      when {
+        isMatchKing -> EstemshanColors.Gold.copy(alpha = 0.6f)
+        isYou -> EstemshanColors.Gold.copy(alpha = 0.26f)
+        else -> EstemshanColors.PanelLine
+      },
+    ),
   ) {
     Row(
+      modifier = Modifier
+        .background(
+          if (isMatchKing) {
+            Brush.horizontalGradient(
+              // color-mix(in oklch, accent 20%, #1a130c) → black 20%.
+              listOf(Color(0xFF433016), Color.Black.copy(alpha = 0.2f)),
+            )
+          } else {
+            Brush.linearGradient(listOf(Color.Black.copy(alpha = 0.26f), Color.Black.copy(alpha = 0.26f)))
+          },
+        )
+        .height(58.dp)
+        .padding(horizontal = 15.dp),
+      horizontalArrangement = Arrangement.SpaceBetween,
       verticalAlignment = Alignment.CenterVertically,
-      horizontalArrangement = Arrangement.spacedBy(8.dp),
-      modifier = Modifier.weight(1f),
     ) {
-      if (isMatchKing) {
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.weight(1f),
+      ) {
+        if (isMatchKing) {
+          // .rank.crown — 22sp gold in a 38dp cell.
+          Box(Modifier.width(38.dp), contentAlignment = Alignment.Center) {
+            Text(
+              "♛",
+              modifier = Modifier
+                .testTag("matchKingCrown")
+                .graphicsLayer(scaleX = crownScale, scaleY = crownScale),
+              style = TextStyle(
+                fontFamily = MonoFamily,
+                fontSize = 22.sp,
+                color = EstemshanColors.Gold,
+              ),
+            )
+          }
+        } else if (isKoz) {
+          // .rank.kooz — the vector mug, 30dp in a 38dp cell.
+          Box(
+            Modifier
+              .width(38.dp)
+              .height(38.dp)
+              .testTag("kozBadge"),
+            contentAlignment = Alignment.Center,
+          ) {
+            Icon(
+              painterResource(R.drawable.koz_mug),
+              contentDescription = "Koz",
+              modifier = Modifier.size(30.dp),
+              tint = Color.Unspecified,
+            )
+          }
+        }
+        // .rn-name — Marcellus 18sp at .02em.
         Text(
-          "♛",
-          modifier = Modifier
-            .testTag("matchKingCrown")
-            .graphicsLayer(scaleX = crownScale, scaleY = crownScale),
-          style = MaterialTheme.typography.titleMedium,
-          color = EstemshanColors.Gold,
+          row.seat + (if (row.saaydaBadge) " · Sa'ayda" else ""),
+          style = TextStyle(
+            fontFamily = DisplayFamily,
+            fontSize = 18.sp,
+            letterSpacing = 0.36.sp,
+            color = if (row.isWinner) EstemshanColors.Gold else EstemshanColors.Ink,
+          ),
         )
-      } else if (isKoz) {
-        Text(
-          "☕",
-          modifier = Modifier.testTag("kozBadge"),
-          style = MaterialTheme.typography.titleMedium,
-        )
+        if (tierChip != null) TierChip(tierChip, fontSize = 9)
       }
+      // .row-score — mono 26sp/700; winners read accent-hi.
       Text(
-        row.seat + (if (row.saaydaBadge) " · Sa'ayda" else ""),
-        style = MaterialTheme.typography.titleMedium,
-        color = nameColor,
+        "${if (row.lastDelta >= 0) "+" else ""}${row.lastDelta} · $displayedTotal",
+        style = TextStyle(
+          fontFamily = MonoFamily,
+          fontWeight = FontWeight.Bold,
+          fontSize = 26.sp,
+          color = if (row.isWinner) EstemshanColors.GoldHi else EstemshanColors.Ink,
+        ),
       )
-      if (tierChip != null) TierChip(tierChip)
     }
-    Text(
-      "${if (row.lastDelta >= 0) "+" else ""}${row.lastDelta} · $displayedTotal",
-      style = MaterialTheme.typography.labelLarge,
-      color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
   }
 }
 
