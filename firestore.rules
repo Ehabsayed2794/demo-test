@@ -1741,7 +1741,13 @@ service cloud.firestore {
       // that advances past (or completes on) that round:
       //   { round: int, matchId: string,
       //     cardLog: [exactly the round's 52 {seatId,card,round} plays],
-      //     biddingLog: [that round's {seatId,actionType,...,round} actions] }
+      //     biddingLog: [that round's {seatId,actionType,...,round} actions],
+      //     estimates: {seat: int 0..13 Final Estimates snapshot} }
+      // `estimates` is ALLOWED, never required: archives written before
+      // S50's archive fix (and any old client still writing the 4-key
+      // shape) stay valid; matches without per-round estimates simply
+      // fail closed at settlement (HISTORY_INCOMPLETE) instead of
+      // settling on fabricated numbers.
       // The parent's own `cardLog`/`biddingLog` then reset to [] in that
       // SAME transaction (see isValidRoundAdvance()/isValidMatchCompletion()
       // above), so the parent NEVER holds more than one round's window
@@ -1778,14 +1784,18 @@ service cloud.firestore {
           return request.auth != null
                  && request.auth.uid in parent.players
                  && ('status' in parent ? parent.status != 'complete' : true)
-                 && data.keys().hasOnly(['round', 'matchId', 'cardLog', 'biddingLog'])
-                 && data.round is int
-                 && data.round >= 1
-                 && data.matchId == matchId
-                 && data.cardLog is list
-                 && data.cardLog.size() == 52
-                 && data.biddingLog is list
-                 && data.round == parent.currentRound;
+                  && data.keys().hasOnly(['round', 'matchId', 'cardLog', 'biddingLog', 'estimates'])
+                  && data.round is int
+                  && data.round >= 1
+                  && data.matchId == matchId
+                  && data.cardLog is list
+                  && data.cardLog.size() == 52
+                  && data.biddingLog is list
+                  // S50 archive fix: `estimates` is allowed but never
+                  // required — pre-fix archives and old clients writing the
+                  // 4-key shape stay valid. Present values must be a map.
+                  && (data.get('estimates', null) == null || data.estimates is map)
+                  && data.round == parent.currentRound;
         }
 
         allow get: if request.auth != null && request.auth.uid in parentMatch().players;
