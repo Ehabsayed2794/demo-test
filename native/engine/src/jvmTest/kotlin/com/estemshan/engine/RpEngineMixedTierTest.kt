@@ -2,6 +2,7 @@ package com.estemshan.engine
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 /**
@@ -185,6 +186,67 @@ class RpEngineMixedTierTest {
         "one tier apart: cap inactive, rankDown=$rankDown",
       )
     }
+  }
+
+  /**
+   * The interaction the owner's pre-merge question turns on. RD29 compares by
+   * TIER, never by ordinal, so the widest gap the one-tier band admits is
+   * division I of the upper tier against division III of the lower. Derived
+   * from the real [rankLadder], not hardcoded, so a ladder change breaks this
+   * and forces the cap decision to be re-taken consciously.
+   *
+   * At the default 0.20 rate that gap reaches the cap EXACTLY (1 + 0.2 × 5 =
+   * 2.0), so the cap is a no-op across the whole eligible band in both modes.
+   * This pins that contract: if a retune pushes the rate up, the cap starts
+   * binding and Rank-down's award diverges from public — which is a
+   * deliberate rule consequence, not a silent regression.
+   */
+  @Test
+  fun theCapReachesTheRankDownCeilingExactlyAtRD29sWidestBand() {
+    val widestEligibleGap = widestOneTierApartGap()
+    assertEquals(5, widestEligibleGap, "the widest gap RD29 admits, in ladder ordinals")
+
+    val rawAtEdge = 1.0 + config.higherTierLossMultiplierPerOrdinal * widestEligibleGap
+    assertEquals(
+      config.rankDownLossMultiplierCap, rawAtEdge,
+      "the raw loss multiplier reaches the cap exactly at the band's edge",
+    )
+
+    // Across the entire eligible band the two modes agree — the cap never
+    // alters an output for a table RD29 can actually form.
+    for (gap in 0..widestEligibleGap) {
+      val public = withMixedTierAdjustment(-30, mixed(MatchOutcome.KOZ, gap, rankDown = false))
+      val rankDown = withMixedTierAdjustment(-30, mixed(MatchOutcome.KOZ, gap, rankDown = true))
+      assertEquals(
+        public, rankDown,
+        "the cap must not bind anywhere in RD29's band: gap=$gap",
+      )
+    }
+
+    // One ordinal PAST the band the cap bites — this is the guardrail, and it
+    // is Rank-down-only, as the rule text scopes it.
+    assertNotEquals(
+      withMixedTierAdjustment(-30, mixed(MatchOutcome.KOZ, widestEligibleGap + 1, rankDown = false)),
+      withMixedTierAdjustment(-30, mixed(MatchOutcome.KOZ, widestEligibleGap + 1, rankDown = true)),
+      "past the band only Rank-down is capped",
+    )
+  }
+
+  /**
+   * The widest ordinal distance two ADJACENT ladder tiers can span: division I
+   * of the upper tier minus division III of the lower. RD29 admits tiers
+   * differing by at most one, compared by tier, so this is the band's edge.
+   */
+  private fun widestOneTierApartGap(): Int {
+    val byTier = rankLadder.withIndex().groupBy { it.value.tier }
+    val tierOrder = rankLadder.map { it.tier }.distinct()
+    var widest = 0
+    for (i in 0 until tierOrder.size - 1) {
+      val lower = byTier[tierOrder[i]]!!
+      val upper = byTier[tierOrder[i + 1]]!!
+      widest = maxOf(widest, upper.last().index - lower.first().index)
+    }
+    return widest
   }
 
   // ── Composition: GM6's ×0.5 applies last, after the asymmetry ────────

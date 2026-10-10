@@ -98,11 +98,18 @@ data class RpEngineConfig(
   //
   // Every rate is a PER-ORDINAL multiplier delta applied to |tierDifference|:
   // a player one ordinal above the table gets 1x the rate, two ordinals 2x.
-  // RD29/S70 caps Ranked tables at one tier apart at the gate, so in
-  // practice these barely move — but they are the tuning surface, and
-  // Rank-down (RD6) admits the wider mixes the cap exists for.
   //
-  // All three are placeholders pending a balance pass, like RD4's above.
+  // RD29 caps every Ranked table — public AND Rank-down — at one tier apart
+  // (the 2026-10-06 amendment repealed Rank-down's former "any tiers
+  // together"; both modes now share the band). Compared by tier, not by
+  // ordinal, so the widest gap the band admits is division I of the upper
+  // tier against division III of the lower = 5 ordinals on this ladder.
+  // At the default 0.20 loss rate that is exactly 1 + 0.2 × 5 = 2.0, i.e.
+  // the loss multiplier reaches [rankDownLossMultiplierCap] precisely at the
+  // eligibility edge and the cap is a no-op today. The cap is the guardrail
+  // that bounds an upward retune, not something the current rates exercise.
+  //
+  // All three rates are placeholders pending a balance pass, like RD4's above.
 
   /**
    * RD5: reward REDUCTION per ordinal the winner sat ABOVE the table. A
@@ -124,9 +131,12 @@ data class RpEngineConfig(
   val higherTierLossMultiplierPerOrdinal: Double = 0.20,
   /**
    * RD6: the hard ceiling on the loss multiplier in Rank-down — "never more
-   * than ×2". Applies ONLY to Rank-down; public matchmaking is uncapped. A
-   * guardrail for a table you built yourself, where the tier mix can exceed
-   * RD29's one-tier band.
+   * than ×2". Applies ONLY to Rank-down; public matchmaking is uncapped.
+   * Post-amendment both modes share RD29's one-tier band, so this is a bound
+   * rather than a correction: at the default 0.20 rate the multiplier
+   * reaches 2.0 exactly at the band's edge (5 ordinals) and the cap never
+   * changes an output. It exists to keep a future balance pass from pushing
+   * a Rank-down loss past double.
    */
   val rankDownLossMultiplierCap: Double = 2.0,
 )
@@ -236,21 +246,32 @@ private fun clampToSign(base: Int, scaled: Int): Int = when {
  *
  * ## RD6: the ×2 cap is Rank-down-only
  *
- * Rank-down (Private/Password Ranked) admits tier mixes beyond RD29's
- * one-tier band, so its loss multiplier is hard-capped at
- * [RpEngineConfig.rankDownLossMultiplierCap] — "never more than ×2" — via
- * [RpMatchInput.rankDown]. Public matchmaking is **uncapped**: RD29/S70
- * already keeps public tables within one tier at the gate, so the cap would
- * be unreachable there. Enforcing the band here would duplicate that gate.
+ * The rule text scopes the cap to the private mode — "×2 in Private Ranked,
+ * RD6's cap", "the ×2 private loss cap" — so it applies only when
+ * [RpMatchInput.rankDown] is set; public matchmaking is uncapped. This is
+ * the mode decision, not a reachability argument.
+ *
+ * Since the 2026-10-06 amendment **both** modes share RD29's one-tier band
+ * (Rank-down's former "any tiers together" was repealed), so the cap is not
+ * correcting for a wider private mix — it no longer exists. It is a bound:
+ * at the default 0.20 rate the loss multiplier reaches the cap exactly at
+ * the band's edge (5 ordinals) and never alters an output. It exists to
+ * keep a future balance pass from pushing a Rank-down loss past double.
+ *
+ * Note that this engine never **enforces** the band. RD29/S70 does that at
+ * the matchmaking gate, server-side; duplicating it here would couple the RP
+ * arithmetic to the eligibility check. Given a seat that is somehow 6+
+ * ordinals above its table, this function still computes an award — capped
+ * in Rank-down, uncapped in public — rather than rejecting the input.
  *
  * ## Sign discipline (the bug class S47's doc warns about)
  *
  * Every multiplier is non-negative, and the win reduction is clamped at 0,
  * so a **reduced reward can never become a loss and a multiplied loss can
  * never become a gain**. The sign comes from the outcome via the base and is
- * restored with [signOf] after scaling the magnitude — the adjustment cannot
- * invert it even at extreme tier gaps. A base already clamped to 0 (a King
- * far above a weak table) scales to 0 here too.
+ * restored after scaling the magnitude — the adjustment cannot invert it
+ * even at extreme tier gaps. A base already clamped to 0 (a King far above
+ * a weak table) scales to 0 here too.
  */
 fun withMixedTierAdjustment(
   baseDelta: Int,
