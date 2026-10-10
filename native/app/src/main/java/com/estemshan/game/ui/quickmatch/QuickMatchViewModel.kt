@@ -23,8 +23,11 @@ import com.estemshan.game.ui.standings.FinalStandingsUiState
 import com.estemshan.game.ui.standings.buildStandings
 import com.estemshan.game.ui.table.TableViewModel
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlin.random.Random
 
@@ -57,6 +60,18 @@ class QuickMatchViewModel : ViewModel() {
 
   private val _standings = MutableStateFlow<FinalStandingsUiState?>(null)
   val standings: StateFlow<FinalStandingsUiState?> = _standings.asStateFlow()
+
+  /**
+   * Each finished round, as [onTableDone] scored it. Purely additive: a
+   * caller driving several matches in one session — the S53 placement
+   * coordinator — reads the per-round estimates-vs-tricks the standings alone
+   * do not carry, so it can record RD10's accuracy, performance, and
+   * consistency signals. Nobody else subscribes and emitting changes no
+   * behaviour; the buffer holds a whole match (18 rounds) so a slow collector
+   * loses nothing.
+   */
+  private val _roundResults = MutableSharedFlow<QuickRoundResult>(extraBufferCapacity = 32)
+  val roundResults: SharedFlow<QuickRoundResult> = _roundResults.asSharedFlow()
 
   /**
    * Which seats a bot drives in this match. Defaults to [BotRoster.HUMANS_ONLY],
@@ -198,6 +213,7 @@ class QuickMatchViewModel : ViewModel() {
     _totals.value = accumulateMatchScores(_totals.value, result.deltas)
     val saaydaSeats = if (result.isSaayda) seats.toSet() else emptySet()
     _standings.value = buildStandings(_totals.value, result.deltas, saaydaSeats)
+    _roundResults.tryEmit(QuickRoundResult(cfg.round, cfg.estimates, tricksWon))
   }
 
   fun nextRound() {
@@ -252,3 +268,16 @@ fun bidsFromOutcome(cfg: RoundCfg): Map<String, Bid> =
       else -> Bid(BidType.TRICKS, cfg.estimates.getValue(seat))
     }
   }
+
+/**
+ * One finished round as [QuickMatchViewModel.onTableDone] scored it — the
+ * every-seat estimates the auction settled on and the tricks each seat
+ * actually took. Published on [QuickMatchViewModel.roundResults] so a caller
+ * running more than one match can keep per-round detail the final standings
+ * throw away (S53's placement signals).
+ */
+data class QuickRoundResult(
+  val round: Int,
+  val estimates: Map<String, Int>,
+  val tricksWon: Map<String, Int>,
+)
