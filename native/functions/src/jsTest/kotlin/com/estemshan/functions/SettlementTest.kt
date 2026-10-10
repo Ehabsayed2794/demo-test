@@ -91,9 +91,18 @@ class SettlementTest {
    * slot takes the lowest remaining card that cannot beat its trick's
    * winner. Led suit cycles S/H/D/C; play order is p1..p4.
    */
-  private fun playsFor(winners: List<String>, trump: String, round: Int): List<Map<String, Any?>> {
-    require(winners.size == 13)
+  private fun nextSeat(seat: String): String {
     val order = listOf("p1", "p2", "p3", "p4")
+    return order[(order.indexOf(seat) + 1) % order.size]
+  }
+
+  private fun playsFor(
+    winners: List<String>,
+    trump: String,
+    round: Int,
+    leaderId: String,
+  ): List<Map<String, Any?>> {
+    require(winners.size == 13)
     val pools = mutableMapOf<String, ArrayDeque<Int>>()
     for (suit in listOf("SPADES", "HEARTS", "DIAMONDS", "CLUBS")) {
       pools[suit] = ArrayDeque((14 downTo 2).toList())
@@ -105,21 +114,28 @@ class SettlementTest {
       winValue[trick] = pools.getValue(winSuitOf[trick]).removeFirst()
     }
     val plays = ArrayList<Map<String, Any?>>()
+    var leader = leaderId
     winners.forEachIndexed { trick, winner ->
       val winSuit = winSuitOf[trick]
       val winV = winValue.getValue(trick)
-      for (seat in order) {
+      val led = ledCycle[trick % 4]
+      var seat = leader
+      repeat(4) {
         if (seat == winner) {
           plays.add(card(seat, winSuit, winV, round))
+        } else if (seat == leader && trump == "SANS") {
+          val pool = pools.getValue(led)
+          plays.add(card(seat, led, pool.removeLast(), round))
         } else {
           val fallback = pools.entries
             .filter { it.key != winSuit && it.value.isNotEmpty() }
             .minByOrNull { it.value.last() }
             ?: pools.entries.first { it.value.isNotEmpty() }
-          val suit = fallback.key
-          plays.add(card(seat, suit, fallback.value.removeLast(), round))
+          plays.add(card(seat, fallback.key, fallback.value.removeLast(), round))
         }
+        seat = nextSeat(seat)
       }
+      leader = winner
     }
     assertEquals(52, plays.size)
     return plays
@@ -137,7 +153,7 @@ class SettlementTest {
     // Synthetic shortened matches: completedRound ends the match, so the
     // default pairs 1/1 (mirrors endMatch's completedRound+1 > maxRounds).
     maxRounds: Any? = 1,
-    finalScores: Any? = mapOf("p1" to 25, "p2" to 13, "p3" to 12, "p4" to 14),
+    finalScores: Any? = mapOf("p1" to 25, "p2" to -11, "p3" to 12, "p4" to 14),
     winnerIds: Any? = listOf("p1"),
     version: Any? = 7,
   ): Map<String, Any?> {
@@ -211,10 +227,11 @@ class SettlementTest {
     trump: String,
     actions: List<Map<String, Any?>>,
     estimates: Map<String, Int>?,
+    leaderId: String = "p1",
   ): ArchivedRound {
     val parsed = Settlement.parseArchive(
       "$round",
-      archiveFields(round, playsFor(winners, trump, round), actions, estimates ?: ABSENT),
+      archiveFields(round, playsFor(winners, trump, round, leaderId), actions, estimates ?: ABSENT),
     ) ?: throw AssertionError("fixture archive $round did not parse")
     // Self-validating fixture: the replay must re-derive the intended wins.
     val tricks = Settlement.replayTricks(shellMatch(), parsed, Suit.valueOf(trump))
@@ -223,8 +240,11 @@ class SettlementTest {
     return parsed
   }
 
-  /** Round-1 golden parts: caller p1 5♠; est p2:3, p3:2, p4:3 (total 14);
-   *  all succeed, no sole → p1:25, p2:13, p3:12, p4:14. */
+  /** Round-1 golden parts: caller p1 5♠; est p2:3, p3:2, p4:4 (total
+   *  14, over); won 5/2/2/4 — p2 alone misses (sole loser): p1 CALLER 25,
+   *  p2 −1−10 = −11, p3 12, p4 RISK win 14. (Completed totals never equal
+   *  13 — the forbidden-13 rule — so all-succeed is unreachable; at least
+   *  one seat always misses.) */
   private data class RoundFixture(
     val winners: List<String>,
     val plays: List<Map<String, Any?>>,
@@ -233,8 +253,8 @@ class SettlementTest {
   )
 
   private fun round1Parts(): RoundFixture {
-    val winners = listOf("p1", "p1", "p1", "p1", "p1", "p2", "p2", "p2", "p3", "p3", "p4", "p4", "p4")
-    val plays = playsFor(winners, "SPADES", 1)
+    val winners = listOf("p1", "p1", "p1", "p1", "p1", "p2", "p2", "p3", "p3", "p4", "p4", "p4", "p4")
+    val plays = playsFor(winners, "SPADES", 1, "p1")
     val actions = listOf(
       dash("p1", false, 1), dash("p2", false, 1), dash("p3", false, 1), dash("p4", false, 1),
       auctionBid("p1", 5, "SPADES", 1),
@@ -297,27 +317,27 @@ class SettlementTest {
   fun agreedWhenClaimMatchesRecompute() {
     val decision = Settlement.recompute(converged(listOf(round1Golden())))
     assertTrue(decision is SettleDecision.Agreed, "expected Agreed but was $decision")
-    assertEquals(mapOf("p1" to 25, "p2" to 13, "p3" to 12, "p4" to 14), decision.recomputed.finalScores)
+    assertEquals(mapOf("p1" to 25, "p2" to -11, "p3" to 12, "p4" to 14), decision.recomputed.finalScores)
     assertEquals(listOf("p1"), decision.recomputed.winnerIds)
   }
 
   @Test
   fun correctedWhenClaimDisagrees() {
-    val forged = matchFields(finalScores = mapOf("p1" to 25, "p2" to 23, "p3" to 12, "p4" to 14))
+    val forged = matchFields(finalScores = mapOf("p1" to 25, "p2" to -1, "p3" to 12, "p4" to 14))
     val decision = Settlement.recompute(converged(listOf(round1Golden()), forged))
     assertTrue(decision is SettleDecision.Corrected, "expected Corrected but was $decision")
-    // The recomputed value is what settles — p2 drops back to 13.
-    assertEquals(mapOf("p1" to 25, "p2" to 13, "p3" to 12, "p4" to 14), decision.recomputed.finalScores)
+    // The recomputed value is what settles — p2 drops back to -11.
+    assertEquals(mapOf("p1" to 25, "p2" to -11, "p3" to 12, "p4" to 14), decision.recomputed.finalScores)
     assertEquals(listOf("p1"), decision.recomputed.winnerIds)
-    assertEquals(mapOf("p1" to 25, "p2" to 23, "p3" to 12, "p4" to 14), decision.recomputed.claimedScores)
+    assertEquals(mapOf("p1" to 25, "p2" to -1, "p3" to 12, "p4" to 14), decision.recomputed.claimedScores)
   }
 
   @Test
   fun withAndDashCallDeriveFromReplay() {
-    // Caller p1 5♠; p3 matched the suit in-auction (With); p2 dash-called;
-    // total 12 (under): p1 25, p2 DASHCALL +33, p3 WIZZ 25, p4 12.
-    // Match King is p2 — the dash caller — not the match caller.
-    val winners = listOf("p1", "p1", "p1", "p1", "p1", "p3", "p3", "p3", "p3", "p3", "p4", "p4", "p4")
+    // Caller p1 5♠; p3 matched the suit in-auction (With) but misses
+    // (WIZZ miss −(1+10) = −11); p2 dash-called and wins (+33, under);
+    // p4 RISK-misses by two (−2). Match King is p2 — the dash caller.
+    val winners = listOf("p1", "p1", "p1", "p1", "p1", "p3", "p3", "p3", "p3", "p4", "p4", "p4", "p4")
     val actions = listOf(
       dash("p1", false, 1), dash("p2", true, 1), dash("p3", false, 1), dash("p4", false, 1),
       auctionBid("p1", 5, "SPADES", 1),
@@ -329,7 +349,7 @@ class SettlementTest {
     val round = archived(1, winners, "SPADES", actions, mapOf("p3" to 5, "p4" to 2))
     val decision = Settlement.recompute(converged(listOf(round)))
     assertTrue(decision is SettleDecision.Corrected, "expected Corrected but was $decision")
-    assertEquals(mapOf("p1" to 25, "p2" to 33, "p3" to 25, "p4" to 12), decision.recomputed.finalScores)
+    assertEquals(mapOf("p1" to 25, "p2" to 33, "p3" to -11, "p4" to -2), decision.recomputed.finalScores)
     assertEquals(listOf("p2"), decision.recomputed.winnerIds)
   }
 
@@ -348,8 +368,9 @@ class SettlementTest {
   @Test
   fun saaydaChainDoublesThroughNextMultiplier() {
     // Round 1: everybody misses (Saayda) → zeros, multiplier → 2.
-    // Round 2 (×2, total 12): p2 CALLER 23×2=46, p3 13×2=26,
-    // p4 13×2=26, p1 RISK-miss −1×2=−2.
+    // Round 2 (×2, total 16): p2 CALLER 24×2=48; p3/p4 WIZZ (triple
+    // jump-in on the 4-call) 24×2=48 each; p1 takes one trick off a 4
+    // (WIZZ_RISK miss −(3+10+10), SOLE loser −10 → −33×2 = −66).
     val r1Winners = listOf("p1", "p1", "p2", "p3", "p3", "p3", "p3", "p4", "p4", "p4", "p4", "p4", "p4")
     val r1Actions = listOf(
       dash("p1", false, 1), dash("p2", false, 1), dash("p3", false, 1), dash("p4", false, 1),
@@ -358,25 +379,25 @@ class SettlementTest {
       confirm("p1", 4, "SPADES", 1),
     )
     val r1 = archived(1, r1Winners, "SPADES", r1Actions, mapOf("p2" to 2, "p3" to 2, "p4" to 3))
-    val r2Winners = listOf("p2", "p2", "p2", "p3", "p3", "p3", "p4", "p4", "p4", "p1", "p1", "p1", "p1")
+    val r2Winners = listOf("p2", "p2", "p2", "p2", "p3", "p3", "p3", "p3", "p4", "p4", "p4", "p4", "p1")
     val r2Actions = listOf(
       dash("p2", false, 2), dash("p3", false, 2), dash("p4", false, 2), dash("p1", false, 2),
-      auctionBid("p2", 3, "HEARTS", 2),
+      auctionBid("p2", 4, "HEARTS", 2),
       auctionPass("p3", 2), auctionPass("p4", 2), auctionPass("p1", 2),
-      confirm("p2", 3, "HEARTS", 2),
+      confirm("p2", 4, "HEARTS", 2),
     )
-    val r2 = archived(2, r2Winners, "HEARTS", r2Actions, mapOf("p3" to 3, "p4" to 3, "p1" to 3))
+    val r2 = archived(2, r2Winners, "HEARTS", r2Actions, mapOf("p3" to 4, "p4" to 4, "p1" to 4), "p2")
     val fields = matchFields(
       dealer = "u2",
       completedRound = 2,
       maxRounds = 2,
-      finalScores = mapOf("p1" to -2, "p2" to 46, "p3" to 26, "p4" to 26),
-      winnerIds = listOf("p2"),
+      finalScores = mapOf("p1" to -66, "p2" to 48, "p3" to 48, "p4" to 48),
+      winnerIds = listOf("p2", "p3", "p4"),
     )
     val decision = Settlement.recompute(converged(listOf(r1, r2), fields))
     assertTrue(decision is SettleDecision.Agreed, "expected Agreed but was $decision")
-    assertEquals(mapOf("p1" to -2, "p2" to 46, "p3" to 26, "p4" to 26), decision.recomputed.finalScores)
-    assertEquals(listOf("p2"), decision.recomputed.winnerIds)
+    assertEquals(mapOf("p1" to -66, "p2" to 48, "p3" to 48, "p4" to 48), decision.recomputed.finalScores)
+    assertEquals(listOf("p2", "p3", "p4"), decision.recomputed.winnerIds)
   }
 
   @Test
@@ -418,7 +439,7 @@ class SettlementTest {
   fun prefixArchiveIsIncompleteNotFabricated() {
     val parsed = Settlement.parseArchive(
       "1",
-      archiveFields(1, playsFor(List(13) { "p1" }, "SPADES", 1), emptyList()),
+      archiveFields(1, playsFor(List(13) { "p1" }, "SPADES", 1, "p1"), emptyList()),
     ) ?: throw AssertionError("parse failed")
     assertNull(parsed.estimates)
     val decision = Settlement.recompute(converged(listOf(parsed)))
@@ -428,7 +449,7 @@ class SettlementTest {
 
   @Test
   fun shortCardLogIsCorrupt() {
-    val full = playsFor(List(13) { "p1" }, "SPADES", 1)
+    val full = playsFor(List(13) { "p1" }, "SPADES", 1, "p1")
     val parsed = Settlement.parseArchive(
       "1",
       archiveFields(1, full.dropLast(1), emptyList(), emptyMap<String, Int>()),
@@ -462,7 +483,7 @@ class SettlementTest {
       "1",
       archiveFields(
         1,
-        playsFor(List(13) { "p2" }, "SPADES", 1),
+        playsFor(List(13) { "p2" }, "SPADES", 1, "p1"),
         rigged,
         mapOf("p1" to 3, "p3" to 2, "p4" to 4),
       ),
@@ -594,13 +615,13 @@ class SettlementTest {
     val golden = round1Golden()
     val parts = round1Parts()
     val db = FakeDb(
-      match = matchFields(finalScores = mapOf("p1" to 25, "p2" to 23, "p3" to 12, "p4" to 14)),
+      match = matchFields(finalScores = mapOf("p1" to 25, "p2" to -1, "p3" to 12, "p4" to 14)),
       archives = mapOf("1" to rawRound(golden, parts.plays, parts.actions)),
     )
     val response = settleOnce(db, settleRequest("u1", "m1"))
     assertTrue(response["ok"] == true, "expected ok response but was $response")
     assertTrue(response["corrected"] == true, "expected corrected response but was $response")
-    assertEquals(mapOf("p1" to 25, "p2" to 13, "p3" to 12, "p4" to 14), response["finalScores"])
+    assertEquals(mapOf("p1" to 25, "p2" to -11, "p3" to 12, "p4" to 14), response["finalScores"])
     assertEquals(1, db.corrections)
     assertEquals(1, db.claims)
 
