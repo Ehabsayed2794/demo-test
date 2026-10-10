@@ -23,12 +23,18 @@ package com.estemshan.engine
  * magnitude band; opponent strength and tier difference scale it. This is
  * the engine S47 owns, and it is the ONLY place the base magnitudes live.
  *
- * **RD5/RD6 (S48, not this file):** the mixed-tier *asymmetry* — a
+ * **RD5/RD6 (this file, S48):** the mixed-tier *asymmetry* — a
  * higher-tier winner earns less, a higher-tier loser loses more, a
- * lower-tier winner earns more — plus Private Ranked's hard ×2 loss cap.
- * Those compose on top of [computeBaseDelta] via [withMixedTierAdjustment],
- * which is why this file exposes the base and the adjustment hook but
- * implements neither asymmetry direction.
+ * lower-tier winner earns more — plus Rank-down's hard ×2 loss cap. It
+ * composes on top of [computeBaseDelta] through [withMixedTierAdjustment]
+ * and touches nothing else, which is why the base and the adjustment are
+ * separate functions with separate config rates.
+ *
+ * **Scope (2026-10-06 amendment):** RD5/RD6 apply to public matchmaking and
+ * within-one-tier Rank-down only. Two or more tiers apart can no longer
+ * reach a Ranked table — RD29/S70 enforces that at the matchmaking gate,
+ * not here. This engine never rejects an input for tier distance; it just
+ * computes the award.
  *
  * ## GM6: the Mini ×0.5, applied once (OPEN-3 CLOSED 2026-10-06)
  *
@@ -87,6 +93,42 @@ data class RpEngineConfig(
   val ladderFloorOrdinal: Int = 0,
   /** The ladder's top ordinal — King. Defaults to the real ladder. */
   val ladderCeilingOrdinal: Int = rankLadder.lastIndex,
+
+  // ── RD5/RD6 (S48) — the mixed-tier asymmetry rates ─────────────────────
+  //
+  // Every rate is a PER-ORDINAL multiplier delta applied to |tierDifference|:
+  // a player one ordinal above the table gets 1x the rate, two ordinals 2x.
+  // RD29/S70 caps Ranked tables at one tier apart at the gate, so in
+  // practice these barely move — but they are the tuning surface, and
+  // Rank-down (RD6) admits the wider mixes the cap exists for.
+  //
+  // All three are placeholders pending a balance pass, like RD4's above.
+
+  /**
+   * RD5: reward REDUCTION per ordinal the winner sat ABOVE the table. A
+   * higher-tier win is worth less. Multiplier is `1 - rate * ordinals`,
+   * clamped at 0 so a reduction can never invert the award (sign
+   * discipline — see [withMixedTierAdjustment]).
+   */
+  val higherTierWinReductionPerOrdinal: Double = 0.10,
+  /**
+   * RD5: reward INCREASE per ordinal the winner sat BELOW the table. A
+   * lower-tier win is worth more. Multiplier is `1 + rate * ordinals`.
+   */
+  val lowerTierWinIncreasePerOrdinal: Double = 0.10,
+  /**
+   * RD5: loss MULTIPLIER per ordinal the loser sat ABOVE the table. A
+   * higher-tier loss costs more. Multiplier is `1 + rate * ordinals`, then
+   * capped by [rankDownLossMultiplierCap] in Rank-down (RD6).
+   */
+  val higherTierLossMultiplierPerOrdinal: Double = 0.20,
+  /**
+   * RD6: the hard ceiling on the loss multiplier in Rank-down — "never more
+   * than ×2". Applies ONLY to Rank-down; public matchmaking is uncapped. A
+   * guardrail for a table you built yourself, where the tier mix can exceed
+   * RD29's one-tier band.
+   */
+  val rankDownLossMultiplierCap: Double = 2.0,
 )
 
 /**
@@ -100,12 +142,20 @@ data class RpEngineConfig(
  * @param opponentStrength the mean ladder ordinal of the three opponents.
  *   Higher = stronger table.
  * @param gameType FULL or MINI (GM6 — the ×0.5 is applied here, once).
+ * @param rankDown RD6's Private/Password Ranked flag. S43 persists this as a
+ *   separate `rankDown` boolean alongside `mode` — Rank-down is
+ *   `RANKED + rankDown`, **never a fourth [MatchMode] value**, and this
+ *   input mirrors that shape rather than inventing one. RP is only ever
+ *   computed for a Ranked match (settlement gates on `mode == RANKED`), so
+ *   `mode` itself is implied and the only open question RD5/RD6 has is
+ *   whether this table was Rank-down. Absent ⇒ false, like an old room doc.
  */
 data class RpMatchInput(
   val outcome: MatchOutcome,
   val playerOrdinal: Int,
   val opponentStrength: Int,
   val gameType: GameType,
+  val rankDown: Boolean = false,
 )
 
 /**
@@ -113,6 +163,16 @@ data class RpMatchInput(
  * player sits above the opponents' mean on the ladder (the higher tier).
  */
 fun RpMatchInput.tierDifference(): Int = playerOrdinal - opponentStrength
+
+/**
+ * RD5's win/loss split. [MatchOutcome.KING] and [MatchOutcome.SECOND] are
+ * the two placements the base awards RP for; [MatchOutcome.THIRD] and
+ * [MatchOutcome.KOZ] cost it. Local to this file so S48 doesn't reach into
+ * `RankedStats.kt` — the classification is the RP engine's, not the
+ * statistics module's.
+ */
+private val MatchOutcome.isGain: Boolean
+  get() = this == MatchOutcome.KING || this == MatchOutcome.SECOND
 
 /**
  * RD4 — the dynamic base delta, before the Mini multiplier and before any
@@ -155,15 +215,71 @@ private fun clampToSign(base: Int, scaled: Int): Int = when {
 }
 
 /**
- * RD5/RD6 — the mixed-tier asymmetry hook. S48 implements the three
- * directions (higher-tier wins → reduced; higher-tier loses → multiplied,
- * capped at ×2 in Private; lower-tier wins → increased) on top of the base.
+ * RD5/RD6 (S48) — the mixed-tier asymmetry, composed on the RD4 base through
+ * the hook S47 deliberately left. **This function is the only asymmetry
+ * authority**: it never calls [computeBaseDelta] or [finalRpDelta], so GM6's
+ * ×0.5 still applies last, after this adjustment.
  *
- * S47 ships the identity default so the engine is complete and testable in
- * isolation: the base is a well-defined award on its own, and S48 replaces
- * this function without touching [computeBaseDelta] or [finalRpDelta].
+ * The mixed-tier signal is [RpMatchInput.tierDifference] — nonzero IS the
+ * mixed-tier condition, positive = the player was the higher tier. RD5 names
+ * three directions, each a per-ordinal multiplier on the base magnitude:
+ *
+ * - **higher-tier wins → reward reduced** — `1 − reduction × ordinals`
+ * - **higher-tier loses → loss multiplied** — `1 + multiplier × ordinals`
+ * - **lower-tier wins → reward increased** — `1 + increase × ordinals`
+ *
+ * The fourth cell — a **lower-tier loser** — is not one of RD5's directions
+ * and returns the base untouched. RD5 is asymmetric by design rather than a
+ * full redistribution, and inventing a direction the closed rules never name
+ * is how a balance becomes unreviewable. The symmetric base already moved
+ * all four cells; this layer adds the three RD5 cares about.
+ *
+ * ## RD6: the ×2 cap is Rank-down-only
+ *
+ * Rank-down (Private/Password Ranked) admits tier mixes beyond RD29's
+ * one-tier band, so its loss multiplier is hard-capped at
+ * [RpEngineConfig.rankDownLossMultiplierCap] — "never more than ×2" — via
+ * [RpMatchInput.rankDown]. Public matchmaking is **uncapped**: RD29/S70
+ * already keeps public tables within one tier at the gate, so the cap would
+ * be unreachable there. Enforcing the band here would duplicate that gate.
+ *
+ * ## Sign discipline (the bug class S47's doc warns about)
+ *
+ * Every multiplier is non-negative, and the win reduction is clamped at 0,
+ * so a **reduced reward can never become a loss and a multiplied loss can
+ * never become a gain**. The sign comes from the outcome via the base and is
+ * restored with [signOf] after scaling the magnitude — the adjustment cannot
+ * invert it even at extreme tier gaps. A base already clamped to 0 (a King
+ * far above a weak table) scales to 0 here too.
  */
-fun withMixedTierAdjustment(baseDelta: Int, input: RpMatchInput): Int = baseDelta
+fun withMixedTierAdjustment(
+  baseDelta: Int,
+  input: RpMatchInput,
+  config: RpEngineConfig = RpEngineConfig(),
+): Int {
+  // Same tier ⇒ not mixed-tier ⇒ the base stands. RD5's precondition.
+  val ordinals = kotlin.math.abs(input.tierDifference())
+  if (ordinals == 0 || baseDelta == 0) return baseDelta
+
+  val higherTier = input.tierDifference() > 0
+  val multiplier = when {
+    input.outcome.isGain && higherTier ->
+      (1.0 - config.higherTierWinReductionPerOrdinal * ordinals).coerceAtLeast(0.0)
+    input.outcome.isGain ->
+      1.0 + config.lowerTierWinIncreasePerOrdinal * ordinals
+    higherTier -> {
+      val raw = 1.0 + config.higherTierLossMultiplierPerOrdinal * ordinals
+      if (input.rankDown) raw.coerceAtMost(config.rankDownLossMultiplierCap) else raw
+    }
+    // A lower-tier loser: not an RD5 direction.
+    else -> return baseDelta
+  }
+  // baseDelta != 0 here (that case returned above), so the sign is exactly
+  // ±1 — restoring it after scaling the magnitude is what keeps the
+  // adjustment from ever inverting the award.
+  val sign = if (baseDelta > 0) 1 else -1
+  return sign * roundDelta(kotlin.math.abs(baseDelta) * multiplier)
+}
 
 /**
  * OPEN-3 (CLOSED 2026-10-06) — nearest integer, ties rounded AWAY from
@@ -208,7 +324,10 @@ fun roundDelta(raw: Double): Int {
  * round is a no-op, so Full is bit-identical to no multiplier at all.
  */
 fun finalRpDelta(input: RpMatchInput, config: RpEngineConfig = RpEngineConfig()): Int {
-  val fullEquivalent = withMixedTierAdjustment(computeBaseDelta(input, config), input)
+  // config is threaded to the hook, not defaulted there, or S48's tunables
+  // would be silently ignored. The composition order is untouched: RD4 base
+  // → RD5/RD6 asymmetry → GM6's ×0.5 last.
+  val fullEquivalent = withMixedTierAdjustment(computeBaseDelta(input, config), input, config)
   val multiplier = if (input.gameType == GameType.MINI) 0.5 else 1.0
   return roundDelta(fullEquivalent * multiplier)
 }

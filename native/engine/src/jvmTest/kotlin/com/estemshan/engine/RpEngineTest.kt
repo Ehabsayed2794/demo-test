@@ -102,18 +102,26 @@ class RpEngineTest {
 
   @Test
   fun fullMultiplierIsExactlyOneAndARoundNoOp() {
-    val base = computeBaseDelta(input(MatchOutcome.KING, 6, 9), config)
-    assertEquals(base, finalRpDelta(input(MatchOutcome.KING, 6, 9, GameType.FULL), config))
+    // Same-tier seat, so RD5's asymmetry is a no-op too and the ONLY thing
+    // under test is GM6: for FULL the gameType multiplier is exactly 1.0 and
+    // the round is a no-op, so Full is bit-identical to no multiplier.
+    // (A mixed-tier input would now move under S48's RD5 layer, which is a
+    // different rule — see RpEngineMixedTierTest.)
+    val base = computeBaseDelta(input(MatchOutcome.KING, 6, 6), config)
+    assertEquals(base, finalRpDelta(input(MatchOutcome.KING, 6, 6, GameType.FULL), config))
   }
 
   @Test
   fun miniIsExactlyHalfOfFullForEvenDeltas() {
-    for (outcome in MatchOutcome.entries) {
-      val full = finalRpDelta(input(outcome, 6, 9, GameType.FULL), config)
-      val mini = finalRpDelta(input(outcome, 6, 9, GameType.MINI), config)
-      // Even deltas halve exactly — no rounding artefact.
-      if (full % 2 == 0) {
-        assertEquals(full / 2, mini, "MINI must be exactly half of FULL for $outcome")
+    // Same-tier seats throughout, isolating GM6 from RD5. Every even full
+    // delta must halve exactly — no rounding artefact.
+    for (ordinal in 0..18) {
+      for (outcome in MatchOutcome.entries) {
+        val full = finalRpDelta(input(outcome, ordinal, ordinal, GameType.FULL), config)
+        val mini = finalRpDelta(input(outcome, ordinal, ordinal, GameType.MINI), config)
+        if (full % 2 == 0) {
+          assertEquals(full / 2, mini, "MINI must be exactly half of FULL for $outcome at ordinal $ordinal")
+        }
       }
     }
   }
