@@ -82,6 +82,22 @@ object Reasons {
   const val MATCH_NOT_COMPLETE = "MATCH_NOT_COMPLETE"
   const val CREATED = "CREATED"
   const val RECORDED = "RECORDED"
+
+  // S60 manual Vote Kick (RD18) — gate denials, thrown. Each maps one
+  // engine VoteKickUnavailability for S40's in-place explanations.
+  const val VOTE_NOT_RANKED = "VOTE_NOT_RANKED"
+  const val VOTE_ROUNDS_SHORT = "VOTE_ROUNDS_SHORT"
+  const val VOTE_NO_UNIQUE_KOZ = "VOTE_NO_UNIQUE_KOZ"
+  const val VOTE_TARGET_NOT_KOZ = "VOTE_TARGET_NOT_KOZ"
+  const val VOTE_TARGET_REMOVED = "VOTE_TARGET_REMOVED"
+  const val VOTE_INITIATOR_IS_TARGET = "VOTE_INITIATOR_IS_TARGET"
+  const val VOTE_INITIATOR_INELIGIBLE = "VOTE_INITIATOR_INELIGIBLE"
+  const val VOTE_COOLDOWN_LIVE = "VOTE_COOLDOWN_LIVE"
+  const val VOTE_ALREADY_OPEN = "VOTE_ALREADY_OPEN"
+
+  // S60: a permanently-removed uid attempting any match write. Distinct
+  // from PERMISSION_DENIED so S40 (and clients) can name the removal.
+  const val REMOVED_FROM_MATCH = "REMOVED_FROM_MATCH"
 }
 
 /** startMatch(roomId): the room↔match atomic write. */

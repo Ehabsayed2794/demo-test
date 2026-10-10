@@ -63,6 +63,7 @@ import com.estemshan.services.model.Reasons.NOT_ALL_YES
 import com.estemshan.services.model.Reasons.NOT_YET_EXPIRED
 import com.estemshan.services.model.Reasons.NOT_YOUR_TURN
 import com.estemshan.services.model.Reasons.PERMISSION_DENIED
+import com.estemshan.services.model.Reasons.REMOVED_FROM_MATCH
 import com.estemshan.services.model.Reasons.ROUND_NOT_COMPLETE
 import com.estemshan.services.model.Reasons.STALE_GAME_STATE
 import com.estemshan.services.model.Reasons.TRICK_WINNER_UNAVAILABLE
@@ -226,6 +227,10 @@ class MatchService(
         return@runTx TxOutcome.Err(ServiceException(PERMISSION_DENIED,
           "submitBid: you do not own seat '$seatId'."))
       }
+      if (match.isRemoved(auth.currentUid() ?: "")) {
+        return@runTx TxOutcome.Err(ServiceException(REMOVED_FROM_MATCH,
+          "submitBid: you were removed from this match and cannot rejoin."))
+      }
       if (match.biddingOpen != true) {
         return@runTx TxOutcome.Err(ServiceException(BIDDING_CLOSED,
           "submitBid: bidding is closed for this match."))
@@ -278,9 +283,16 @@ class MatchService(
     val matchRef = matches.document(matchId)
 
     /** resolveSeat() — the same call pre-transaction and in-transaction. */
-    fun resolveSeat(match: MatchDoc): String = adapter.uidToSeat(match, callingUid)
-      ?: throw ServiceException(PERMISSION_DENIED,
-        "submitBiddingAction: you do not own a seat in this match.")
+    fun resolveSeat(match: MatchDoc): String {
+      val seat = adapter.uidToSeat(match, callingUid)
+        ?: throw ServiceException(PERMISSION_DENIED,
+          "submitBiddingAction: you do not own a seat in this match.")
+      if (match.isRemoved(callingUid)) {
+        throw ServiceException(REMOVED_FROM_MATCH,
+          "submitBiddingAction: you were removed from this match and cannot rejoin.")
+      }
+      return seat
+    }
 
     // Pre-check read: engine verdict BEFORE runTransaction() — zero writes
     // attempted for an illegal or out-of-turn action.
@@ -356,6 +368,10 @@ class MatchService(
       val seatId = adapter.uidToSeat(match, callingUid)
         ?: throw ServiceException(PERMISSION_DENIED,
           "submitCard: you do not own a seat in this match.")
+      if (match.isRemoved(callingUid)) {
+        throw ServiceException(REMOVED_FROM_MATCH,
+          "submitCard: you were removed from this match and cannot rejoin.")
+      }
       if (match.isRoundOneOpeningWindow) return seatId
       try {
         adapter.assertLocalTurn(match, seatId)
@@ -515,6 +531,10 @@ class MatchService(
         return@runTx TxOutcome.Err(ServiceException(PERMISSION_DENIED,
           "advanceToNextRound: you are not a player in this match."))
       }
+      if (match.isRemoved(callingUid)) {
+        return@runTx TxOutcome.Err(ServiceException(REMOVED_FROM_MATCH,
+          "advanceToNextRound: you were removed from this match and cannot rejoin."))
+      }
       if (match.isComplete) {
         return@runTx TxOutcome.Ok(AdvanceResult.alreadyComplete(matchId, match.currentRound))
       }
@@ -608,6 +628,10 @@ class MatchService(
         return@runTx TxOutcome.Err(ServiceException(PERMISSION_DENIED,
           "extendMatchRounds: you are not a player in this match."))
       }
+      if (match.isRemoved(callingUid)) {
+        return@runTx TxOutcome.Err(ServiceException(REMOVED_FROM_MATCH,
+          "extendMatchRounds: you were removed from this match and cannot rejoin."))
+      }
       if (match.isComplete) {
         return@runTx TxOutcome.Ok(ExtendResult.alreadyComplete(matchId, match.maxRounds))
       }
@@ -664,6 +688,10 @@ class MatchService(
       if (!match.isPlayer(callingUid)) {
         return@runTx TxOutcome.Err(ServiceException(PERMISSION_DENIED,
           "endMatch: you are not a player in this match."))
+      }
+      if (match.isRemoved(callingUid)) {
+        return@runTx TxOutcome.Err(ServiceException(REMOVED_FROM_MATCH,
+          "endMatch: you were removed from this match and cannot rejoin."))
       }
       if (match.isComplete) {
         return@runTx TxOutcome.Ok(EndMatchResult.alreadyComplete(
@@ -743,6 +771,10 @@ class MatchService(
       if (!match.isPlayer(callingUid)) {
         return@runTx TxOutcome.Err(ServiceException(PERMISSION_DENIED,
           "dealRound: you are not a player in this match."))
+      }
+      if (match.isRemoved(callingUid)) {
+        return@runTx TxOutcome.Err(ServiceException(REMOVED_FROM_MATCH,
+          "dealRound: you were removed from this match and cannot rejoin."))
       }
       if (match.gameState.dealtRound >= roundNumber) {
         return@runTx TxOutcome.Ok(DealResult.alreadyDealt(matchId, match.gameState.dealtRound))
