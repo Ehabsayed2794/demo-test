@@ -2,6 +2,7 @@ package com.estemshan.engine
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 /**
@@ -102,18 +103,26 @@ class RpEngineTest {
 
   @Test
   fun fullMultiplierIsExactlyOneAndARoundNoOp() {
-    val base = computeBaseDelta(input(MatchOutcome.KING, 6, 9), config)
-    assertEquals(base, finalRpDelta(input(MatchOutcome.KING, 6, 9, GameType.FULL), config))
+    // Same-tier seat, so RD5's asymmetry is a no-op too and the ONLY thing
+    // under test is GM6: for FULL the gameType multiplier is exactly 1.0 and
+    // the round is a no-op, so Full is bit-identical to no multiplier.
+    // (A mixed-tier input would now move under S48's RD5 layer, which is a
+    // different rule — see RpEngineMixedTierTest.)
+    val base = computeBaseDelta(input(MatchOutcome.KING, 6, 6), config)
+    assertEquals(base, finalRpDelta(input(MatchOutcome.KING, 6, 6, GameType.FULL), config))
   }
 
   @Test
   fun miniIsExactlyHalfOfFullForEvenDeltas() {
-    for (outcome in MatchOutcome.entries) {
-      val full = finalRpDelta(input(outcome, 6, 9, GameType.FULL), config)
-      val mini = finalRpDelta(input(outcome, 6, 9, GameType.MINI), config)
-      // Even deltas halve exactly — no rounding artefact.
-      if (full % 2 == 0) {
-        assertEquals(full / 2, mini, "MINI must be exactly half of FULL for $outcome")
+    // Same-tier seats throughout, isolating GM6 from RD5. Every even full
+    // delta must halve exactly — no rounding artefact.
+    for (ordinal in 0..18) {
+      for (outcome in MatchOutcome.entries) {
+        val full = finalRpDelta(input(outcome, ordinal, ordinal, GameType.FULL), config)
+        val mini = finalRpDelta(input(outcome, ordinal, ordinal, GameType.MINI), config)
+        if (full % 2 == 0) {
+          assertEquals(full / 2, mini, "MINI must be exactly half of FULL for $outcome at ordinal $ordinal")
+        }
       }
     }
   }
@@ -174,6 +183,38 @@ class RpEngineTest {
       java.lang.Math.round(-7.5).toInt() != roundDelta(-7.5),
       "the two rules must differ on negative ties — if they agree, the guard is stale",
     )
+  }
+
+  /**
+   * The second mandatory trap guard (OPEN-3). The plan's insertion contract
+   * names `kotlin.math.round` as the implementation, but it rounds ties to
+   * the EVEN neighbour, so it breaks two of the four cases the same plan
+   * mandates as separate assertions (+9 → +5 and −9 → −5, since 9 × 0.5 =
+   * 4.5 exactly). It gets the ±15 pair right only by coincidence — 7.5 and
+   * −7.5 happen to round to the even ±8.
+   *
+   * This test exists so that a future refactor "fixing" [roundDelta] by
+   * delegating to the plan's named call fails HERE, in a test named after
+   * the trap, rather than silently asymmetrizing Mini's odd losses.
+   */
+  @Test
+  fun kotlinMathRoundIsTiesToEvenAndIsNotOurRule() {
+    assertEquals(4.0, kotlin.math.round(4.5), "kotlin.math.round(4.5) is 4, not 5")
+    assertEquals(-4.0, kotlin.math.round(-4.5), "kotlin.math.round(−4.5) is −4, not −5")
+
+    // The plan's four mandated cases, all four against the named call.
+    assertEquals(8, roundDelta(15 * 0.5), "+15 → +8")
+    assertEquals(-8, roundDelta(-15 * 0.5), "−15 → −8")
+    assertEquals(5, roundDelta(9 * 0.5), "+9 → +5")
+    assertEquals(-5, roundDelta(-9 * 0.5), "−9 → −5")
+
+    // The named call passes the ±15 pair and fails the ±9 pair.
+    assertEquals(8, kotlin.math.round(15 * 0.5).toInt(), "the ±15 pair passes by coincidence")
+    assertEquals(-8, kotlin.math.round(-15 * 0.5).toInt())
+    assertNotEquals(5, kotlin.math.round(9 * 0.5).toInt(),
+      "the +9 case is where the plan's named call is wrong")
+    assertNotEquals(-5, kotlin.math.round(-9 * 0.5).toInt(),
+      "the −9 case is where the plan's named call is wrong")
   }
 
   // ── The engine stays independent of the ladder's threshold constants ──
