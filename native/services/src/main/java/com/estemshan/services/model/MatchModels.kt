@@ -250,6 +250,26 @@ data class MatchDoc(
   val botTier: BotTier = BotTier.MEDIUM,
   val botPersonality: BotPersonality = BotPersonality.BALANCED,
   val decisionTimerSeconds: Int = DEFAULT_DECISION_TIMER_SECONDS,
+  /**
+   * S60 (E6b, RD18): seats currently bot-driven. Today only a Vote Kick
+   * success writes here (the removed seat stays bot-held permanently);
+   * the S39/S41 takeovers will append when they land. Absent in older
+   * docs ⇒ no bot seats (no migration).
+   */
+  val botSeats: List<String> = emptyList(),
+  /**
+   * S60: uids permanently removed by a passed Vote Kick. A removed uid
+   * can never play, vote, or rejoin this match again — every match write
+   * path checks [isSeated], and future (re)join paths must too. Absent
+   * in older docs ⇒ nobody removed (no migration).
+   */
+  val removedUids: List<String> = emptyList(),
+  /**
+   * S60 (D8): the 5-round same-target cooldown, verbatim
+   * `failedVoteKickCooldown: { targetSeat, blockedUntilRound }`. Single
+   * slot by spec. Absent ⇒ no live cooldown (no migration).
+   */
+  val failedVoteKickCooldown: VoteKickCooldownData? = null,
 ) {
 
   /** The match is over, terminal: status never moves complete → anything. */
@@ -274,6 +294,16 @@ data class MatchDoc(
   fun seatToUid(seatId: String): String? = seats[seatId]
 
   fun isPlayer(uid: String): Boolean = uid in players
+
+  /** S60: permanently removed by a passed Vote Kick — never plays again. */
+  fun isRemoved(uid: String): Boolean = uid in removedUids
+
+  /**
+   * S60: seated AND not removed — the gate every match write path
+   * enforces. Removal is checked separately from membership so the
+   * denial can name it (REMOVED_FROM_MATCH, S40-facing).
+   */
+  fun isSeated(uid: String): Boolean = isPlayer(uid) && !isRemoved(uid)
 
   /** Round-tagged card count — the structural round-completion check
    *  (52 == 13 tricks * 4 seats) used by advance/endMatch. */
@@ -345,6 +375,9 @@ data class MatchDoc(
         botTier = RoomDoc.parseBotTier(fields["botTier"]),
         botPersonality = RoomDoc.parseBotPersonality(fields["botPersonality"]),
         decisionTimerSeconds = RoomDoc.parseDecisionTimerSeconds(fields["decisionTimerSeconds"]),
+        botSeats = (fields["botSeats"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+        removedUids = (fields["removedUids"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+        failedVoteKickCooldown = VoteKickCooldownData.fromFields(fields["failedVoteKickCooldown"]),
       )
     }
   }

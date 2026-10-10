@@ -1383,11 +1383,50 @@ service cloud.firestore {
              && newData.completedRound is int
              && newData.completedRound == oldData.currentRound
              && newData.completedRound + 1 > oldData.maxRounds
-             // Winner IDs must be exactly the non-empty highest-score tie
-             // set over this match's fixed seat map. This checks
-             // consistency only; it does not claim to recompute gameplay.
-             && isExactWinnerTieSet(newData.finalScores, newData.winnerIds, oldData.seats);
-    }
+              // Winner IDs must be exactly the non-empty highest-score tie
+              // set over this match's fixed seat map. This checks
+              // consistency only; it does not claim to recompute gameplay.
+              && isExactWinnerTieSet(newData.finalScores, newData.winnerIds, oldData.seats);
+     }
+
+      // ── S60 manual Vote Kick (RD18): parent writes ────────────────
+      // Two shapes, both written by VoteKickService inside the resolving
+      // transaction; anything else touching these fields is denied. The
+      // tally math itself stays services-side (the eligible denominator
+      // moves with botSeats, which CEL cannot count) — these validators
+      // check mode, shape, membership, and monotonicity only.
+      function isValidVoteKickCooldownWrite() {
+        let oldData = resource.data;
+        let newData = request.resource.data;
+        return request.auth != null
+               && request.auth.uid in oldData.players
+               && oldData.get('mode', 'ROOM') == 'RANKED'
+               && newData.diff(oldData).affectedKeys().hasOnly(
+                    ['failedVoteKickCooldown', 'version', 'updatedAt'])
+               && newData.version == oldData.version + 1
+               && newData.failedVoteKickCooldown is map
+               && newData.failedVoteKickCooldown.targetSeat in oldData.seats.keys()
+               && newData.failedVoteKickCooldown.blockedUntilRound is int
+               && newData.failedVoteKickCooldown.blockedUntilRound >= 1;
+      }
+
+      function isValidVoteKickRemovalWrite() {
+        let oldData = resource.data;
+        let newData = request.resource.data;
+        return request.auth != null
+               && request.auth.uid in oldData.players
+               && oldData.get('mode', 'ROOM') == 'RANKED'
+               && newData.diff(oldData).affectedKeys().hasOnly(
+                    ['botSeats', 'removedUids', 'version', 'updatedAt'])
+               && newData.version == oldData.version + 1
+               && newData.botSeats is list
+               && newData.botSeats.hasOnly(oldData.seats.keys())
+               && newData.removedUids is list
+               && newData.removedUids.hasOnly(oldData.players)
+               // Removal only grows: nothing is ever un-removed.
+               && oldData.get('botSeats', []).hasOnly(newData.botSeats)
+               && oldData.get('removedUids', []).hasOnly(newData.removedUids);
+      }
 
     match /matches/{matchId} {
       // Player Hand Synchronization sprint (Architecture Gate-approved
@@ -1721,9 +1760,14 @@ service cloud.firestore {
           // changes cardLog/currentRound/status/maxRounds/gameState, all
           // checked BEFORE this line.
           ('turn' in affected || 'cardPhase' in affected) ? isValidOpeningTurnPublication() :
-          ('biddingLog' in affected) ? isValidBiddingActionSubmission() :
-          ('bids' in affected) ? isValidBidSubmission() :
-          false;
+           ('biddingLog' in affected) ? isValidBiddingActionSubmission() :
+           ('bids' in affected) ? isValidBidSubmission() :
+           // S60 manual Vote Kick (RD18): the cooldown write and the
+           // removal write each own their exact field set — never mixed
+           // with gameplay writes, never each other.
+           ('failedVoteKickCooldown' in affected) ? isValidVoteKickCooldownWrite() :
+           ('botSeats' in affected || 'removedUids' in affected) ? isValidVoteKickRemovalWrite() :
+           false;
       }
       allow update: if request.auth != null && isValidMatchUpdateDispatch();
       allow delete: if false;
@@ -1980,6 +2024,131 @@ service cloud.firestore {
 
         allow create: if isValidNewRematchVote();
         allow update: if isValidVoteCast() || isValidTimeoutResolution() || isValidRematchMatchLink();
+        allow delete: if false;
+      }
+
+      // ── matches/{matchId}/voteKick/{voteId} ────────────────────────
+      // S60 manual Vote Kick (RD18, Ranked-only). One open vote at a time
+      // at the well-known id "current" (the rematchVote/current pattern):
+      // the target is frozen at open and never re-derived, the target's
+      // slot is structurally absent from `votes` (never null-valued),
+      // bot-held seats hold no slot (D7), terminal statuses are final.
+      // Majority math stays services-side (the eligible denominator moves
+      // with botSeats, which CEL cannot count) — these validators check
+      // mode, round gate, shape, membership, immutability, and terminal
+      // transitions only. The unique-Koz rule itself is services-side too:
+      // the rules cannot see match totals.
+      match /voteKick/{voteId} {
+        function parentMatch() {
+          return get(/databases/$(database)/documents/matches/$(matchId)).data;
+        }
+        function voteKickBots() {
+          return parentMatch().get('botSeats', []);
+        }
+        // The shared open shape: create opens it; a terminal→OPEN update
+        // replaces it with a fresh vote (version restarts at 1).
+        function isValidVoteKickOpenShape(data) {
+          let parent = parentMatch();
+          return voteId == 'current'
+                 && parent.get('mode', 'ROOM') == 'RANKED'
+                 && parent.currentRound >= 8
+                 && data.matchId == matchId
+                 && data.status == 'OPEN'
+                 && data.version == 1
+                 && data.roundOpened == parent.currentRound
+                 && data.reason is string
+                 && data.targetSeat in parent.seats.keys()
+                 && !(data.targetSeat in voteKickBots())
+                 // Initiator owns a seat, is human, isn't the target.
+                 && parent.seats.get(data.initiatorSeat, null) == request.auth.uid
+                 && data.initiatorSeat != data.targetSeat
+                 && !(data.initiatorSeat in voteKickBots())
+                 // Cooldown is services-computed; the rules re-check the
+                 // live gate so a stale client cannot slip one through.
+                 && voteKickCooldownClear(parent, data.targetSeat)
+                 && data.votes.keys().hasOnly(parent.seats.keys())
+                 && ((parent.seats.get('p1', null) != null && 'p1' != data.targetSeat && !('p1' in voteKickBots())) ? data.votes.get('p1', 'ABSENT') == null : !('p1' in data.votes))
+                 && ((parent.seats.get('p2', null) != null && 'p2' != data.targetSeat && !('p2' in voteKickBots())) ? data.votes.get('p2', 'ABSENT') == null : !('p2' in data.votes))
+                 && ((parent.seats.get('p3', null) != null && 'p3' != data.targetSeat && !('p3' in voteKickBots())) ? data.votes.get('p3', 'ABSENT') == null : !('p3' in data.votes))
+                 && ((parent.seats.get('p4', null) != null && 'p4' != data.targetSeat && !('p4' in voteKickBots())) ? data.votes.get('p4', 'ABSENT') == null : !('p4' in data.votes))
+                 && data.keys().hasOnly(['matchId', 'targetSeat', 'initiatorSeat', 'reason', 'votes', 'status', 'roundOpened', 'version']);
+        }
+        function voteKickCooldownClear(parent, targetSeat) {
+          let cooldown = parent.get('failedVoteKickCooldown', null);
+          return cooldown == null
+                 || cooldown.targetSeat != targetSeat
+                 || parent.currentRound >= cooldown.blockedUntilRound;
+        }
+        // ── create (VoteKickService.openVoteKick()) ─────────────────
+        function isValidNewVoteKick() {
+          return request.auth != null && isValidVoteKickOpenShape(request.resource.data);
+        }
+        // ── update, shape 1 (VoteKickService.castVoteKick()) ────────
+        // Casts exactly ONE eligible seat's own, currently-null vote.
+        // LOCKED once cast — the rematch vote's immutability rule, cited
+        // by RD18. Terminal moves ride this same write (re-derived from
+        // THIS write's resulting votes map by services, never trusted
+        // from the client's claim alone — the tally math itself is
+        // services-side, see above).
+        function isValidVoteKickCast() {
+          let parent = parentMatch();
+          let oldData = resource.data;
+          let newData = request.resource.data;
+          let actingSeat =
+            (parent.seats.get('p1', null) == request.auth.uid) ? 'p1' :
+            (parent.seats.get('p2', null) == request.auth.uid) ? 'p2' :
+            (parent.seats.get('p3', null) == request.auth.uid) ? 'p3' :
+            (parent.seats.get('p4', null) == request.auth.uid) ? 'p4' : null;
+          let newVal = actingSeat == null ? null : newData.votes.get(actingSeat, null);
+          return request.auth != null
+                 && oldData.status == 'OPEN'
+                 && actingSeat != null
+                 && actingSeat != oldData.targetSeat
+                 && !(actingSeat in voteKickBots())
+                 && oldData.votes.get(actingSeat, 'UNSET') == null
+                 && (newVal == 'YES' || newVal == 'NO')
+                 && newData.diff(oldData).affectedKeys().hasOnly(['votes', 'status', 'version'])
+                 && newData.version == oldData.version + 1
+                 && (actingSeat == 'p1' || newData.votes.get('p1', null) == oldData.votes.get('p1', null))
+                 && (actingSeat == 'p2' || newData.votes.get('p2', null) == oldData.votes.get('p2', null))
+                 && (actingSeat == 'p3' || newData.votes.get('p3', null) == oldData.votes.get('p3', null))
+                 && (actingSeat == 'p4' || newData.votes.get('p4', null) == oldData.votes.get('p4', null))
+                 && !(oldData.targetSeat in newData.votes)
+                 && (newData.status == 'OPEN' || newData.status == 'PASSED'
+                     || newData.status == 'FAILED_NO' || newData.status == 'FAILED_TIMEOUT');
+        }
+        // ── update, shape 2 (completion sweep) ──────────────────────
+        // No wall-clock deadline is invented (OPEN-2): a vote still OPEN
+        // when its match completes resolves FAILED_TIMEOUT ("no majority
+        // by timeout = no", RD18), with the same-target cooldown the
+        // parent write carries in the same transaction.
+        function isValidVoteKickSweep() {
+          let parent = parentMatch();
+          let oldData = resource.data;
+          let newData = request.resource.data;
+          return request.auth != null
+                 && request.auth.uid in parent.players
+                 && oldData.status == 'OPEN'
+                 && parent.status == 'complete'
+                 && newData.status == 'FAILED_TIMEOUT'
+                 && newData.diff(oldData).affectedKeys().hasOnly(['status', 'version'])
+                 && newData.version == oldData.version + 1
+                 && newData.votes == oldData.votes;
+        }
+        // ── update, shape 3 (VoteKickService.openVoteKick() over a ───
+        // terminal vote) — a fresh vote replaces the record, version
+        // restarts at 1, target re-freezes.
+        function isValidVoteKickReopen() {
+          let oldData = resource.data;
+          return request.auth != null
+                 && oldData.status != 'OPEN'
+                 && isValidVoteKickOpenShape(request.resource.data);
+        }
+
+        allow create: if isValidNewVoteKick();
+        allow update: if isValidVoteKickCast() || isValidVoteKickSweep() || isValidVoteKickReopen();
+        allow get: if request.auth != null && request.auth.uid in parentMatch().players;
+        allow list: if false;
         allow delete: if false;
       }
 

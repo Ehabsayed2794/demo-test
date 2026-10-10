@@ -8,6 +8,7 @@ import com.estemshan.engine.Card
 import com.estemshan.engine.ExtensionReason
 import com.estemshan.engine.GameSession
 import com.estemshan.engine.HandAuthority
+import com.estemshan.engine.MatchMode
 import com.estemshan.engine.RoundCfg
 import com.estemshan.engine.RoundScoreInput
 import com.estemshan.engine.RoundState
@@ -126,9 +127,9 @@ class ScriptedMatch(
    * allowed to trigger the start, so any other order would leave the
    * match unstarted.
    */
-  suspend fun start(): String {
+  suspend fun start(mode: MatchMode = MatchMode.ROOM): String {
     val creator = uids.getValue(seats.first())
-    roomCode = clients.first().rooms.createRoom(creator, "suite-room")
+    roomCode = clients.first().rooms.createRoom(creator, "suite-room", mode = mode)
     for (i in 1 until clients.size) {
       clients[i].rooms.joinRoom(roomCode, clients[i].uid)
     }

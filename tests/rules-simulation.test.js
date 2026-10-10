@@ -2894,6 +2894,315 @@ check(
     "uidA", linkedNewMatch) === false
 );
 
+// ════════════════════════════════════════════════════════════════════
+// S60 manual Vote Kick (RD18) — mirrors of firestore.rules'
+// voteKick/current validators + the two parent write shapes. Same
+// "honest, lower-fidelity substitute" disclaimer as every prior block:
+// the tally math itself stays services-side (the eligible denominator
+// moves with botSeats, which CEL cannot count), so these mirrors cover
+// mode, round gate, shape, membership, immutability, and terminal
+// transitions — never the majority arithmetic.
+// ════════════════════════════════════════════════════════════════════
+var vkSeats = { p1: "uidA", p2: "uidB", p3: "uidC", p4: "uidD" };
+var vkRankedParent = {
+  players: ["uidA", "uidB", "uidC", "uidD"], status: "starting", currentRound: 8,
+  mode: "RANKED", seats: vkSeats, botSeats: [], version: 7,
+};
+
+function vkSeatForUid(parentSeats, uid) {
+  var found = Object.keys(parentSeats || {}).filter(function (s) { return parentSeats[s] === uid; });
+  return found.length ? found[0] : null;
+}
+
+function vkCooldownClear(parent, targetSeat) {
+  var cooldown = parent.failedVoteKickCooldown != null ? parent.failedVoteKickCooldown : null;
+  if (cooldown == null) return true;
+  if (cooldown.targetSeat !== targetSeat) return true;
+  return parent.currentRound >= cooldown.blockedUntilRound;
+}
+
+function vkOpenShapeValid(parent, data, requestAuthUid) {
+  if (parent.mode !== "RANKED") return false;
+  if (!(parent.currentRound >= 8)) return false;
+  if (data.matchId !== "m-vk") return false;
+  if (data.status !== "OPEN") return false;
+  if (data.version !== 1) return false;
+  if (data.roundOpened !== parent.currentRound) return false;
+  if (typeof data.reason !== "string") return false;
+  if (Object.keys(parent.seats).indexOf(data.targetSeat) === -1) return false;
+  if ((parent.botSeats || []).indexOf(data.targetSeat) !== -1) return false;
+  if (parent.seats[data.initiatorSeat] !== requestAuthUid) return false;
+  if (data.initiatorSeat === data.targetSeat) return false;
+  if ((parent.botSeats || []).indexOf(data.initiatorSeat) !== -1) return false;
+  if (!vkCooldownClear(parent, data.targetSeat)) return false;
+  var voteKeys = Object.keys(data.votes || {});
+  var expected = ["p1", "p2", "p3", "p4"].filter(function (s) {
+    return parent.seats[s] != null && s !== data.targetSeat && (parent.botSeats || []).indexOf(s) === -1;
+  });
+  if (!expected.every(function (k) { return voteKeys.indexOf(k) !== -1; })) return false;
+  if (!voteKeys.every(function (k) { return expected.indexOf(k) !== -1; })) return false;
+  if (!voteKeys.every(function (k) { return data.votes[k] === null; })) return false;
+  var allowed = ["matchId", "targetSeat", "initiatorSeat", "reason", "votes", "status", "roundOpened", "version"];
+  if (!Object.keys(data).every(function (k) { return allowed.indexOf(k) !== -1; })) return false;
+  return true;
+}
+
+function vkWellFormedOpen(targetSeat, initiatorSeat, votes) {
+  return {
+    matchId: "m-vk", targetSeat: targetSeat, initiatorSeat: initiatorSeat,
+    reason: "griefing", votes: votes, status: "OPEN", roundOpened: 8, version: 1,
+  };
+}
+
+check(
+  "SIMULATED — voteKick open: well-formed (RANKED, round 8, target slot absent, null slots) — ALLOWED",
+  vkOpenShapeValid(vkRankedParent,
+    vkWellFormedOpen("p4", "p1", { p1: null, p2: null, p3: null }), "uidA") === true
+);
+check(
+  "SIMULATED — voteKick open: ROOM mode — DENIED",
+  vkOpenShapeValid(Object.assign({}, vkRankedParent, { mode: "ROOM" }),
+    vkWellFormedOpen("p4", "p1", { p1: null, p2: null, p3: null }), "uidA") === false
+);
+check(
+  "SIMULATED — voteKick open: UNRANKED mode — DENIED",
+  vkOpenShapeValid(Object.assign({}, vkRankedParent, { mode: "UNRANKED" }),
+    vkWellFormedOpen("p4", "p1", { p1: null, p2: null, p3: null }), "uidA") === false
+);
+check(
+  "SIMULATED — voteKick open: Round 7 still in progress (currentRound 7) — DENIED",
+  vkOpenShapeValid(Object.assign({}, vkRankedParent, { currentRound: 7 }),
+    vkWellFormedOpen("p4", "p1", { p1: null, p2: null, p3: null }), "uidA") === false
+);
+check(
+  "SIMULATED — voteKick open: target slot present (even null-valued honesty check) — DENIED",
+  vkOpenShapeValid(vkRankedParent,
+    vkWellFormedOpen("p4", "p1", { p1: null, p2: null, p3: null, p4: null }), "uidA") === false
+);
+check(
+  "SIMULATED — voteKick open: initiator is the target — DENIED",
+  vkOpenShapeValid(vkRankedParent,
+    vkWellFormedOpen("p4", "p4", { p1: null, p2: null, p3: null }), "uidD") === false
+);
+check(
+  "SIMULATED — voteKick open: initiator is a bot-held seat — DENIED",
+  vkOpenShapeValid(Object.assign({}, vkRankedParent, { botSeats: ["p1"] }),
+    vkWellFormedOpen("p4", "p1", { p2: null, p3: null }), "uidA") === false
+);
+check(
+  "SIMULATED — voteKick open: live cooldown on that target — DENIED",
+  vkOpenShapeValid(
+    Object.assign({}, vkRankedParent, {
+      failedVoteKickCooldown: { targetSeat: "p4", blockedUntilRound: 13 },
+    }),
+    vkWellFormedOpen("p4", "p1", { p1: null, p2: null, p3: null }), "uidA") === false
+);
+check(
+  "SIMULATED — voteKick open: expired cooldown (round 13) — ALLOWED",
+  vkOpenShapeValid(
+    Object.assign({}, vkRankedParent, {
+      currentRound: 13,
+      failedVoteKickCooldown: { targetSeat: "p4", blockedUntilRound: 13 },
+    }),
+    Object.assign(vkWellFormedOpen("p4", "p1", { p1: null, p2: null, p3: null }), { roundOpened: 13 }),
+    "uidA") === true
+);
+check(
+  "SIMULATED — voteKick open: cooldown on a DIFFERENT target does not block — ALLOWED",
+  vkOpenShapeValid(
+    Object.assign({}, vkRankedParent, {
+      failedVoteKickCooldown: { targetSeat: "p2", blockedUntilRound: 13 },
+    }),
+    vkWellFormedOpen("p4", "p1", { p1: null, p2: null, p3: null }), "uidA") === true
+);
+
+function vkCastValid(parent, oldData, newData, requestAuthUid) {
+  if (requestAuthUid == null) return false;
+  if (oldData.status !== "OPEN") return false;
+  var actingSeat = vkSeatForUid(parent.seats, requestAuthUid);
+  if (actingSeat == null) return false;
+  if (actingSeat === oldData.targetSeat) return false;
+  if ((parent.botSeats || []).indexOf(actingSeat) !== -1) return false;
+  if (oldData.votes[actingSeat] != null) return false;
+  var newVal = newData.votes[actingSeat];
+  if (newVal !== "YES" && newVal !== "NO") return false;
+  var affectedKeys = Object.keys(newData).filter(function (k) {
+    return JSON.stringify(newData[k]) !== JSON.stringify(oldData[k]);
+  });
+  if (!affectedKeys.every(function (k) { return ["votes", "status", "version"].indexOf(k) !== -1; })) return false;
+  if (newData.version !== oldData.version + 1) return false;
+  var othersUnchanged = ["p1", "p2", "p3", "p4"].every(function (s) {
+    return s === actingSeat || JSON.stringify(newData.votes[s]) === JSON.stringify(oldData.votes[s]);
+  });
+  if (!othersUnchanged) return false;
+  if (oldData.targetSeat in newData.votes) return false;
+  if (["OPEN", "PASSED", "FAILED_NO", "FAILED_TIMEOUT"].indexOf(newData.status) === -1) return false;
+  return true;
+}
+
+var vkOpen = vkWellFormedOpen("p4", "p1", { p1: null, p2: null, p3: null });
+check(
+  "SIMULATED — voteKick cast: one eligible YES, status stays OPEN — ALLOWED",
+  vkCastValid(vkRankedParent, vkOpen,
+    Object.assign({}, vkOpen, {
+      votes: { p1: "YES", p2: null, p3: null }, version: 2,
+    }), "uidA") === true
+);
+check(
+  "SIMULATED — voteKick cast: flipping an already-cast vote — DENIED",
+  vkCastValid(vkRankedParent,
+    Object.assign({}, vkOpen, { votes: { p1: "YES", p2: null, p3: null }, version: 2 }),
+    Object.assign({}, vkOpen, { votes: { p1: "NO", p2: null, p3: null }, version: 3 }),
+    "uidA") === false
+);
+check(
+  "SIMULATED — voteKick cast: the target voting — DENIED",
+  vkCastValid(vkRankedParent, vkOpen,
+    Object.assign({}, vkOpen, { votes: { p1: null, p2: null, p3: null, p4: "NO" }, version: 2 }),
+    "uidD") === false
+);
+check(
+  "SIMULATED — voteKick cast: a bot-held seat voting — DENIED",
+  vkCastValid(Object.assign({}, vkRankedParent, { botSeats: ["p2"] }), vkOpen,
+    Object.assign({}, vkOpen, { votes: { p1: null, p2: "YES", p3: null }, version: 2 }),
+    "uidB") === false
+);
+check(
+  "SIMULATED — voteKick cast: smuggling the target slot back in — DENIED",
+  vkCastValid(vkRankedParent, vkOpen,
+    Object.assign({}, vkOpen, { votes: { p1: "YES", p2: null, p3: null, p4: "YES" }, version: 2 }),
+    "uidA") === false
+);
+check(
+  "SIMULATED — voteKick cast: terminal vote accepts no more casts — DENIED",
+  vkCastValid(vkRankedParent, Object.assign({}, vkOpen, { status: "PASSED" }),
+    Object.assign({}, vkOpen, {
+      status: "PASSED", votes: { p1: "YES", p2: "YES", p3: null }, version: 2,
+    }), "uidC") === false
+);
+
+function vkSweepValid(parent, oldData, newData, requestAuthUid) {
+  if (requestAuthUid == null) return false;
+  if ((parent.players || []).indexOf(requestAuthUid) === -1) return false;
+  if (oldData.status !== "OPEN") return false;
+  if (parent.status !== "complete") return false;
+  if (newData.status !== "FAILED_TIMEOUT") return false;
+  var affectedKeys = Object.keys(newData).filter(function (k) {
+    return JSON.stringify(newData[k]) !== JSON.stringify(oldData[k]);
+  });
+  if (!affectedKeys.every(function (k) { return ["status", "version"].indexOf(k) !== -1; })) return false;
+  if (newData.version !== oldData.version + 1) return false;
+  if (JSON.stringify(newData.votes) !== JSON.stringify(oldData.votes)) return false;
+  return true;
+}
+
+check(
+  "SIMULATED — voteKick sweep: OPEN vote overtaken by completion — ALLOWED",
+  vkSweepValid(
+    Object.assign({}, vkRankedParent, { status: "complete" }), vkOpen,
+    Object.assign({}, vkOpen, { status: "FAILED_TIMEOUT", version: 2 }), "uidA") === true
+);
+check(
+  "SIMULATED — voteKick sweep: match still running — DENIED",
+  vkSweepValid(vkRankedParent, vkOpen,
+    Object.assign({}, vkOpen, { status: "FAILED_TIMEOUT", version: 2 }), "uidA") === false
+);
+
+function vkAffectedKeys(oldParent, newParent) {
+  return Object.keys(newParent).filter(function (k) {
+    return JSON.stringify(newParent[k]) !== JSON.stringify(oldParent[k]);
+  });
+}
+
+function vkCooldownWriteValid(oldParent, newParent, requestAuthUid) {
+  if (requestAuthUid == null) return false;
+  if ((oldParent.players || []).indexOf(requestAuthUid) === -1) return false;
+  if (oldParent.mode !== "RANKED") return false;
+  var affected = vkAffectedKeys(oldParent, newParent);
+  if (!affected.every(function (k) {
+    return ["failedVoteKickCooldown", "version", "updatedAt"].indexOf(k) !== -1;
+  })) return false;
+  if (newParent.version !== oldParent.version + 1) return false;
+  var cooldown = newParent.failedVoteKickCooldown;
+  if (cooldown == null || typeof cooldown !== "object" || Array.isArray(cooldown)) return false;
+  if (Object.keys(oldParent.seats).indexOf(cooldown.targetSeat) === -1) return false;
+  if (!Number.isInteger(cooldown.blockedUntilRound) || cooldown.blockedUntilRound < 1) return false;
+  return true;
+}
+
+function vkRemovalWriteValid(oldParent, newParent, requestAuthUid) {
+  if (requestAuthUid == null) return false;
+  if ((oldParent.players || []).indexOf(requestAuthUid) === -1) return false;
+  if (oldParent.mode !== "RANKED") return false;
+  var affected = vkAffectedKeys(oldParent, newParent);
+  if (!affected.every(function (k) {
+    return ["botSeats", "removedUids", "version", "updatedAt"].indexOf(k) !== -1;
+  })) return false;
+  if (newParent.version !== oldParent.version + 1) return false;
+  if (!Array.isArray(newParent.botSeats)) return false;
+  if (!newParent.botSeats.every(function (s) {
+    return Object.keys(oldParent.seats).indexOf(s) !== -1;
+  })) return false;
+  if (!Array.isArray(newParent.removedUids)) return false;
+  if (!newParent.removedUids.every(function (u) {
+    return oldParent.players.indexOf(u) !== -1;
+  })) return false;
+  var oldBots = oldParent.botSeats || [];
+  var oldRemoved = oldParent.removedUids || [];
+  if (!oldBots.every(function (s) { return newParent.botSeats.indexOf(s) !== -1; })) return false;
+  if (!oldRemoved.every(function (u) { return newParent.removedUids.indexOf(u) !== -1; })) return false;
+  return true;
+}
+
+var vkMatchBase = Object.assign({}, vkRankedParent, { updatedAt: "t0" });
+
+check(
+  "SIMULATED — voteKick parent cooldown write: well-formed (RANKED, seated writer) — ALLOWED",
+  vkCooldownWriteValid(vkMatchBase,
+    Object.assign({}, vkMatchBase, {
+      failedVoteKickCooldown: { targetSeat: "p4", blockedUntilRound: 13 },
+      version: 8, updatedAt: "t1",
+    }), "uidA") === true
+);
+check(
+  "SIMULATED — voteKick parent cooldown write: ROOM match — DENIED",
+  vkCooldownWriteValid(Object.assign({}, vkMatchBase, { mode: "ROOM" }),
+    Object.assign({}, vkMatchBase, {
+      mode: "ROOM",
+      failedVoteKickCooldown: { targetSeat: "p4", blockedUntilRound: 13 },
+      version: 8, updatedAt: "t1",
+    }), "uidA") === false
+);
+check(
+  "SIMULATED — voteKick parent cooldown write: smuggling an extra field — DENIED",
+  vkCooldownWriteValid(vkMatchBase,
+    Object.assign({}, vkMatchBase, {
+      failedVoteKickCooldown: { targetSeat: "p4", blockedUntilRound: 13 },
+      finalScores: { p1: 1 }, version: 8, updatedAt: "t1",
+    }), "uidA") === false
+);
+check(
+  "SIMULATED — voteKick parent removal write: well-formed (botSeats + removedUids grow) — ALLOWED",
+  vkRemovalWriteValid(vkMatchBase,
+    Object.assign({}, vkMatchBase, {
+      botSeats: ["p4"], removedUids: ["uidD"], version: 8, updatedAt: "t1",
+    }), "uidA") === true
+);
+check(
+  "SIMULATED — voteKick parent removal write: un-removing a seat — DENIED",
+  vkRemovalWriteValid(
+    Object.assign({}, vkMatchBase, { botSeats: ["p4"], removedUids: ["uidD"] }),
+    Object.assign({}, vkMatchBase, { botSeats: [], removedUids: [], version: 8, updatedAt: "t1" }),
+    "uidA") === false
+);
+check(
+  "SIMULATED — voteKick parent removal write: stranger writer — DENIED",
+  vkRemovalWriteValid(vkMatchBase,
+    Object.assign({}, vkMatchBase, {
+      botSeats: ["p4"], removedUids: ["uidD"], version: 8, updatedAt: "t1",
+    }), "uidX") === false
+);
+
 var validRematchMatchData = {
   roomId: "room-x", players: ["uidA", "uidB", "uidC", "uidD"], status: "starting", currentRound: 1,
   dealer: "uidA", turn: "uidA", maxRounds: 18, extendedRounds: [],
