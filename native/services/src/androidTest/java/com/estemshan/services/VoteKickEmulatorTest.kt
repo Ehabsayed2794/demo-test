@@ -108,7 +108,8 @@ class VoteKickEmulatorTest {
     val seating = seating()
     val match = ScriptedMatch(seating, 6001L)
     val matchId = match.start(MatchMode.RANKED)
-    val (totals, currentRound) = playToUniqueKoz(match)
+    // Triple(totals, koz, currentRound): skip the Koz seat, bind the round.
+    val (totals, _, currentRound) = playToUniqueKoz(match)
     val koz = uniqueKozSeat(totals)!!
     val initiator = (SEAT_IDS - koz).first()
     val others = (SEAT_IDS - koz - initiator).toList()
