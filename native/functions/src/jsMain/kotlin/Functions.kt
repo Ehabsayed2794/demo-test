@@ -9,8 +9,15 @@
 // stays packaged and importable like everything else.
 
 import com.estemshan.engine.Dealer
+import com.estemshan.functions.AdminSettlementDb
 import com.estemshan.functions.CallableAuth
 import com.estemshan.functions.onCall
+import com.estemshan.functions.settleOnce
+import com.estemshan.functions.toPlain
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.promise
 import kotlin.js.json
 
 /**
@@ -40,3 +47,22 @@ val engineSmoke = onCall { request ->
 }
 
 private const val SMOKE_SEED: Long = 42L
+
+/** Module scope for callable Promise bridging (handlers return, never await). */
+private val SettleScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
+/**
+ * S50 settlement (RD12/RD13): re-reads the converged match document +
+ * roundArchive history, re-runs the shared :engine over it, and settles
+ * the recomputed result — correcting a disagreeing client claim, never
+ * trusting it. RANKED only (ROOM/UNRANKED no-op); authenticated (the
+ * settler must be a player); exactly-once per match (a replayed call
+ * returns the recorded outcome).
+ */
+@JsExport
+@JsName("settleMatch")
+val settleMatch = onCall { request ->
+  // toPlain at the serialization boundary: settleOnce stays in Kotlin
+  // maps (unit-testable reads), the runtime JSON-serializes plain data.
+  SettleScope.promise { toPlain(settleOnce(AdminSettlementDb(), request)) }
+}

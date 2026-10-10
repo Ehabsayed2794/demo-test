@@ -533,6 +533,12 @@ class MatchService(
           matchId = matchId,
           cardLog = match.roundCards(completedRound),
           biddingLog = match.roundBids(completedRound),
+          // S50 archive fix: snapshot the round's Final Estimates — bids/
+          // resets below and is never otherwise persisted. Dash-Call seats
+          // never submit and stay absent by design.
+          estimates = match.bids.mapNotNull { (seat, bid) ->
+            bid?.let { seat to it }
+          }.toMap(),
         ).toFields(),
       )
       val nextVersion = match.version + 1
@@ -688,6 +694,11 @@ class MatchService(
           matchId = matchId,
           cardLog = match.roundCards(completedRound),
           biddingLog = match.roundBids(completedRound),
+          // S50 archive fix: same Final Estimates snapshot as advance —
+          // the terminal archive is the settlement callable's last round.
+          estimates = match.bids.mapNotNull { (seat, bid) ->
+            bid?.let { seat to it }
+          }.toMap(),
         ).toFields(),
       )
       val nextVersion = match.version + 1

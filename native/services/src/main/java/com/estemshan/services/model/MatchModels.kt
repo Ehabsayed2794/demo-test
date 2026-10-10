@@ -383,6 +383,17 @@ data class RoundArchiveDoc(
   val matchId: String,
   val cardLog: List<CardLogEntry>,
   val biddingLog: List<BiddingLogEntry>,
+  /**
+   * S50 archive fix (E6b): the round's Final Estimates snapshot, taken from
+   * the parent's transient bids/ at archive time (advance/endMatch). Bids/
+   * resets every round and is never otherwise persisted — without this
+   * snapshot the settlement callable cannot recompute the authoritative
+   * result (RD12). Dash-Call seats never submit an estimate and are
+   * legitimately absent; settlement derives them from the round's
+   * biddingLog instead. Absent on archives written before this field
+   * existed — those matches fail closed at settlement (HISTORY_INCOMPLETE).
+   */
+  val estimates: Map<String, Int> = emptyMap(),
 ) {
 
   fun toFields(): Map<String, Any?> = mapOf(
@@ -390,6 +401,7 @@ data class RoundArchiveDoc(
     "matchId" to matchId,
     "cardLog" to cardLog.map { it.toFields() },
     "biddingLog" to biddingLog.map { it.toFields() },
+    "estimates" to estimates.toMap(),
   )
 }
 

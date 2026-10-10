@@ -2062,8 +2062,10 @@ check(
 // parentPre: matches/{matchId} BEFORE the same transaction commits
 // (rules get() is pre-commit state). data: the roundArchive/{round}
 // candidate. Mirrors the real rule 1:1: seated writer, parent not
-// complete, exact 4-key shape, int round >= 1, matchId binding,
-// cardLog exactly 52, biddingLog a list, round == parent.currentRound.
+// complete, base 4 keys + optional `estimates` (S50 archive fix —
+// allowed, never required; a map when present), int round >= 1,
+// matchId binding, cardLog exactly 52, biddingLog a list,
+// round == parent.currentRound.
 // ============================================================
 function isValidRoundArchiveCreate(parentPre, data, requestAuthUid, matchIdParam) {
   if (requestAuthUid == null) return false;
@@ -2072,12 +2074,13 @@ function isValidRoundArchiveCreate(parentPre, data, requestAuthUid, matchIdParam
   if ("status" in parentPre && parentPre.status === "complete") return false;
   if (!data || typeof data !== "object" || Array.isArray(data)) return false;
   var keys = Object.keys(data);
-  if (keys.length !== 4) return false;
   if (["round", "matchId", "cardLog", "biddingLog"].every(function (k) { return keys.indexOf(k) !== -1; }) === false) return false;
+  if (keys.every(function (k) { return ["round", "matchId", "cardLog", "biddingLog", "estimates"].indexOf(k) !== -1; }) === false) return false;
   if (!Number.isInteger(data.round) || data.round < 1) return false;
   if (data.matchId !== matchIdParam) return false;
   if (!Array.isArray(data.cardLog) || data.cardLog.length !== 52) return false;
   if (!Array.isArray(data.biddingLog)) return false;
+  if ("estimates" in data && (data.estimates == null || typeof data.estimates !== "object" || Array.isArray(data.estimates))) return false;
   if (data.round !== parentPre.currentRound) return false;
   return true;
 }
@@ -2096,9 +2099,25 @@ check(
   "SIMULATED — roundArchive create: a well-formed Round 1 archive (52 plays, round == parent.currentRound, seated writer) — ALLOWED",
   isValidRoundArchiveCreate(
     archiveParentR1,
+    { round: 1, matchId: "m1", cardLog: fiftyTwoCardEntries(1), biddingLog: [], estimates: { p1: 5, p2: 3, p3: 2, p4: 3 } },
+    "userB", "m1"
+  ) === true
+);
+check(
+  "SIMULATED — roundArchive create: pre-fix 4-key archive without estimates (old clients stay valid) — ALLOWED",
+  isValidRoundArchiveCreate(
+    archiveParentR1,
     { round: 1, matchId: "m1", cardLog: fiftyTwoCardEntries(1), biddingLog: [] },
     "userB", "m1"
   ) === true
+);
+check(
+  "SIMULATED — roundArchive create: estimates present but not a map — DENIED",
+  isValidRoundArchiveCreate(
+    archiveParentR1,
+    { round: 1, matchId: "m1", cardLog: fiftyTwoCardEntries(1), biddingLog: [], estimates: [5, 3, 2, 3] },
+    "userB", "m1"
+  ) === false
 );
 check(
   "SIMULATED — roundArchive create: archiving the WRONG round (2 while the parent is still on 1) — DENIED",
@@ -2141,7 +2160,7 @@ check(
   ) === false
 );
 check(
-  "SIMULATED — roundArchive create: extra key smuggled alongside the 4 allowed ones — DENIED",
+  "SIMULATED — roundArchive create: extra key smuggled alongside the 5 allowed ones — DENIED",
   isValidRoundArchiveCreate(
     archiveParentR1,
     { round: 1, matchId: "m1", cardLog: fiftyTwoCardEntries(1), biddingLog: [], winnerIds: ["p1"] },
