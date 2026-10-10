@@ -178,6 +178,28 @@ These carry the same standing as D1–D4, V1–V5, and RD1–RD28.
   | +9 | +4.5 | **+5** |
   | −9 | −4.5 | **−5** |
 
+  > **OPEN-3 implementation correction (verified 2026-10-10 — pointer; the
+  > trap paragraph below is left unchanged, and the table above is correct as
+  > written).** The paragraph below names `kotlin.math.round` as the correct
+  > call. **It is not.** `kotlin.math.round` rounds ties toward the **even**
+  > neighbour — `round(4.5) == 4.0` and `round(-4.5) == -4.0` — which
+  > contradicts the table immediately above this note: +9 × 0.5 = +4.5 must
+  > round to **+5** and −9 × 0.5 = −4.5 to **−5**, but `kotlin.math.round`
+  > returns 4 and −4 for those two. It satisfies the ±15 pair in that table
+  > only by coincidence (7.5 and −7.5 happen to round to the even ±8). So the
+  > paragraph caught one real trap — `java.lang.Math.round`, which is indeed
+  > wrong, −7.5 → −7 — while standing in the other one itself. **Neither
+  > library implements the closed rule.** S47 therefore ships neither: the
+  > authoritative implementation is a hand-written `roundDelta()` in
+  > `native/engine/src/commonMain/kotlin/com/estemshan/engine/RpEngine.kt`
+  > (floor + fractional part, the tie branch rounding away from zero in both
+  > signs). The paragraph's asymmetry test remains **mandatory** — it is just
+  > asserted against `roundDelta` rather than against the named call, and S47
+  > added a second mandatory guard pinning `kotlin.math.round` itself. The
+  > same correction applies at the four other sites that repeat this claim:
+  > the insertion contract in §6, the settlement test plan below it, the S47
+  > row in the story table, and the amendment changelog.
+
   **The implementation trap this decision exists to catch:** `java.lang.Math.round(Double)` rounds **half up toward +∞**, so `Math.round(-7.5)` returns **−7** — asymmetric, and wrong for this decision. The correct call is **`kotlin.math.round(Double)`**, which rounds ties **away from zero** (`round(-7.5) == -8.0`), then `.toInt()`. A test asserting `−15 → −8` fails against `Math.round` and passes against `kotlin.math.round`; that asymmetry test is therefore mandatory in S47, not optional.
 
   **Status:** closed before S47 is written, as planned. It no longer gates anything.
@@ -253,6 +275,20 @@ Both formulas themselves (`Scoring.kt:50-98`, `:100-141`) and the branch at `Rou
 **8. The exact location where the final RP delta is calculated.**
 
 **It does not exist yet.** There is no RP function, no RP field, no settlement code (see OPEN-3). So GM6's ×0.5 is recorded as an **insertion contract** for **S47 (the RP engine) and S50/S51 (settlement)** rather than a patch: compute the full Ranked result exactly as the RD4/RD5 architecture specifies — opponent strength, tier difference, outcome, placement, mixed-tier conditions, every modifier — and apply the multiplier **once, at the single authority point, after the Full-equivalent delta is final and before RP is written to the player's rank document**:
+
+> **OPEN-3 implementation correction (verified 2026-10-10 — pointer; the code
+> block and the `kotlin.math.round` sentence below it are left unchanged).**
+> The line below does not implement the closed rule, and neither does the
+> sentence naming it. `kotlin.math.round` is ties-to-**even** (4.5 → 4,
+> −4.5 → −4), so it yields +9 → +4 and −9 → −4 where OPEN-3 requires +9 → +5
+> and −9 → −5; `java.lang.Math.round` is half-up toward +∞ (−7.5 → −7), wrong
+> on the other pair. **Neither library implements the rule.** The shipped
+> authority is `roundDelta()` in
+> `native/engine/src/commonMain/kotlin/com/estemshan/engine/RpEngine.kt`,
+> which rounds ties away from zero by hand, with mandatory trap guards
+> against both calls in `RpEngineTest`. The composition the block expresses
+> is otherwise exactly what S47 implemented — the multiplier applied once, at
+> the single authority point, and a no-op for FULL.
 
 ```
 finalRpDelta = kotlin.math.round(fullEquivalentFinalRpDelta * (if (gameType == GameType.MINI) 0.5 else 1.0)).toInt()
@@ -346,6 +382,17 @@ enum class GameType(val baseRounds: Int, val firstFastRound: Int, val maxExtensi
   asserting `−15 → −8` fails against `Math.round` and passes against
   `kotlin.math.round`. This test is **mandatory**, not optional — it is the
   guard that keeps a future refactor from silently asymmetrizing Mini's losses.
+  > **OPEN-3 implementation correction (verified 2026-10-10 — pointer; the
+  > bullet above is left unchanged).** Its claim that `−15 → −8` "passes
+  > against `kotlin.math.round`" is right, but only by coincidence, and the
+  > same guard fails for the two odd cases this plan mandates next to it:
+  > `kotlin.math.round` is ties-to-**even**, so +9 → **+4** and −9 → **−4**,
+  > not the +5 and −5 the bullet above asserts as separate mandatory cases.
+  > S47 keeps this test and adds its mirror image: `RpEngineTest` asserts
+  > `−15 → −8` against the shipped `roundDelta()` **and** asserts
+  > `kotlin.math.round(4.5) == 4.0` to pin the trap the plan's own naming
+  > would reintroduce. Neither library call is the implementation;
+  > `roundDelta()` in `RpEngine.kt` is.
 - **Full is a no-op:** with `gameType == FULL` the multiplier is exactly 1.0 and
   the round is a no-op, asserted so Full's RP is provably bit-identical to a
   system with no multiplier.
@@ -954,6 +1001,19 @@ One epic per phase; stories sized in hours; `S/M/L` from §2. Critical path mark
 > **After the 2026-10-06 RD29/RD30 amendment:** the 2 new **E6b** stories (S70 at 14h, S71 at 26h, plus a 4h documents row) sum to exactly **44h**, matching the amendment block's §F9 feature line with zero drift. E6b becomes **432h** (388 + 44). The table now carries 880 + 44 = **924h** non-voice stories plus **170h** voice = **1,094h** of stories; PM (40) and 15% contingency (**169**, on the new pre-contingency total of 1,124) land the table at **1,303**, against the §9 headline of **1,293** — the same 10h story-vs-feature drift, unchanged in kind and size. **The critical path does not extend**: S70 depends only on S42/S44, and S71 reuses the S56 search-lifecycle shape, so both run parallel to the Ranked core.
 >
 > **Rank-King vs Match-King, once, because it is the single easiest thing to get wrong in this amendment:** Rank King is the account's competitive ceiling (19th rung, no divisions). Match King is whoever finishes first in one match. Koz is the unique current last place in one match — not a rank at all. The `#E8A33D` gold colour in the design tokens belongs to the **Match-King badge**; the **Gold tier** must not reuse it, or "Gold" collapses into "King" in the UI.
+>
+> **S47 row — OPEN-3 implementation correction (verified 2026-10-10 — pointer;
+> the S47 row above is left unchanged).** The row's "rounding per the closed
+> OPEN-3 — `kotlin.math.round`, ties away from zero" names the wrong call.
+> `kotlin.math.round` is ties-to-**even**: 4.5 → 4, so it yields +9 → +4 where
+> the closed rule (and this plan's own OPEN-3 table) requires +9 → +5; it
+> passes the row's +15/−15 pair only by coincidence. S47 therefore did not
+> ship the named call — it ships the hand-written `roundDelta()` in
+> `RpEngine.kt`, with the `Math.round` asymmetry test the row asks for **plus**
+> a second mandatory guard pinning `kotlin.math.round` itself. Everything
+> else in the row is as implemented: MINI's ×0.5 applied once after every
+> RD4/RD5 input, and FULL's 1.0 multiplier asserted as a no-op. See the
+> correction note at the OPEN-3 decision body for the full case table.
 
 ---
 
@@ -1143,7 +1203,22 @@ reopens a closed owner decision. **The GM amendment (GM1–GM8) is carried in bo
 identically, with A2 as the shared rule statement; the RD29/RD30 amendment is
 carried in both with A3 as the shared rule statement — and both agree that
 `mode` is `ROOM | RANKED | UNRANKED`, three values, with Rank-down a `RANKED`
-configuration and Unranked a first-class mode that has no voice.** **OPEN-3 — the Mini RP rounding rule — was CLOSED 2026-10-06, before S47 was written, exactly as planned: nearest integer, ties away from zero (+15 → +8, −15 → −8), implemented with `kotlin.math.round` rather than `java.lang.Math.round`.** With OPEN-3 closed, **no open item gates a Ranked story** — OPEN-1 and OPEN-2 remain open and non-blocking, and neither blocks E6b or E7.
+configuration and Unranked a first-class mode that has no voice.** **OPEN-3 — the Mini RP rounding rule — was CLOSED 2026-10-06, before S47 was written, exactly as planned: nearest integer, ties away from zero (+15 → +8, −15 → −8), implemented with `kotlin.math.round` rather than `java.lang.Math.round`.**
+
+> **Correction to the sentence above (verified 2026-10-10 — pointer; the
+> sentence is left unchanged).** The rule it states is correct and OPEN-3 is
+> indeed closed, but "implemented with `kotlin.math.round`" is wrong.
+> `kotlin.math.round` rounds ties toward the **even** neighbour, so it gives
+> +9 → +4 and −9 → −4, not the +9 → +5 and −9 → −5 that the closed rule (and
+> this plan's own OPEN-3 table) mandate; it reproduces +15 → +8 and −15 → −8
+> only because 7.5 and −7.5 round to the even ±8. `java.lang.Math.round` is
+> wrong on that other pair (−7.5 → −7, half-up toward +∞). **Neither library
+> implements the closed rule, and S47 implemented neither** — it ships a
+> hand-written `roundDelta()` in `RpEngine.kt` with mandatory trap guards
+> against both calls. OPEN-3's *closure* stands; only the named call did not
+> survive contact with the compiler.
+
+With OPEN-3 closed, **no open item gates a Ranked story** — OPEN-1 and OPEN-2 remain open and non-blocking, and neither blocks E6b or E7.
 
 **The two small decisions the owner still owes, both on the Ranked critical path
 and both non-blocking for design work:** **OPEN-1** (reconnect after the
