@@ -2313,6 +2313,51 @@ service cloud.firestore {
         allow update: if isValidHandRedeal();
         allow delete: if false;
       }
+
+      // ── S61 Stage 2: the per-seat timeout counter ───────────────────
+      // `matches/{matchId}/timeoutCounts/{uid}` — one doc per PLAYER,
+      // carrying a single `count` field (0..REMOVAL_TIMEOUT_THRESHOLD, 15).
+      // The count cannot live on the match document itself: that doc is
+      // readable by every seated player (`request.auth.uid in
+      // resource.data.players`), so a per-player count there would hand one
+      // player's timeout history to the other three. A subcollection keyed
+      // by uid is what keeps it per-player; these rules are what keep it
+      // private. Written ONLY by the timeout resolver via the Admin SDK,
+      // which bypasses rules entirely — so this block's whole job is the
+      // READ side and the total prohibition of any client write.
+      match /timeoutCounts/{uid} {
+        function parentMatch() {
+          return get(/databases/$(database)/documents/matches/$(matchId)).data;
+        }
+        // BOTH gates, conjoined — neither alone is sufficient. Ownership
+        // (`uid == request.auth.uid`) proves the doc is the reader's own;
+        // membership (`in parentMatch().players`) proves the reader still
+        // belongs to THIS match. A player who left, was Vote-Kick-removed,
+        // or was timeout-removed keeps no window into a table they no
+        // longer play at — and a player still seated may never read a
+        // uid that is not their own, even one seated alongside them.
+        // `players`, the same membership list the parent match's own
+        // `allow get` above already gates on.
+        function isOwnerInMatch() {
+          return request.auth != null
+                 && request.auth.uid == uid
+                 && request.auth.uid in parentMatch().players;
+        }
+
+        allow get: if isOwnerInMatch();
+        // No `list` — enumerating this subcollection would hand back every
+        // seat's count at once, defeating the per-player split for exactly
+        // the reason `hands/{seatId}` and `rematchVote/{voteId}` both deny
+        // it above.
+        allow list: if false;
+        // Every client write is denied. The counter is written only by the
+        // resolver through the Admin SDK, which is not subject to these
+        // rules; a client creating, editing, or DELETING its own count
+        // would be able to reset the 15-timeout removal threshold for
+        // itself, so all three mutations are closed here rather than
+        // trusted to the client never trying.
+        allow create, update, delete: if false;
+      }
     }
 
     // Deny-by-default for every collection outside this sprint's scope —
