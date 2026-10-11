@@ -303,11 +303,18 @@ class TimeoutResolutionTest {
     /** The document the transaction sees; defaults to the pre-check doc. A
      *  different value models a decision landing between the two reads. */
     private val inTxDoc: Map<String, Any?>? = null,
+    /** The stored `timeoutCounts/{uid}` values the transaction reads. A uid
+     *  absent from this map is a MISSING counter doc (a first timeout); a
+     *  uid present with a garbage value is a PRESENT-but-invalid one, which
+     *  must fail closed rather than read as 0. */
+    private val storedCounts: Map<String, Any?> = emptyMap(),
   ) : TimeoutDb {
     var handReads = 0
       private set
     var written: Map<String, Any?>? = null
       private set
+    /** The counter writes committed, keyed by uid. */
+    val writtenCounts: MutableMap<String, Any?> = mutableMapOf()
 
     override suspend fun readMatch(matchId: String): Map<String, Any?>? = doc
     override suspend fun readHands(matchId: String, round: Int, seats: List<String>): Map<String, List<Card>> {
@@ -320,6 +327,13 @@ class TimeoutResolutionTest {
         override suspend fun readMatch(matchId: String): Map<String, Any?>? = txDoc
         override fun updateMatch(matchId: String, updates: Map<String, Any?>) {
           written = updates
+        }
+        override suspend fun readTimeoutCount(matchId: String, uid: String): Any? =
+          storedCounts[uid]
+        override suspend fun timeoutCountExists(matchId: String, uid: String): Boolean =
+          uid in storedCounts
+        override fun writeTimeoutCount(matchId: String, uid: String, count: Int) {
+          writtenCounts[uid] = count
         }
       })
     }
@@ -445,5 +459,244 @@ class TimeoutResolutionTest {
     }
     assertFailsWith<Throwable> { resolveTimeoutOnce(db, request, DecisionClock { anchorMillis }) }
     assertNull(db.written)
+  }
+
+  // ── Stage 2: the per-seat timeout counter + the 15-timeout removal ──────
+
+  private val expiredClock = DecisionClock { anchorMillis + 20_000 }
+
+  @Test
+  fun aFirstTimeoutCreatesTheCounterAtOne() = runTest {
+    val db = FakeTimeoutDb(fastRoundDoc(), dealtHands())
+
+    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+
+    // p1 is the acting seat; u1 owns it. The counter is keyed by the PLAYER.
+    assertEquals(1, db.writtenCounts["u1"])
+    // The decision write itself is unchanged from Stage 1.
+    assertNotNull(db.written)
+    assertNull(db.written!!["timeoutRemovedUids"])
+  }
+
+  @Test
+  fun anExistingTimeoutCountIncrementsByExactlyOne() = runTest {
+    val db = FakeTimeoutDb(
+      doc = fastRoundDoc(),
+      hands = dealtHands(),
+      storedCounts = mapOf("u1" to 7),
+    )
+
+    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+
+    assertEquals(8, db.writtenCounts["u1"])
+    assertNull(db.written!!["timeoutRemovedUids"])
+  }
+
+  @Test
+  fun theFifteenthTimeoutAtomicallyRecordsTheRemovalWithTheDecision() = runTest {
+    val db = FakeTimeoutDb(
+      doc = fastRoundDoc(),
+      hands = dealtHands(),
+      storedCounts = mapOf("u1" to 14),
+    )
+
+    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+
+    // The count reaches the threshold and the removal lands in the SAME write
+    // as the deciding move — never before it.
+    assertEquals(15, db.writtenCounts["u1"])
+    val removed = db.written!!["timeoutRemovedUids"]
+    assertEquals(listOf("u1"), removed)
+  }
+
+  @Test
+  fun aRemovalNeverWritesVoteKicksState() = runTest {
+    val db = FakeTimeoutDb(
+      doc = fastRoundDoc(),
+      hands = dealtHands(),
+      storedCounts = mapOf("u1" to 14),
+    )
+
+    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+
+    // The timeout mechanism's OWN field only — never botSeats, never
+    // removedUids (Vote Kick's state stays untouched).
+    assertNull(db.written!!["botSeats"])
+    assertNull(db.written!!["removedUids"])
+    assertNotNull(db.written!!["timeoutRemovedUids"])
+  }
+
+  @Test
+  fun aMalformedStoredCountFailsClosedAndNeverRemoves() = runTest {
+    val db = FakeTimeoutDb(
+      doc = fastRoundDoc(),
+      hands = dealtHands(),
+      storedCounts = mapOf("u1" to "not-a-number"),
+    )
+
+    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+
+    // The decision still applies — the match must progress — but the counter
+    // is neither trusted nor written, and no removal can fire.
+    assertNotNull(db.written)
+    assertNull(db.writtenCounts["u1"])
+    assertNull(db.written!!["timeoutRemovedUids"])
+  }
+
+  @Test
+  fun anAboveRangeStoredCountAlsoFailsClosed() = runTest {
+    val db = FakeTimeoutDb(
+      doc = fastRoundDoc(),
+      hands = dealtHands(),
+      storedCounts = mapOf("u1" to 99),
+    )
+
+    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+
+    // A stored value above the threshold cannot leap straight to a removal.
+    assertNull(db.writtenCounts["u1"])
+    assertNull(db.written!!["timeoutRemovedUids"])
+  }
+
+  @Test
+  fun anAlreadyRemovedSeatStillDecidesButIncrementsNothing() = runTest {
+    // A seat the 15-timeout counter already removed: the table must still see
+    // its bot move (or it stalls), but the counter counts HUMAN timeouts and
+    // this seat is no longer human-driven.
+    val doc = fastRoundDoc().toMutableMap()
+    doc["timeoutRemovedUids"] = listOf("u1")
+    val db = FakeTimeoutDb(doc, dealtHands())
+
+    val response = resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+
+    assertEquals(true, response["resolved"])
+    assertNotNull(db.written)
+    assertNull(db.writtenCounts["u1"])
+  }
+
+  @Test
+  fun aVoteKickRemovedSeatStillDecidesButIncrementsNothing() = runTest {
+    // The same holds for S60's removal: Vote Kick and timeout removal are
+    // separate persisted state, but a bot-held seat is a bot-held seat.
+    val doc = fastRoundDoc().toMutableMap()
+    doc["botSeats"] = listOf("p1")
+    val db = FakeTimeoutDb(doc, dealtHands())
+
+    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+
+    assertNotNull(db.written)
+    assertNull(db.writtenCounts["u1"])
+  }
+
+  @Test
+  fun aBotControlledSeatGetsTheShortDecisionWindow() = runTest {
+    val doc = fastRoundDoc().toMutableMap()
+    doc["timeoutRemovedUids"] = listOf("u1")
+    val pending = TimeoutResolution.pendingDecision(doc)
+
+    assertNotNull(pending)
+    assertEquals(TimeoutResolution.BOT_DECISION_SECONDS, pending.durationSeconds)
+  }
+
+  @Test
+  fun aHumanSeatKeepsTheFullPhaseWindow() = runTest {
+    val pending = TimeoutResolution.pendingDecision(fastRoundDoc(timerSeconds = 10))
+
+    assertNotNull(pending)
+    // BIDDING is timer + 5 (RD21's rule), not the bot's short window.
+    assertEquals(15, pending.durationSeconds)
+  }
+
+  @Test
+  fun botControlledSeatsUnionsVoteKickAndTimeoutRemoval() = runTest {
+    val doc = fastRoundDoc().toMutableMap()
+    doc["botSeats"] = listOf("p2")
+    doc["timeoutRemovedUids"] = listOf("u1")
+
+    // p2 via Vote Kick's botSeats, p1 because its uid (u1) was timeout-removed
+    // — resolved through the RETAINED seats map.
+    assertEquals(setOf("p1", "p2"), TimeoutResolution.botControlledSeats(doc))
+  }
+
+  @Test
+  fun botControlledSeatsIsEmptyWhenNobodyWasRemoved() = runTest {
+    assertEquals(emptySet<String>(), TimeoutResolution.botControlledSeats(fastRoundDoc()))
+  }
+
+  @Test
+  fun anUnexpiredDeadlineReportsTheServerAuthoritativeRetryDelay() = runTest {
+    val db = FakeTimeoutDb(fastRoundDoc(timerSeconds = 10), dealtHands())
+    // 1 s before a 15 s BIDDING window (10 + 5) — the client called early.
+    val clock = DecisionClock { anchorMillis + 14_000 }
+
+    val response = resolveTimeoutOnce(db, fakeRequest("u3"), clock)
+
+    assertEquals(false, response["resolved"])
+    assertEquals(TimeoutResolution.Reason.NOT_YET_EXPIRED, response["reason"])
+    // The client re-arms on THIS, never its own estimate.
+    assertEquals(1_000L, response["retryAfterMillis"])
+    assertNull(db.written)
+  }
+
+  @Test
+  fun aNearlyExpiredDeadlineReportsTheFlooredRetryDelay() = runTest {
+    val db = FakeTimeoutDb(fastRoundDoc(), dealtHands())
+    // 1 ms before a 20 s window — the raw remainder is below the retry floor,
+    // so the client is handed the floor, never a near-zero delay it could
+    // spin on.
+    val clock = DecisionClock { anchorMillis + 19_999 }
+
+    val response = resolveTimeoutOnce(db, fakeRequest("u3"), clock)
+
+    assertEquals(false, response["resolved"])
+    assertEquals(
+      TimeoutResolution.MIN_RETRY_AFTER_MILLIS,
+      response["retryAfterMillis"],
+    )
+    assertNull(db.written)
+  }
+
+  @Test
+  fun aJustExpiredDeadlineReportsTheFlooredRetryDelay() = runTest {
+    val pending = TimeoutResolution.Pending(
+      TimeoutResolution.DecisionPhase.BIDDING,
+      "p1",
+      20,
+      anchorMillis,
+    )
+    // Clock already AT the deadline: the raw remainder is 0, the floor keeps
+    // the client from spinning on a zero delay.
+    assertEquals(
+      TimeoutResolution.MIN_RETRY_AFTER_MILLIS,
+      TimeoutResolution.millisUntilDeadline(pending, anchorMillis + 20_000),
+    )
+  }
+
+  @Test
+  fun theCounterNeverExceedsTheRemovalThreshold() = runTest {
+    // A stored count already AT the threshold (a seat that was removed and
+    // somehow has no removal recorded): the clamp keeps the written value at
+    // 15, never 16.
+    val counter = TimeoutResolution.TimeoutCounter.fromStored(15)
+    assertEquals(15, counter!!.nextCount)
+    assertFalse(counter.shouldRemove)
+  }
+
+  @Test
+  fun onlyTheCountFourteenTriggersRemoval() = runTest {
+    assertFalse(TimeoutResolution.TimeoutCounter.fromStored(13)!!.shouldRemove)
+    assertTrue(TimeoutResolution.TimeoutCounter.fromStored(14)!!.shouldRemove)
+    // Even 15 (already removed) must not re-remove.
+    assertFalse(TimeoutResolution.TimeoutCounter.fromStored(15)!!.shouldRemove)
+  }
+
+  @Test
+  fun aNegativeStoredCountIsRejected() {
+    assertNull(TimeoutResolution.TimeoutCounter.fromStored(-1))
+  }
+
+  @Test
+  fun aNonNumericStoredCountIsRejected() {
+    assertNull(TimeoutResolution.TimeoutCounter.fromStored(mapOf("count" to "x")))
   }
 }

@@ -135,6 +135,76 @@ object TimeoutResolution {
     data class Applied(val write: DecisionWrite) : Resolution()
   }
 
+  /**
+   * S61 Stage 2 — the validated per-seat timeout count and the removal it
+   * mandates.
+   *
+   * The counter increments ONLY on a real TIMEOUT (§0.5-C: INACTIVE never
+   * increments it; Stage 3's takeover shares none of this state). It lives at
+   * `matches/{id}/timeoutCounts/{uid}` because the match document is readable
+   * by every player (`request.auth.uid in resource.data.players`), so a
+   * per-player count can never live there — only an owner-read-only
+   * subcollection keeps one player's count from the other three.
+   *
+   * **Fail-closed validation.** A stored count that is not an Int in
+   * [MIN_STORED_TIMEOUT_COUNT]..[REMOVAL_TIMEOUT_THRESHOLD] is untrusted, so
+   * [shouldRemove] can only ever fire on a count this process validated
+   * itself: the write proceeds (the match must still progress), but the
+   * counter is neither incremented nor written, and NO removal happens.
+   * Corrupt or malformed state therefore can never trigger a removal.
+   *
+   * **The removal rule.** [shouldRemove] is true iff the VALIDATED stored
+   * count is exactly [REMOVAL_TIMEOUT_THRESHOLD] - 1 — i.e. the increment
+   * that is about to be written reaches the threshold. [nextCount] clamps so
+   * the stored value can never exceed the threshold either.
+   */
+  data class TimeoutCounter(
+    /** The validated stored count. Always non-null once this object exists —
+     *  an untrusted stored value yields a null from [fromStored] instead. */
+    val stored: Int,
+    /** Whether THIS increment removes the seat. Only true when [stored] sits
+     *  exactly one below the threshold. */
+    val shouldRemove: Boolean,
+  ) {
+
+    /** The count to write back, clamped so it can never exceed the threshold. */
+    val nextCount: Int get() = (stored + 1).coerceAtMost(REMOVAL_TIMEOUT_THRESHOLD)
+
+    companion object {
+      /**
+       * Validates then advances. Returns null when the stored value is
+       * PRESENT but unparseable or out of range — the FAIL-CLOSED outcome:
+       * the caller applies the decision (the match must still progress) but
+       * writes no counter and triggers no removal. A corrupted count
+       * therefore disables that seat's removal while the seat keeps
+       * resolving through the MEDIUM bot, and no malformed state can ever
+       * remove a player.
+       *
+       * A MISSING counter doc also reads null, but that is the legitimate
+       * "no timeouts recorded yet" case, so [raw] null is trusted as 0 —
+       * the seam's doc-exists check distinguishes the two, and a seat's
+       * first timeout must create the counter.
+       */
+      fun fromStored(raw: Any?, docExists: Boolean = true): TimeoutCounter? {
+        if (!docExists) return TimeoutCounter(stored = 0, shouldRemove = false)
+        val stored = (raw as? Number)?.toInt() ?: return null
+        if (stored !in MIN_STORED_TIMEOUT_COUNT..REMOVAL_TIMEOUT_THRESHOLD) return null
+        return TimeoutCounter(
+          stored = stored,
+          shouldRemove = stored == REMOVAL_TIMEOUT_THRESHOLD - 1,
+        )
+      }
+    }
+  }
+
+  /**
+   * The `timeoutRemovedUids` write for a removal: appends [uid] to the
+   * mechanism's own list, distinct. The ONLY field the timeout mechanism
+   * writes for a removal — never `botSeats`, never Vote Kick's `removedUids`.
+   */
+  fun removalWrite(fields: Map<String, Any?>, uid: String): List<String> =
+    (timeoutRemovedUids(fields) + uid).distinct()
+
   // ── constants mirrored from :services (not visible to :functions) ────
 
   /**
@@ -149,6 +219,54 @@ object TimeoutResolution {
   private const val MAX_DECISION_TIMER_SECONDS = 20
 
   private const val MILLIS_PER_SECOND = 1000L
+
+  /**
+   * S61 Stage 2: a seat that is already permanently bot-driven does not make
+   * the table wait the full human window. The deadline the resolver derives
+   * shortens to this for bot-controlled seats, so a timeout-removed (or
+   * Vote-Kick-removed) seat plays promptly instead of stalling the match for
+   * `decisionTimerSeconds` on every subsequent decision. Server-authoritative
+   * — the anchor is still `updatedAt`, only the derived duration changes, so
+   * the Stage 1 idempotency proof (the write re-stamps `updatedAt`, the next
+   * caller re-anchors past it) is untouched.
+   */
+  const val BOT_DECISION_SECONDS = 2
+
+  /** The timeout count at which a seat is permanently removed (§0.5-C). */
+  const val REMOVAL_TIMEOUT_THRESHOLD = 15
+
+  /** The lower bound a stored timeout count must satisfy to be trusted. */
+  const val MIN_STORED_TIMEOUT_COUNT = 0
+
+  /** `timeoutCounts/{uid}`'s single field. */
+  const val COUNT_FIELD = "count"
+
+  /**
+   * The floor for [millisUntilDeadline]. A deadline that has just passed (or a
+   * clock that ticked over) must not hand back a zero/negative delay the
+   * client could spin on — a controlled retry floor, not a tight loop.
+   */
+  const val MIN_RETRY_AFTER_MILLIS = 250L
+
+  /**
+   * S61 Stage 2: the seats a bot drives, for EITHER reason — Vote Kick's
+   * `botSeats`, or a seat whose uid the 15-timeout counter removed. Mirrors
+   * MatchDoc.botControlledSeats() read-side-only: the two mechanisms keep
+   * separate persisted lists and this never writes either.
+   */
+  fun botControlledSeats(fields: Map<String, Any?>): Set<String> {
+    val botSeats = (fields["botSeats"] as? List<*>)?.mapNotNull { it as? String }.orEmpty()
+    val timeoutRemoved = timeoutRemovedUids(fields)
+    val seats = strMap(fields["seats"]) ?: return botSeats.toSet()
+    return botSeats.toSet() +
+      seats.entries.mapNotNull { (seat, uid) ->
+        if (uid in timeoutRemoved) seat else null
+      }
+  }
+
+  /** The timeout mechanism's own persisted removal list (never Vote Kick's). */
+  fun timeoutRemovedUids(fields: Map<String, Any?>): Set<String> =
+    ((fields["timeoutRemovedUids"] as? List<*>)?.mapNotNull { it as? String }).orEmpty().toSet()
 
   /** 13 tricks × the seats at the table (maybeCompleteRound's own check). */
   private fun cardTotal(seats: Int): Int = 13 * seats
@@ -279,7 +397,7 @@ object TimeoutResolution {
       return Pending(
         phase = DecisionPhase.BIDDING,
         seatId = waiting,
-        durationSeconds = DecisionPhase.BIDDING.durationSeconds(timerSeconds),
+        durationSeconds = durationFor(fields, waiting, timerSeconds, DecisionPhase.BIDDING),
         anchorMillis = anchor,
       )
     }
@@ -305,14 +423,42 @@ object TimeoutResolution {
     return Pending(
       phase = DecisionPhase.CARD,
       seatId = seat,
-      durationSeconds = DecisionPhase.CARD.durationSeconds(timerSeconds),
+      durationSeconds = durationFor(fields, seat, timerSeconds, DecisionPhase.CARD),
       anchorMillis = anchor,
     )
   }
 
+  /**
+   * S61 Stage 2: the window for [seatId]'s decision. A bot-driven seat gets
+   * [BOT_DECISION_SECONDS] — a permanently bot-held seat should not stall the
+   * table through the full human timer on every later decision — while a
+   * human seat keeps the RD21 phase duration. Server-authoritative either
+   * way: only the derived duration moves, never the `updatedAt` anchor.
+   */
+  private fun durationFor(
+    fields: Map<String, Any?>,
+    seatId: String,
+    timerSeconds: Int,
+    phase: DecisionPhase,
+  ): Int =
+    if (seatId in botControlledSeats(fields)) BOT_DECISION_SECONDS
+    else phase.durationSeconds(timerSeconds)
+
   /** True iff [nowMillis] is at or past the pending decision's derived deadline. */
   fun isExpired(pending: Pending, nowMillis: Long): Boolean =
     nowMillis >= pending.anchorMillis + pending.durationSeconds * MILLIS_PER_SECOND
+
+  /**
+   * S61 Stage 2: the server-authoritative milliseconds until [pending]'s
+   * deadline, from the SAME server clock that judges expiry. This is what the
+   * client re-arms its alarm on when it called early and received
+   * NOT_YET_EXPIRED — it never re-arms on its own estimate, because
+   * `updatedAt` is not on `MatchDoc` and the client cannot know the anchor.
+   * Floored so a just-expired deadline cannot hand back a negative delay.
+   */
+  fun millisUntilDeadline(pending: Pending, nowMillis: Long): Long =
+    (pending.anchorMillis + pending.durationSeconds * MILLIS_PER_SECOND - nowMillis)
+      .coerceAtLeast(MIN_RETRY_AFTER_MILLIS)
 
   // ── reconstruction + decision ────────────────────────────────────────
 
@@ -730,8 +876,16 @@ object TimeoutResolution {
     return trickWinner(table.cfg.trump, plays.first().card.suit, plays)
   }
 
-  /** The uid occupying [seatId], or null when the seat is empty. */
-  private fun seatUid(fields: Map<String, Any?>, seatId: String): String? =
+  /**
+   * The uid occupying [seatId], or null when the seat is empty. Public for the
+   * counter: `timeoutCounts/{uid}` is keyed by the PLAYER, and the seats map
+   * is RETAINED on removal (S60 writes only `botSeats`/`removedUids`), so a
+   * seat whose uid `isSeated()` no longer admits still resolves to its uid
+   * here — that is how the counter keeps counting for the right player after
+   * a removal, and how a Vote-Kick-removed seat is recognized as already
+   * bot-controlled.
+   */
+  fun seatUid(fields: Map<String, Any?>, seatId: String): String? =
     (strMap(fields["seats"])?.get(seatId) as? String)
 
   /** { suit, rank: { v, s } } — StoredCard.toFields' own shape. */
