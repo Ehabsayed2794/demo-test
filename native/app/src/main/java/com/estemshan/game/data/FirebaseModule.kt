@@ -10,6 +10,8 @@ import com.google.firebase.auth.ktx.auth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
+import com.google.firebase.functions.FirebaseFunctions
+import com.google.firebase.functions.ktx.functions
 
 /**
  * Firebase bootstrap. No google-services.json is committed and no
@@ -32,6 +34,13 @@ object FirebaseModule {
   const val EMULATOR_HOST = "10.0.2.2"
   const val AUTH_EMULATOR_PORT = 9099
   const val FIRESTORE_EMULATOR_PORT = 8080
+
+  /**
+   * S61 — the Functions emulator's HTTP port (firebase.json). Debug only:
+   * release talks to real Cloud Functions, and S61's Spark constraint forbids
+   * ever deploying them, so the callable is only ever exercised through this.
+   */
+  const val FUNCTIONS_EMULATOR_PORT = 5001
 
   // Correctly-shaped but obviously unpopulated: the project number is real
   // (261597513798), the Android app id is all zeros. The owner replaces it
@@ -78,9 +87,15 @@ object FirebaseModule {
     if (useEmulator) {
       Firebase.auth.useEmulator(EMULATOR_HOST, AUTH_EMULATOR_PORT)
       Firebase.firestore.useEmulator(EMULATOR_HOST, FIRESTORE_EMULATOR_PORT)
+      // S61: the timeout resolver's callable. useEmulator must be called once
+      // before any getHttpsCallable, the same as the other two.
+      Firebase.functions.useEmulator(EMULATOR_HOST, FUNCTIONS_EMULATOR_PORT)
     }
   }
 
   val auth: FirebaseAuth get() = Firebase.auth
   val db: FirebaseFirestore get() = Firebase.firestore
+
+  /** S61 — the Functions instance the timeout resolver's callable hangs off. */
+  val functions: FirebaseFunctions get() = Firebase.functions
 }

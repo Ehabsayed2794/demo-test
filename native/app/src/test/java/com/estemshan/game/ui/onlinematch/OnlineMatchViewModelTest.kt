@@ -46,6 +46,7 @@ import com.estemshan.services.model.SubmitBidResult
 import com.estemshan.services.model.SubmitBiddingActionResult
 import com.estemshan.services.model.SubmitCardResult
 import com.estemshan.services.session.MatchStore
+import com.estemshan.services.DecisionTimeoutPort
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -53,6 +54,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.resetMain
@@ -128,6 +130,7 @@ class OnlineMatchViewModelTest {
     worker: CoroutineDispatcher,
     clock: () -> Long = { System.currentTimeMillis() },
     heartbeat: Heartbeat = Heartbeat.None,
+    timeouts: DecisionTimeoutPort = DecisionTimeoutPortStub,
   ): OnlineMatchViewModel {
     val session = GameSession()
     sessions[uid] = session
@@ -145,6 +148,7 @@ class OnlineMatchViewModelTest {
       worker = worker,
       clock = clock,
       heartbeat = heartbeat,
+      timeouts = timeouts,
     )
   }
 
@@ -694,6 +698,10 @@ class OnlineMatchViewModelTest {
       assertFalse("the restarted clock is measured from the progress",
         vm.opponentAway.value,
       )
+
+      // S61: the timeout alarm this VM now also arms must not outlive the
+      // test — see stopAndDrain.
+      stopAndDrain(vm)
     } finally {
       Dispatchers.resetMain()
     }
@@ -930,6 +938,363 @@ class OnlineMatchViewModelTest {
       error("FinalEstimate is the bids map, not the biddingLog")
   }
 
+  /**
+   * S61 — stop the VM and drain the scheduler. Any test that leaves the
+   * timeout alarm armed must do this before [Dispatchers.resetMain]:
+   * [runTest]'s own epilogue resumes the pending alarm afterwards, and a Main
+   * dispatcher that has been reset cannot serve it. [advanceUntilIdle] fires
+   * and drains everything still scheduled — the away alarm, the timeout alarm,
+   * and the cancellation runnables stop() raises — so nothing is left for the
+   * epilogue to trip over. Every assertion precedes it, so the extra virtual
+   * time it spends is unobservable.
+   */
+  private fun TestScope.stopAndDrain(vm: OnlineMatchViewModel) {
+    advanceUntilIdle()
+    vm.stop()
+    advanceUntilIdle()
+  }
+
+  // ==========================================================================
+  // S61 (E6b) — the timeout-resolution alarm
+  //
+  // The alarm is pure client logic over a scriptable [DecisionTimeoutPort],
+  // so these pin its retry semantics hermetically — the same way
+  // [FakeMatchStore] pins the write paths. The instrumented suite exercises
+  // the REAL callable against the Functions emulator; these tests pin what
+  // the alarm DOES with each answer it gets back.
+  // ==========================================================================
+
+  /**
+   * The first arm is the derived window — 20 s here (the 15 s default timer +
+   * RD21's 5 s bidding offset). Nothing reaches the callable before it, and
+   * one second short of it nothing has fired.
+   */
+  @Test
+  fun theAlarmWaitsTheDerivedWindowBeforeCalling() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastRoundDoc()
+      val timeouts = ScriptedTimeouts(DecisionTimeoutPort.Resolution.Applied)
+      val vm = makeVm("uid-a", Dispatchers.Main, timeouts = timeouts)
+      vm.start("m-to")
+      advanceUntilIdle()
+      deliverNow("m-to")
+
+      // 500 ms short of the window: the first fire has not happened yet
+      // (advanceTimeBy also runs the tasks that fall due inside it, so the
+      // boundary itself would fire).
+      advanceTimeBy(19_500)
+      runCurrent()
+      assertEquals("no call before the window elapses", 0, timeouts.calls.get())
+
+      advanceTimeBy(2_000)
+      runCurrent()
+      assertEquals("the window elapsed and the callable was invoked", 1, timeouts.calls.get())
+      stopAndDrain(vm)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * Acceptance (a): an early call is retried on the SERVER's remaining time
+   * and eventually resolves. No unrelated Firestore update is needed to move
+   * it along — NOT_YET_EXPIRED re-arms the alarm itself.
+   */
+  @Test
+  fun anEarlyNotYetExpiredIsRetriedAndEventuallyResolves() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastRoundDoc()
+      val timeouts = ScriptedTimeouts(
+        DecisionTimeoutPort.Resolution.NotYetExpired(1_000),
+        DecisionTimeoutPort.Resolution.Applied,
+      )
+      val vm = makeVm("uid-a", Dispatchers.Main, timeouts = timeouts)
+      vm.start("m-to")
+      advanceUntilIdle()
+      deliverNow("m-to")
+
+      // 250 ms past the 20 s window but short of the 1 s retry that follows,
+      // so exactly the first fire lands here.
+      advanceTimeBy(20_250)
+      runCurrent()
+      assertEquals("the first call landed early", 1, timeouts.calls.get())
+
+      // Re-armed on the server's 1 s, not on a re-delivery.
+      advanceTimeBy(1_000)
+      runCurrent()
+      assertEquals(2, timeouts.calls.get())
+
+      // APPLIED terminates the loop — it does not poll for the update.
+      advanceTimeBy(60_000)
+      runCurrent()
+      assertEquals("no further call after an applied resolution", 2, timeouts.calls.get())
+      stopAndDrain(vm)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * Acceptance (b): a transient callable failure does not permanently disable
+   * the alarm. Each failure backs off and the next attempt still lands.
+   */
+  @Test
+  fun aTransientCallableFailureDoesNotDisableTheAlarm() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastRoundDoc()
+      val timeouts = ScriptedTimeouts(
+        DecisionTimeoutPort.Resolution.Retryable,
+        DecisionTimeoutPort.Resolution.Retryable,
+        DecisionTimeoutPort.Resolution.Applied,
+      )
+      val vm = makeVm("uid-a", Dispatchers.Main, timeouts = timeouts)
+      vm.start("m-to")
+      advanceUntilIdle()
+      deliverNow("m-to")
+
+      // 250 ms past the 20 s window but short of the 500 ms first backoff,
+      // so exactly the first fire lands here.
+      advanceTimeBy(20_250)
+      runCurrent()
+      assertEquals(1, timeouts.calls.get())
+
+      // 500 ms backoff, then 1 s.
+      advanceTimeBy(500)
+      runCurrent()
+      assertEquals(2, timeouts.calls.get())
+      advanceTimeBy(1_000)
+      runCurrent()
+      assertEquals(3, timeouts.calls.get())
+
+      // The third call applied; the loop stops.
+      advanceTimeBy(60_000)
+      runCurrent()
+      assertEquals(3, timeouts.calls.get())
+      stopAndDrain(vm)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * Acceptance (c): a newer delivery cancels the stale scheduled attempt. Both
+   * deliveries land at the same virtual instant and each arms a 20 s wait, so
+   * if the first alarm had survived it would ALSO have fired here — exactly
+   * one call proves it was cancelled rather than merely superseded.
+   */
+  @Test
+  fun aNewerDeliveryCancelsTheStaleAlarm() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastRoundDoc()
+      val timeouts = ScriptedTimeouts(DecisionTimeoutPort.Resolution.Applied)
+      val vm = makeVm("uid-a", Dispatchers.Main, timeouts = timeouts)
+      vm.start("m-to")
+      advanceUntilIdle()
+
+      deliverNow("m-to")
+      // A newer decision baseline arrives before the first alarm fires.
+      store.doc = fastRoundDoc().copy(version = 2)
+      deliverNow("m-to")
+
+      advanceTimeBy(21_000)
+      runCurrent()
+      assertEquals("only the re-armed alarm fired", 1, timeouts.calls.get())
+      stopAndDrain(vm)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * At most one alarm is ever armed: three rapid deliveries, one call. This is
+   * the client half of "at most one active alarm job".
+   */
+  @Test
+  fun atMostOneAlarmIsEverArmedAcrossDeliveries() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastRoundDoc()
+      val timeouts = ScriptedTimeouts(DecisionTimeoutPort.Resolution.Applied)
+      val vm = makeVm("uid-a", Dispatchers.Main, timeouts = timeouts)
+      vm.start("m-to")
+      advanceUntilIdle()
+
+      repeat(3) { i ->
+        store.doc = fastRoundDoc().copy(version = i + 1)
+        deliverNow("m-to")
+      }
+
+      advanceTimeBy(21_000)
+      runCurrent()
+      assertEquals(1, timeouts.calls.get())
+      stopAndDrain(vm)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * A bot-controlled seat does not make the table wait the human window — the
+   * S61 pacing fix is pointless if the client still arms at 15 s + 5 and stalls
+   * the table first. Three seconds is past the 2 s bot window and well short
+   * of the 20 s human window.
+   */
+  @Test
+  fun aBotControlledSeatArmsAtTheShortWindow() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastRoundDoc()
+      val timeouts = ScriptedTimeouts(DecisionTimeoutPort.Resolution.Applied, clock = { currentTime })
+      val vm = makeVm("uid-a", Dispatchers.Main, timeouts = timeouts)
+      vm.start("m-to")
+      advanceUntilIdle()
+      deliverNow("m-to")
+
+      val waiting = biddingOf(vm.state.value).waitingFor
+        ?: error("expected a live bidding decision to wait on")
+      // Remove the deciding seat by the timeout mechanism's OWN provenance —
+      // never Vote Kick's botSeats — and re-deliver. The version MUST tick:
+      // every real write bumps it, and the adapter's ordering guard drops a
+      // same-version delivery, so a flat copy would never reach the VM.
+      store.doc = fastRoundDoc().copy(
+        version = 2,
+        timeoutRemovedUids = listOf(seatUids.getValue(waiting)),
+      )
+      deliverNow("m-to")
+      val armedAt = currentTime
+
+      // advanceUntilIdle fires every pending timer; the recorded call time is
+      // what distinguishes the two-second bot window from the twenty-second
+      // human one, which is the whole point of the pacing fix.
+      advanceUntilIdle()
+      assertEquals(1, timeouts.callTimes.size)
+      val firedAt = timeouts.callTimes.single()
+      assertTrue(
+        "the bot-controlled seat fired at its short window (${firedAt - armedAt} ms), " +
+          "not the 20 s human one",
+        firedAt - armedAt <= 3_000,
+      )
+      stopAndDrain(vm)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * A permanent denial terminates the alarm: retrying a denial the server
+   * raised on purpose would only hammer it.
+   */
+  @Test
+  fun aDeniedResolutionTerminatesTheAlarm() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastRoundDoc()
+      val timeouts = ScriptedTimeouts(DecisionTimeoutPort.Resolution.Denied)
+      val vm = makeVm("uid-a", Dispatchers.Main, timeouts = timeouts)
+      vm.start("m-to")
+      advanceUntilIdle()
+      deliverNow("m-to")
+
+      advanceTimeBy(21_000)
+      runCurrent()
+      assertEquals(1, timeouts.calls.get())
+
+      advanceTimeBy(60_000)
+      runCurrent()
+      assertEquals("a denial is terminal", 1, timeouts.calls.get())
+      stopAndDrain(vm)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * The loop is bounded: a callable that never succeeds cannot spin it. The
+   * transient budget is six consecutive failures plus the attempt that spends
+   * the last one — the exponential backoff makes those ~31 s of patient
+   * retrying, not a burst.
+   */
+  @Test
+  fun theAlarmStopsWhenItsTransientBudgetIsSpent() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastRoundDoc()
+      val timeouts = ScriptedTimeouts(DecisionTimeoutPort.Resolution.Retryable)
+      val vm = makeVm("uid-a", Dispatchers.Main, timeouts = timeouts)
+      vm.start("m-to")
+      advanceUntilIdle()
+      deliverNow("m-to")
+
+      advanceUntilIdle()
+      val calls = timeouts.calls.get()
+      assertEquals("exactly the transient budget, then the alarm stopped", 7, calls)
+
+      // And it stays stopped.
+      advanceTimeBy(120_000)
+      runCurrent()
+      assertEquals(7, timeouts.calls.get())
+      // advanceUntilIdle above already drained everything, so nothing is
+      // left armed — no stopAndDrain needed here.
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * Leaving the match drops the armed alarm along with everything else — a
+   * resolved alarm for a match nobody is watching is a leak.
+   */
+  @Test
+  fun stopCancelsTheArmedAlarm() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastRoundDoc()
+      val timeouts = ScriptedTimeouts(DecisionTimeoutPort.Resolution.Applied)
+      val vm = makeVm("uid-a", Dispatchers.Main, timeouts = timeouts)
+      vm.start("m-to")
+      advanceUntilIdle()
+      deliverNow("m-to")
+
+      vm.stop()
+      advanceTimeBy(60_000)
+      runCurrent()
+      assertEquals("the armed alarm never fired after stop", 0, timeouts.calls.get())
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
   // ==========================================================================
   //  The hermetic stand-ins
   // ==========================================================================
@@ -978,6 +1343,47 @@ class OnlineMatchViewModelTest {
 
     /** Live subscribers — the "one real listener per device" invariant. */
     fun subscribers(matchId: String): Int = sinks[matchId]?.size ?: 0
+  }
+
+  /**
+   * A [DecisionTimeoutPort] that answers from a script and records every call.
+   * The alarm's retry semantics are client logic, so this stands in for the
+   * callable exactly the way [FakeMatchStore] stands in for Firestore: a call
+   * is the observable, and the script is the answer the server would have
+   * given. [DecisionTimeoutPort.Resolution.Applied] and [NotYetExpired] are
+   * the two the alarm's behaviour turns on; the instrumented suite covers the
+   * real callable path.
+   */
+  private class ScriptedTimeouts(vararg scripted: DecisionTimeoutPort.Resolution) :
+    DecisionTimeoutPort {
+    private val script = scripted.toList()
+    val calls = AtomicInteger(0)
+    val matchIds = mutableListOf<String>()
+    /** The scheduler's virtual time at each call — the bot-pacing test pins the
+     *  window the alarm actually armed at, not just that it fired. */
+    val callTimes = mutableListOf<Long>()
+    private var clock: () -> Long = { 0L }
+
+    constructor(vararg scripted: DecisionTimeoutPort.Resolution, clock: () -> Long) : this(
+      *scripted,
+    ) {
+      this.clock = clock
+    }
+
+    override suspend fun resolve(matchId: String): DecisionTimeoutPort.Resolution {
+      matchIds.add(matchId)
+      callTimes.add(clock())
+      val index = calls.getAndIncrement()
+      return script.getOrElse(index) { script.last() }
+    }
+  }
+
+  /**
+   * [makeVm]'s default port: the pre-S61 sections never arm an alarm that
+   * reaches a callable, and if one does, [NotActive] ends it immediately.
+   */
+  private object DecisionTimeoutPortStub : DecisionTimeoutPort {
+    override suspend fun resolve(matchId: String) = DecisionTimeoutPort.Resolution.NotActive
   }
 
   /**
