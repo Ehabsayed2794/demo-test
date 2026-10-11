@@ -147,7 +147,7 @@ class VoteKickService(
         standings = claimedStandings,
         targetSeat = targetSeat,
         initiatorSeat = initiatorSeat ?: "",
-        botSeats = match.botSeats.toSet(),
+        botSeats = match.botControlledSeats(),
         cooldown = match.failedVoteKickCooldown?.let {
           VoteKickCooldown(it.targetSeat, it.blockedUntilRound)
         },
@@ -161,7 +161,7 @@ class VoteKickService(
       }
       val initiator = initiatorSeat ?: throw ServiceException(VOTE_INITIATOR_INELIGIBLE,
         "openVoteKick: you do not own a seat in this match.")
-      val eligible = eligibleVoteKickVoters(match.seats.keys, targetSeat, match.botSeats.toSet())
+      val eligible = eligibleVoteKickVoters(match.seats.keys, targetSeat, match.botControlledSeats())
       val vote = engineOpenVote(
         targetSeat = targetSeat,
         initiatorSeat = initiator,
@@ -220,7 +220,7 @@ class VoteKickService(
       val seat = match.uidToSeat(callingUid)
         ?: return@runTx TxOutcome.Err(ServiceException(PERMISSION_DENIED,
           "castVoteKick: you do not own a seat in this match."))
-      val eligible = eligibleVoteKickVoters(match.seats.keys, vote.targetSeat, match.botSeats.toSet())
+      val eligible = eligibleVoteKickVoters(match.seats.keys, vote.targetSeat, match.botControlledSeats())
       if (seat !in eligible) {
         return@runTx TxOutcome.Err(ServiceException(PERMISSION_DENIED,
           "castVoteKick: seat '$seat' is not an eligible voter in this vote."))
@@ -390,7 +390,7 @@ class VoteKickService(
     removed: Boolean = false,
     cooledDown: Boolean = false,
   ): VoteKickCastResult {
-    val eligible = eligibleVoteKickVoters(match.seats.keys, vote.targetSeat, match.botSeats.toSet())
+    val eligible = eligibleVoteKickVoters(match.seats.keys, vote.targetSeat, match.botControlledSeats())
     val engineVotes = vote.votes.mapValues { (_, v) -> v?.let { VoteKickDoc.choiceOf(it) } }
     return VoteKickCastResult(
       matchId = matchId,
