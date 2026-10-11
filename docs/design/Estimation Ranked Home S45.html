@@ -1,0 +1,83 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="design_doc_mode" content="canvas"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Estimation Ranked Home (S45)</title>
+<link href="https://fonts.googleapis.com/css2?family=Marcellus&family=Saira:wght@400;500;600;700&family=Spline+Sans+Mono:wght@400;500;600;700&family=Noto+Naskh+Arabic:wght@500;600&display=swap" rel="stylesheet">
+<style>:root{--accent:#E8A33D;--accent-hi:#F4B860;--accent-dim:#A8742A;--ink:#F0EADA;--ink-dim:#A89F8E;--ink-faint:#8A8272;--bg:#0D0A07;--panel:#17130E;--hi:#1D1912;--line:rgba(255,240,210,.07);--pill:#1D1A16;--mono:"Spline Sans Mono",monospace;--serif:"Marcellus",serif;--sans:"Saira","Noto Naskh Arabic",sans-serif}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#2a2622;font-family:var(--sans);color:var(--ink)}
+a{color:var(--accent)}a:hover{color:var(--accent-hi)}
+.lab{position:absolute;font:600 13px var(--mono);letter-spacing:.12em;color:#d9d2c2;text-transform:uppercase}
+.scr{position:absolute;width:932px;height:430px;overflow:hidden;border-radius:20px;color:var(--ink);background:radial-gradient(140% 65% at 50% -18%,rgba(141,84,32,.33),transparent 70%),linear-gradient(180deg,#171008 0%,var(--bg) 48%,#080604 100%)}
+.top{position:absolute;top:16px;left:26px;right:26px;display:flex;justify-content:space-between;align-items:center}
+.kick{font:500 10px var(--mono);letter-spacing:.18em;color:var(--ink-dim);text-transform:uppercase}
+h1{font:400 22px/1 var(--serif);letter-spacing:.05em;margin-top:4px}
+.chip{display:flex;align-items:center;gap:8px;height:44px;padding:0 16px;border-radius:22px;background:var(--pill);border:1px solid var(--line);font:600 10px var(--mono);letter-spacing:.14em;color:var(--ink-dim);text-decoration:none}
+.chip b{font:600 13px var(--mono);color:var(--ink);letter-spacing:.04em}.chip i{font-style:normal;color:var(--ink-faint);font-size:14px}
+.panel{position:absolute;left:26px;right:26px;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.id{top:84px;padding:20px 22px;display:flex;flex-direction:column;gap:20px}
+.idr{display:flex;align-items:center;gap:16px}
+.shield,.shield:before{clip-path:polygon(50% 0,100% 22%,100% 64%,50% 100%,0 64%,0 22%)}
+.shield{width:52px;height:60px;flex:none;position:relative;background:var(--ink-faint);display:grid;place-items:center;font:22px var(--serif);color:var(--ink)}
+.shield:before{content:"";position:absolute;inset:1.5px;background:var(--hi)}.shield span{position:relative}
+.nm small{display:block;font:600 9px var(--mono);letter-spacing:.14em;color:var(--ink-faint);margin-bottom:4px}
+.nm b{display:block;font:400 18px/1 var(--serif);letter-spacing:.04em}
+.nm span{display:block;margin-top:7px;font:600 15px/1.2 "Noto Naskh Arabic",serif;color:var(--ink-dim)}
+.rp{margin-left:auto;text-align:right}.rp small{display:block;font:600 9px var(--mono);letter-spacing:.14em;color:var(--ink-faint);margin-bottom:2px}
+.rp b{font:600 32px/1 var(--mono);letter-spacing:-.01em}
+.trk{height:6px;border-radius:3px;background:var(--pill);border:1px solid var(--line);overflow:hidden}.trk div{height:100%;background:var(--ink-dim);border-radius:3px}
+.tl{display:flex;gap:12px;justify-content:space-between;margin-top:8px;font:500 12px var(--sans);color:var(--ink-dim)}.tl span{white-space:nowrap}.tl i{font:600 12px var(--mono);font-style:normal;color:var(--ink);margin-left:6px}
+.note{font-size:13px;line-height:1.45;color:var(--ink-dim)}
+.sec{position:absolute;left:26px;top:78px;font:600 10px var(--mono);letter-spacing:.14em;color:var(--ink-faint);text-transform:uppercase}
+.cards{position:absolute;left:26px;right:26px;top:100px;height:290px;display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.path{position:static;padding:20px 22px;display:flex;flex-direction:column;gap:12px;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.path h2{font:400 20px/1 var(--serif);letter-spacing:.04em;margin-bottom:6px}
+.path p{font-size:14px;line-height:1.45;color:var(--ink-dim);min-height:40px}
+.path p.fact{color:var(--ink)}
+.path p i{font:600 13px var(--mono);font-style:normal;color:var(--ink)}
+.path .btn{margin-top:auto}
+.btn{height:44px;width:100%;border-radius:10px;border:1px solid rgba(255,240,210,.18);background:rgba(8,6,4,.4);color:var(--ink);font:600 13px var(--sans);letter-spacing:.03em;cursor:pointer}
+.btn:hover{border-color:rgba(232,163,61,.4);color:var(--accent-hi)}
+.btn:focus-visible,.chip:focus-visible{outline:2px solid var(--accent-hi);outline-offset:2px}
+.btn.p{background:linear-gradient(180deg,var(--accent-hi),var(--accent));color:#2a1d0c;border-color:transparent}.btn.p:hover{color:#2a1d0c;filter:brightness(1.06)}
+.act{position:absolute;left:26px;right:26px;bottom:0;height:56px;display:flex;align-items:center;justify-content:flex-end;border-top:1px solid var(--line)}
+.act .btn{width:240px}
+.steps{display:flex;gap:6px}.steps i{flex:1;height:6px;border-radius:3px;background:var(--pill);border:1px solid var(--line)}.steps i.d{background:var(--ink-dim);border-color:transparent}
+.sk{background:linear-gradient(90deg,var(--pill),var(--hi),var(--pill));background-size:200% 100%;animation:sh 2.4s ease-in-out infinite;border-radius:6px}
+@keyframes sh{0%,100%{background-position:100% 0}50%{background-position:0 0}}
+@media (prefers-reduced-motion:reduce){.sk{animation:none}}
+.doc{position:absolute;width:880px;background:#17130E;border:1px solid var(--line);border-radius:12px;padding:22px 24px;font-size:13px;line-height:1.5;color:var(--ink)}
+.doc h3{font:400 20px var(--serif);letter-spacing:.04em;margin-bottom:12px}.doc h4{font:600 10px var(--mono);letter-spacing:.14em;color:var(--accent);margin:14px 0 6px;text-transform:uppercase}
+.doc table{border-collapse:collapse;width:100%}.doc td,.doc th{border-top:1px solid var(--line);padding:6px 8px 6px 0;text-align:left;vertical-align:top}.doc th{font:600 10px var(--mono);color:var(--ink-faint);letter-spacing:.1em}
+.doc td:first-child{font:500 11px var(--mono);color:var(--ink-dim);width:170px}.doc li{margin:0 0 5px 16px;color:var(--ink-dim)}.doc li b{color:var(--ink)}
+.doc code{font:11px var(--mono);color:var(--accent-hi)}.doc p{color:var(--ink-dim)}</style></head><body>
+<script>const hdr='<div class="top"><div><div class="kick">Ranked · Solo</div><h1>Ranked</h1></div><a class="chip" href="#" aria-label="Season 1, open Season Overview"><span>SEASON</span><b>1</b><i>›</i></a></div>';
+const idp=(o)=>'<div class="panel id"><div class="idr"><div class="shield"><span>'+o.l+'</span></div><div class="nm"><small>YOUR RANK</small><b>'+o.n+'</b><span lang="ar" dir="rtl">'+o.ar+'</span></div><div class="rp"><small>RP</small><b>'+o.rp+'</b></div></div>'+o.tail+'</div>';
+const prog=(p,a,av,b,bv)=>'<div><div class="trk" role="progressbar" aria-valuenow="'+p+'" aria-valuemin="0" aria-valuemax="100"><div style="width:'+p+'%"></div></div><div class="tl"><span>'+a+'<i>'+av+'</i></span><span>'+b+'<i>'+bv+'</i></span></div></div>';
+const paths='<div class="sec">Choose how to start</div><div class="cards"><div class="path"><h2>Test my level</h2><p>Three matches set your starting rank, up to Platinum.</p><p class="fact">Difficulty and personality are set for you.</p><button class="btn">Test my level</button></div><div class="path"><h2>Start from Bronze</h2><p>You get Bronze III at <i>0</i> RP and climb toward Bronze II at <i>75</i>.</p><p class="fact">You can\'t take placement later.</p><button class="btn">Start from Bronze</button></div></div>';
+const play='<div class="act"><button class="btn p">Create Ranked Match</button></div>';
+const F=[
+['1 · Fresh (primary)',hdr+paths],
+['2 · Placed',hdr+idp({l:'G',n:'Gold II',ar:'معلم',rp:'740',tail:prog(32,'Gold II','700','Gold I','825')})+play],
+['3 · At King',hdr+idp({l:'K',n:'King',ar:'ملك',rp:'3,140',tail:'<p class="note">Further RP counts on the leaderboard only.</p>'})+play],
+['4 · Mid-placement',hdr+'<div class="panel id"><div class="nm"><small>PLACEMENT</small><b>Placement <span style="display:inline;margin:0;font:600 18px var(--mono);color:var(--ink)">2/3</span></b></div><div class="steps" aria-hidden="true"><i class="d"></i><i class="d"></i><i></i></div><p class="note">Your rank is revealed after the third match.</p></div>'],
+['5 · Loading',hdr+'<div class="panel id" aria-busy="true" aria-label="Loading rank"><div class="idr"><div class="sk" style="width:52px;height:60px"></div><div style="display:flex;flex-direction:column;gap:8px"><div class="sk" style="width:64px;height:9px"></div><div class="sk" style="width:110px;height:16px"></div><div class="sk" style="width:60px;height:14px"></div></div><div class="sk" style="width:76px;height:30px;margin-left:auto"></div></div><div class="sk" style="height:6px"></div></div>']
+];
+document.write(F.map((f,i)=>{const x=40+i*992;return '<div class="lab" style="left:'+x+'px;top:34px">'+f[0]+'</div><div class="scr" data-screen-label="'+f[0]+'" style="left:'+x+'px;top:60px">'+f[1]+'</div>'}).join(''));</script>
+<div class="doc" style="left:40px;top:540px"><h3>Copy table</h3><table><tr><th>ELEMENT</th><th>TEXT</th><th>SOURCE</th></tr>
+<tr><td>Kicker / title</td><td>Ranked · Solo / Ranked</td><td>approved</td></tr>
+<tr><td>Season chip</td><td>SEASON 1 (bound sample)</td><td>approved</td></tr>
+<tr><td>Identity label</td><td>YOUR RANK (placed, King only)</td><td>approved-verbatim</td></tr>
+<tr><td>Placed / King samples</td><td>Gold II · معلم · RP 740 (700 → Gold I 825) / King · ملك · RP 3,140</td><td>bound samples</td></tr>
+<tr><td>King line</td><td>Further RP counts on the leaderboard only.</td><td>approved-verbatim</td></tr>
+<tr><td>Section label</td><td>Choose how to start</td><td>agent-written (no rank fact)</td></tr>
+<tr><td>Path A</td><td>Test my level · [verbatim]<br>Three matches set your starting rank, up to Platinum.<br>Difficulty and personality are set for you.</td><td>title/button approved-verbatim; line 1 agent-written (Platinum ceiling: Rules §3); line 2 agent-written (existing)</td></tr>
+<tr><td>Path B</td><td>Start from Bronze · [verbatim]<br>You get Bronze III at 0 RP and climb toward Bronze II at 75.<br>You can't take placement later.</td><td>title/button/line 2 approved-verbatim; line 1 agent-written (ladder bounds 0, 75: Rules §1)</td></tr>
+<tr><td>Primary action</td><td>Create Ranked Match</td><td>agent-written (no rank fact)</td></tr>
+<tr><td>Mid-placement</td><td>PLACEMENT / Placement 2/3 / Your rank is revealed after the third match.</td><td>agent-written (no rank fact)</td></tr>
+<tr><td>Loading</td><td>Skeleton only, no text</td><td>-</td></tr></table>
+<h4>State table</h4><p>1 Fresh = NOT_STARTED (only frame with the choice; no identity block, no rank shown) · 2 Placed · 3 King · 4 Mid-placement (status only) · 5 Loading (skeleton, no values).</p>
+<h4>Fresh frame</h4><p>No rank, division or RP is displayed as the player's current rank. Bronze III at 0 RP appears only as Path B's consequence. Declining placement carries no penalty; the account tier is real but not yet assigned by this screen.</p></div>
+<div class="doc" style="left:1032px;top:540px"><h3>Contrast, colour audit, open decisions</h3><h4>Header kicker contrast (InkDim #A89F8E)</h4><p>Backdrop recomposited from the rendered gradients and sampled across the kicker box; the lightest pixel is used (worst case). Frames 1–5 are identical: backdrop <code>#26190B</code>, ratio <code>6.54:1</code> (≥ 4.5). All frames measure 932 × 430.</p>
+<h4>Colour audit</h4><ul><li><b>Screen Backdrop (owner-approved shared token):</b> <code>linear-gradient(180deg,#171008 0%,#0D0A07 48%,#080604 100%)</code> under <code>radial-gradient(140% 65% at 50% -18%, rgba(141,84,32,.33), transparent 70%)</code>. The glow is roadmap §4.1.3 (0.6 × 0.55). Used on every frame; no other undocumented values.</li><li>Approved tokens: Accent #E8A33D (primary button only), AccentHi #F4B860, Ink #F0EADA, InkDim #A89F8E, InkFaint #8A8272, Background #0D0A07, Surface #17130E, SurfaceHigh #1D1912, Pill #1D1A16, hairline rgba(255,240,210,.07). Button border .18 alpha, button fill rgba(8,6,4,.4), primary-button text #2a1d0c are inherited from the sibling language. Error is not used.</li></ul>
+<h4>Open decisions, designed around, not resolved</h4><ul><li><b>1 Tier tokens:</b> one swappable neutral shield; gate #2 Royal clause still unmet.</li><li><b>2 Seed conflict:</b> the Platinum II seed is not used; Gold II · 740 sits inside 700–824.</li><li><b>3 Season display:</b> one chip, bound sample, no remaining time.</li><li><b>4 Mid-placement:</b> status only; re-entry assumed via S48.</li><li><b>5 Highest Rank:</b> not surfaced.</li></ul>
+<p>Backdrop and header-kicker contrast are decided (owner amendment), no longer open.</p>
+<h4>Follow-up (not done here)</h4><p>Matchmaking and Result kickers use InkFaint over the same glow and need InkFaint → InkDim. Separate task; those files are untouched.</p></div>
+</body></html>
