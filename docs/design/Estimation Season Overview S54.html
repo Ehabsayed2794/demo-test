@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="design_doc_mode" content="canvas">
+<title>Estemshan — Season Overview</title>
+<link href="https://fonts.googleapis.com/css2?family=Marcellus&family=Saira:wght@400;500;600&family=Spline+Sans+Mono:wght@500;600;700&family=Noto+Naskh+Arabic:wght@600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0D0A07;--panel:#17130E;--high:#1D1912;--pill:#1D1A16;--line:rgba(255,240,210,.07);--ink:#F0EADA;--dim:#A89F8E;--faint:#8A8272;--mono:"Spline Sans Mono",monospace;--serif:"Marcellus",serif;--sans:"Saira",sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 13px/1.45 var(--sans)}
+.scr{position:absolute;left:26px;top:26px;width:932px;height:430px;border-radius:20px;overflow:hidden;background:radial-gradient(140% 65% at 50% -18%,rgba(141,84,32,.33),transparent 70%),linear-gradient(180deg,#171008 0%,#0D0A07 48%,#080604 100%)}
+.top{position:absolute;left:26px;right:26px;top:16px;display:flex;align-items:center;justify-content:space-between}
+.kick{font:500 10px var(--mono);letter-spacing:.18em;text-transform:uppercase;color:var(--dim)}
+h1{font:400 22px/1 var(--serif);letter-spacing:.05em;margin:4px 0 0}
+.chip{border:1px solid var(--line);border-radius:15px;background:var(--pill);padding:6px 12px;font:500 10px var(--mono);letter-spacing:.1em;color:var(--dim)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.window{position:absolute;top:74px;left:26px;right:26px;height:90px;display:flex;align-items:center;padding:16px 20px;gap:24px}
+.identity{flex:1}
+.identity h2{font:400 22px var(--serif);margin:6px 0 0}
+.sample{font:400 13px var(--sans);color:var(--dim);letter-spacing:0}
+.duration{border-left:1px solid var(--line);padding-left:24px;min-width:235px}
+.duration strong{font:600 26px var(--mono)}
+.duration p{margin:0;color:var(--dim)}
+.columns{position:absolute;left:26px;right:26px;top:176px;bottom:14px;display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.column{padding:12px 20px}
+.column h2{margin:6px 0}
+.column p{margin:4px 0}
+.column > :last-child{margin-bottom:0}
+h2{font:400 18px var(--serif);letter-spacing:.04em;margin:6px 0 10px}
+p{margin:8px 0}
+.rule{color:var(--ink)}
+.support{color:var(--dim)}
+.pair{display:flex;align-items:center;gap:12px;margin:6px 0;background:var(--pill);border:1px solid var(--line);border-radius:12px;padding:6px 12px}
+.rankname{font:400 18px var(--serif)}
+.ar{font:600 15px "Noto Naskh Arabic",serif;color:var(--dim)}
+.division,.num{font-family:var(--mono)}
+.details{font-size:13px;color:var(--ink);line-height:1.5}
+.record{display:flex;align-items:center;gap:14px;margin:6px 0;padding:6px 12px;background:var(--pill);border:1px solid var(--line);border-radius:12px}
+.shield{width:40px;height:46px;background:var(--faint);clip-path:polygon(50% 0,100% 22%,100% 64%,50% 100%,0 64%,0 22%);position:relative;display:grid;place-items:center;flex:none}
+.shield:before{content:"";position:absolute;inset:1px;background:var(--high);clip-path:inherit}
+.shield span{position:relative;font:400 20px var(--serif)}
+.record small{font:600 10px var(--mono);letter-spacing:.12em;color:var(--dim)}
+.held{color:var(--ink)}
+.doc{position:absolute;left:26px;top:482px;width:932px;padding:24px;background:var(--panel);border:1px solid var(--line);border-radius:12px;color:var(--dim)}
+.doc h2,.doc h3{color:var(--ink);font-family:var(--serif);font-weight:400}
+.doc code,.doc .check{font-family:var(--mono)}
+.doc li{margin-bottom:8px}
+.checklist{display:grid;grid-template-columns:1fr 1fr;gap:6px 24px}
+.checklist div{padding:6px 0;border-top:1px solid var(--line)}
+</style>
+</head>
+<body>
+<script>
+// One fixed-size landscape frame; samples are static, never a live countdown.
+document.write('<main class="scr" aria-label="Season Overview"></main>');
+</script>
+<template id="screen">
+<header class="top"><div><div class="kick">Ranked · Season</div><h1>Season</h1></div><div class="chip">SEASONAL POSITION · LIFETIME RECORD</div></header>
+<section class="panel window" aria-label="Bound season sample">
+  <div class="identity"><div class="kick">Current season · sample</div><h2 data-binding="season.id">{season.id}</h2></div>
+  <div class="duration"><div class="kick">Remaining · sample</div><p data-binding="season.end"><strong class="num">3</strong> months <span class="sample">(sample)</span></p><p>Season duration: <span class="num">3</span> months</p></div>
+</section>
+<div class="columns">
+<section class="panel column">
+  <div class="kick">Seasonal position</div><h2>A new cycle</h2>
+  <p class="rule">At the end of a season, your rank moves two division steps down.</p>
+  <div class="pair"><span><span class="rankname">Gold <span class="division">I</span></span> · <span class="ar" lang="ar" dir="rtl">معلم</span></span><span aria-hidden="true">→</span><span><span class="rankname">Gold <span class="division">III</span></span> · <span class="ar" lang="ar" dir="rtl">معلم</span></span></div>
+  <div class="details"><span class="rankname">King</span> · <span class="ar" lang="ar" dir="rtl">ملك</span> → <span class="rankname">Royal <span class="division">I</span></span> · <span class="ar" lang="ar" dir="rtl">سلطان</span> at season reset.</div>
+  <p class="support">A player at <span>Bronze <span class="division">III</span> · <span class="ar" lang="ar" dir="rtl">مبتدئ</span></span> stays there — there is no rank below it.</p>
+</section>
+<section class="panel column">
+  <div class="kick">Permanent record</div><h2>What you earned stays</h2>
+  <div class="record" data-binding="RankedProfile.highestRank">
+    <div class="shield" aria-hidden="true"><span>D</span></div>
+    <div><small>HIGHEST RANK EVER</small><div><span class="rankname">Diamond <span class="division">I</span></span> · <span class="ar" lang="ar" dir="rtl">أمير</span> <span class="sample">(sample)</span></div></div>
+  </div>
+  <p class="held">Never erased by a seasonal demotion.</p>
+  <p class="support">Career statistics never reset.<br>Your lifetime record carries into every season.</p>
+  <p class="support">Placement is once per account,<br>never per season.</p>
+</section>
+</div>
+</template>
+<script>document.querySelector(".scr").append(document.getElementById("screen").content.cloneNode(true));</script>
+<aside class="doc">
+<div class="kick">Delivery notes · S<span class="num">54</span></div>
+<h2>Position is seasonal. Record is permanent.</h2>
+<ol>
+<li><b>Bindings and samples.</b> Identity uses <code>season.id</code>, shown as the literal unresolved binding token, marked sample. This deliberately accommodates either a human-readable label or opaque identifier without choosing the final display policy. Remaining time uses <code>season.end − clientNow</code>, formatted as a coarse duration. The static <span class="num">3</span>-month sample uses the only approved duration, not a measured remainder. Highest Rank is a marked Diamond <span class="num">I</span> · <span class="ar" lang="ar" dir="rtl">أمير</span> sample bound to <code>RankedProfile.highestRank</code>; its initial and bilingual label update together. No RP or fabricated dates.</li>
+<li><b>Token audit.</b> Only approved surface, ink, backdrop, shape and typography tokens used. No gold accent anywhere, including Highest Rank. Shield uses SurfaceHigh fill, InkFaint edge and Ink initial. No missing token was invented. Kicker uses InkDim.</li>
+<li><b>Reset audit.</b> “At the end of a season, your rank moves two division steps down.” Gold <span class="num">I</span> → Gold <span class="num">III</span> is illustrated; the Bronze <span class="num">III</span> floor is explicit; King → Royal <span class="num">I</span> is stated as the special destination. No hedge, RP loss total or downward arrow. All tier labels on the screen include approved Arabic.</li>
+<li><b>New-cycle audit.</b> Identically sized, side-by-side panels give permanent record equal prominence to seasonal position. Highest Rank has a held neutral shield and explicit permanence. No confirmation, warning colour or primary action. The statistics grid is omitted in full to preserve hierarchy; lifetime permanence is stated.</li>
+<li><b>Open decision carried.</b> Season display form remains owner decision #<span class="num">3</span>. A literal binding placeholder is used rather than inventing a label. The component remains one value irrespective of the chosen format.</li>
+<li><b>Contrast / verification dependency.</b> Smallest text is InkDim, <span class="num">10</span>px. Approved-token documentation reports approximately <span class="num">6.5:1</span> at the lightest glow pixel; this is a source reference, not a measurement of this delivery. Exact rendered sample point and ratio remain unverified. A browser was not available through the discovered capabilities; the required reference-browser review and TASK console check remain outstanding. Source HTML was inspected, but browser rendering and font loading are not claimed verified.</li>
+</ol>
+<h3>Acceptance checklist</h3>
+<div class="checklist">
+<div>A<span class="num">1</span> — Pending: fixed landscape source complete; browser check outstanding.</div>
+<div>A<span class="num">2</span> — Checked: one marked bound season value.</div>
+<div>A<span class="num">3</span> — Checked: static marked remaining-time sample.</div>
+<div>A<span class="num">4</span> — Checked: complete reset rule and floor.</div>
+<div>A<span class="num">5</span> — Checked: neutral cycle framing.</div>
+<div>A<span class="num">6</span> — Checked: permanent Highest Rank.</div>
+<div>A<span class="num">7</span> — Checked: lifetime statement; no partial grid.</div>
+<div>A<span class="num">8</span> — Checked: no trophy system.</div>
+<div>A<span class="num">9</span> — Source checked: approved tokens; rendered contrast pending.</div>
+<div>A<span class="num">10</span> — Checked: divisionless King; Royal destination retains division.</div>
+<div>A<span class="num">11</span> — Source checked: bilingual labels, Naskh CSS; font load pending.</div>
+<div>A<span class="num">12</span> — Source checked: numerals in mono; font load pending.</div>
+<div>A<span class="num">13</span> — Checked: voice and pause controls absent.</div>
+<div>A<span class="num">14</span> — Checked: delivery notes and dependencies present.</div>
+</div>
+</aside>
+</body>
+</html>
