@@ -1,0 +1,84 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="design_doc_mode" content="canvas"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Estimation Ranked Placement Introduction (S47)</title>
+<link href="https://fonts.googleapis.com/css2?family=Marcellus&family=Saira:wght@400;500;600;700&family=Spline+Sans+Mono:wght@400;500;600;700&family=Noto+Naskh+Arabic:wght@500;600&display=swap" rel="stylesheet">
+<style>
+:root{--accent:#E8A33D;--accent-hi:#F4B860;--ink:#F0EADA;--ink-dim:#A89F8E;--ink-faint:#8A8272;--bg:#0D0A07;--panel:#17130E;--hi:#1D1912;--line:rgba(255,240,210,.07);--pill:#1D1A16;--mono:"Spline Sans Mono",monospace;--serif:"Marcellus",serif;--sans:"Saira","Noto Naskh Arabic",sans-serif}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#2a2622;font-family:var(--sans);color:var(--ink)}
+a{color:var(--accent)}a:hover{color:var(--accent-hi)}
+.lab{position:absolute;font:600 13px var(--mono);letter-spacing:.12em;color:#d9d2c2;text-transform:uppercase}
+.scr{position:absolute;width:932px;height:430px;overflow:hidden;border-radius:20px;color:var(--ink);background:radial-gradient(140% 65% at 50% -18%,rgba(141,84,32,.33),transparent 70%),linear-gradient(180deg,#171008 0%,var(--bg) 48%,#080604 100%)}
+.top{position:absolute;top:16px;left:26px;right:26px}
+.kick{font:500 10px var(--mono);letter-spacing:.18em;color:var(--ink-dim);text-transform:uppercase}
+h1{font:400 22px/1 var(--serif);letter-spacing:.05em;margin-top:4px}
+.panel{position:absolute;left:26px;right:26px;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.exp{top:70px;height:158px;padding:16px 22px;display:grid;grid-template-columns:minmax(0,1fr) 350px;gap:28px}
+.lead{font:400 18px/1.25 var(--serif);letter-spacing:.03em;margin-bottom:14px}
+.shape{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.m{display:flex;flex-direction:column;gap:8px}
+.m:before{content:"";height:6px;border-radius:3px;background:var(--pill);border:1px solid var(--line)}
+.m span{font:600 10px var(--mono);letter-spacing:.14em;color:var(--ink-dim);text-transform:uppercase}
+.m span i,.m2 i{font-style:normal;font-family:var(--mono)}
+.prog{margin-top:10px;font-size:13px;line-height:1.45;color:var(--ink-dim)}
+.side{border-left:1px solid var(--line);padding-left:24px;display:flex;flex-direction:column;justify-content:center;gap:8px}
+.cap small{display:block;font:600 9px var(--mono);letter-spacing:.14em;color:var(--ink-dim);margin-bottom:4px}
+.cap b{font:400 18px/1.2 var(--serif);letter-spacing:.04em}
+.cap b span{font:600 15px "Noto Naskh Arabic",serif;color:var(--ink-dim);margin-left:8px;letter-spacing:0}
+.side ul{list-style:none;display:flex;flex-direction:column;gap:5px}.side li{font-size:13px;line-height:1.4;color:var(--ink-dim)}
+.cards{position:absolute;left:26px;right:26px;top:240px;height:168px;display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.path{padding:14px 22px;display:flex;flex-direction:column;gap:6px;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.path h2{font:400 20px/1 var(--serif);letter-spacing:.04em;margin-bottom:2px}
+.path p{font-size:14px;line-height:1.45;color:var(--ink-dim);min-height:40px}
+.path p.fact{color:var(--ink);min-height:0}
+.path p i{font:600 13px var(--mono);font-style:normal;color:var(--ink)}
+.path .btn{margin-top:auto}
+.btn{height:44px;width:100%;border-radius:10px;border:1px solid rgba(255,240,210,.18);background:rgba(8,6,4,.4);color:var(--ink);font:600 13px var(--sans);letter-spacing:.03em;cursor:pointer}
+.btn:hover{border-color:rgba(232,163,61,.4);color:var(--accent-hi)}
+.btn:focus-visible{outline:2px solid var(--accent-hi);outline-offset:2px}
+[data-mk=num] .m:before{display:none}[data-mk=num] .m{flex-direction:row;align-items:center;gap:10px}[data-mk=num] .m:after{content:"";flex:1;height:1px;background:rgba(255,240,210,.18)}[data-mk=num] .m:last-child:after{display:none}[data-mk=num] .m span{display:flex;align-items:baseline;gap:8px}[data-mk=num] .m span i{font:400 30px/1 var(--serif);color:var(--ink);letter-spacing:0}
+[data-ceil=gold] .cap b{color:var(--accent-hi)}[data-ceil=gold] .m:last-child:before{background:var(--accent);border-color:transparent}[data-ceil=gold][data-mk=num] .m:last-child span i{color:var(--accent-hi)}
+[data-cta=lean] .path:first-child .btn{background:linear-gradient(180deg,var(--accent-hi),var(--accent));color:#2a1d0c;border-color:transparent}[data-cta=lean] .path:first-child .btn:hover{color:#2a1d0c;filter:brightness(1.06)}
+.doc{position:absolute;width:880px;background:#17130E;border:1px solid var(--line);border-radius:12px;padding:22px 24px;font-size:13px;line-height:1.5;color:var(--ink)}
+.doc h3{font:400 20px var(--serif);letter-spacing:.04em;margin-bottom:12px}.doc h4{font:600 10px var(--mono);letter-spacing:.14em;color:var(--accent);margin:14px 0 6px;text-transform:uppercase}
+.doc table{border-collapse:collapse;width:100%}.doc td,.doc th{border-top:1px solid var(--line);padding:6px 8px 6px 0;text-align:left;vertical-align:top}.doc th{font:600 10px var(--mono);color:var(--ink-faint);letter-spacing:.1em}
+.doc td:first-child{font:500 11px var(--mono);color:var(--ink-dim);width:150px}.doc li{margin:0 0 5px 16px;color:var(--ink-dim)}.doc li b{color:var(--ink)}
+.doc code{font:11px var(--mono);color:var(--accent-hi)}.doc p{color:var(--ink-dim)}
+</style></head><body>
+<div class="lab" style="left:40px;top:34px">S47 · Placement Introduction (NOT_STARTED)</div>
+<div class="scr" data-screen-label="S47 Placement Introduction" style="left:40px;top:60px">
+<div class="top"><div class="kick">Ranked · Solo</div><h1>Placement</h1></div>
+<div class="panel exp"><div><p class="lead">Three matches set your starting rank, up to Platinum.</p><div class="shape"><div class="m"><span>Match <i>1</i></span></div><div class="m"><span>Match <i>2</i></span></div><div class="m"><span>Match <i>3</i></span></div></div><p class="prog">The matches get progressively harder.</p></div>
+<div class="side"><div class="cap"><small>HIGHEST PLACEMENT</small><b>Platinum<span lang="ar" dir="rtl">وزير</span></b></div><ul><li>Difficulty and personality are set for you.</li><li>These matches don't count toward your statistics.</li><li>Placement happens once per account.</li></ul></div></div>
+<div class="cards">
+<div class="path"><h2>Begin placement</h2><p>Your rank is revealed after the third match.</p><p class="fact">Placement happens once per account.</p><button class="btn">Begin placement</button></div>
+<div class="path"><h2>Start from Bronze</h2><p>You get Bronze III at <i>0</i> RP and climb toward Bronze II at <i>75</i>.</p><p class="fact">You can't take placement later.</p><button class="btn">Start from Bronze</button></div>
+</div></div>
+<div class="doc" style="left:40px;top:540px"><h3>Copy table</h3><table><tr><th>ELEMENT</th><th>TEXT</th><th>SOURCE</th></tr>
+<tr><td>Kicker / title</td><td>Ranked · Solo / Placement</td><td>agent-written (BRIEF §4)</td></tr>
+<tr><td>Shape lead</td><td>Three matches set your starting rank, up to Platinum.</td><td>approved-verbatim (S45 Path A)</td></tr>
+<tr><td>Match markers</td><td>Match 1 · Match 2 · Match 3</td><td>agent-written (three-match shape, RD10); numerals only, no weights</td></tr>
+<tr><td>Progression</td><td>The matches get progressively harder.</td><td>agent-written (BRIEF §2, RD10 schedule); no difficulty names. Flagged as assumption 2</td></tr>
+<tr><td>Ceiling</td><td>HIGHEST PLACEMENT / Platinum · وزير</td><td>label agent-written; ceiling per RD10 (§4b.2); Arabic approved (RD1)</td></tr>
+<tr><td>What is fixed</td><td>Difficulty and personality are set for you.</td><td>approved-verbatim (S45 Path A)</td></tr>
+<tr><td>Statistics</td><td>These matches don't count toward your statistics.</td><td>agent-written (RD23, BRIEF §2)</td></tr>
+<tr><td>Once per account</td><td>Placement happens once per account.</td><td>agent-written (RD10, BRIEF §2); repeated in card A so the two cards hold the same text roles</td></tr>
+<tr><td>Path A</td><td>Begin placement · Your rank is revealed after the third match. · Placement happens once per account.</td><td>title/button agent-written (BRIEF §4); line 2 approved-verbatim (S45 mid-placement frame)</td></tr>
+<tr><td>Path B</td><td>Start from Bronze · You get Bronze III at 0 RP and climb toward Bronze II at 75. · You can't take placement later.</td><td>all approved-verbatim; 0 and 75 per ladder (§4b.1, RD26)</td></tr></table>
+<h4>State table</h4><table><tr><th>STATE</th><th>S47</th></tr><tr><td>NOT_STARTED</td><td>The only state. Gate: <code>canStartPlacement</code>.</td></tr><tr><td>IN_PROGRESS</td><td>Unreachable; re-entry via S48.</td></tr><tr><td>SKIPPED / COMPLETE</td><td>Unreachable; no replay, no per-season repeat.</td></tr></table>
+<h4>Structure</h4><p>The explanation (shape, ceiling, fixed items) leads and occupies the upper panel; the commitment sits beneath it. No rank, division, RP-as-current or example outcome is shown. Bronze III at 0 RP appears only as Path B's outcome. Voice, disconnect and pause controls are absent. No season chip (S45/S54).</p></div>
+<div class="doc" style="left:1032px;top:540px"><h3>Colour audit, open decisions, assumptions</h3>
+<h4>Colour audit</h4><ul><li><b>Screen Backdrop (owner-approved):</b> <code>linear-gradient(180deg,#171008 0%,#0D0A07 48%,#080604 100%)</code> under <code>radial-gradient(140% 65% at 50% -18%,rgba(141,84,32,.33),transparent 70%)</code>. Identical to S45.</li><li>Tokens used: Ink #F0EADA, InkDim #A89F8E, Background #0D0A07, Surface #17130E, Pill #1D1A16, hairline rgba(255,240,210,.07). Button border .18 alpha and fill rgba(8,6,4,.4) inherited from S45. Button hover border and focus ring use Gold/GoldHi as in S45.</li><li>Gold #E8A33D is not used as a fill: neither path has a primary fill. Error, warning colours, crown and per-tier colours are not used. All small labels use InkDim on Surface (about 7.4:1); the kicker uses InkDim as in S45.</li></ul>
+<h4>Open decisions, designed around, not resolved</h4><ul><li><b>Tier tokens (E6b-gated):</b> Platinum is named in type only; no tier colour, crest or glyph. The tier-distinctness clause stays unmet.</li><li><b>S47 vs S45 choice:</b> both screens carry both paths; S47 leads with the explanation. This is a design reading, not an owner ruling.</li><li><b>Progression wording:</b> see assumption 2.</li><li><b>RD30 provenance:</b> the S45 handoff package cites Amendment A3 (RD29/RD30, 2026-10-06) for "declining placement is legitimate", but the roadmap's decision block stops at RD1–RD28. The equal-dignity rule the design follows is the roadmap's §4b.2 clause either way; the owner needs to reconcile the roadmap with the package.</li></ul>
+<h4>Assumptions to confirm</h4><ul><li><b>1</b> "Begin placement" is the action label; no primary gold fill so the two paths stay equal.</li><li><b>2</b> Saying "progressively harder" is allowed (S48 shows none). Delete the line under the match markers if not.</li><li><b>3</b> The 10 / 20 / 70 weights are not shown; they are not player-facing in the approved copy.</li><li><b>4</b> Path B has no confirm dialog: the line "You can't take placement later." is the only statement of permanence.</li></ul></div>
+<div id="root"></div>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel">
+const TWEAK_DEFAULTS=/*EDITMODE-BEGIN*/{"markers":"bars","ceiling":"quiet","commit":"equal"}/*EDITMODE-END*/;
+function S47Tweaks(){const [t,setTweak]=useTweaks(TWEAK_DEFAULTS);
+React.useEffect(()=>{const s=document.querySelector('.scr');s.dataset.mk=t.markers;s.dataset.ceil=t.ceiling;s.dataset.cta=t.commit},[t]);
+return <TweaksPanel title="Tweaks"><TweakSection label="Explanation"/><TweakRadio label="Match markers" value={t.markers} options={[{value:'bars',label:'Bars'},{value:'num',label:'Numerals'}]} onChange={v=>setTweak('markers',v)}/><TweakRadio label="Platinum ceiling" value={t.ceiling} options={[{value:'quiet',label:'Quiet'},{value:'gold',label:'Gold'}]} onChange={v=>setTweak('ceiling',v)}/><TweakSection label="Commitment"/><TweakRadio label="Path emphasis" value={t.commit} options={[{value:'equal',label:'Equal'},{value:'lean',label:'Favour placement'}]} onChange={v=>setTweak('commit',v)}/></TweaksPanel>}
+ReactDOM.createRoot(document.getElementById('root')).render(<S47Tweaks/>);
+</script>
+</body></html>
