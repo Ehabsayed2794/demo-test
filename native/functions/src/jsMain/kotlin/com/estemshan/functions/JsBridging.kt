@@ -55,3 +55,26 @@ fun toPlain(value: Any?): Any? = when {
   value is Array<*> -> value.map { toPlain(it) }.toTypedArray()
   else -> value
 }
+
+/**
+ * S61 Stage 1 — a server timestamp as epoch millis, the anchor the decision
+ * timer's deadline is derived from (the doc's `updatedAt`).
+ *
+ * Admin reads return committed documents, so a `FieldValue.serverTimestamp()`
+ * written by MatchService is always a resolved `firebase-admin` Timestamp by
+ * the time it reaches us. That Timestamp's public conversion is `toDate()`;
+ * the plain-number path exists so unit fixtures can supply millis directly.
+ * Any other shape returns null — a deadline is never guessed from a value that
+ * is not a real server timestamp (the rematch vote's own rule).
+ */
+fun timestampToMillis(value: Any?): Long? {
+  if (value == null) return null
+  if (value is Number) return value.toLong()
+  val toDate: dynamic = value.asDynamic().toDate
+  if (toDate != null) {
+    val date = runCatching { toDate.call(value) }.getOrNull() ?: return null
+    val millis = runCatching { date.asDynamic().getTime() as Number }.getOrNull()
+    if (millis != null) return millis.toLong()
+  }
+  return null
+}

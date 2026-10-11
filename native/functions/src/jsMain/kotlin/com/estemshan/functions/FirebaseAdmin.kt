@@ -64,4 +64,10 @@ external interface Transaction {
 
 external object FieldValue {
   fun serverTimestamp(): Any
+  /**
+   * S61 Stage 1: the decision writes append to the round's append-only logs
+   * (biddingLog/cardLog) the same way MatchService does — never a full-array
+   * rewrite.
+   */
+  fun arrayUnion(vararg elements: Any?): Any
 }
