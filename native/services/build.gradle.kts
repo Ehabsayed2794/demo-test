@@ -59,6 +59,8 @@ dependencies {
   // plugin — options are built in code).
   implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
   implementation("com.google.firebase:firebase-firestore-ktx")
+  // S61: the resolveDecisionTimeout callable. BOM-managed like the rest.
+  implementation("com.google.firebase:firebase-functions-ktx")
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 

@@ -2,6 +2,8 @@ package com.estemshan.game.data
 
 import com.estemshan.engine.GameSession
 import com.estemshan.services.CoroutineMatchScheduler
+import com.estemshan.services.CallableDecisionTimeout
+import com.estemshan.services.DecisionTimeoutPort
 import com.estemshan.services.Heartbeat
 import com.estemshan.services.MatchAdapter
 import com.estemshan.services.MatchListenerFactory
@@ -86,6 +88,15 @@ object OnlineServices {
    * [FirebaseModule.db].
    */
   val heartbeat: Heartbeat by lazy { PlayerHeartbeat(players) }
+
+  /**
+   * S61's timeout resolver seam — the `resolveDecisionTimeout` callable. Lazy
+   * for the same reason as [auth]: it reads [FirebaseModule.functions], a
+   * computed getter over the Firebase singleton MainActivity initializes.
+   */
+  val timeouts: DecisionTimeoutPort by lazy {
+    CallableDecisionTimeout(FirebaseModule.functions)
+  }
 
   /**
    * The Room screen's match writer. Lazy for the same reason as [auth]:
