@@ -21,12 +21,17 @@ package com.estemshan.engine
  * - No provisional rank is ever produced: the only rank this file emits
  *   is the final one, from all three records at once.
  *
- * What is engineering judgment inside that closed envelope (documented,
- * tunable, and pinned by test rather than invented silently): each match's
- * six signals are normalized to 0..1 and averaged with equal weight, and
- * the raw-score signal is scaled against a per-format par. The match
- * weights, the ceiling, and the lower-bound start are NOT judgment calls —
- * they are the spec, asserted exactly.
+ * What is engineering judgment inside that closed envelope (documented
+ * below and pinned by PlacementScoringTest, not specified by RD10): each
+ * match's six signals are normalized to 0..1 and averaged with equal
+ * weight, and the 0..1 series composite maps LINEARLY onto RP 0..ceiling
+ * ([placementRpForSeriesScore]). The match weights, the ceiling, and the
+ * lower-bound start are NOT judgment calls — they are the spec, asserted
+ * exactly. The linear curve is S54's choice among unclosed alternatives
+ * (a quadratic would also satisfy RD10's letter); the pinning tests assert
+ * its exact shape — f(0)=0, f(0.25)=350, f(0.5)=700, f(0.75)=1050,
+ * f(1)=1400 — so any reshaping fails loudly instead of silently moving
+ * every player 1–2 tiers.
  *
  * Pure data + pure functions, no I/O — the same boundary Placement.kt
  * and RankLadder.kt keep. Common-main: stdlib only.
@@ -134,6 +139,23 @@ fun scorePlacementMatch(record: PlacementMatchRecord): Double {
 }
 
 /**
+ * S54 judgment, pinned by test (RD10 does not specify the curve): the
+ * 0..1 series composite maps linearly onto RP 0..[placementRpCeiling].
+ * f(0)=0, f(0.25)=350, f(0.5)=700, f(0.75)=1050, f(1)=1400 — asserted
+ * literally, so a quadratic or any other reshaping fails loudly.
+ *
+ * Rounding is OPEN-3 (nearest integer, ties away from zero) via the
+ * shared [roundDelta] — the same helper S47 settles through. NOT
+ * `kotlin.math.round`: it rounds ties to even and is the wrong call for
+ * any RP quantity (see its KDoc and the 2026-10-10 pointer note in the
+ * plan). Inputs outside 0..1 clamp to the ends.
+ */
+fun placementRpForSeriesScore(seriesScore: Double): Int {
+  val clamped = seriesScore.coerceIn(0.0, 1.0)
+  return roundDelta(clamped * placementRpCeiling).coerceIn(0, placementRpCeiling)
+}
+
+/**
  * The scored series: per-match composites, the weighted series score,
  * and the final rank + starting RP.
  *
@@ -169,8 +191,7 @@ fun scorePlacementSeries(records: List<PlacementMatchRecord>): PlacementSeriesRe
   val matchScores = byIndex.map { scorePlacementMatch(it) }
   val seriesScore = matchScores.zip(placementMatchWeights) { score, weight -> score * weight }.sum()
     .coerceIn(0.0, 1.0)
-  val targetRp = kotlin.math.round(seriesScore * placementRpCeiling).toInt()
-    .coerceIn(0, placementRpCeiling)
+  val targetRp = placementRpForSeriesScore(seriesScore)
   val rank = rankAt(targetRp)
   return PlacementSeriesResult(
     matchScores = matchScores,

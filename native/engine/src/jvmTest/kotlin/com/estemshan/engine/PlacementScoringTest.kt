@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlin.math.sqrt
 
 /**
  * S54 — placement scoring (RD10, FINAL): the 10/20/70 series composite,
@@ -185,6 +186,99 @@ class PlacementScoringTest {
   }
 
   // ==========================================================================
+  //  The composite→RP mapping, pinned literally (F1)
+  // ==========================================================================
+
+  @Test
+  fun theSeriesToRpMappingIsLinearOntoTheCeiling() {
+    // S54 judgment, not RD10 text: the 0..1 composite maps linearly onto
+    // RP 0..Platinum-I-floor. Asserted literally at five points, so any
+    // reshaping (e.g. quadratic, which would read 350 here) fails loudly
+    // instead of silently moving every player 1–2 tiers.
+    assertEquals(0, placementRpForSeriesScore(0.0))
+    assertEquals(350, placementRpForSeriesScore(0.25))
+    assertEquals(700, placementRpForSeriesScore(0.5))
+    assertEquals(1050, placementRpForSeriesScore(0.75))
+    assertEquals(1400, placementRpForSeriesScore(1.0))
+  }
+
+  @Test
+  fun theMappingClampsOutsideZeroToOne() {
+    assertEquals(0, placementRpForSeriesScore(-0.2))
+    assertEquals(1400, placementRpForSeriesScore(1.5))
+  }
+
+  @Test
+  fun theMappingRoundsTiesAwayFromZeroPerOPEN3() {
+    // 0.5/1400 of the ceiling is exactly 0.5 RP: away-from-zero → 1.
+    // kotlin.math.round returns 0 here (ties-to-even) — this test fails
+    // against it and passes against the shared roundDelta (F3).
+    assertEquals(1, placementRpForSeriesScore(0.5 / 1400.0))
+    assertEquals(3, placementRpForSeriesScore(2.5 / 1400.0))
+  }
+
+  // ==========================================================================
+  //  Every RD10 signal contributes (F2)
+  // ==========================================================================
+
+  @Test
+  fun everySignalMovesTheMatchComposite() {
+    val base = record(
+      1,
+      placement = 2,
+      outcome = MatchOutcome.SECOND,
+      score = 100,
+      roundMisses = listOf(1, -1, 1, -1),
+    )
+    val baseScore = scorePlacementMatch(base)
+    assertTrue(
+      "dropping the placement signal must change the composite",
+      baseScore != scorePlacementMatch(base.copy(placement = 1)),
+    )
+    assertTrue(
+      "dropping the result signal must change the composite",
+      baseScore != scorePlacementMatch(base.copy(outcome = MatchOutcome.KING)),
+    )
+    assertTrue(
+      "dropping the score signal must change the composite",
+      baseScore != scorePlacementMatch(base.copy(score = 150)),
+    )
+    // Accuracy varies while performance (no exact hits either side) and
+    // consistency (constant miss either side) stay fixed.
+    val steady1 = record(1, roundMisses = listOf(1, 1, 1, 1))
+    val steady3 = record(1, roundMisses = listOf(3, 3, 3, 3))
+    assertTrue(
+      "dropping the accuracy signal must change the composite",
+      scorePlacementMatch(steady1) != scorePlacementMatch(steady3),
+    )
+    // Consistency varies while accuracy (same mean abs miss) and
+    // performance (no exact hits either side) stay fixed.
+    val tight = record(1, roundMisses = listOf(2, -2, 2, -2))
+    val loose = record(1, roundMisses = listOf(3, -1, -3, 1))
+    assertTrue(
+      "dropping the consistency signal must change the composite",
+      scorePlacementMatch(tight) != scorePlacementMatch(loose),
+    )
+  }
+
+  @Test
+  fun theMatchCompositeIsTheMeanOfAllSixSignals() {
+    // Hand-derived independently of the implementation: rank 2/3, result
+    // 2/3, MINI score 0.75, accuracy 0.5, performance 0.5, consistency
+    // 1/(1+√2) = √2−1. Dropping or reweighting any signal — performance
+    // included — moves this value by more than 0.05.
+    val r = record(
+      1,
+      placement = 2,
+      outcome = MatchOutcome.SECOND,
+      score = 100,
+      roundMisses = listOf(0, 0, 2, -2),
+    )
+    val expected = (2.0 / 3.0 + 2.0 / 3.0 + 0.75 + 0.5 + 0.5 + (sqrt(2.0) - 1.0)) / 6.0
+    assertEquals(expected, scorePlacementMatch(r), 1e-9)
+  }
+
+  // ==========================================================================
   //  Full series: extremes
   // ==========================================================================
 
@@ -338,6 +432,24 @@ class PlacementScoringTest {
       )
       assertTrue("series score stays in 0..1: ${result.seriesScore}", result.seriesScore in 0.0..1.0)
     }
+  }
+
+  @Test
+  fun theDecisiveMatchScoresAtFullLength() {
+    // M3 is FULL (18 rounds per GameType): the 70% slot must work at FULL
+    // length, not just the 10-round helper shape used elsewhere here.
+    val fullLength = record(
+      2,
+      placement = 1,
+      outcome = MatchOutcome.KING,
+      score = 400,
+      roundMisses = List(18) { 0 },
+    )
+    assertEquals(18, fullLength.rounds.size)
+    assertEquals(1.0, scorePlacementMatch(fullLength), 1e-9)
+    val result = scorePlacementSeries(listOf(perfect(0), perfect(1), fullLength))
+    assertEquals("Platinum", result.rank.tier)
+    assertEquals(1400, result.startRp)
   }
 
   // ==========================================================================
