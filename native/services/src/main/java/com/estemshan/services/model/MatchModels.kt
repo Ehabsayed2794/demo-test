@@ -265,6 +265,17 @@ data class MatchDoc(
    */
   val removedUids: List<String> = emptyList(),
   /**
+   * S61 Stage 2: uids permanently removed by the 15-timeout counter. This
+   * is the timeout mechanism's OWN provenance and is deliberately kept
+   * separate from [removedUids] (Vote Kick) — the two mechanisms never
+   * write each other's fields. Recognition is read-side only: [isRemoved]
+   * unions the two lists, and [botControlledSeats] adds these seats' seats
+   * to [botSeats], so a timeout-removed seat is bot-driven and excluded
+   * from Vote Kick eligibility WITHOUT merging persisted state. Absent in
+   * older docs ⇒ nobody timeout-removed (no migration).
+   */
+  val timeoutRemovedUids: List<String> = emptyList(),
+  /**
    * S60 (D8): the 5-round same-target cooldown, verbatim
    * `failedVoteKickCooldown: { targetSeat, blockedUntilRound }`. Single
    * slot by spec. Absent ⇒ no live cooldown (no migration).
@@ -295,8 +306,27 @@ data class MatchDoc(
 
   fun isPlayer(uid: String): Boolean = uid in players
 
-  /** S60: permanently removed by a passed Vote Kick — never plays again. */
-  fun isRemoved(uid: String): Boolean = uid in removedUids
+  /**
+   * S60 + S61 Stage 2: permanently removed by EITHER mechanism. The union
+   * is read-side only — [removedUids] (Vote Kick) and [timeoutRemovedUids]
+   * (the 15-timeout counter) stay separate persisted lists and are never
+   * written by the other's path. Both make the seat unplayable, so
+   * [isSeated] gates on this union rather than on either list alone.
+   */
+  fun isRemoved(uid: String): Boolean = uid in removedUids || uid in timeoutRemovedUids
+
+  /**
+   * S61 Stage 2: seats currently driven by a bot, for EITHER reason — a
+   * Vote Kick removal ([botSeats], written by that mechanism) or a seat
+   * whose uid was removed by the 15-timeout counter (resolved here from
+   * [timeoutRemovedUids] through the RETAINED seats map, so a seat whose
+   * uid is no longer "seated" by [isSeated] still maps to its seat id).
+   * Read-side union only: no mechanism writes the other's field. This is
+   * what makes a timeout-removed seat bot-driven for the timeout resolver
+   * and already-excluded from Vote Kick eligibility.
+   */
+  fun botControlledSeats(): Set<String> =
+    botSeats.toSet() + seats.filterValues { it in timeoutRemovedUids }.keys
 
   /**
    * S60: seated AND not removed — the gate every match write path
@@ -377,6 +407,8 @@ data class MatchDoc(
         decisionTimerSeconds = RoomDoc.parseDecisionTimerSeconds(fields["decisionTimerSeconds"]),
         botSeats = (fields["botSeats"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
         removedUids = (fields["removedUids"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+        timeoutRemovedUids = (fields["timeoutRemovedUids"] as? List<*>)
+          ?.mapNotNull { it as? String } ?: emptyList(),
         failedVoteKickCooldown = VoteKickCooldownData.fromFields(fields["failedVoteKickCooldown"]),
       )
     }
