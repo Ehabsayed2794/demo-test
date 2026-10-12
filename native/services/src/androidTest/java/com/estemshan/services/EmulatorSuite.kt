@@ -53,11 +53,29 @@ object EmulatorSuite {
    */
   const val PROJECT_ID = "demo-test-ci"
 
+  /**
+   * A placeholder that is still a *well-formed* Firebase web API key:
+   * `A` followed by 38 [A-Za-z0-9_-] chars, which is the shape
+   * `Utils.isValidApiKeyFormat` (and firebase-iid's twin check) requires.
+   *
+   * The Emulator Suite never validates this value, but the client SDKs do
+   * validate its FORMAT before they will build a callable request:
+   * `FirebaseFunctions` puts a Firebase-Instance-ID-Token on every call, and
+   * `FirebaseInstanceId.checkRequiredFirebaseOptions` rejects a key that does
+   * not match that regex — with an arbitrary string here every callable dies
+   * with "Please set a valid API key" before a single packet reaches port
+   * 5001. The instance id itself is generated locally (firebase-iid's Store
+   * is SharedPreferences only), so passing the format check costs no network
+   * round trip, and the emulator ignores the header anyway — it reads only
+   * `Authorization`. Never a real key: this is 39 zeros in a key's clothes.
+   */
+  private const val EMULATOR_API_KEY = "AIza00000000000000000000000000000000000"
+
   /** No google-services.json in :services (and no plugin): options are
    *  built in code, exactly like :app's FirebaseModule emulator branch. */
   private fun options() = FirebaseOptions.Builder()
     .setApplicationId("1:000000000000:android:0000000000000000000000")
-    .setApiKey("emulator-dummy-key-not-a-secret")
+    .setApiKey(EMULATOR_API_KEY)
     .setProjectId(PROJECT_ID)
     .build()
 
