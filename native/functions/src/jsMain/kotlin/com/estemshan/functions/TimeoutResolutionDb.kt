@@ -246,6 +246,9 @@ private fun extractSeats(fields: Map<String, Any?>): List<String> =
 /** Admin-SDK implementation. Reads normalize through dynamicToKotlin;
  *  writes normalize through toPlain. */
 class AdminTimeoutDb : TimeoutDb {
+  // Before getFirestore() resolves the default app — see ensureDefaultAdminApp.
+  init { ensureDefaultAdminApp() }
+
   private val db = getFirestore()
 
   private fun matchRef(matchId: String): DocRef = db.collection("matches").doc(matchId)
