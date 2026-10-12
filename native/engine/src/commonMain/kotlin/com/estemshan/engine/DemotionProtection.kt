@@ -29,11 +29,18 @@ package com.estemshan.engine
  *   the rank, not the points above it.
  * - King is uniform: previous King demoting below 3,000 with the shield
  *   armed holds King at 3,000. No King branch exists anywhere below.
+ *   Cross-King ordering ("ordered against other King players by RP",
+ *   RD3) is S64's server-authoritative leaderboard, not this file.
  * - The shield never stacks: arming an armed profile stays armed (single).
+ * - Consume and re-arm are ATOMIC inside [applyDemotionShield]: a
+ *   promotion resolved while armed spends the old shield and earns the
+ *   new one in the same call, so no caller composition can drop it.
  *
- * Out of scope by design: syncing the profile's tier/division identity to
- * the held rung stays with the settlement caller that persists the
- * profile — this file moves RP/rank math and the shield flag only.
+ * Profile sync contract: pass-through paths move the shield flag only and
+ * the settlement caller persists as before; a BLOCKED demotion additionally
+ * syncs the returned profile to the held rung (tier/division/rp), because
+ * the intervention changed what the resolution means and the store must
+ * never hold the stale rung.
  *
  * Pure data + pure functions, no I/O. Common-main: stdlib only.
  */
@@ -41,8 +48,10 @@ package com.estemshan.engine
 /**
  * The shielded outcome of one resolved match: the (possibly held)
  * resolution, whether this match consumed an armed shield, whether a
- * would-be demotion was negated, and the profile with the shield flag
- * moved forward. [resolution] is the value the caller persists.
+ * would-be demotion was negated, and the profile moved forward — shield
+ * consumed, re-armed on promotion (see [applyDemotionShield]), and, when
+ * a demotion was blocked, synced to the held rung (tier/division/rp).
+ * [resolution] is the value the caller persists.
  */
 data class ShieldedResolution(
   val resolution: RankedResolution,
@@ -57,30 +66,48 @@ data class ShieldedResolution(
 fun hasDemotionShield(profile: RankedProfile): Boolean = profile.demotionShield
 
 /**
+ * Matches of protection remaining: 1 while armed, 0 otherwise. The
+ * countdown-of-one has exactly two states, so this exhausts it — S51
+ * renders its labelled shield state from this hook, never from a second
+ * source. (The S51 copy itself is UI scope, not engine scope.)
+ */
+fun shieldMatchesRemaining(profile: RankedProfile): Int =
+  if (profile.demotionShield) 1 else 0
+
+/**
  * Arm the shield on promotion. [resolution.movement] > 0 arms (or keeps
  * armed — never stacked); anything else returns the profile untouched.
  * Promotion here means a resolved climb, not the S54 starting assignment.
+ * This is the entry point for the UNARMED path; a promotion resolved while
+ * armed re-arms atomically inside [applyDemotionShield], so no caller must
+ * compose the two to avoid dropping an earned shield.
  */
 fun armShieldOnPromotion(profile: RankedProfile, resolution: RankedResolution): RankedProfile =
   if (resolution.movement > 0) profile.copy(demotionShield = true) else profile
 
 /**
- * Apply the shield to one already-final [resolution]. The pre-match rung
- * is read from [RankedResolution.previousRP] — the resolution's own
- * authority for where the match started — not from the profile's
- * tier/division identity, so the two can never disagree.
+ * Apply the shield to one already-final [resolution] — the single call a
+ * settlement pipeline needs per match: consume, optionally block,
+ * optionally re-arm. The pre-match rung is read from
+ * [RankedResolution.previousRP] — the resolution's own authority for where
+ * the match started — not from the profile's tier/division identity, so
+ * the two can never disagree; on a block the returned profile is synced
+ * to the held rung, closing that gap the other way.
  *
  * - Unarmed: pass-through — the resolution, the consumption flag (false),
  *   and the profile are returned untouched.
- * - Armed: the shield is consumed (the returned profile is disarmed) and
- *   exactly one of:
+ * - Armed: the shield is consumed and exactly one of:
  *   - movement < 0 → BLOCKED: RP clamps to the previous rung's lower
- *     bound, the rank holds, movement becomes 0 (settled), and the
- *     effective delta is floor − previous (still negative — the loss is
- *     recorded, the rank is saved);
- *   - otherwise → the countdown simply expires: the resolution passes
- *     through unchanged, shield gone.
- */
+ *     bound, the rank holds, movement becomes 0 (settled), the effective
+ *     delta is floor − previous (still negative — the loss is recorded,
+ *     the rank is saved), and the returned profile is synced to the held
+ *     rung (tier/division/rp) so the store never holds a stale rung;
+ *   - movement > 0 → the spent shield is REPLACED atomically: the
+ *     resolution passes through unchanged and the returned profile is
+ *     re-armed — a promotion while armed never drops the new shield;
+  *   - otherwise → the countdown simply expires: the resolution passes
+  *     through unchanged, shield gone.
+  */
 fun applyDemotionShield(profile: RankedProfile, resolution: RankedResolution): ShieldedResolution {
   if (!profile.demotionShield) {
     return ShieldedResolution(
@@ -92,26 +119,32 @@ fun applyDemotionShield(profile: RankedProfile, resolution: RankedResolution): S
   }
   val disarmed = profile.copy(demotionShield = false)
   if (resolution.movement >= 0) {
+    val rearmed = if (resolution.movement > 0) disarmed.copy(demotionShield = true) else disarmed
     return ShieldedResolution(
       resolution = resolution,
       shieldConsumed = true,
       demotionBlocked = false,
-      profile = disarmed,
+      profile = rearmed,
     )
   }
   val floor = rankAt(resolution.previousRP).lowerBound
   val heldRp = maxOf(resolution.rp, floor)
+  val heldRank = rankAt(heldRp)
   val held = resolution.copy(
     rp = heldRp,
     delta = heldRp - resolution.previousRP,
-    next = rankAt(heldRp),
-    movement = rankLadder.indexOf(rankAt(heldRp))
+    next = heldRank,
+    movement = rankLadder.indexOf(heldRank)
       .compareTo(rankLadder.indexOf(resolution.previous)),
   )
   return ShieldedResolution(
     resolution = held,
     shieldConsumed = true,
     demotionBlocked = true,
-    profile = disarmed,
+    profile = disarmed.copy(
+      rp = heldRp,
+      tier = heldRank.tier,
+      division = heldRank.division,
+    ),
   )
 }

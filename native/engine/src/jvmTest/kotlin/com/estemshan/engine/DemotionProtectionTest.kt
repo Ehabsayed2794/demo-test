@@ -34,19 +34,25 @@ class DemotionProtectionTest {
   fun promotionArmsTheShield() {
     // 140 is Bronze II (75); +15 → 155, Bronze I (150): a climb.
     val promotion = resolveRanked(previousRP = 140, delta = 15)
-    assertEquals(1, promotion.movement)
+    assertEquals("the fixture must be a promotion", 1, promotion.movement)
     val armed = armShieldOnPromotion(RankedProfile(seasonId = "S1"), promotion)
-    assertTrue(hasDemotionShield(armed))
+    assertTrue("promotion arms the one-match shield", hasDemotionShield(armed))
+    assertEquals("an armed shield reads one match remaining", 1, shieldMatchesRemaining(armed))
+  }
+
+  @Test
+  fun anUnarmedProfileReadsZeroMatchesRemaining() {
+    assertEquals(0, shieldMatchesRemaining(RankedProfile(seasonId = "S1")))
   }
 
   @Test
   fun neutralAndDemotingMatchesNeverArm() {
     val neutral = resolveRanked(previousRP = 100, delta = 10)
-    assertEquals(0, neutral.movement)
+    assertEquals("the fixture must be neutral", 0, neutral.movement)
     assertFalse(hasDemotionShield(armShieldOnPromotion(RankedProfile(seasonId = "S1"), neutral)))
 
     val demotion = resolveRanked(previousRP = 80, delta = -10)
-    assertEquals(-1, demotion.movement)
+    assertEquals("the fixture must be a demotion", -1, demotion.movement)
     assertFalse(hasDemotionShield(armShieldOnPromotion(RankedProfile(seasonId = "S1"), demotion)))
   }
 
@@ -63,9 +69,11 @@ class DemotionProtectionTest {
 
   @Test
   fun anUnarmedProfilePassesThroughUntouched() {
+    val profile = RankedProfile(seasonId = "S1")
     val demotion = resolveRanked(previousRP = 80, delta = -10)
-    val out = applyDemotionShield(RankedProfile(seasonId = "S1"), demotion)
+    val out = applyDemotionShield(profile, demotion)
     assertEquals("no shield, no change", demotion, out.resolution)
+    assertEquals("no shield, profile untouched", profile, out.profile)
     assertFalse(out.shieldConsumed)
     assertFalse(out.demotionBlocked)
     assertFalse(hasDemotionShield(out.profile))
@@ -82,15 +90,16 @@ class DemotionProtectionTest {
   }
 
   @Test
-  fun aShieldedPromotionConsumesThenRearmsThroughThePipeline() {
-    // The settlement pipeline composes consume-then-arm: a promotion while
-    // armed spends the old shield and earns the new one — net still armed.
+  fun aShieldedPromotionRearmsAtomicallyInOneCall() {
+    // Consume and re-arm are atomic: a promotion while armed spends the
+    // old shield and earns the new one in the same call — no caller
+    // composition can drop it.
     val promotion = resolveRanked(previousRP = 140, delta = 15)
-    val applied = applyDemotionShield(shieldedProfile(), promotion)
-    assertTrue(applied.shieldConsumed)
-    assertFalse(applied.demotionBlocked)
-    val next = armShieldOnPromotion(applied.profile, applied.resolution)
-    assertTrue("promotion re-arms after the old shield is spent", hasDemotionShield(next))
+    val out = applyDemotionShield(shieldedProfile(), promotion)
+    assertEquals("promotion passes through unchanged", promotion, out.resolution)
+    assertTrue("the old shield was spent", out.shieldConsumed)
+    assertFalse(out.demotionBlocked)
+    assertTrue("the new shield is armed in the same call", hasDemotionShield(out.profile))
   }
 
   @Test
@@ -128,6 +137,9 @@ class DemotionProtectionTest {
     assertEquals("II", out.resolution.next.division)
     assertEquals(0, out.resolution.movement)
     assertFalse(hasDemotionShield(out.profile))
+    assertEquals("the stored profile holds the rung, not the fall", 700, out.profile.rp)
+    assertEquals("Gold", out.profile.tier)
+    assertEquals("II", out.profile.division)
   }
 
   @Test
@@ -152,6 +164,8 @@ class DemotionProtectionTest {
     assertTrue(out.resolution.next.isKing)
     assertEquals(0, out.resolution.movement)
     assertFalse(hasDemotionShield(out.profile))
+    assertEquals("the stored King holds 3,000", 3000, out.profile.rp)
+    assertEquals("King", out.profile.tier)
   }
 
   @Test
@@ -163,7 +177,7 @@ class DemotionProtectionTest {
     assertTrue(first.demotionBlocked)
     val second = applyDemotionShield(first.profile, demotion)
     assertFalse(second.demotionBlocked)
-    assertEquals(-1, second.resolution.movement)
+    assertEquals("the second fall demotes normally", -1, second.resolution.movement)
     assertEquals(690, second.resolution.rp)
   }
 }
