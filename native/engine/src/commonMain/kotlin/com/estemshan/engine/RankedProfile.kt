@@ -60,6 +60,14 @@ data class RankedProfile(
    */
   val highestRank: LadderRank = rankLadder.first(),
   val placementState: PlacementState = PlacementState.NOT_STARTED,
+  /**
+   * RD7 — the one-match demotion shield. Armed by promotion (see
+   * [armShieldOnPromotion]), consumed by the next resolved match whatever
+   * its outcome (see [applyDemotionShield]): a labelled shield state with
+   * a countdown of one, never a permanent buff. Defaults off so every
+   * profile built before S49 reads as unshielded.
+   */
+  val demotionShield: Boolean = false,
 )
 
 /**
