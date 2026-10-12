@@ -150,6 +150,9 @@ suspend fun settleOnce(db: SettlementDb, request: CallableRequest): Map<String, 
 /** Admin-SDK implementation. Reads normalize through dynamicToKotlin;
  *  writes normalize through toPlain. */
 class AdminSettlementDb : SettlementDb {
+  // Before getFirestore() resolves the default app — see ensureDefaultAdminApp.
+  init { ensureDefaultAdminApp() }
+
   private val db = getFirestore()
 
   private fun matchRef(matchId: String): DocRef =
