@@ -5,6 +5,7 @@ import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.functions.FirebaseFunctions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.tasks.await
@@ -39,6 +40,13 @@ object EmulatorSuite {
   const val AUTH_PORT = 9099
 
   /**
+   * S61: the Functions emulator, which serves the timeout resolver. Same
+   * host convention as the other two (10.0.2.2 is the host loopback from
+   * inside the Android emulator); the port is firebase.json's own.
+   */
+  const val FUNCTIONS_PORT = 5001
+
+  /**
    * The emulator ignores the project id for routing, but the REST clear
    * endpoint is keyed on it, so it has to be stable across the run.
    * Matches the project the existing rules-emulator CI job uses.
@@ -61,6 +69,9 @@ object EmulatorSuite {
   data class ClientFirebase(
     val db: FirebaseFirestore,
     val uid: String,
+    /** S61: the Functions endpoint for the same app — the timeout resolver
+     *  is called from the seat's own auth context, exactly as :app calls it. */
+    val functions: FirebaseFunctions,
   )
 
   suspend fun client(context: Context, tag: String): ClientFirebase {
@@ -69,8 +80,9 @@ object EmulatorSuite {
     // useEmulator() must precede any document access on each instance.
     val auth = FirebaseAuth.getInstance(app).apply { useEmulator(HOST, AUTH_PORT) }
     val db = FirebaseFirestore.getInstance(app).apply { useEmulator(HOST, FIRESTORE_PORT) }
+    val functions = FirebaseFunctions.getInstance(app).apply { useEmulator(HOST, FUNCTIONS_PORT) }
     val uid = auth.signInAnonymously().await().user!!.uid
-    return ClientFirebase(db, uid)
+    return ClientFirebase(db, uid, functions)
   }
 
   /**

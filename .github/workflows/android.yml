@@ -373,12 +373,39 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Start the Firestore + Auth emulators on the host
+      - name: Compile the Functions module
+        # S61: the instrumented suite now exercises the timeout resolver, so
+        # the Functions emulator has to serve the real compiled Kotlin/JS
+        # bundle. This is the same artifact the functions-smoke job builds;
+        # done here, before the emulators start, because the bundle must
+        # exist at index.js's require() path the moment firebase-tools loads
+        # the source dir to discover triggers.
+        run: native/gradlew -p native :functions:jsProductionExecutableCompileSync --stacktrace
+
+      - name: Install the Functions runtime dependencies
+        # index.js requires('firebase-functions/v2/https') at runtime and
+        # firebase-tools serves native/functions, so its node_modules must
+        # exist before the emulator loads the module. `ci` rather than
+        # `install`: package-lock.json pins the 6.x line and ci refuses to
+        # resolve anything else.
+        run: npm --prefix native/functions ci
+
+      - name: Start the Firestore + Auth + Functions emulators on the host
         # Auth is not optional: firestore.rules requires request.auth != null
         # on every match write, so the suite signs four real anonymous users
-        # in against it. Ports are firebase.json's (firestore 8080, auth
-        # 9099); the Android emulator reaches them via 10.0.2.2, the host
-        # loopback as seen from inside the guest.
+        # in against it. Functions is not optional either now: S61's
+        # TimeoutEmulatorTest calls resolveDecisionTimeout against it, and
+        # the resolver reads and writes the match document in Firestore, so
+        # all three must be up together. Ports are firebase.json's (firestore
+        # 8080, auth 9099, functions 5001); the Android emulator reaches them
+        # via 10.0.2.2, the host loopback as seen from inside the guest.
+        #
+        # NOTE ON FUNCTIONS READINESS: the port probe below only proves the
+        # HTTP port is accepting. firebase-tools answers on 5001 BEFORE it
+        # has finished discovering the bundle's triggers, and until discovery
+        # completes every call returns functions/not-found. The port probe
+        # cannot see that, so the suite itself polls the callable and treats
+        # NOT_FOUND as "still loading" — see TimeoutEmulatorTest.awaitTrigger.
         #
         # firebase-tools also writes firestore-debug.log / firebase-debug.log
         # to this directory; the artifact step below uploads them because
@@ -387,13 +414,13 @@ jobs:
         # "permission-denied" with a line number, never which clause threw.
         run: |
           set -euo pipefail
-          npx firebase emulators:start --project demo-test-ci --only firestore,auth \
+          npx firebase emulators:start --project demo-test-ci --only firestore,auth,functions \
             > "$RUNNER_TEMP/emulators.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/emulators.pid"
           # Readiness probe — a bounded wait on a real condition (the ports
           # accepting connections), not a fixed sleep: the suite is only
-          # started once both emulators actually answer.
-          for port in 8080 9099; do
+          # started once every emulator actually answers.
+          for port in 8080 9099 5001; do
             for i in $(seq 1 180); do
               code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/" || true)
               if [ "$code" != "000" ]; then
@@ -428,10 +455,13 @@ jobs:
         # directory the emulators were started from — the repo root here.
         # Copied BEFORE the emulators are stopped so a SIGTERM cannot
         # truncate the final flush of a denial this very run produced.
+        # ui-debug.log is the Functions emulator's console: the only place a
+        # trigger-discovery failure or an uncaught error in the Kotlin/JS
+        # bundle is recorded, which S61's callable-backed suite can hit.
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/emulator-logs"
-          for f in firestore-debug.log firebase-debug.log; do
+          for f in firestore-debug.log firebase-debug.log ui-debug.log; do
             [ -f "$f" ] && cp "$f" "$RUNNER_TEMP/emulator-logs/$f" || true
           done
 
