@@ -24,6 +24,7 @@ import com.estemshan.engine.initNormalRound
 import com.estemshan.engine.legalCards
 import com.estemshan.services.model.BiddingActionInput
 import com.estemshan.services.model.BiddingLogEntry
+import com.estemshan.services.model.DEFAULT_DECISION_TIMER_SECONDS
 import com.estemshan.services.model.MatchDoc
 import com.estemshan.services.model.RAPID_ROUND_MIN
 import com.estemshan.services.model.Reasons
@@ -78,6 +79,14 @@ class ScriptedMatch(
    * [EmulatorSuite.client]. */
   private val seating: Map<String, EmulatorSuite.ClientFirebase>,
   private val seed: Long,
+  /**
+   * S61: the room's decision timer, threaded through so a timeout test can
+   * ask for the shortest legal window (5 s) instead of the 15 s default —
+   * the deadline a resolver expires is this plus the bidding offset, so the
+   * default would cost the suite a 20 s wait per expiry. Defaults to the
+   * production value, so every existing caller is unchanged.
+   */
+  private val decisionTimerSeconds: Int = DEFAULT_DECISION_TIMER_SECONDS,
 ) {
   private val seats: List<String> = SEAT_IDS
   private val uids: Map<String, String> = seating.mapValues { it.value.uid }
@@ -129,7 +138,12 @@ class ScriptedMatch(
    */
   suspend fun start(mode: MatchMode = MatchMode.ROOM): String {
     val creator = uids.getValue(seats.first())
-    roomCode = clients.first().rooms.createRoom(creator, "suite-room", mode = mode)
+    roomCode = clients.first().rooms.createRoom(
+      creator,
+      "suite-room",
+      mode = mode,
+      decisionTimerSeconds = decisionTimerSeconds,
+    )
     for (i in 1 until clients.size) {
       clients[i].rooms.joinRoom(roomCode, clients[i].uid)
     }
@@ -141,6 +155,31 @@ class ScriptedMatch(
     matchId = started.matchStart?.matchId
       ?: error("match did not start: ${started.matchStart}")
     return matchId
+  }
+
+  /**
+   * S61 — deal [round] and STOP at the open auction: a dealt round, a live
+   * bidding decision, and nobody having made it. That is exactly the state
+   * the timeout resolver exists for, and [playRound] drives straight past
+   * it into bidding, which would resolve the decision a timeout test needs
+   * left hanging. One [syncAll] pass per loop, the same call [driveBidding]
+   * makes on its first pass — proven idempotent, never a second guess.
+   *
+   * Returns the committed document the resolver will see, so the caller can
+   * read the seat it is waiting on and the anchor the deadline derives from.
+   */
+  suspend fun dealAndOpenAuction(round: Int = 1): MatchDoc {
+    var guard = 0
+    while (guard++ < DEAL_GUARD) {
+      val doc = loadMatch()
+      syncAll(doc)
+      if (doc.gameState.dealtRound >= round &&
+        clients.first().engine.getBiddingState()?.subPhase != BiddingPhase.DONE
+      ) {
+        return doc
+      }
+    }
+    error("round $round did not deal and open an auction within $DEAL_GUARD passes")
   }
 
   // ── per-step sync: one document, four engines ───────────────────────
@@ -706,6 +745,11 @@ class ScriptedMatch(
     const val AUCTION_BID = 4
     const val BIDDING_GUARD = 120
     const val MAX_PLAUSIBLE_ROUNDS = 40
+
+    // S61: the deal is idempotent and converges in a handful of passes (four
+    // clients each race one dealRound plus its paired hands writes); this
+    // bound just keeps a broken deal from hanging the suite.
+    const val DEAL_GUARD = 30
 
     // Bounded wait for the rematch vote doc to settle after all four
     // clients have submitted — see rematch(). The deciding vote's
