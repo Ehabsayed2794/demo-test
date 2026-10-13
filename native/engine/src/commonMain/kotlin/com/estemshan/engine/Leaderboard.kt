@@ -35,8 +35,13 @@ package com.estemshan.engine
  *   instead of a table. RD27 does not name a tie rule; sharing RD17's is
  *   the least novel choice available.
  * - Rung identity (tier/division) is the ordering authority; RP orders
- *   within it. A bogus identity fails LOUDLY (same convention as
- *   [ladderRankOf]/[seasonResetRank]) instead of sorting somewhere vague.
+ *   within it. Tier-grouping is structural, not assumed: RD27's
+ *   "ranked among themselves" rule for Kings only makes sense if tiers
+ *   group first. On valid data this coincides with RP order anyway (the
+ *   keeps-both-consistent invariant: identity always agrees with
+ *   [rankAt] of the stored RP). A bogus identity fails LOUDLY (same
+ *   convention as [ladderRankOf]/[seasonResetRank]) instead of sorting
+ *   somewhere vague.
  * - Season isolation is a filter: only [seasonId] entries board. A season
  *   with no entries boards empty — reset-by-absence, never blended.
  * - `isCurrentPlayer` marks the passed player id; highlighting itself is
@@ -83,6 +88,14 @@ fun orderLeaderboard(
 ): List<LeaderboardRow> {
   data class RankedEntry(val entry: LeaderboardEntry, val rung: LadderRank) {
     val rungIndex: Int = rankLadder.indexOf(rung)
+
+    /**
+     * Tie identity for positions: rung + RP only. The playerId determinism
+     * tiebreak orders within a tie but never merges or splits one — this
+     * single predicate is the only place that decision lives.
+     */
+    infix fun tiesWith(other: RankedEntry): Boolean =
+      rungIndex == other.rungIndex && entry.rp == other.entry.rp
   }
 
   val placed = entries
@@ -103,13 +116,7 @@ fun orderLeaderboard(
   val rows = mutableListOf<LeaderboardRow>()
   placed.forEachIndexed { index, (entry, rung) ->
     val position = if (index > 0) {
-      val prev = rows[index - 1]
-      val prevPlaced = placed[index - 1]
-      if (prevPlaced.rungIndex == placed[index].rungIndex && entry.rp == prevPlaced.entry.rp) {
-        prev.position
-      } else {
-        index + 1
-      }
+      if (placed[index] tiesWith placed[index - 1]) rows[index - 1].position else index + 1
     } else {
       1
     }
