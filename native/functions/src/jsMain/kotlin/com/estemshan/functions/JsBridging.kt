@@ -72,7 +72,14 @@ fun timestampToMillis(value: Any?): Long? {
   if (value is Number) return value.toLong()
   val toDate: dynamic = value.asDynamic().toDate
   if (toDate != null) {
-    val date = runCatching { toDate.call(value) }.getOrNull() ?: return null
+    // runCatching infers `dynamic` for this local, and `x.asDynamic()` on a
+    // `dynamic` receiver is NOT the kotlin.js.asDynamic intrinsic — it compiles
+    // to a real JS method call, and a firebase-admin Timestamp's Date has no
+    // `asDynamic`, so it throws and the conversion dies inside the runCatching.
+    // Pinning the type to Any? makes the extension resolve and elide to the
+    // receiver. Left unchecked this returns null for every real server timestamp
+    // and the deadline can never be derived.
+    val date: Any? = runCatching { toDate.call(value) }.getOrNull() ?: return null
     val millis = runCatching { date.asDynamic().getTime() as Number }.getOrNull()
     if (millis != null) return millis.toLong()
   }
