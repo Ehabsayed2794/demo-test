@@ -1,7 +1,6 @@
 package com.estemshan.engine
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -9,8 +8,9 @@ import org.junit.Test
 /**
  * S59 — the season-reset math (RD24): two division steps down the single
  * ladder, floored at Bronze III, King → Royal I by owner decision, RP
- * restarted at the new rung's floor, Highest/placement carried, shield
- * cleared, stats structurally untouched (never taken).
+ * restarted at the new rung's floor, Highest raised-only through the
+ * existing policy, placement and shield carried over, stats structurally
+ * untouched (never taken).
  */
 class SeasonResetTest {
 
@@ -61,7 +61,7 @@ class SeasonResetTest {
     assertEquals("I", royal.division)
     assertEquals(2000, royal.rp)
 
-    // Bronze II floors at Bronze III (0): one step would leave the ladder.
+    // Bronze II floors at Bronze III (0): two steps would fall off the ladder.
     val floored = applySeasonReset(profile("Bronze", "II", 100), "S2")
     assertEquals("Bronze", floored.tier)
     assertEquals("III", floored.division)
@@ -78,8 +78,6 @@ class SeasonResetTest {
   fun kingLandsOnRoyalIByDecisionNotByStepping() {
     // Index − 2 from King would be Royal III — RD24 overrides it:
     // King has no divisions to step through, so the destination is Royal I.
-    val platinumI = rankLadder.first { it.tier == "Platinum" && it.division == "I" }
-    assertEquals(1400, platinumI.lowerBound)
     val out = applySeasonReset(profile("King", "", 3100), "S2")
     assertEquals("Royal", out.tier)
     assertEquals("I", out.division)
