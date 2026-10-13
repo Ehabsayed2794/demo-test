@@ -1,6 +1,7 @@
 package com.estemshan.functions
 
 import com.estemshan.engine.BiddingIntent
+import com.estemshan.engine.BiddingPhase
 import com.estemshan.engine.Card
 import com.estemshan.engine.Dealer
 import com.estemshan.engine.EmitResult
@@ -104,6 +105,32 @@ class TimeoutResolutionTest {
     "botPersonality" to "BALANCED",
     "decisionTimerSeconds" to timerSeconds,
     "updatedAt" to updatedAt,
+  )
+
+  /**
+   * A round-1 NORMAL round (FULL), dealt, waiting on the dealer's opening Dash
+   * Call — the state every real match's first round is in, and the one
+   * [fastRoundDoc] cannot model: round 14 is past FULL's fast boundary, so it
+   * opens on ESTIMATES instead. Same document, different sub-phase, which is
+   * the whole difference in what a timeout writes.
+   */
+  private fun normalRoundDoc(
+    biddingOpen: Boolean = true,
+    updatedAt: Long = anchorMillis,
+    timerSeconds: Int = 15,
+    biddingLog: List<Map<String, Any?>> = emptyList(),
+    version: Int = 1,
+  ): Map<String, Any?> = fastRoundDoc(
+    biddingOpen = biddingOpen,
+    updatedAt = updatedAt,
+    timerSeconds = timerSeconds,
+    dealtRound = 1,
+    currentRound = 1,
+    cardLog = emptyList(),
+    cardPhase = null,
+    turn = null,
+    biddingLog = biddingLog,
+    version = version,
   )
 
   /** The round's dealt hands from the real dealer — 4×13 unique cards. */
@@ -242,6 +269,52 @@ class TimeoutResolutionTest {
     // The decision is legal: feeding it back through the real engine accepts it.
     val state = TimeoutResolution.replayBidding(doc, order, 14)!!
     val reemit = emit(state, BiddingIntent.FinalEstimate("p1", estimate))
+    assertTrue(reemit is EmitResult.Applied || reemit is EmitResult.Completed)
+  }
+
+  /**
+   * The normal-round counterpart of the estimate test above. A NORMAL round
+   * (anything before the game type's fast boundary) opens on the DASH
+   * decision, so the resolver's move is a SubmitDashCallDecision appended to
+   * `biddingLog` — submitBiddingAction's own channel. `bids/` is never touched
+   * by it: that field belongs to the Fast-Round estimates.
+   *
+   * Every fixture here defaults to round 14, which is a FAST round and opens on
+   * ESTIMATES; without this case the DASH path had no coverage at all, and the
+   * instrumented suite was the only thing that exercised it — which is how a
+   * test asserting `bids` after a dash resolution reached CI.
+   */
+  @Test
+  fun anExpiredDashCallIsWrittenExactlyAsSubmitBiddingActionWouldWriteIt() {
+    val doc = normalRoundDoc()
+    val hands = dealtHands()
+    val pending = TimeoutResolution.pendingDecision(doc)!!
+    assertEquals(TimeoutResolution.DecisionPhase.BIDDING, pending.phase)
+    // initNormalRound waits on the dealer for the dash call.
+    assertEquals("p1", pending.seatId)
+
+    val resolution = TimeoutResolution.resolveExpired(doc, hands, pending)
+
+    assertIs<TimeoutResolution.Resolution.Applied>(resolution)
+    val updates = resolution.write.updates
+    assertEquals(
+      setOf("biddingLog", "version", "updatedAt"),
+      updates.keys,
+    )
+    assertFalse(updates.containsKey("bids"), "a dash call never writes bids/")
+    assertEquals(2, updates["version"])
+
+    val entry = arrayUnionEntries(updates["biddingLog"]).single()
+    assertEquals("p1", entry["seatId"])
+    assertEquals("SubmitDashCallDecision", entry["actionType"])
+    assertEquals(1, entry["round"])
+    val declared = entry["declaredDashCall"]
+    assertTrue(declared is Boolean, "declaredDashCall is the dash entry's one payload field")
+
+    // The decision is legal: feeding it back through the real engine accepts it.
+    val state = TimeoutResolution.replayBidding(doc, order, 1)!!
+    assertEquals(BiddingPhase.DASH, state.subPhase)
+    val reemit = emit(state, BiddingIntent.DashCallDecision("p1", declared as Boolean))
     assertTrue(reemit is EmitResult.Applied || reemit is EmitResult.Completed)
   }
 

@@ -184,6 +184,10 @@ class TimeoutEmulatorTest {
     // Nothing was decided: the call reported time left, it did not move the
     // table. The counter cannot exist yet either — no timeout happened.
     val doc = match.standings()
+    // Round 1 is a NORMAL round, so the auction opens on the Dash-Call
+    // decision, which submitBiddingAction appends to biddingLog — bids/ stays
+    // empty until the Fast-Round estimates. The log is the move channel here.
+    assertEquals("no decision landed on an unexpired decision", 0, doc.biddingLog.size)
     assertEquals("no bid landed on an unexpired decision", 0, doc.bids.count { it.value != null })
     assertNull(
       "no counter before a timeout",
@@ -227,9 +231,13 @@ class TimeoutEmulatorTest {
 
     // (f): the decision landed...
     val decided = match.standings()
-    val decidedSeats = decided.bids.filterValues { it != null }.keys
+    // Round 1 is a NORMAL round: the auction opens on the Dash-Call decision,
+    // which lands in biddingLog (submitBiddingAction's channel), never in
+    // bids/ — that is the Fast-Round estimates' field. One entry for one
+    // decided seat is the move.
+    val decidedSeats = decided.biddingLog.map { it.seatId }
     assertEquals(
-      "exactly one seat's bid was decided",
+      "exactly one seat's dash-call decision was decided",
       1,
       decidedSeats.size,
     )
@@ -283,7 +291,10 @@ class TimeoutEmulatorTest {
     )
 
     val decided = match.standings()
-    val decidedSeats = decided.bids.filterValues { it != null }.keys
+    // The same DASH channel as (f): biddingLog is where the round-1 decision
+    // lands, so exactly one entry is exactly one move — a non-idempotent
+    // resolver would leave two.
+    val decidedSeats = decided.biddingLog.map { it.seatId }
     assertEquals(
       "exactly one seat was decided, no double-move",
       1,
