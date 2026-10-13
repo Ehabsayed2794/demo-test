@@ -228,7 +228,10 @@ suspend fun resolveTimeoutOnce(
           // The 15th: the decision (still the Stage 1 MEDIUM policy) lands in
           // the SAME write that records the removal — the removal takes
           // effect WITH the deciding move, never before it. Subsequent
-          // decisions for this seat use the match's configured bot profile.
+          // decisions for this seat are still MEDIUM: RD20 pins the timeout
+          // engine to MEDIUM regardless of the match's configured difficulty.
+          // The configured profile is the explicit-leave path's (RD20), which
+          // this resolver never runs.
           val merged = LinkedHashMap(outcome.write.updates)
           merged["timeoutRemovedUids"] =
             TimeoutResolution.removalWrite(fresh, seatUid!!)
