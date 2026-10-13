@@ -312,6 +312,23 @@ object TimeoutResolution {
     return if (order.isEmpty()) null else order
   }
 
+  /**
+   * S61 Stage 2 — the membership gate over a LIVE match document.
+   *
+   * Settlement.parseMatch is the wrong gate here: it requires `completedRound`,
+   * a key only endMatch ever writes (MatchService.kt:737), so every mid-match
+   * document — exactly the documents a timeout resolves — fails it and the
+   * callable answers failed-precondition. Settlement needs that field for its
+   * converged-history replay; the resolver needs only the caller's membership.
+   * This parse takes what a live doc actually carries from buildMatchFields: a
+   * non-empty `players` list of uids and a `status`.
+   */
+  fun parsePlayers(fields: Map<String, Any?>): List<String>? {
+    if (fields["status"] as? String == null) return null
+    val players = (fields["players"] as? List<*>) ?: return null
+    return players.map { it as? String ?: return null }.takeIf { it.isNotEmpty() }
+  }
+
   /** The seat a uid occupies, from the doc's own seats map — never a
    *  client-supplied seat id (the vote machine's own rule). */
   fun seatOfUid(fields: Map<String, Any?>, uid: String): String? {
