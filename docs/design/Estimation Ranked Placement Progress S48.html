@@ -1,0 +1,55 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="design_doc_mode" content="canvas"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Estimation Ranked Placement Progress (S48)</title>
+<link href="https://fonts.googleapis.com/css2?family=Marcellus&family=Saira:wght@400;500;600;700&family=Spline+Sans+Mono:wght@400;500;600;700&family=Noto+Naskh+Arabic:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="placement-base.css">
+<style>
+.pg{top:70px;height:338px;display:grid;grid-template-columns:minmax(0,1fr) 340px}
+.big{display:flex;flex-direction:column;justify-content:center;padding:0 36px;gap:18px}
+.big small{font:600 11px var(--mono);letter-spacing:.16em;color:var(--ink-dim);text-transform:uppercase}
+.num{font:600 112px/1 var(--mono);letter-spacing:-.02em;color:var(--ink);display:flex;align-items:baseline;gap:18px}
+.num span{color:var(--ink-dim);font-weight:500}
+.pips{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-width:420px}
+.pips div{height:8px;border-radius:4px;background:var(--pill);border:1px solid var(--line);transition:background .12s ease}
+.pips .d{background:var(--ink);border-color:transparent}
+.pips .c{background:transparent;border:2px solid var(--accent)}
+.side{border-left:1px solid var(--line);padding:0 28px;display:flex;flex-direction:column;justify-content:center;gap:12px}
+.side h2{font:400 22px/1.15 var(--serif);letter-spacing:.04em}
+.side p{font-size:14px;line-height:1.45;color:var(--ink-dim)}
+.side .btn{width:100%;margin-top:6px}
+.ret{display:none}[data-entry=returning] .ret{display:block}[data-entry=returning] .fr{display:none}
+</style></head><body>
+<div class="lab" style="left:40px;top:34px">S48 · Placement Match Progress (IN_PROGRESS · use Tweaks: match 1–3, entry)</div>
+<div class="scr" id="scr" data-screen-label="S48 Placement Match Progress" data-entry="fresh" style="left:40px;top:60px">
+<div class="top"><div class="kick">Ranked · Solo</div><h1>Placement</h1></div>
+<div class="panel pg"><div class="big"><small>Placement match</small><div class="num" aria-label="Match 1 of 3"><i class="n" id="cur">1</i><span>/</span><i class="n">3</i></div><div class="pips" id="pips"></div></div>
+<div class="side"><h2 class="fr">Ready for your next match.</h2><h2 class="ret">Welcome back.</h2><p class="fr">Your rank is revealed after the third match.</p><p class="ret">Placement is in progress. Pick up where you left off. Your rank is revealed after the third match.</p><p>These matches don't count toward your statistics.</p><button class="btn" id="go">Start match</button></div></div></div>
+<div class="doc" style="left:40px;top:540px"><h3>Copy table</h3><table><tr><th>ELEMENT</th><th>TEXT</th><th>SOURCE</th></tr>
+<tr><td>Kicker / title</td><td>Ranked · Solo / Placement</td><td>approved (carried from S47, itself agent-written, BRIEF §4)</td></tr>
+<tr><td>Label</td><td>PLACEMENT MATCH</td><td>agent-written</td></tr>
+<tr><td>Progress</td><td>1 / 3 · 2 / 3 · 3 / 3</td><td>approved (RD10, ROADMAP §4b.2: the only progress signal). Spline Sans Mono. Screen-reader label "Match n of 3" is agent-written</td></tr>
+<tr><td>Heading (fresh)</td><td>Ready for your next match.</td><td>agent-written; assumption 1</td></tr>
+<tr><td>Heading (returning)</td><td>Welcome back.</td><td>agent-written; assumption 2</td></tr>
+<tr><td>Reveal promise</td><td>Your rank is revealed after the third match.</td><td>approved-verbatim (S45 mid-placement frame, via S47)</td></tr>
+<tr><td>Re-entry line</td><td>Placement is in progress. Pick up where you left off.</td><td>agent-written; assumption 2</td></tr>
+<tr><td>Statistics</td><td>These matches don't count toward your statistics.</td><td>carried from S47 (RD23)</td></tr>
+<tr><td>Button</td><td>Start match</td><td>agent-written; assumption 3</td></tr></table>
+<h4>State table</h4><table><tr><th>STATE</th><th>S48</th></tr><tr><td>Match 1 / 2 / 3</td><td>Three states via Tweaks "Match". Pips: completed = filled Ink, current = Gold outline, upcoming = empty Pill.</td></tr><tr><td>Entry: fresh / returning</td><td>Returning swaps heading and line; the pips alone tell the player where they are, so S47 need not be re-read. Returning at 1 / 3 is identical to fresh and is not distinct.</td></tr><tr><td>After match 3 ends</td><td>Hand-off to S49. S48 does not render a "4 / 3".</td></tr><tr><td>Provisional rank, difficulty, bot, RP, results</td><td>Unreachable by design.</td></tr></table>
+<h4>Structure</h4><p>One frame, one segmented Tweak (S47 pattern). The numeral leads at 112 px; one primary action. Omitted: any rank, tier, division, RP, difficulty, opponent personality, stat delta, season chip, vote / disconnect / pause / voice controls. No back or skip action: Path B is S47's decision and is closed once placement begins (assumption 4).</p></div>
+<div class="doc" style="left:1032px;top:540px"><h3>Colour audit, decisions, assumptions</h3>
+<h4>Colour audit (vs bg #0D0A07 / surface #17130E / surfaceHigh #1D1912)</h4><ul><li>Ink #F0EADA 16.44 / 15.39 / 14.57 · InkDim #A89F8E 7.54 / 7.06 / 6.68 · button text #2A1D0C on Gold #E8A33D 7.61, on GoldHi #F4B860 9.28.</li><li>Gold #E8A33D (current-pip outline, button fill) and GoldHi are used as in S45/S47; no tier colour appears. Backdrop identical to S45/S47. Pill #1D1A16, hairline rgba(255,240,210,.07). No token darkened.</li></ul>
+<h4>Open decisions, designed around, not resolved</h4><ul><li>Whether the S47 "progressively harder" line is permitted (S47 assumption 2): S48 is silent either way.</li><li>Match-end interstitial between matches: not in the spec; not drawn.</li></ul>
+<h4>Assumptions to confirm</h4><ul><li><b>1</b> "Ready for your next match." Consequence: replace the heading; layout unaffected.</li><li><b>2</b> The returning copy. If the owner wants no distinct re-entry copy, drop the Tweak value; the pips already carry the state.</li><li><b>3</b> Button label "Start match". Consequence: label only.</li><li><b>4</b> No exit from S48 mid-placement. If the owner wants one, it needs a confirm per RD10 (once per account).</li><li><b>5</b> The 8 px pip bars are a progress indicator, not a text; the numeral is the signal.</li></ul></div>
+<div id="root"></div>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel">
+const TWEAK_DEFAULTS=/*EDITMODE-BEGIN*/{"match":"1","entry":"fresh"}/*EDITMODE-END*/;
+function S48Tweaks(){const [t,setTweak]=useTweaks(TWEAK_DEFAULTS);
+React.useEffect(()=>{const m=+t.match,s=document.getElementById('scr');s.dataset.entry=t.entry;document.getElementById('cur').textContent=m;s.querySelector('.num').setAttribute('aria-label','Match '+m+' of 3');
+document.getElementById('pips').innerHTML=[1,2,3].map(i=>'<div class="'+(i<m?'d':i===m?'c':'')+'"></div>').join('');
+document.getElementById('go').textContent=t.entry==='returning'?'Continue placement':'Start match'},[t]);
+return <TweaksPanel title="Tweaks"><TweakSection label="State"/><TweakRadio label="Match" value={t.match} options={[{value:'1',label:'1 / 3'},{value:'2',label:'2 / 3'},{value:'3',label:'3 / 3'}]} onChange={v=>setTweak('match',v)}/><TweakRadio label="Entry" value={t.entry} options={[{value:'fresh',label:'Fresh'},{value:'returning',label:'Returning'}]} onChange={v=>setTweak('entry',v)}/></TweaksPanel>}
+ReactDOM.createRoot(document.getElementById('root')).render(<S48Tweaks/>);
+</script>
+</body></html>

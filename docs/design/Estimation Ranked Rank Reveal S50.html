@@ -1,0 +1,64 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="design_doc_mode" content="canvas"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Estimation Ranked Rank Reveal (S50)</title>
+<link href="https://fonts.googleapis.com/css2?family=Marcellus&family=Saira:wght@400;500;600;700&family=Spline+Sans+Mono:wght@400;500;600;700&family=Noto+Naskh+Arabic:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="placement-base.css"><link rel="stylesheet" href="tier-ladder.css">
+<style>
+.rv{top:62px;height:168px;display:grid;grid-template-columns:150px minmax(0,1fr) 210px;align-items:center;padding:0 24px;gap:12px}
+.info{display:flex;flex-direction:column;gap:6px;min-width:0}
+.tn{display:flex;align-items:baseline;gap:14px}
+.tn b{font:400 40px/44px var(--serif);letter-spacing:.03em}
+.tn em{font:600 26px/1 "Noto Naskh Arabic",serif;font-style:normal}
+.dv{font:400 17px/22px var(--sans);color:var(--ink)}
+.rp{display:flex;align-items:baseline;gap:8px}.rp b{font:600 28px/1 var(--mono)}.rp span{font:500 13px/1 var(--mono);color:var(--ink-dim);letter-spacing:.1em}
+.bar{height:6px;border-radius:3px;background:var(--pill);border:1px solid var(--line);position:relative;max-width:400px}
+.bar:before{content:"";position:absolute;left:-1px;top:-4px;width:12px;height:12px;border-radius:50%;background:var(--t)}
+.bl{display:flex;justify-content:space-between;max-width:400px;font:500 12px var(--mono);color:var(--ink-dim)}
+.note{font-size:14px;line-height:1.4;color:var(--ink-dim)}
+.cta{display:flex;flex-direction:column;gap:8px}.cta .btn{width:100%;padding:0}
+.lp{top:242px;height:170px;padding:12px 16px 0}
+.lp small{display:flex;justify-content:space-between;font:600 10px var(--mono);letter-spacing:.16em;color:var(--ink-dim);text-transform:uppercase;margin-bottom:14px}
+</style></head><body>
+<div class="lab" style="left:40px;top:34px">S50 · Rank Reveal (Tweaks: Gold II · Platinum I ceiling · Bronze III floor)</div>
+<div class="scr" id="scr" data-screen-label="S50 Rank Reveal" style="left:40px;top:60px">
+<div class="top"><div class="kick" id="kick">Placement complete</div></div>
+<div class="panel rv" id="rv" style="top:40px;height:184px"><div id="chip"></div><div class="info"><div class="tn"><b id="tn"></b><em id="ta" lang="ar" dir="rtl"></em></div><div class="dv" id="dv"></div><div class="rp"><b id="rp"></b><span>RP</span></div><div class="bar"></div><div class="bl"><span id="b0"></span><span id="b1"></span></div></div>
+<div class="cta"><p class="note" id="note"></p><button class="btn">Go to Ranked Home</button></div></div>
+<div class="panel lp" style="top:236px;height:176px"><small><span>Rank ladder</span><span id="you"></span></small><div id="lad"></div></div></div>
+<div class="doc" style="left:40px;top:540px"><h3>Copy table</h3><table><tr><th>ELEMENT</th><th>TEXT</th><th>SOURCE</th></tr>
+<tr><td>Kicker</td><td>Placement complete</td><td>agent-written</td></tr>
+<tr><td>Tier + Arabic</td><td>Gold معلم · Platinum وزير · Bronze مبتدئ</td><td>approved (RD1 titles); Noto Naskh Arabic, RTL</td></tr>
+<tr><td>Division</td><td>Division II · Division I · Division III</td><td>agent-written label; divisions per RD1/RD2</td></tr>
+<tr><td>RP</td><td>700 · 1,400 · 0 (+ "RP")</td><td>approved: RD26 lower bounds (Gold II · Platinum I · Bronze III). RD10: start at division lower bound</td></tr>
+<tr><td>Progress</td><td>700 → 825 · 1,400 → 1,600 · 0 → 75</td><td>RD26 values (next rung: Gold I · Diamond III · Bronze II). Bar is at 0 % of the span</td></tr>
+<tr><td>Note: Gold II</td><td>Next: Gold I at 825 RP.</td><td>agent-written; values RD26</td></tr>
+<tr><td>Note: ceiling</td><td>Highest placement reached. Diamond is earned in ranked play.</td><td>agent-written (RD10: max Platinum); assumption 2</td></tr>
+<tr><td>Note: floor</td><td>Your climb starts here. Next: Bronze II at 75 RP.</td><td>agent-written; the Bronze III / 0 / 75 phrasing follows S47 Path B (approved)</td></tr>
+<tr><td>Ladder title / marker</td><td>RANK LADDER / YOU ARE HERE</td><td>agent-written</td></tr>
+<tr><td>Button</td><td>Go to Ranked Home</td><td>agent-written; destination S45; assumption 3</td></tr></table>
+<h4>State table</h4><table><tr><th>STATE</th><th>S50</th></tr><tr><td>Gold II · 700</td><td>Division other than III.</td></tr><tr><td>Platinum I · 1,400</td><td>Ceiling: tier colour at full strength, "highest placement reached".</td></tr><tr><td>Bronze III · 0</td><td>Floor: framed as a start, no downward cue, no red.</td></tr><tr><td>Diamond / Royal / King</td><td>Unreachable (RD10). The Tweak offers no such value.</td></tr></table>
+<h4>Structure</h4><p>The rank leads: chip, tier, Arabic title, division, RP, progress. The ladder is the S46 component, with the current rung highlighted and every boundary an RD26 value. One action, to S45. No stats, no season chip, no delta, no percentage, no vote / pause / voice controls. S50 is a destination, not a hub.</p></div>
+<div class="doc" style="left:1032px;top:540px"><h3>Colour audit, decisions, assumptions</h3>
+<h4>Colour audit (vs bg #0D0A07 / surface #17130E / surfaceHigh #1D1912)</h4><ul><li>Ink 16.44 / 15.39 / 14.57 · InkDim 7.54 / 7.06 / 6.68. Button text #2A1D0C on Gold 7.61.</li><li>Tier text colours: Bronze #D79369 7.77 / 7.28 / 6.89 · Gold-tier #E6D585 13.37 / 12.52 / 11.85 · Platinum #9AE0DF 13.26 / 12.41 / 11.75. Tier colours appear as text only on these three; the ladder shows all seven (see S46 audit).</li><li>Current-rung text #14100A on its tier fill: &gt; 9:1 on all seven. Backdrop as S45.</li></ul>
+<h4>Open decisions, designed around</h4><ul><li>Tier tokens (§4.1.4 #5): proposal in S46; pending owner approval.</li><li>Whether RP is a count-up reveal: static here.</li></ul>
+<h4>Assumptions to confirm</h4><ul><li><b>1</b> Progress bar at 0 % of the current division's span. Consequence if the owner wants no bar on S50: remove the bar and the two bounds.</li><li><b>2</b> Ceiling line mentions Diamond. Consequence: if naming a higher tier is unwanted, keep only "Highest placement reached."</li><li><b>3</b> "Go to Ranked Home". Label only.</li><li><b>4</b> Ladder cell text is 11 px mono (reference, not play-critical). Consequence: if ≥ 14 is required, the ladder needs two rows or horizontal scroll.</li><li><b>5</b> The Roman-numeral division in the chip is a letter set in mono for consistency.</li></ul></div>
+<div id="root"></div>
+<script src="tier-ladder.js"></script>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel">
+const TWEAK_DEFAULTS=/*EDITMODE-BEGIN*/{
+  "result": "7"
+}/*EDITMODE-END*/;
+const NOTES={7:'Next: Gold I at 825 RP.',11:'Highest placement reached. Diamond is earned in ranked play.',0:'Your climb starts here. Next: Bronze II at 75 RP.'};
+function S50Tweaks(){const [t,setTweak]=useTweaks(TWEAK_DEFAULTS);
+React.useEffect(()=>{const L=TierLadder,i=+t.result,r=L.rung(i),nx=L.rung(i+1),f=L.fmt,$=id=>document.getElementById(id);
+const s=$('scr');s.style.setProperty('--t',r.tier.c);$('rv').style.setProperty('--t',r.tier.c);
+$('chip').innerHTML=L.chip(i,104);const tn=$('tn');tn.textContent=r.tier.en;tn.style.color=r.tier.c;const ta=$('ta');ta.textContent=r.tier.ar;ta.style.color=r.tier.c;
+$('dv').textContent='Division '+r.roman;$('rp').textContent=f(r.rp);$('b0').textContent=f(r.rp);$('b1').textContent=f(nx.rp);$('note').textContent=NOTES[i];
+const y=$('you');y.textContent='You are here';y.style.color=r.tier.c;
+L.render($('lad'),i)},[t]);
+return <TweaksPanel title="Tweaks"><TweakSection label="Placement result"/><TweakRadio label="Result" value={t.result} options={[{value:'7',label:'Gold II'},{value:'11',label:'Platinum I'},{value:'0',label:'Bronze III'}]} onChange={v=>setTweak('result',v)}/></TweaksPanel>}
+ReactDOM.createRoot(document.getElementById('root')).render(<S50Tweaks/>);
+</script>
+</body></html>

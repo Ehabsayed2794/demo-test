@@ -1,0 +1,44 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="design_doc_mode" content="canvas"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Estimation Ranked Placement Calculating (S49)</title>
+<link href="https://fonts.googleapis.com/css2?family=Marcellus&family=Saira:wght@400;500;600;700&family=Spline+Sans+Mono:wght@400;500;600;700&family=Noto+Naskh+Arabic:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="placement-base.css">
+<style>
+.mid{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center}
+.ring{width:96px;height:96px;border-radius:50%;border:3px solid var(--pill);border-top-color:var(--accent);animation:sp 1.1s linear infinite;margin-bottom:6px;display:grid;place-items:center}
+@keyframes sp{to{transform:rotate(360deg)}}
+.mid h2{font:400 30px/1.1 var(--serif);letter-spacing:.04em}
+.mid p{font-size:14px;line-height:1.45;color:var(--ink-dim);max-width:420px}
+.pips{display:grid;grid-template-columns:repeat(3,56px);gap:8px;margin-top:2px}.pips div{height:8px;border-radius:4px;background:var(--ink)}
+.mid small{font:600 11px var(--mono);letter-spacing:.16em;color:var(--ink-dim)}
+.rdy{display:none}[data-s=ready] .rdy{display:block}[data-s=ready] .cal{display:none}
+[data-s=ready] .ring{animation:none;border-color:var(--accent);transform:none}
+.btn.rdy{margin-top:8px}[data-s=calc] .btn{display:none}
+.tick{display:none;width:22px;height:38px;border:solid var(--accent-hi);border-width:0 4px 4px 0;transform:rotate(40deg) translate(-3px,-4px)}[data-s=ready] .tick{display:block}
+</style></head><body>
+<div class="lab" style="left:40px;top:34px">S49 · Calculating Rank (Tweaks: calculating / ready to reveal)</div>
+<div class="scr" id="scr" data-screen-label="S49 Calculating Rank" data-s="calc" style="left:40px;top:60px">
+<div class="top"><div class="kick">Ranked · Solo</div><h1>Placement</h1></div>
+<div class="mid"><div class="ring" aria-hidden="true"><span class="tick"></span></div><small><i class="n">3</i> / <i class="n">3</i></small><h2 class="cal">Calculating your rank</h2><h2 class="rdy">Your rank is ready</h2><p class="cal" role="status">Your three matches are being assessed.</p><p class="rdy">Your placement is complete.</p><div class="pips"><div></div><div></div><div></div></div><button class="btn rdy">Reveal my rank</button></div></div>
+<div class="doc" style="left:40px;top:540px"><h3>Copy table</h3><table><tr><th>ELEMENT</th><th>TEXT</th><th>SOURCE</th></tr>
+<tr><td>Kicker / title</td><td>Ranked · Solo / Placement</td><td>carried from S47</td></tr>
+<tr><td>Progress</td><td>3 / 3 and three filled pips</td><td>approved (RD10, §4b.2). All matches complete; the only number shown</td></tr>
+<tr><td>Calculating</td><td>Calculating your rank / Your three matches are being assessed.</td><td>title: approved name (§4b.2 "Calculating Rank"); body agent-written; assumption 1</td></tr>
+<tr><td>Ready</td><td>Your rank is ready / Your placement is complete. / Reveal my rank</td><td>agent-written; assumption 2</td></tr></table>
+<h4>State table</h4><table><tr><th>STATE</th><th>S49</th></tr><tr><td>Calculating</td><td>Gold arc rotates indefinitely: waiting on the backend, with no percentage and no ETA (§4b.3: computed once, server-side).</td></tr><tr><td>Ready to reveal</td><td>Ring closes, check mark, one action to S50. The rank is still not shown.</td></tr><tr><td>Failure / timeout</td><td>Not in the spec; not drawn. No agent-added path.</td></tr></table>
+<h4>Structure</h4><p>Centred, one element of motion, no score, no outcome language, no provisional rank, no teaser. The ring uses no tier colour. Reduced-motion: the arc is static.</p></div>
+<div class="doc" style="left:1032px;top:540px"><h3>Colour audit, decisions, assumptions</h3>
+<h4>Colour audit (vs bg / surface / surfaceHigh)</h4><ul><li>Ink #F0EADA 16.44 / 15.39 / 14.57 · InkDim #A89F8E 7.54 / 7.06 / 6.68 · button text #2A1D0C on Gold 7.61. Gold #E8A33D arc and check are non-text. The check mark is decorative (3:1 non-text met at 9.16 vs bg). Backdrop as S45.</li></ul>
+<h4>Open decisions, designed around</h4><ul><li>Failure / retry path for a slow backend: spec silent.</li><li>Whether Ready auto-advances: designed as a tap.</li></ul>
+<h4>Assumptions to confirm</h4><ul><li><b>1</b> Body "Your three matches are being assessed." Consequence: copy only. It must not hint at a score.</li><li><b>2</b> Ready state requires a tap on "Reveal my rank". If auto-advance is preferred, delete the Ready frame and button; S50 follows after the backend responds.</li><li><b>3</b> "3 / 3" stays visible so the flow's single progress signal is unbroken.</li></ul></div>
+<div id="root"></div>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel">
+const TWEAK_DEFAULTS=/*EDITMODE-BEGIN*/{"state":"calc"}/*EDITMODE-END*/;
+function S49Tweaks(){const [t,setTweak]=useTweaks(TWEAK_DEFAULTS);
+React.useEffect(()=>{document.getElementById('scr').dataset.s=t.state},[t]);
+return <TweaksPanel title="Tweaks"><TweakSection label="State"/><TweakRadio label="Sub-state" value={t.state} options={[{value:'calc',label:'Calculating'},{value:'ready',label:'Ready'}]} onChange={v=>setTweak('state',v)}/></TweaksPanel>}
+ReactDOM.createRoot(document.getElementById('root')).render(<S49Tweaks/>);
+</script>
+</body></html>
