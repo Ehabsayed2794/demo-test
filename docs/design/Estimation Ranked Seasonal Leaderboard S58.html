@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="design_doc_mode" content="canvas">
+<title>Estemshan — Seasonal Ranked Leaderboard S58</title>
+<link href="https://fonts.googleapis.com/css2?family=Marcellus&family=Saira:wght@400;500;600&family=Spline+Sans+Mono:wght@500;600;700&family=Noto+Naskh+Arabic:wght@600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0D0A07;--panel:#17130E;--high:#1D1912;--pill:#1D1A16;--line:rgba(255,240,210,.07);--ink:#F0EADA;--dim:#A89F8E;--faint:#8A8272;--mono:"Spline Sans Mono",monospace;--serif:"Marcellus",serif;--sans:"Saira",sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:400 14px/1.45 var(--sans)}
+a{color:var(--ink)}a:hover{color:var(--dim)}
+.lab{position:absolute;left:26px;top:4px;font:500 11px var(--mono);letter-spacing:.14em;color:var(--dim);text-transform:uppercase}
+.scr{position:absolute;left:26px;top:26px;width:932px;height:430px;border-radius:20px;overflow:hidden;background:radial-gradient(140% 65% at 50% -18%,rgba(141,84,32,.33),transparent 70%),linear-gradient(180deg,#171008 0%,#0D0A07 48%,#080604 100%)}
+.top{position:absolute;left:26px;right:26px;top:14px;height:40px;display:flex;align-items:center;justify-content:space-between}
+.kick{font:500 11px var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+h1{font:400 22px/1 var(--serif);letter-spacing:.05em;margin:4px 0 0}
+.chips{display:flex;gap:8px}
+.chip{border:1px solid var(--line);border-radius:14px;background:var(--pill);padding:6px 12px;font:500 12px var(--mono);letter-spacing:.08em;color:var(--dim);white-space:nowrap}
+.chip b{color:var(--ink);font-weight:600}
+.board{position:absolute;left:26px;right:26px;top:62px;bottom:14px;background:var(--panel);border:1px solid var(--line);border-radius:12px;display:flex;flex-direction:column;overflow:hidden}
+.g{display:grid;grid-template-columns:64px minmax(0,1fr) 262px 84px 104px;column-gap:12px;align-items:center;padding:0 16px}
+.hd{height:26px;flex:none;border-bottom:1px solid var(--line);font:500 12px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--dim);cursor:default;user-select:none}
+.r{text-align:right}
+.list{position:relative;flex:1;min-height:0;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#3a3226 transparent}
+.row{height:28px;border-bottom:1px solid var(--line);font:400 14px var(--sans);color:var(--ink)}
+.row.k{background:var(--high)}
+.row.me,.pin .row{background:rgba(240,234,218,.11);box-shadow:inset 0 0 0 1px rgba(240,234,218,.6);border-radius:6px;border-bottom-color:transparent}
+.n{font-family:var(--mono);font-weight:600;font-size:14px;color:var(--ink)}
+.pos{color:var(--dim);font-weight:500}.k .pos,.me .pos{color:var(--ink)}
+.rp{font-weight:700;text-align:right}
+.ssn{font:500 13px var(--mono);color:var(--dim)}
+.pl{display:flex;align-items:center;gap:8px;min-width:0}
+.nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.you{flex:none;background:var(--ink);color:var(--bg);font:700 12px/1 var(--mono);letter-spacing:.1em;padding:3px 6px;border-radius:5px}
+.tr{display:flex;align-items:center;gap:8px;min-width:0}
+.tr .tn{white-space:nowrap}.tr .dv{font:600 14px var(--mono);margin-left:-3px}
+.tr .ar{margin-left:auto;font:600 15px/1.2 "Noto Naskh Arabic",serif;color:var(--dim);direction:rtl;white-space:nowrap}
+.tk{flex:none;width:18px;height:18px;background:var(--c)}
+.band{height:22px;flex:none;display:flex;align-items:center;gap:10px;padding:0 16px;background:var(--high);border-bottom:1px solid var(--line);font:500 12px var(--mono);letter-spacing:.12em;color:var(--dim);text-transform:uppercase}
+.band .ar{font:600 14px/1 "Noto Naskh Arabic",serif;color:var(--ink);letter-spacing:0}
+.band b{color:var(--ink);font-weight:600}
+.pin{flex:none;border-top:1px solid var(--line);padding:0 6px 6px;position:relative;background:var(--panel)}
+.pin:before{content:"";position:absolute;left:0;right:0;top:-24px;height:24px;background:linear-gradient(transparent,var(--panel));pointer-events:none}
+.pin[role=button]{cursor:pointer}.pin:focus-visible{outline:2px solid var(--ink);outline-offset:-3px;border-radius:10px}.row:focus{outline:none}.pin .hint{height:22px;display:flex;align-items:center;font:500 14px var(--sans);color:var(--dim);padding:0 10px}
+.pin .g{padding:0 10px}
+.sk{border-radius:6px;background:linear-gradient(90deg,var(--pill) 0%,#26211a 50%,var(--pill) 100%);background-size:200% 100%;animation:sh 1.4s linear infinite;border:1px solid var(--line);height:14px}
+@keyframes sh{to{background-position:-200% 0}}
+@media (prefers-reduced-motion:reduce){.sk{animation:none}}
+.empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;gap:6px;padding:0 40px}
+.empty h2{font:400 26px/30px var(--serif);margin:0;letter-spacing:.03em}
+.empty p{margin:0;color:var(--dim);font:400 16px/22px var(--sans);max-width:520px}
+.ghost{height:28px;border:1px dashed var(--line);border-radius:6px;color:var(--faint);font:500 14px var(--mono)}
+.doc{position:absolute;left:26px;top:482px;width:932px;padding:24px;background:var(--panel);border:1px solid var(--line);border-radius:12px;color:var(--dim)}
+.doc h2,.doc h3{color:var(--ink);font-family:var(--serif);font-weight:400}
+.doc h2{font-size:22px;margin:6px 0 14px}.doc h3{font-size:17px;margin:26px 0 8px}
+.doc code,.doc .num{font-family:var(--mono);color:var(--ink);font-size:12.5px}
+.doc table{width:100%;border-collapse:collapse;font-size:13px}
+.doc th{font:500 11px var(--mono);letter-spacing:.1em;text-transform:uppercase;text-align:left;color:var(--dim);padding:6px 8px;border-bottom:1px solid var(--line)}
+.doc td{padding:6px 8px;border-top:1px solid var(--line);vertical-align:top;color:var(--dim)}
+.doc td:first-child{color:var(--ink)}
+.doc li{margin-bottom:8px}.doc b{color:var(--ink);font-weight:600}
+.sw{display:inline-block;width:11px;height:11px;border-radius:3px;border:1px solid var(--line);vertical-align:-1px;margin-right:6px}
+.ok{color:var(--ink)!important}
+.tkrow{display:flex;gap:18px;flex-wrap:wrap;margin:8px 0}
+.tkrow span{display:flex;align-items:center;gap:8px;color:var(--ink)}
+</style>
+</head>
+<body>
+<div class="lab">S58 · Seasonal Ranked Leaderboard · 932 × 430</div>
+<main class="scr" id="root" aria-label="Seasonal Ranked Leaderboard"></main>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel">
+const TWEAK_DEFAULTS=/*EDITMODE-BEGIN*/{"state":"Board","stress":false,"gold":"Brass","royal":"Muted"}/*EDITMODE-END*/;
+// RD26 lower bounds, verbatim. Order low→high.
+const LADDER=[["Bronze","مبتدئ","III",0],["Bronze","مبتدئ","II",75],["Bronze","مبتدئ","I",150],["Silver","لاعب","III",250],["Silver","لاعب","II",350],["Silver","لاعب","I",450],["Gold","معلم","III",575],["Gold","معلم","II",700],["Gold","معلم","I",825],["Platinum","وزير","III",1000],["Platinum","وزير","II",1200],["Platinum","وزير","I",1400],["Diamond","أمير","III",1600],["Diamond","أمير","II",1800],["Diamond","أمير","I",2000],["Royal","سلطان","III",2250],["Royal","سلطان","II",2500],["Royal","سلطان","I",2750],["King","ملك",null,3000]];
+const rungOf=rp=>{let r=LADDER[0];for(const x of LADDER)if(rp>=x[3])r=x;return r};
+const star=(()=>{const p=[];for(let i=0;i<16;i++){const a=Math.PI*i/8-Math.PI/2,r=i%2?30:50;p.push((50+r*Math.cos(a)).toFixed(1)+"% "+(50+r*Math.sin(a)).toFixed(1)+"%")}return"polygon("+p.join(",")+")"})();
+const SEASON_TOKEN="{season.id}";
+const GOLD={Straw:"oklch(.86 .15 118)",Brass:"oklch(.76 .10 95)",Antique:"oklch(.70 .085 85)"};
+const ROYAL={Violet:"oklch(.68 .17 300)",Muted:"oklch(.62 .10 300)",Deep:"oklch(.54 .09 302)"};
+const HEX="polygon(25% 5%,75% 5%,100% 50%,75% 95%,25% 95%,0 50%)",OCT="polygon(30% 0,70% 0,100% 30%,100% 70%,70% 100%,30% 100%,0 70%,0 30%)";
+Object.assign(window,{GOLD,ROYAL,HEX,OCT});
+const PAL={gold:GOLD.Brass,royal:ROYAL.Muted};
+const TOK={Bronze:["oklch(.62 .09 50)","",{borderRadius:"50%"}],Silver:["oklch(.82 .012 250)","",{borderRadius:4}],get Gold(){return [PAL.gold,HEX]},Platinum:["oklch(.82 .08 195)","polygon(50% 0,100% 38%,82% 100%,18% 100%,0 38%)"],Diamond:["oklch(.72 .14 245)","polygon(50% 0,100% 50%,50% 100%,0 50%)"],get Royal(){return [PAL.royal,OCT]},King:["#F0EADA",star]};
+function Tk({t}){const [c,cp,s]=TOK[t];return <i className="tk" style={{"--c":c,clipPath:cp||undefined,width:t==="King"?24:18,height:t==="King"?24:18,...s}} aria-hidden="true"></i>}
+const NAMES=["Nasser Al-Otaibi","Layla_K","Omar Haddad","Sara Mansour","Yousef B.","Rania Said","Tariq Aziz","Dana F.","Majed Al-Zahrani","Huda Nasr","Sami R.","Lina Qasim","Ziad Karam","Noura A.","Karim Farouk","Mona Idris","Fahad Al-Shehri","Reem T.","Adel Barakat","Salma Younis","Walid M.","Hana Darwish","Bassam O.","Jood Al-Amri","Rashid K.","Maya S.","Imad Tawil","Aya Hamdan","Zain Khoury","Dina Hijazi","Hamza Rafiq","Lujain W.","Osama Nabil","Siba Ghanem","Anwar J.","Ghada Fares","Talal Mrad","Yara Sabbagh","Mazen H.","Abeer N."];
+const LONG="Abdulrahman Al-Mutawakkil",ME="Khalid Al-Rashidi",STRESS="Abdulrahman bin Mohammed Al-Mutawakkil";
+const jit=p=>(p*7)%11,tail=p=>2470-(p-10)*31-jit(p);
+function build(kind,stress,jumped){
+  const meName=stress?STRESS:ME,out=[];
+  const head=kind==="king"?[3612,3455,3301,3188,3094,3041,2968,2890,2811,2742]:[3612,3388,3104,2941,2873,2790,2718,2602,2511];
+  const meAt=kind==="king"?4:9,longAt=kind==="king"?7:6;
+  if(kind==="far"&&jumped){for(let p=1270;p<=1298;p++)out.push({pos:p,name:p===1284?meName:NAMES[p%40],rp:412+(1284-p)*2,me:p===1284});return out}
+  if(kind==="far"){for(let p=38;p<=68;p++)out.push({pos:p,name:p===44?LONG:NAMES[p%40],rp:tail(p)});return out}
+  // 72 rows so the window descends through Gold (rows ~62–71); otherwise the Gold
+  // token is never rendered and R2 cannot be judged at row scale.
+  for(let p=1;p<=72;p++){const rp=p<=head.length?head[p-1]:tail(p);out.push({pos:p,rp,me:p===meAt,name:p===meAt?meName:p===longAt?LONG:NAMES[(p*3)%40]})}
+  return out;
+}
+const fmt=n=>n.toLocaleString("en-US");
+function Row({r,pin}){
+  const [t,ar,dv]=rungOf(r.rp);
+  return <div className={"g row"+(r.rp>=3000?" k":"")+(r.me?" me":"")} data-me={r.me?"1":undefined} tabIndex={r.me?-1:undefined}>
+    <span className="n pos">{fmt(r.pos)}</span>
+    <span className="pl"><span className="nm" title={r.name}>{r.name}</span>{(r.me||pin)&&<span className="you">YOU</span>}</span>
+    <span className="tr"><Tk t={t}/><span className="tn">{t}</span>{dv&&<span className="dv">{dv}</span>}<span className="ar" lang="ar" dir="rtl">{ar}</span></span>
+    <span className="n rp">{fmt(r.rp)}</span>
+    <span className="ssn" data-binding="season.id">{SEASON_TOKEN}</span>
+  </div>
+}
+const Head=()=><div className="g hd" role="presentation"><span>Pos</span><span>Player</span><span>Tier · Rank</span><span className="r">RP</span><span>Season</span></div>;
+function Skeleton(){
+  const w=[150,120,170,100,140,130,160,110,150,120,140];
+  return <div className="list" aria-busy="true" aria-label="Loading leaderboard">{w.map((x,i)=><div key={i} className="g row" style={{borderBottomColor:"var(--line)"}}><div className="sk" style={{width:30}}/><div className="sk" style={{width:x}}/><div style={{display:"flex",gap:8,alignItems:"center"}}><div className="sk" style={{width:18,height:18}}/><div className="sk" style={{width:96}}/></div><div className="sk" style={{width:44,marginLeft:"auto"}}/><div className="sk" style={{width:64}}/></div>)}</div>
+}
+function Empty(){
+  return <div className="empty"><h2>The season has begun</h2><p>No ranked games have been played yet. Positions appear here once the first results are in.</p>
+    <div style={{width:"100%",maxWidth:700,marginTop:12,display:"grid",gap:6}}>{[0,1,2].map(i=><div key={i} className="g ghost" style={{opacity:1-i*.25}}><span>—</span><span></span><span></span><span></span><span></span></div>)}</div></div>
+}
+function Board({state,stress}){
+  const ref=React.useRef(null);
+  const [jumped,setJumped]=React.useState(false);
+  React.useEffect(()=>{setJumped(false);if(ref.current)ref.current.scrollTop=0},[state]);
+  React.useEffect(()=>{const l=ref.current;if(!jumped||!l)return;const r=l.querySelector("[data-me]");if(!r)return;l.scrollTop=Math.max(0,r.offsetTop-(l.clientHeight-r.offsetHeight)/2);r.focus({preventScroll:true})},[jumped]);
+  if(state==="Loading")return <><Head/><Skeleton/></>;
+  if(state==="Empty")return <><Head/><Empty/></>;
+  const kind=state==="King"?"king":state==="Far"?"far":"board";
+  const rows=build(kind,stress,jumped),kings=rows.filter(r=>r.rp>=3000);
+  const me={pos:1284,name:stress?STRESS:ME,rp:412,me:true};
+  const jump=()=>setJumped(true);
+  const key=e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();jump()}};
+  return <><Head/>
+    <div className="list" ref={ref}>
+      {kings.length>0&&<div className="band"><b>King</b><span className="ar" lang="ar" dir="rtl">ملك</span><span>3,000+ RP · one group, ordered by RP</span></div>}
+      {rows.map(r=><Row key={r.pos} r={r}/>)}
+    </div>
+    {kind==="far"&&!jumped&&<div className="pin" role="button" tabIndex={0} aria-label="Jump to your row, position 1,284" onClick={jump} onKeyDown={key}><div className="hint">Your row is below this view · tap to jump</div><Row r={me} pin/></div>}
+  </>
+}
+function App(){
+  const [t,setTweak]=useTweaks(TWEAK_DEFAULTS);
+  PAL.gold=GOLD[t.gold]||GOLD.Brass;PAL.royal=ROYAL[t.royal]||ROYAL.Muted;
+  return <>
+    <header className="top"><div><div className="kick">Ranked · Season</div><h1>Leaderboard</h1></div>
+      <div className="chips"><div className="chip">SEASON <b data-binding="season.id">{SEASON_TOKEN}</b></div><div className="chip">ORDERED BY RP</div></div></header>
+    <section className="board" aria-label="Seasonal leaderboard"><Board state={t.state} stress={t.stress}/></section>
+    <TweaksPanel>
+      <TweakSection label="S58 state"/>
+      <TweakRadio label="State" value={t.state} options={["Board","King","Far","Loading","Empty"]} onChange={v=>setTweak("state",v)}/>
+      <TweakToggle label="Stress: 38-char own name" value={t.stress} onChange={v=>setTweak("stress",v)}/>
+      <TweakSection label="Tier token proposals"/>
+      <TweakRadio label="Gold" value={t.gold} options={["Straw","Brass","Antique"]} onChange={v=>setTweak("gold",v)}/>
+      <TweakRadio label="Royal" value={t.royal} options={["Violet","Muted","Deep"]} onChange={v=>setTweak("royal",v)}/>
+    </TweaksPanel>
+  </>
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+<aside class="doc" id="doc">
+<div class="kick">Delivery notes · S<span class="num">58</span> · revision 2 · design screen, not code story</div>
+<h2>Where you stand, and who is ahead of you</h2>
+<p>Tweaks: <b>Board</b> · <b>King</b> (six King rows, you at <span class="num">4</span>) · <b>Far</b> (window at <span class="num">38–68</span>, your row pinned; activating the pin jumps to your real row) · <b>Loading</b> · <b>Empty</b>. “Stress” renders a 38-character own name. New: <b>Gold</b> (Straw = revision 1, Brass, Antique) and <b>Royal</b> (Violet = revision 1, Muted, Deep) proposal toggles; the file opens on Brass + Muted so the new proposals are what a reviewer sees first. All names, RP values and positions are invented samples. Sources: roadmap §4b.8, §4b.1, §4b.7, §4.1, §4.2.3, §4b.16; plan RD1–RD3, RD24, RD26, RD27, D10.</p>
+
+<h3>1 · Copy table</h3>
+<table><tr><th>Element</th><th>Text</th><th>Source</th></tr>
+<tr><td>Kicker / title</td><td>Ranked · Season / Leaderboard</td><td>Agent-written; kicker follows S54</td></tr>
+<tr><td>Season chip, Season column</td><td>SEASON {season.id} / {season.id}</td><td>Binding token, S54 convention; display form open (§9, #1)</td></tr>
+<tr><td>Order chip</td><td>ORDERED BY RP</td><td>Agent-written; states RD27. Read-only</td></tr>
+<tr><td>Column labels</td><td>Pos · Player · Tier · Rank · RP · Season</td><td>RD27 / §4b.8 (Position → Pos, Tier / Rank → Tier · Rank)</td></tr>
+<tr><td>Tier names, divisions, Arabic titles</td><td>Bronze … King; III/II/I; مبتدئ لاعب معلم وزير أمير سلطان ملك</td><td>Approved verbatim, RD1 / §4b.1</td></tr>
+<tr><td>King band</td><td>King · ملك · 3,000+ RP · one group, ordered by RP</td><td>3,000 = RD26; wording agent-written from RD27</td></tr>
+<tr><td>Own-row tag</td><td>YOU</td><td>Agent-written</td></tr>
+<tr><td>Pinned hint</td><td>Your row is below this view · tap to jump</td><td>Agent-written; now fulfilled by real behaviour</td></tr>
+<tr><td>Pin accessible name</td><td>Jump to your row, position 1,284</td><td>Agent-written (screen-reader only); contains the visible words “your row”, “jump”</td></tr>
+<tr><td>Empty title / body</td><td>The season has begun / No ranked games have been played yet. Positions appear here once the first results are in.</td><td>Agent-written</td></tr>
+<tr><td>Loading</td><td>No text; aria-label “Loading leaderboard”</td><td>Agent-written</td></tr>
+<tr><td>Names, RP, positions</td><td>Samples</td><td>Invented samples, not product data</td></tr></table>
+
+<h3>2 · State table</h3>
+<table><tr><th>State</th><th>Content</th></tr>
+<tr><td>Board</td><td><span class="num">72</span> scrollable rows: King band (<span class="num">3</span> rows) → Royal → Diamond → Platinum → Gold (rows <span class="num">62–71</span>); your row highlighted at <span class="num">9</span>. Extended so the Gold token is visible at row scale</td></tr>
+<tr><td>King</td><td>Six King rows under one band, no divisions, ordered by RP; you at <span class="num">4</span>; Royal begins at <span class="num">7</span></td></tr>
+<tr><td>Far</td><td>Positions 38–68; your row (<span class="num">1,284</span>, Silver II) pinned under the list. Pointer click, Enter or Space on the pin replaces the window with positions <span class="num">1,270–1,298</span>, scrolls your row to the vertical centre and moves focus to it; the pin then disappears because your row is on screen. Switching state resets it</td></tr>
+<tr><td>Loading</td><td>Unchanged: header, 11 shimmer rows, no spinner, reduced-motion stops the shimmer</td></tr>
+<tr><td>Empty</td><td>Unchanged: fresh-season copy, three dashed ghost rows</td></tr></table>
+
+<h3>3 · Pinned row: operable jump implemented</h3>
+<ul>
+<li><b>Option chosen: operable jump</b> (not the non-interactive fallback). The list is a plain scroll container and the jump is a deterministic <code>scrollTop</code> assignment, so it can be implemented reliably here.</li>
+<li>The pin is <code>role="button"</code> with <code>tabindex="0"</code>, an <code>onClick</code> handler, and <code>onKeyDown</code> for Enter and Space (Space's default page scroll is prevented). Its name states what it does. Focus ring: 2px <code>ink</code> outline, inset, in the same ink language as the YOU row.</li>
+<li>A real server would load the page of rows around position 1,284; the sample window <span class="num">1,270–1,298</span> stands in for that fetch. Loading of that page is not designed (assumption A2).</li>
+<li>No way back to the top is added, since that would be a new interaction outside the brief.</li>
+</ul>
+
+<h3>4 · Row-scale tier tokens — PROPOSALS for owner review</h3>
+<p><b>S46 status:</b> S46 (Tier &amp; Division presentation) <b>has been delivered</b> since this revision was authored — it landed as part of the S48–S50 placement-flow package and is merged to <code>origin/main</code> (commit <span class="num">9445964</span>). It carries its own tier-token proposal, so these two treatments should be read together. <b>They agree on Gold.</b> S46 Gold is <code>#E6D585</code> = oklch(.869 .102 97.7); the Brass default below is oklch(.761 .100 95.2) — the same hue and the same chroma, with S46 sitting <span class="num">0.11</span> lighter in L. ΔE between the two is <span class="num">10.9</span>, and both are ΔE <span class="num">12</span> from the Match-King crown <code>#E8A33D</code> (oklch(.765 .140 72.9), a distinctly more orange hue at higher chroma). So the direction was arrived at independently twice; the open question is only lightness, not hue. Nothing approved is overridden and no shared token is changed by this file. Everything below is a proposal, and the merged S46 decision supersedes it. Neither treatment uses tier artwork; both are CSS shapes.</p>
+<div class="tkrow" id="tokrow"></div>
+<table id="tokaudit"><tr><th>Variant</th><th>oklch</th><th>ΔE vs #E8A33D (Match-King)</th><th>on surface</th><th>on surfaceHigh</th></tr></table>
+<ul>
+<li><b>Gold — Brass</b> <code>oklch(.76 .10 95)</code> (default) and <b>Antique</b> <code>oklch(.70 .085 85)</code>: lower chroma and a hue about 13–23° more yellow than the crown's amber, so both read as aged brass rather than lime. Not <code>#E8A33D</code>, no crown glyph. Shape stays the hexagon, a flat <span class="num">18</span>px row-aligned token beside the name, while the Match-King crown is a glyph on the avatar. Antique sits closest to Bronze (<code>oklch(.62 .09 50)</code>, a circle); the shape and ~<span class="num">.08</span> lightness gap keep them apart, but check this at a glance on device. Straw is the revision-1 value, kept for comparison.</li>
+<li><b>Royal — Muted</b> <code>oklch(.62 .10 300)</code> (default) and <b>Deep</b> <code>oklch(.54 .09 302)</code>: lower chroma than the revision-1 violet (.17), a dusty aubergine-violet. The octagon shape and the cool hue keep the second-highest rung away from the warm near-black + brass room skin, which satisfies the §4.1.4 item 5 clause (Royal is the app's art direction). Deep is the quietest; it is measured above against both surfaces. No green anywhere (“blue-gold, no green felt”).</li>
+<li>Both are non-text shapes; the tier name beside them stays <code>ink</code>.</li>
+<li>The owner's “charcoal, deep-green, brass” description does not match the Foundation (warm near-black + gold/brass, no green). Worked from the Foundation.</li>
+</ul>
+
+<h3>5 · Colour audit (live-computed from this page)</h3>
+<table id="audit"><tr><th>Token / use</th><th>Hex</th><th>on bg</th><th>on surface</th><th>on surfaceHigh</th><th>on YOU row</th></tr></table>
+<p>All text tokens are published values, none darkened. The YOU tag is <code>bg</code> text on <code>ink</code>.</p>
+
+<h3>6 · Type floor at port time (§4.1.2: artboard px are reference proportions; re-scale to ~430 dp short edge; 14 dp body floor, 16 dp play-critical)</h3>
+<table><tr><th>Element class (artboard size)</th><th>Port treatment</th></tr>
+<tr><td>Player name, tier name, Arabic title (14–15)</td><td>Already at floor: ≥14 dp.</td></tr>
+<tr><td>Position and RP numerals (14 mono)</td><td>Floor at 14 dp. The leaderboard has no play-critical (game-decision) text, so 16 dp does not apply; owner may raise RP if headroom exists.</td></tr>
+<tr><td><b>Season values (13 mono)</b></td><td><b>Raise to 14 dp; no exemption.</b> It is data the player reads, so it gets the floor. Fit: <span id="sfit" class="num">…</span>. Because the real <code>season.id</code> length is unknown, the Season column must be the second flexible column (with Player) at port time, not a fixed width.</td></tr>
+<tr><td>YOU tag (12 mono)</td><td>Raise to 14 dp (it identifies your row). The tag grows ~3px; the 28px row holds it.</td></tr>
+<tr><td>King band label (12 mono)</td><td>Raise to 14 dp; the 22px band holds it.</td></tr>
+<tr><td>Season chip (12 mono)</td><td>Raise to 14 dp (shows data).</td></tr>
+<tr><td>Column labels, “ORDERED BY RP” chip (12 mono caps)</td><td><b>Documented exemption</b> as non-play-critical labels: uppercase, tracked, redundant with the column content, <span class="num">7.54:1</span> contrast. Owner to confirm the exemption or raise to 14 dp (costs ~<span class="num">2</span>px of header height).</td></tr>
+<tr><td>Empty body (16), pinned hint (14)</td><td>Already compliant.</td></tr></table>
+<p>Every text colour used is <code>ink</code>, <code>inkDim</code> or <code>inkFaint</code>; all clear <span class="num">4.5:1</span> on bg, surface and surfaceHigh (§5). The artboard itself is not changed for these sizes in this revision (documentation item); say if you want the raised sizes applied.</p>
+
+<h3>7 · Season display format</h3>
+<p>§4b.7 says a season has an ID, a start and an end. There is no label field and no season code in the repository, so “Autumn 2026” cannot be shipped. The <code>season.id</code> binding and <code>{season.id}</code> placeholder are retained in the chip and column, matching S54. Both now read one constant (<code>SEASON_TOKEN</code>), so swapping in a label is a one-line change. Supporting labels later needs an approved <code>label</code> field on the season document and an owner ruling on the labelling scheme.</p>
+
+<h3>8 · Verification (measured on this page at load)</h3>
+<table id="checks"><tr><th>Check</th><th>Result</th></tr></table>
+<p>The Arabic font check probes weight <span class="num">600</span> and passes the sample character <code>م</code>. This matters: Google Fonts serves Noto Naskh Arabic as five <code>unicode-range</code> subsets, and only the Arabic subset is ever fetched because no Latin text uses this family. <code>check()</code> without a text argument requires <i>all</i> subsets to be loaded, so it reports a false negative; with the Arabic character it reports loaded. Not performed by this script: console errors, git branch and <code>docs/design/</code> placement.</p>
+
+<h3>9 · Open decisions and assumptions</h3>
+<ol>
+<li><b>Which season display form?</b> Needs a <code>label</code> field and a labelling scheme, or the literal id stays.</li>
+<li><b>Which Gold: Brass, Antique or Straw?</b> Or adopt S46's <code>#E6D585</code> directly — same hue and chroma as Brass, <span class="num">0.11</span> lighter. Which Royal: Muted, Deep or Violet? Both S46 and this file are CSS shapes, not tier artwork — is commissioned artwork wanted before the tokens are frozen? <i>If a later ruling differs:</i> only the <code>TOK</code> map changes.</li>
+<li><b>Are the 12 dp column labels and ORDERED BY RP chip exempt from the 14 dp floor?</b></li>
+<li><b>Entry point.</b> Reached from S45 and S54; not stated in the spec. <i>If wrong:</i> only entry affordances change.</li>
+<li><b>Far treatment.</b> Pinned row + jump is an assumption, and the loaded window around the player is sample data. <i>If wrong:</i> swap for a floating button or position-only footer.</li>
+<li><b>Own-row highlight in ink, not gold</b>, to avoid the Match-King gold.</li>
+<li><b>Empty copy, abbreviated labels “Pos” / “Tier · Rank”, and sample data</b> are agent-written. Gold III = <span class="num">575</span>.</li>
+</ol>
+</aside>
+<script>
+(function(){
+function boot(){
+const hex=h=>[1,3,5].map(i=>parseInt(h.substr(i,2),16));
+const lin=v=>{v/=255;return v<=.03928?v/12.92:Math.pow((v+.055)/1.055,2.4)};
+const L=c=>.2126*lin(c[0])+.7152*lin(c[1])+.0722*lin(c[2]);
+const cr=(a,b)=>{const x=L(a),y=L(b);return (Math.max(x,y)+.05)/(Math.min(x,y)+.05)};
+const lab=c=>{const [r,g,b]=c.map(lin);const l=Math.cbrt(.4122214708*r+.5363325363*g+.0514459929*b),m=Math.cbrt(.2119034982*r+.6806995451*g+.1073969566*b),s=Math.cbrt(.0883024619*r+.2817188376*g+.6299787005*b);return [.2104542553*l+.793617785*m-.0040720468*s,1.9779984951*l-2.428592205*m+.4505937099*s,.0259040371*l+.7827717662*m-.808675766*s]};
+const dE=(a,b)=>{const x=lab(a),y=lab(b);return 100*Math.hypot(x[0]-y[0],x[1]-y[1],x[2]-y[2])};
+const bg=hex("#0D0A07"),sf=hex("#17130E"),hi=hex("#1D1912"),ink=hex("#F0EADA"),crown=hex("#E8A33D");
+const you=sf.map((v,i)=>v*.89+ink[i]*.11);
+const cell=(fg,b)=>{const r=cr(fg,b);return '<td class="'+(r>=4.5?'ok':'')+'"><span class="num">'+r.toFixed(2)+':1</span> '+(r>=4.5?'pass':'FAIL')+'</td>'};
+const t=document.getElementById("audit");
+[["ink — row text, names, RP, positions","#F0EADA"],["inkDim — headers, Arabic, Season, hints","#A89F8E"],["inkFaint — ghost dashes","#8A8272"]].forEach(([n,h])=>{const f=hex(h);t.insertAdjacentHTML("beforeend",'<tr><td><span class="sw" style="background:'+h+'"></span>'+n+'</td><td class="num">'+h+'</td>'+cell(f,bg)+cell(f,sf)+cell(f,hi)+cell(f,you)+'</tr>')});
+t.insertAdjacentHTML("beforeend",'<tr><td>bg on ink — YOU tag</td><td class="num">#0D0A07 / #F0EADA</td><td colspan="4"><span class="num">'+cr(bg,ink).toFixed(2)+':1</span> pass</td></tr>');
+const cv=document.createElement("canvas");cv.width=cv.height=1;const cx=cv.getContext("2d",{willReadFrequently:true});
+const rgb=s=>{cx.clearRect(0,0,1,1);cx.fillStyle="#000";cx.fillStyle=s;cx.fillRect(0,0,1,1);const d=cx.getImageData(0,0,1,1).data;return [d[0],d[1],d[2]]};
+const ta=document.getElementById("tokaudit"),tr=document.getElementById("tokrow");
+const ids=[["Gold","Straw (rev 1)",GOLD.Straw,HEX],["Gold","Brass",GOLD.Brass,HEX],["Gold","Antique",GOLD.Antique,HEX],["Royal","Violet (rev 1)",ROYAL.Violet,OCT],["Royal","Muted",ROYAL.Muted,OCT],["Royal","Deep",ROYAL.Deep,OCT]];
+ids.forEach(([tier,v,c,cp])=>{const k=rgb(c);const sp=document.createElement("span");const i=document.createElement("i");i.style.cssText="width:18px;height:18px;background:"+c+";clip-path:"+cp;sp.append(i,tier+" "+v);tr.append(sp);
+ const d=tier==="Gold"?dE(k,crown).toFixed(1):"n/a";const a=cr(k,sf),b=cr(k,hi);
+ ta.insertAdjacentHTML("beforeend",'<tr><td>'+tier+' — '+v+'</td><td class="num">'+c+'</td><td class="num">'+d+'</td><td class="num">'+a.toFixed(2)+':1</td><td class="num">'+b.toFixed(2)+':1</td></tr>')});
+document.fonts.load('600 16px "Noto Naskh Arabic"','م').then(()=>setTimeout(run,700));
+function run(){
+  const ck=document.getElementById("checks"),scr=document.getElementById("root"),R=scr.getBoundingClientRect();
+  const add=(a,b)=>ck.insertAdjacentHTML("beforeend","<tr><td>"+a+"</td><td>"+b+"</td></tr>");
+  const f=[["Marcellus",'16px "Marcellus"'],["Saira",'400 16px "Saira"'],["Spline Sans Mono",'600 16px "Spline Sans Mono"'],["Noto Naskh Arabic",'600 16px "Noto Naskh Arabic"','م']].map(([n,q,t])=>n+": "+((t?document.fonts.check(q,t):document.fonts.check(q))?"loaded":"NOT loaded"));
+  add("Canvas size",R.width+" × "+R.height);
+  add("Fonts (Arabic probed at weight 600)",f.join(" · "));
+  const ar=scr.querySelector(".ar[lang=ar]");add("Arabic direction / family",ar?getComputedStyle(ar).direction+" / "+getComputedStyle(ar).fontFamily.split(",")[0]:"n/a");
+  const nm=[...scr.querySelectorAll(".nm")];
+  add("Names truncated (state shown)",nm.filter(n=>n.scrollWidth>n.clientWidth).length+" of "+nm.length+"; longest sample "+Math.max(0,...nm.map(n=>n.textContent.length))+" chars");
+  add("Tier / RP / Pos / Season clipped (state shown)",[...scr.querySelectorAll(".tr,.rp,.pos,.ssn")].filter(n=>n.scrollWidth>n.clientWidth+1).length+" cells");
+  const out=[...scr.querySelectorAll("*")].filter(e=>{const r=e.getBoundingClientRect();return r.width&&e.closest(".list")==null&&(r.right>R.right+.5||r.bottom>R.bottom+.5||r.left<R.left-.5||r.top<R.top-.5)}).length;
+  add("Elements outside frame, excluding scrolled list rows",out);
+  const mono=[...scr.querySelectorAll(".n,.ssn,.dv,.you,.chip b")].filter(e=>!getComputedStyle(e).fontFamily.includes("Spline Sans Mono")).length;
+  add("Numeral elements not in Spline Sans Mono",mono);
+  const sp=document.createElement("span");sp.style.cssText="font:500 14px 'Spline Sans Mono';position:absolute;visibility:hidden";sp.textContent="{season.id}";document.body.append(sp);
+  const w=sp.getBoundingClientRect().width;sp.remove();
+  document.getElementById("sfit").textContent="“{season.id}” at 14px mono = "+w.toFixed(0)+"px in a 104px column"+(w<=104?" (fits)":" (overflows)");
+}
+}
+(function w(){window.GOLD?boot():setTimeout(w,100)})();
+})();
+</script>
+</body>
+</html>
