@@ -41,9 +41,19 @@ private fun isPlainObject(value: Any?): Boolean {
  * Deep-converts Kotlin maps/lists into plain JS data for Admin writes and
  * callable responses (which the runtime JSON-serializes). Sentinels such
  * as serverTimestamp() pass through by reference.
+ *
+ * [Long] is special-cased before the [Number] branch it would otherwise match:
+ * on Kotlin/JS a `Long` is a `Number` subclass carrying own enumerable
+ * `low_1`/`high_1` fields and no `toJSON`, so `JSON.stringify` emits an object
+ * (`{"low_1":..,"high_1":..}`), not a number. A `retryAfterMillis` that
+ * arrived like that failed the client's `as? Number` and fell back to the
+ * constant retry delay. Doubles stay exact for every value this module
+ * serializes — epoch millis and durations sit ~1.75e12, far below 2^53.
  */
 fun toPlain(value: Any?): Any? = when {
-  value == null || value is String || value is Number || value is Boolean -> value
+  value == null || value is String || value is Boolean -> value
+  value is Long -> value.toDouble()
+  value is Number -> value
   value is Map<*, *> -> {
     val out: dynamic = js("{}")
     for ((k, v) in value) {

@@ -756,7 +756,11 @@ object TimeoutResolution {
     decided: Map<String, Any?>,
   ): Resolution = Resolution.Applied(DecisionWrite(
     updates = mapOf(
-      "biddingLog" to FieldValue.arrayUnion(entry),
+      // toPlain at construction, not at updateMatch: the arrayUnion sentinel
+      // passes toPlain by reference, so a Kotlin map handed to it here keeps
+      // its custom prototype all the way to Firestore, which rejects it with
+      // "Firestore doesn't support JavaScript objects with custom prototypes".
+      "biddingLog" to FieldValue.arrayUnion(toPlain(entry)),
       "version" to (num(fields["version"]) ?: 0) + 1,
       "updatedAt" to FieldValue.serverTimestamp(),
     ),
@@ -864,7 +868,8 @@ object TimeoutResolution {
     )
     return Resolution.Applied(DecisionWrite(
       updates = mapOf(
-        "cardLog" to FieldValue.arrayUnion(entry),
+        // See biddingWrite: the entry must be plain JS before arrayUnion.
+        "cardLog" to FieldValue.arrayUnion(toPlain(entry)),
         "lastCardSeat" to seatId,
         "turn" to nextTurnUid,
         "cardPhase" to preview.nextPhase?.name,

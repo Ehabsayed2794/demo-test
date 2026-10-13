@@ -551,6 +551,23 @@ class SettlementTest {
     assertEquals(nested, dynamicToKotlin(plain))
   }
 
+  /**
+   * `retryAfterMillis` is a Long, and on Kotlin/JS a Long is a Number subclass
+   * with own enumerable low/high fields and no toJSON. Before the special case
+   * it serialized as `{"low_1":..,"high_1":..}`, the client's `as? Number`
+   * failed, and every NotYetExpired fell back to the constant retry delay —
+   * which the instrumented suite saw as a deadline that never arrived.
+   */
+  @Test
+  fun aLongSerializesAsANumberNotALowHighObject() {
+    val plain = toPlain(mapOf("retryAfterMillis" to 1_000L))
+
+    assertEquals("""{"retryAfterMillis":1000}""", js("JSON.stringify(plain)") as String)
+    // The client reads it back as a Number, so the round trip must stay numeric.
+    val roundTripped = (dynamicToKotlin(plain) as Map<*, *>)["retryAfterMillis"]
+    assertEquals(1_000L, (roundTripped as Number).toLong())
+  }
+
   // ── orchestration (fake ports) ────────────────────────────────────
 
   private class FakeDb(
