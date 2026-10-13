@@ -151,6 +151,28 @@ class SeasonResetTest {
   }
 
   @Test
+  fun careerStatsSurviveTheResetUntouched() {
+    // RD24: "career stats never reset". The reset never takes the stats
+    // object — this pins continuity across the boundary instead of
+    // asserting it by comment: pre-reset totals plus one post-reset match
+    // accumulate without loss.
+    val before = profile("Gold", "I", 830, seasonId = "S1")
+    var stats = RankedStats()
+    stats = accumulateRankedStat(stats, MatchOutcome.KING, before, MatchMode.RANKED)
+    stats = accumulateRankedStat(stats, MatchOutcome.SECOND, before, MatchMode.RANKED)
+    assertEquals(2, stats.gamesPlayed)
+
+    val reset = applySeasonReset(before, "S2")
+
+    val after = accumulateRankedStat(stats, MatchOutcome.KOZ, reset, MatchMode.RANKED)
+    assertEquals("Games Played never resets across seasons", 3, after.gamesPlayed)
+    assertEquals(1, after.kingCount)
+    assertEquals(1, after.secondCount)
+    assertEquals(1, after.kozCount)
+    assertEquals(0, after.thirdCount)
+  }
+
+  @Test
   fun aResetAlwaysOpensANamedSeason() {
     assertThrows(IllegalArgumentException::class.java) {
       applySeasonReset(profile("Gold", "I", 830), "")
