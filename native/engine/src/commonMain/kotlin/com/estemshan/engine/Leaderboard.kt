@@ -81,7 +81,9 @@ fun orderLeaderboard(
   seasonId: String,
   currentPlayerId: String,
 ): List<LeaderboardRow> {
-  data class Placed(val entry: LeaderboardEntry, val rung: LadderRank)
+  data class RankedEntry(val entry: LeaderboardEntry, val rung: LadderRank) {
+    val rungIndex: Int = rankLadder.indexOf(rung)
+  }
 
   val placed = entries
     .filter { it.seasonId == seasonId }
@@ -91,10 +93,10 @@ fun orderLeaderboard(
         "Leaderboard entry for '${entry.playerId}' names no ladder rung: " +
           "tier='${entry.tier}', division='${entry.division}'"
       }
-      Placed(entry, rung)
+      RankedEntry(entry, rung)
     }
     .sortedWith(
-      compareByDescending<Placed> { rankLadder.indexOf(it.rung) }
+      compareByDescending<RankedEntry> { it.rungIndex }
         .thenByDescending { it.entry.rp }
         .thenBy { it.entry.playerId },
     )
@@ -103,7 +105,7 @@ fun orderLeaderboard(
     val position = if (index > 0) {
       val prev = rows[index - 1]
       val prevPlaced = placed[index - 1]
-      if (rankLadder.indexOf(rung) == rankLadder.indexOf(prevPlaced.rung) && entry.rp == prevPlaced.entry.rp) {
+      if (prevPlaced.rungIndex == placed[index].rungIndex && entry.rp == prevPlaced.entry.rp) {
         prev.position
       } else {
         index + 1
