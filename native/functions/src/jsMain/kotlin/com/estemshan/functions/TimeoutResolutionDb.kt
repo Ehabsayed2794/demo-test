@@ -141,22 +141,19 @@ suspend fun resolveTimeoutOnce(
   }
   val uid = CallableAuth.requireUid(request)
 
-  // TEMP S61 DIAGNOSTICS — remove before merge.
-  fun diag(msg: String) = println("[S61DIAG] $msg")
-
   // Cheap pre-check OUTSIDE the transaction: an unexpired deadline costs one
   // read, not a transaction plus four hand reads.
   val fields = db.readMatch(matchId)
     ?: throw HttpsError("not-found", "resolveDecisionTimeout: match '$matchId' was not found.")
-  diag("readMatch ok; keys=${fields.keys}; updatedAt=${fields["updatedAt"]} ; " +
-    "anchorMillis=${TimeoutResolution.parseUpdatedAtMillis(fields)}")
-  val parsed = Settlement.parseMatch(matchId, fields)
+  // A live match gate, NOT Settlement.parseMatch: that one requires
+  // `completedRound`, which only endMatch writes, so every mid-match document
+  // would fail it. See TimeoutResolution.parsePlayers.
+  val players = TimeoutResolution.parsePlayers(fields)
     ?: throw HttpsError(
       "failed-precondition",
       "resolveDecisionTimeout: match '$matchId' is not a match document.",
     )
-  diag("parseMatch ok; players=${parsed.players}; uid=$uid")
-  if (uid !in parsed.players) {
+  if (uid !in players) {
     throw HttpsError(
       "permission-denied",
       "resolveDecisionTimeout: you are not a player in this match.",
@@ -168,8 +165,6 @@ suspend fun resolveTimeoutOnce(
       Reason.NOT_ACTIVE,
       "resolveDecisionTimeout: match '$matchId' is not waiting on a decision.",
     )
-  diag("pending=$pending; now=${clock.nowMillis()}; " +
-    "isExpired=${TimeoutResolution.isExpired(pending, clock.nowMillis())}")
   if (!TimeoutResolution.isExpired(pending, clock.nowMillis())) {
     return noWriteResponse(
       Reason.NOT_YET_EXPIRED,
@@ -201,13 +196,9 @@ suspend fun resolveTimeoutOnce(
     }
 
     when (val outcome = TimeoutResolution.resolveExpired(fresh, hands, freshPending)) {
-      is Resolution.NoWrite -> {
-        diag("resolveExpired NoWrite reason=${outcome.reason} msg=${outcome.message}; " +
-          "handsSeats=${hands.keys}; handsRound=${extractRound(fresh)}")
-        when (outcome.reason) {
-          Reason.NOT_ACTIVE -> noWriteResponse(outcome.reason, outcome.message)
-          else -> throw HttpsError("failed-precondition", outcome.message)
-        }
+      is Resolution.NoWrite -> when (outcome.reason) {
+        Reason.NOT_ACTIVE -> noWriteResponse(outcome.reason, outcome.message)
+        else -> throw HttpsError("failed-precondition", outcome.message)
       }
       is Resolution.Applied -> {
         // S61 Stage 2: the counter and the removal ride the SAME transaction

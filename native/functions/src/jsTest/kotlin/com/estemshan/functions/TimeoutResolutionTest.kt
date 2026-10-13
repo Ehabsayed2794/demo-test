@@ -160,6 +160,33 @@ class TimeoutResolutionTest {
     assertNull(TimeoutResolution.pendingDecision(doc))
   }
 
+  /**
+   * S61 Stage 2 — a LIVE match document. buildMatchFields never writes
+   * `completedRound` (only endMatch does), so the membership gate must not
+   * require it. Settlement.parseMatch does, which denied every mid-match
+   * resolution in the emulator suite with FAILED_PRECONDITION.
+   */
+  @Test
+  fun aLiveMatchDocumentHasPlayersWithoutACompletedRound() {
+    val live = fastRoundDoc().toMutableMap().apply { remove("completedRound") }
+    assertEquals(players, TimeoutResolution.parsePlayers(live))
+  }
+
+  @Test
+  fun aDocumentWithoutPlayersIsNotAMatch() {
+    assertNull(TimeoutResolution.parsePlayers(fastRoundDoc().toMutableMap().apply { remove("players") }))
+  }
+
+  @Test
+  fun aDocumentWithoutStatusIsNotAMatch() {
+    assertNull(TimeoutResolution.parsePlayers(fastRoundDoc().toMutableMap().apply { remove("status") }))
+  }
+
+  @Test
+  fun aDocumentWithNoPlayersIsNotAMatch() {
+    assertNull(TimeoutResolution.parsePlayers(fastRoundDoc().toMutableMap().apply { this["players"] = emptyList<String>() }))
+  }
+
   // ── nothing to time out ──────────────────────────────────────────────
 
   @Test
@@ -435,6 +462,29 @@ class TimeoutResolutionTest {
     }
     assertNotNull(error.message)
     assertTrue(error.message!!.contains("not a player in this match"))
+    assertNull(db.written)
+  }
+
+  /**
+   * S61 Stage 2 regression — the emulator suite caught this. A live match
+   * document carries no `completedRound`, and the gate then used
+   * Settlement.parseMatch, which requires it: every mid-match resolution died
+   * at the pre-check with FAILED_PRECONDITION before the deadline was ever
+   * consulted. The gate now takes only what a live doc has, so a doc shaped
+   * like the real writer's output reaches the deadline check and reports
+   * NOT_YET_EXPIRED rather than a denial.
+   */
+  @Test
+  fun aLiveMatchDocumentWithoutACompletedRoundReachesTheDeadlineCheck() = runTest {
+    val liveDoc = fastRoundDoc().toMutableMap().apply { remove("completedRound") }
+    val db = FakeTimeoutDb(liveDoc, dealtHands())
+    val oneMillisecondEarly = DecisionClock { anchorMillis + 19_999 }
+
+    val response = resolveTimeoutOnce(db, fakeRequest("u3"), oneMillisecondEarly)
+
+    assertEquals(false, response["resolved"])
+    assertEquals(TimeoutResolution.Reason.NOT_YET_EXPIRED, response["reason"])
+    assertEquals(0, db.handReads)
     assertNull(db.written)
   }
 
