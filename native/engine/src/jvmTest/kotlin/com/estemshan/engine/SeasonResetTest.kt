@@ -152,17 +152,21 @@ class SeasonResetTest {
 
   @Test
   fun careerStatsSurviveTheResetUntouched() {
-    // RD24: "career stats never reset". The reset never takes the stats
-    // object — this pins continuity across the boundary instead of
-    // asserting it by comment: pre-reset totals plus one post-reset match
-    // accumulate without loss.
-    val before = profile("Gold", "I", 830, seasonId = "S1")
+    // RD24: "career stats never reset". A ranked Gold account is past
+    // placement (COMPLETE — NOT_STARTED at Gold I is unreachable), so the
+    // realistic fixture accumulates through it: 2 pre-reset matches, the
+    // reset, then 1 post-reset match on the carried totals.
+    val before = profile(
+      "Gold", "I", 830, seasonId = "S1",
+      placementState = PlacementState.COMPLETE,
+    )
     var stats = RankedStats()
     stats = accumulateRankedStat(stats, MatchOutcome.KING, before, MatchMode.RANKED)
     stats = accumulateRankedStat(stats, MatchOutcome.SECOND, before, MatchMode.RANKED)
     assertEquals(2, stats.gamesPlayed)
 
     val reset = applySeasonReset(before, "S2")
+    assertEquals("placement completion survives the reset", PlacementState.COMPLETE, reset.placementState)
 
     val after = accumulateRankedStat(stats, MatchOutcome.KOZ, reset, MatchMode.RANKED)
     assertEquals("Games Played never resets across seasons", 3, after.gamesPlayed)
@@ -170,6 +174,40 @@ class SeasonResetTest {
     assertEquals(1, after.secondCount)
     assertEquals(1, after.kozCount)
     assertEquals(0, after.thirdCount)
+    // The full RD23 nine, percentages over the CONTINUOUS total — a wipe
+    // anywhere in the chain would zero these, not just the counts.
+    assertEquals(
+      listOf(
+        RankedStat(RankedStatKey.GAMES_PLAYED, 3),
+        RankedStat(RankedStatKey.KING_COUNT, 1),
+        RankedStat(RankedStatKey.KING_PCT, 33),
+        RankedStat(RankedStatKey.SECOND_COUNT, 1),
+        RankedStat(RankedStatKey.SECOND_PCT, 33),
+        RankedStat(RankedStatKey.THIRD_COUNT, 0),
+        RankedStat(RankedStatKey.THIRD_PCT, 0),
+        RankedStat(RankedStatKey.KOZ_COUNT, 1),
+        RankedStat(RankedStatKey.KOZ_PCT, 33),
+      ),
+      after.grid,
+    )
+  }
+
+  @Test
+  fun placementAndUnrankedMatchesStayExcludedAcrossTheReset() {
+    // RD23/RD28 gates hold on both sides of the boundary: mid-placement
+    // and non-RANKED modes record nothing, before or after a reset.
+    val ranked = profile("Gold", "I", 830, seasonId = "S1", placementState = PlacementState.COMPLETE)
+    val midPlacement = profile("Bronze", "III", 0, seasonId = "S1", placementState = PlacementState.IN_PROGRESS)
+    val reset = applySeasonReset(ranked, "S2")
+
+    assertEquals("placement matches count toward nothing", RankedStats(), accumulateRankedStat(RankedStats(), MatchOutcome.KING, midPlacement, MatchMode.RANKED))
+    assertEquals("rooms record no Ranked stats", RankedStats(), accumulateRankedStat(RankedStats(), MatchOutcome.KING, reset, MatchMode.ROOM))
+    assertEquals("unranked records no Ranked stats", RankedStats(), accumulateRankedStat(RankedStats(), MatchOutcome.KING, reset, MatchMode.UNRANKED))
+    assertEquals(
+      "ranked still accumulates after the reset",
+      1,
+      accumulateRankedStat(RankedStats(), MatchOutcome.KING, reset, MatchMode.RANKED).gamesPlayed,
+    )
   }
 
   @Test
