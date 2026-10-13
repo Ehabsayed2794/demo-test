@@ -276,6 +276,28 @@ class TimeoutResolutionTest {
     assertTrue(hand.any { it.suit.name == played["suit"] && it.rank.v == (played["rank"] as Map<*, *>)["v"] })
   }
 
+  /**
+   * Firestore rejects a Kotlin map inside arrayUnion — "Firestore doesn't
+   * support JavaScript objects with custom prototypes" — and the arrayUnion
+   * sentinel passes toPlain by reference, so the entry has to be plain JS
+   * before it is wrapped. This asserts the prototype directly because the
+   * failure is in the SDK's serializer, which no unit double reproduces.
+   */
+  @Test
+  fun anAppendedLogEntryIsAPlainObjectNotAKotlinMap() {
+    val doc = fastRoundDoc(biddingOpen = false, bidsOverride = order.associateWith { 3 })
+    val pending = TimeoutResolution.pendingDecision(doc)!!
+    val resolution = TimeoutResolution.resolveExpired(doc, dealtHands(), pending)
+    assertIs<TimeoutResolution.Resolution.Applied>(resolution)
+
+    val element = (resolution.write.updates["cardLog"]?.asDynamic()?.elements as Array<*>).single()
+    assertNull(element as? Map<*, *>, "a Kotlin map's prototype is what Firestore rejects")
+    assertTrue(
+      js("Object.getPrototypeOf(element) === Object.prototype") as Boolean,
+      "the entry must be a plain object",
+    )
+  }
+
   // ── hand privacy: the hand never reaches a client ────────────────────
 
   @Test
@@ -389,15 +411,16 @@ class TimeoutResolutionTest {
    *
    * `FieldValue.arrayUnion(entry)` is a firebase-admin transform OBJECT, not an
    * array, so the log update cannot be inspected with a plain cast — it has to
-   * be expanded through the SDK's own `elements` field. That field holds the
-   * very Kotlin maps decideCard handed in, which is what makes the write-shape
-   * assertions below observable at all. Test-only, against the pinned SDK.
+   * be expanded through the SDK's own `elements` field. Those elements are the
+   * PLAIN JS objects the resolver now hands arrayUnion (a Kotlin map's custom
+   * prototype is what Firestore rejects), so they come back through
+   * dynamicToKotlin. Test-only, against the pinned SDK.
    */
   private fun arrayUnionEntries(value: Any?): List<Map<String, Any?>> {
     val transform = value?.asDynamic() ?: return emptyList()
     assertEquals("FieldValue.arrayUnion", transform.methodName, "the log update must be an arrayUnion")
     @Suppress("UNCHECKED_CAST")
-    return (transform.elements as Array<*>).map { it as Map<String, Any?> }
+    return (transform.elements as Array<*>).map { dynamicToKotlin(it) as Map<String, Any?> }
   }
 
   @Test
