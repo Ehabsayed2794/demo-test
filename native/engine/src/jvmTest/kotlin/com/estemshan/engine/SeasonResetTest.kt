@@ -97,6 +97,35 @@ class SeasonResetTest {
   }
 
   @Test
+  fun aStalePeakIsRaisedToThePreResetRungNeverLowered() {
+    // No engine path auto-records promotions, so a recorded peak can lag
+    // the current rung (e.g. an S54 starting assignment, which does not
+    // touch highestRank). The reset applies the existing raise-only
+    // policy — it never lowers, and it closes the lag.
+    val stale = rankLadder.first()
+    val out = applySeasonReset(
+      profile("Gold", "I", 830, highestRank = stale),
+      "S2",
+    )
+    assertEquals(
+      "the reset preserves the highest rank ATTAINED, not the stale record",
+      rankLadder.first { it.tier == "Gold" && it.division == "I" },
+      out.highestRank,
+    )
+  }
+
+  @Test
+  fun aKingKeepsKingAsTheHistoricalPeakThroughRoyalI() {
+    val king = rankLadder.first { it.isKing }
+    val out = applySeasonReset(
+      profile("King", "", 3100, highestRank = king),
+      "S2",
+    )
+    assertEquals("Royal", out.tier)
+    assertEquals("the King peak is never erased by the reset", king, out.highestRank)
+  }
+
+  @Test
   fun placementStateCarriesOverUntouched() {
     // RD10: placement never repeats per season — S59 must not reopen it.
     val done = applySeasonReset(
@@ -113,10 +142,14 @@ class SeasonResetTest {
   }
 
   @Test
-  fun theShieldDoesNotCrossTheSeasonBoundary() {
+  fun theShieldCarriesOverUnchanged() {
+    // No contract ends the shield at the season boundary: it guards the
+    // next MATCH played (RD7), and a reset plays no match. Clearing it
+    // would invent a rule; carrying a Boolean cannot break the
+    // rankAt/RP invariant.
     val out = applySeasonReset(profile("Gold", "I", 830, shield = true), "S2")
-    assertFalse("a one-match shield cannot survive a 3-month reset", hasDemotionShield(out))
-    assertEquals(0, shieldMatchesRemaining(out))
+    assertTrue("the earned shield survives into the new season", hasDemotionShield(out))
+    assertEquals(1, shieldMatchesRemaining(out))
   }
 
   @Test
@@ -130,23 +163,66 @@ class SeasonResetTest {
   }
 
   @Test
-  fun everyRungLandsAtOrBelowItselfAndNeverAbovePlatinum() {
-    // Sweep the whole ladder: no reset climbs, nothing lands above the
-    // start rung, King is the only special case.
-    rankLadder.forEach { rung ->
-      val landed = seasonResetRank(rung)
-      assertTrue(
-        "${rung.tier} ${rung.division} must not climb on reset",
-        rankLadder.indexOf(landed) <= rankLadder.indexOf(rung),
-      )
-      if (!rung.isKing) {
-        val expected = rankLadder[(rankLadder.indexOf(rung) - SEASON_RESET_STEPS).coerceAtLeast(0)]
-        assertEquals("two steps down, floored", expected, landed)
-      }
+  fun reopeningTheCurrentSeasonIdIsADoubleRun() {
+    // Pure double-run aid: a reset always opens a NEW season, so the same
+    // ID is definitionally a re-run. Not an exactly-once guard — that
+    // belongs to the server-side season job.
+    assertThrows(IllegalArgumentException::class.java) {
+      applySeasonReset(profile("Gold", "I", 830, seasonId = "S2"), "S2")
     }
-    assertEquals(
-      "Royal",
-      seasonResetRank(rankLadder.first { it.isKing }).tier,
+    val ok = applySeasonReset(profile("Gold", "I", 830, seasonId = "S1"), "S2")
+    assertEquals("S2", ok.seasonId)
+  }
+
+  @Test
+  fun aForeignRungFailsInsteadOfFlooring() {
+    // indexOf == -1 must never flow into the floor math: under R27's
+    // irreversible migration, a silent Bronze III for an unknown rank is
+    // the worst outcome. Valid bottom flooring is unaffected (see floors).
+    val foreign = LadderRank(tier = "Mithril", arabic = "x", lowerBound = 9999, division = "I")
+    assertThrows(IllegalArgumentException::class.java) { seasonResetRank(foreign) }
+    // A foreign rung wearing the King tier must not slip through the
+    // King shortcut either.
+    val falseKing = LadderRank(tier = "King", arabic = "x", lowerBound = 9999, division = "I")
+    assertThrows(IllegalArgumentException::class.java) { seasonResetRank(falseKing) }
+  }
+
+  @Test
+  fun everyRungLandsOnItsHandDerivedDestination() {
+    // Independent expected table: literal tier/division per rung, derived
+    // by hand from the ladder order — the test never reimplements the
+    // index arithmetic. Also pins the keeps-both-consistent invariant:
+    // rankAt(reset RP) always resolves the landed rung.
+    val expected = listOf(
+      "Bronze III", "Bronze III", "Bronze III",
+      "Bronze II", "Bronze I", "Silver III",
+      "Silver II", "Silver I", "Gold III",
+      "Gold II", "Gold I", "Platinum III",
+      "Platinum II", "Platinum I", "Diamond III",
+      "Diamond II", "Diamond I", "Royal III",
+      "Royal I",
     )
+    assertEquals("the table covers the whole 19-rung ladder", rankLadder.size, expected.size)
+    rankLadder.forEachIndexed { index, rung ->
+      val landed = seasonResetRank(rung)
+      val label = if (landed.division.isEmpty()) landed.tier else "${landed.tier} ${landed.division}"
+      assertEquals("rung $index (${rung.tier} ${rung.division}) lands wrong", expected[index], label)
+
+      val reset = applySeasonReset(
+        profile(rung.tier, rung.division, rung.lowerBound, seasonId = "S1"),
+        "S2",
+      )
+      assertEquals(expected[index], "${reset.tier} ${reset.division}".trim())
+      assertEquals(
+        "RP restarts at the landed rung's floor",
+        landed.lowerBound,
+        reset.rp,
+      )
+      assertEquals(
+        "rankAt(reset RP) resolves the landed rung — the profile stays self-consistent",
+        landed,
+        rankAt(reset.rp),
+      )
+    }
   }
 }
