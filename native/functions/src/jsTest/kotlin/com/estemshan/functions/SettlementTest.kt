@@ -8,6 +8,7 @@ import com.estemshan.functions.Settlement.ArchivedRound
 import com.estemshan.functions.Settlement.ConvergedMatch
 import com.estemshan.functions.Settlement.SettleDecision
 import kotlinx.coroutines.test.runTest
+import kotlin.js.json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -595,7 +596,10 @@ class SettlementTest {
 
   private fun settleRequest(uid: String?, matchId: Any?): CallableRequest =
     object : CallableRequest {
-      override val data: Any? = mapOf("matchId" to matchId)
+      // The Functions runtime delivers data as a PLAIN JS OBJECT, never a Kotlin
+      // map — `mapOf` here would let a broken `as? Map` cast pass. json() is
+      // the runtime shape; matchId is Any? because one caller probes a null id.
+      override val data: Any? = json("matchId" to matchId)
       override val auth: AuthData? = uid?.let { object : AuthData {
         override val uid: String = it
         override val token: AuthToken? = null

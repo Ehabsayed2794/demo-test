@@ -130,7 +130,11 @@ suspend fun resolveTimeoutOnce(
   request: CallableRequest,
   clock: DecisionClock,
 ): Map<String, Any?> {
-  val data = request.data as? Map<*, *>
+  // The runtime delivers request.data as a PLAIN JS OBJECT, not a Kotlin map —
+  // `as? Map` returns null on one (JsBridging's own documented trap), which
+  // silently turned every real call into "matchId is required". Convert at the
+  // boundary, the same way every Admin read does.
+  val data = dynamicToKotlin(request.data) as? Map<*, *>
   val matchId = data?.get("matchId") as? String
   if (matchId.isNullOrEmpty()) {
     throw HttpsError("invalid-argument", "resolveDecisionTimeout: matchId is required.")

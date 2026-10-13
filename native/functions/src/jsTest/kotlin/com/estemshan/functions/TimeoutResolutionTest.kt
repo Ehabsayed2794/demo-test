@@ -6,6 +6,7 @@ import com.estemshan.engine.Dealer
 import com.estemshan.engine.EmitResult
 import com.estemshan.engine.emit
 import kotlinx.coroutines.test.runTest
+import kotlin.js.json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -341,7 +342,10 @@ class TimeoutResolutionTest {
 
   private fun fakeRequest(uid: String?, matchId: String = "m1"): CallableRequest =
     object : CallableRequest {
-      override val data: Any? = mapOf("matchId" to matchId)
+      // The Functions runtime delivers data as a PLAIN JS OBJECT, never a Kotlin
+      // map — `mapOf` here would let a broken `as? Map` cast pass (the S61
+      // instrumented suite caught exactly that). json() is the runtime shape.
+      override val data: Any? = json("matchId" to matchId)
       override val auth: AuthData? = uid?.let {
         object : AuthData {
           override val uid: String = it
