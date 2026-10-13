@@ -1,0 +1,20 @@
+:root{--accent:#E8A33D;--accent-hi:#F4B860;--ink:#F0EADA;--ink-dim:#A89F8E;--ink-faint:#8A8272;--bg:#0D0A07;--panel:#17130E;--hi:#1D1912;--line:rgba(255,240,210,.07);--pill:#1D1A16;--mono:"Spline Sans Mono",monospace;--serif:"Marcellus",serif;--sans:"Saira","Noto Naskh Arabic",sans-serif}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#2a2622;font-family:var(--sans);color:var(--ink)}
+a{color:var(--accent)}a:hover{color:var(--accent-hi)}
+.lab{position:absolute;font:600 13px var(--mono);letter-spacing:.12em;color:#d9d2c2;text-transform:uppercase}
+.scr{position:absolute;width:932px;height:430px;overflow:hidden;border-radius:20px;color:var(--ink);background:radial-gradient(140% 65% at 50% -18%,rgba(141,84,32,.33),transparent 70%),linear-gradient(180deg,#171008 0%,var(--bg) 48%,#080604 100%)}
+.top{position:absolute;top:16px;left:26px;right:26px}
+.kick{font:500 10px var(--mono);letter-spacing:.18em;color:var(--ink-dim);text-transform:uppercase}
+h1{font:400 22px/1 var(--serif);letter-spacing:.05em;margin-top:4px}
+.panel{position:absolute;left:26px;right:26px;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+i.n{font-style:normal;font-family:var(--mono)}
+.btn{height:44px;border-radius:10px;border:1px solid transparent;background:linear-gradient(180deg,var(--accent-hi),var(--accent));color:#2a1d0c;font:600 14px var(--sans);letter-spacing:.03em;cursor:pointer;padding:0 28px;transition:filter .12s ease}
+.btn:hover{filter:brightness(1.06)}.btn:focus-visible{outline:2px solid var(--accent-hi);outline-offset:2px}
+.btn i.n{font-weight:700}
+.doc{position:absolute;width:880px;background:#17130E;border:1px solid var(--line);border-radius:12px;padding:22px 24px;font-size:13px;line-height:1.5;color:var(--ink)}
+.doc h3{font:400 20px var(--serif);letter-spacing:.04em;margin-bottom:12px}.doc h4{font:600 10px var(--mono);letter-spacing:.14em;color:var(--accent);margin:14px 0 6px;text-transform:uppercase}
+.doc table{border-collapse:collapse;width:100%}.doc td,.doc th{border-top:1px solid var(--line);padding:6px 8px 6px 0;text-align:left;vertical-align:top}.doc th{font:600 10px var(--mono);color:var(--ink-faint);letter-spacing:.1em}
+.doc td:first-child{font:500 11px var(--mono);color:var(--ink-dim);width:150px}.doc li{margin:0 0 5px 16px;color:var(--ink-dim)}.doc li b{color:var(--ink)}
+.doc code{font:11px var(--mono);color:var(--accent-hi)}.doc p{color:var(--ink-dim)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
