@@ -204,6 +204,10 @@ dependencies {
   implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
   implementation("com.google.firebase:firebase-auth-ktx")
   implementation("com.google.firebase:firebase-firestore-ktx")
+  // S61: the timeout resolver's callable. FirebaseModule wires its emulator
+  // alongside the other two; declared here as well as :services because
+  // implementation-scoped deps are not transitive.
+  implementation("com.google.firebase:firebase-functions-ktx")
   // S25: crash reporting. Version comes from the BOM above — no explicit
   // version. The -ktx artifact is deprecated upstream, so the base one.
   implementation("com.google.firebase:firebase-crashlytics")

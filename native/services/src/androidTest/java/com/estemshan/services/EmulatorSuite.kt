@@ -5,6 +5,7 @@ import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.functions.FirebaseFunctions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.tasks.await
@@ -39,17 +40,42 @@ object EmulatorSuite {
   const val AUTH_PORT = 9099
 
   /**
+   * S61: the Functions emulator, which serves the timeout resolver. Same
+   * host convention as the other two (10.0.2.2 is the host loopback from
+   * inside the Android emulator); the port is firebase.json's own.
+   */
+  const val FUNCTIONS_PORT = 5001
+
+  /**
    * The emulator ignores the project id for routing, but the REST clear
    * endpoint is keyed on it, so it has to be stable across the run.
    * Matches the project the existing rules-emulator CI job uses.
    */
   const val PROJECT_ID = "demo-test-ci"
 
+  /**
+   * A placeholder that is still a *well-formed* Firebase web API key:
+   * `A` followed by 38 [A-Za-z0-9_-] chars, which is the shape
+   * `Utils.isValidApiKeyFormat` (and firebase-iid's twin check) requires.
+   *
+   * The Emulator Suite never validates this value, but the client SDKs do
+   * validate its FORMAT before they will build a callable request:
+   * `FirebaseFunctions` puts a Firebase-Instance-ID-Token on every call, and
+   * `FirebaseInstanceId.checkRequiredFirebaseOptions` rejects a key that does
+   * not match that regex — with an arbitrary string here every callable dies
+   * with "Please set a valid API key" before a single packet reaches port
+   * 5001. The instance id itself is generated locally (firebase-iid's Store
+   * is SharedPreferences only), so passing the format check costs no network
+   * round trip, and the emulator ignores the header anyway — it reads only
+   * `Authorization`. Never a real key: this is 39 zeros in a key's clothes.
+   */
+  private const val EMULATOR_API_KEY = "AIza00000000000000000000000000000000000"
+
   /** No google-services.json in :services (and no plugin): options are
    *  built in code, exactly like :app's FirebaseModule emulator branch. */
   private fun options() = FirebaseOptions.Builder()
     .setApplicationId("1:000000000000:android:0000000000000000000000")
-    .setApiKey("emulator-dummy-key-not-a-secret")
+    .setApiKey(EMULATOR_API_KEY)
     .setProjectId(PROJECT_ID)
     .build()
 
@@ -61,6 +87,9 @@ object EmulatorSuite {
   data class ClientFirebase(
     val db: FirebaseFirestore,
     val uid: String,
+    /** S61: the Functions endpoint for the same app — the timeout resolver
+     *  is called from the seat's own auth context, exactly as :app calls it. */
+    val functions: FirebaseFunctions,
   )
 
   suspend fun client(context: Context, tag: String): ClientFirebase {
@@ -69,8 +98,9 @@ object EmulatorSuite {
     // useEmulator() must precede any document access on each instance.
     val auth = FirebaseAuth.getInstance(app).apply { useEmulator(HOST, AUTH_PORT) }
     val db = FirebaseFirestore.getInstance(app).apply { useEmulator(HOST, FIRESTORE_PORT) }
+    val functions = FirebaseFunctions.getInstance(app).apply { useEmulator(HOST, FUNCTIONS_PORT) }
     val uid = auth.signInAnonymously().await().user!!.uid
-    return ClientFirebase(db, uid)
+    return ClientFirebase(db, uid, functions)
   }
 
   /**

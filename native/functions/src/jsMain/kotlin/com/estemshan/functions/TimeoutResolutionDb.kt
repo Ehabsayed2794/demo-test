@@ -7,6 +7,8 @@ import com.estemshan.functions.TimeoutResolution.DecisionWrite
 import com.estemshan.functions.TimeoutResolution.Pending
 import com.estemshan.functions.TimeoutResolution.Reason
 import com.estemshan.functions.TimeoutResolution.Resolution
+import com.estemshan.functions.TimeoutResolution.TimeoutCounter
+import com.estemshan.functions.TimeoutResolution.COUNT_FIELD
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -49,7 +51,27 @@ interface TimeoutDb {
 
   interface TimeoutTx {
     suspend fun readMatch(matchId: String): Map<String, Any?>?
+
     fun updateMatch(matchId: String, updates: Map<String, Any?>)
+
+    /**
+     * S61 Stage 2: the acting seat's stored timeout count. Read INSIDE the
+     * transaction so the increment and the decision write commit atomically
+     * — the count the removal decision is made against is the count under
+     * the same lock as the match write.
+     *
+     * Returns null when the `timeoutCounts/{uid}` doc does not exist — a
+     * seat's first timeout — which the caller must distinguish from a
+     * present-but-invalid `count` field (the former is trusted as 0, the
+     * latter fails closed and writes nothing).
+     */
+    suspend fun readTimeoutCount(matchId: String, uid: String): Any?
+
+    /** S61 Stage 2: whether the `timeoutCounts/{uid}` doc exists. */
+    suspend fun timeoutCountExists(matchId: String, uid: String): Boolean
+
+    /** S61 Stage 2: writes `timeoutCounts/{uid}`'s single `count` field. */
+    fun writeTimeoutCount(matchId: String, uid: String, count: Int)
   }
 }
 
@@ -62,12 +84,23 @@ fun interface DecisionClock {
   fun nowMillis(): Long
 }
 
-private fun noWriteResponse(reason: String, message: String): Map<String, Any?> = mapOf(
-  "ok" to true,
-  "resolved" to false,
-  "reason" to reason,
-  "message" to message,
-)
+/**
+ * A no-write outcome. [retryAfterMillis] is present ONLY on NOT_YET_EXPIRED —
+ * the server-authoritative time until the deadline, which the client re-arms
+ * its alarm on instead of its own estimate (`updatedAt` is not on MatchDoc,
+ * so the client cannot derive the anchor). Never carries the timeout count.
+ */
+private fun noWriteResponse(
+  reason: String,
+  message: String,
+  retryAfterMillis: Long? = null,
+): Map<String, Any?> = buildMap {
+  put("ok", true)
+  put("resolved", false)
+  put("reason", reason)
+  put("message", message)
+  if (retryAfterMillis != null) put("retryAfterMillis", retryAfterMillis)
+}
 
 /**
  * The decided move is public information — it is the move itself, which the
@@ -97,7 +130,11 @@ suspend fun resolveTimeoutOnce(
   request: CallableRequest,
   clock: DecisionClock,
 ): Map<String, Any?> {
-  val data = request.data as? Map<*, *>
+  // The runtime delivers request.data as a PLAIN JS OBJECT, not a Kotlin map —
+  // `as? Map` returns null on one (JsBridging's own documented trap), which
+  // silently turned every real call into "matchId is required". Convert at the
+  // boundary, the same way every Admin read does.
+  val data = dynamicToKotlin(request.data) as? Map<*, *>
   val matchId = data?.get("matchId") as? String
   if (matchId.isNullOrEmpty()) {
     throw HttpsError("invalid-argument", "resolveDecisionTimeout: matchId is required.")
@@ -108,12 +145,15 @@ suspend fun resolveTimeoutOnce(
   // read, not a transaction plus four hand reads.
   val fields = db.readMatch(matchId)
     ?: throw HttpsError("not-found", "resolveDecisionTimeout: match '$matchId' was not found.")
-  val parsed = Settlement.parseMatch(matchId, fields)
+  // A live match gate, NOT Settlement.parseMatch: that one requires
+  // `completedRound`, which only endMatch writes, so every mid-match document
+  // would fail it. See TimeoutResolution.parsePlayers.
+  val players = TimeoutResolution.parsePlayers(fields)
     ?: throw HttpsError(
       "failed-precondition",
       "resolveDecisionTimeout: match '$matchId' is not a match document.",
     )
-  if (uid !in parsed.players) {
+  if (uid !in players) {
     throw HttpsError(
       "permission-denied",
       "resolveDecisionTimeout: you are not a player in this match.",
@@ -129,6 +169,7 @@ suspend fun resolveTimeoutOnce(
     return noWriteResponse(
       Reason.NOT_YET_EXPIRED,
       "resolveDecisionTimeout: the decision for seat '${pending.seatId}' has not expired yet.",
+      retryAfterMillis = TimeoutResolution.millisUntilDeadline(pending, clock.nowMillis()),
     )
   }
 
@@ -150,6 +191,7 @@ suspend fun resolveTimeoutOnce(
         Reason.NOT_YET_EXPIRED,
         "resolveDecisionTimeout: the decision for seat '${freshPending.seatId}' " +
           "has not expired yet.",
+        retryAfterMillis = TimeoutResolution.millisUntilDeadline(freshPending, clock.nowMillis()),
       )
     }
 
@@ -159,7 +201,46 @@ suspend fun resolveTimeoutOnce(
         else -> throw HttpsError("failed-precondition", outcome.message)
       }
       is Resolution.Applied -> {
-        tx.updateMatch(matchId, outcome.write.updates)
+        // S61 Stage 2: the counter and the removal ride the SAME transaction
+        // as the decision write, so all three commit atomically or none does.
+        // The acting seat's uid comes from the RETAINED seats map — a seat
+        // already removed by Vote Kick or by a prior timeout still resolves
+        // here (it must, or the table would stall), but a seat already under
+        // bot control increments nothing: the counter counts HUMAN timeouts,
+        // and that seat is no longer human-driven.
+        val seatUid = TimeoutResolution.seatUid(fresh, freshPending.seatId)
+        val alreadyBotControlled =
+          freshPending.seatId in TimeoutResolution.botControlledSeats(fresh)
+        val counter = if (seatUid != null && !alreadyBotControlled) {
+          TimeoutCounter.fromStored(
+            tx.readTimeoutCount(matchId, seatUid),
+            docExists = tx.timeoutCountExists(matchId, seatUid),
+          )
+        } else {
+          null
+        }
+
+        if (counter != null) {
+          tx.writeTimeoutCount(matchId, seatUid!!, counter.nextCount)
+        }
+
+        val updates = if (counter != null && counter.shouldRemove) {
+          // The 15th: the decision (still the Stage 1 MEDIUM policy) lands in
+          // the SAME write that records the removal — the removal takes
+          // effect WITH the deciding move, never before it. Subsequent
+          // decisions for this seat are still MEDIUM: RD20 pins the timeout
+          // engine to MEDIUM regardless of the match's configured difficulty.
+          // The configured profile is the explicit-leave path's (RD20), which
+          // this resolver never runs.
+          val merged = LinkedHashMap(outcome.write.updates)
+          merged["timeoutRemovedUids"] =
+            TimeoutResolution.removalWrite(fresh, seatUid!!)
+          merged
+        } else {
+          outcome.write.updates
+        }
+
+        tx.updateMatch(matchId, updates)
         appliedResponse(freshPending, outcome.write, matchId)
       }
     }
@@ -175,6 +256,9 @@ private fun extractSeats(fields: Map<String, Any?>): List<String> =
 /** Admin-SDK implementation. Reads normalize through dynamicToKotlin;
  *  writes normalize through toPlain. */
 class AdminTimeoutDb : TimeoutDb {
+  // Before getFirestore() resolves the default app — see ensureDefaultAdminApp.
+  init { ensureDefaultAdminApp() }
+
   private val db = getFirestore()
 
   private fun matchRef(matchId: String): DocRef = db.collection("matches").doc(matchId)
@@ -241,7 +325,24 @@ class AdminTimeoutDb : TimeoutDb {
     override fun updateMatch(matchId: String, updates: Map<String, Any?>) {
       tx.update(matchRef(matchId), toPlain(updates))
     }
+
+    override suspend fun readTimeoutCount(matchId: String, uid: String): Any? {
+      val snap = tx.get(countRef(matchId, uid)).await()
+      if (!snap.exists) return null
+      return dynamicToKotlin(snap.data())?.let { it as? Map<*, *> }?.get(COUNT_FIELD)
+    }
+
+    override suspend fun timeoutCountExists(matchId: String, uid: String): Boolean =
+      tx.get(countRef(matchId, uid)).await().exists
+
+    override fun writeTimeoutCount(matchId: String, uid: String, count: Int) {
+      tx.set(countRef(matchId, uid), toPlain(mapOf(COUNT_FIELD to count)))
+    }
   }
+
+  /** `matches/{matchId}/timeoutCounts/{uid}` — owner-read-only by the rules. */
+  private fun countRef(matchId: String, uid: String): DocRef =
+    matchRef(matchId).collection("timeoutCounts").doc(uid)
 
   companion object {
     private val TxScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

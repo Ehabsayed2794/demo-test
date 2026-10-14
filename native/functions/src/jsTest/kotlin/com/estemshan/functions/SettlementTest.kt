@@ -8,6 +8,7 @@ import com.estemshan.functions.Settlement.ArchivedRound
 import com.estemshan.functions.Settlement.ConvergedMatch
 import com.estemshan.functions.Settlement.SettleDecision
 import kotlinx.coroutines.test.runTest
+import kotlin.js.json
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -550,6 +551,23 @@ class SettlementTest {
     assertEquals(nested, dynamicToKotlin(plain))
   }
 
+  /**
+   * `retryAfterMillis` is a Long, and on Kotlin/JS a Long is a Number subclass
+   * with own enumerable low/high fields and no toJSON. Before the special case
+   * it serialized as `{"low_1":..,"high_1":..}`, the client's `as? Number`
+   * failed, and every NotYetExpired fell back to the constant retry delay —
+   * which the instrumented suite saw as a deadline that never arrived.
+   */
+  @Test
+  fun aLongSerializesAsANumberNotALowHighObject() {
+    val plain = toPlain(mapOf("retryAfterMillis" to 1_000L))
+
+    assertEquals("""{"retryAfterMillis":1000}""", js("JSON.stringify(plain)") as String)
+    // The client reads it back as a Number, so the round trip must stay numeric.
+    val roundTripped = (dynamicToKotlin(plain) as Map<*, *>)["retryAfterMillis"]
+    assertEquals(1_000L, (roundTripped as Number).toLong())
+  }
+
   // ── orchestration (fake ports) ────────────────────────────────────
 
   private class FakeDb(
@@ -595,7 +613,10 @@ class SettlementTest {
 
   private fun settleRequest(uid: String?, matchId: Any?): CallableRequest =
     object : CallableRequest {
-      override val data: Any? = mapOf("matchId" to matchId)
+      // The Functions runtime delivers data as a PLAIN JS OBJECT, never a Kotlin
+      // map — `mapOf` here would let a broken `as? Map` cast pass. json() is
+      // the runtime shape; matchId is Any? because one caller probes a null id.
+      override val data: Any? = json("matchId" to matchId)
       override val auth: AuthData? = uid?.let { object : AuthData {
         override val uid: String = it
         override val token: AuthToken? = null

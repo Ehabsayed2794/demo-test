@@ -39,6 +39,8 @@ import com.estemshan.services.MatchSnapshot
 import com.estemshan.services.MatchSnapshotListener
 import com.estemshan.services.MatchSubscriptionHandle
 import com.estemshan.services.Heartbeat
+import com.estemshan.services.DecisionTimeoutPort
+import com.estemshan.services.DecisionWindow
 import com.estemshan.services.PlayerPort
 import com.estemshan.services.ROUND_CARD_TOTAL
 import com.estemshan.services.model.BiddingActionInput
@@ -106,6 +108,7 @@ class OnlineMatchViewModel(
   private val worker: CoroutineDispatcher = Dispatchers.Default,
   private val clock: () -> Long = System::currentTimeMillis,
   private val heartbeat: Heartbeat = OnlineServices.heartbeat,
+  private val timeouts: DecisionTimeoutPort = OnlineServices.timeouts,
 ) : ViewModel() {
 
   private val _state = MutableStateFlow<MatchUiState>(MatchUiState.Connecting)
@@ -143,6 +146,19 @@ class OnlineMatchViewModel(
    * and any progress cancels it.
    */
   private var awayAlarm: Job? = null
+
+  /**
+   * S61 — the ONE pending timeout-resolution alarm. Distinct from
+   * [awayAlarm]: that one flips a passive hint and only ever waits on an
+   * OPPONENT; this one resolves a stalled table and arms for the seat the
+   * table is waiting on EVEN WHEN THAT SEAT IS OURS, because the reliability
+   * constraint is that a resolution must not depend on the acting player's
+   * foreground process. Every delivery cancel-then-re-arms, so a decision
+   * that landed, a phase that changed, or a round that advanced all void the
+   * stale wait before a fresh one starts — there is at most one armed alarm
+   * for the whole match.
+   */
+  private var timeoutAlarm: Job? = null
 
   /** The running lastSeenAt cadence, dropped with the binding. */
   private var heartbeatJob: Job? = null
@@ -244,6 +260,7 @@ class OnlineMatchViewModel(
     heartbeatJob?.cancel()
     heartbeatJob = null
     clearOpponentAway()
+    clearTimeoutAlarm()
     matchId = null
     boundSeat = null
   }
@@ -364,6 +381,7 @@ class OnlineMatchViewModel(
         _reconnecting.value = false
       }
       clearOpponentAway()
+      clearTimeoutAlarm()
       return
     }
 
@@ -373,6 +391,7 @@ class OnlineMatchViewModel(
     if (doc.isComplete) {
       _reconnecting.value = false
       clearOpponentAway()
+      clearTimeoutAlarm()
       publishComplete(doc)
       return
     }
@@ -381,6 +400,7 @@ class OnlineMatchViewModel(
     if (myUid == null) {
       _state.value = MatchUiState.Failed("Not signed in.")
       clearOpponentAway()
+      clearTimeoutAlarm()
       return
     }
     val seat = adapter.uidToSeat(doc, myUid)
@@ -388,6 +408,7 @@ class OnlineMatchViewModel(
       _state.value = MatchUiState.NotInMatch
       _reconnecting.value = false
       clearOpponentAway()
+      clearTimeoutAlarm()
       return
     }
     bindSeat(seat)
@@ -407,6 +428,7 @@ class OnlineMatchViewModel(
     maybeCompleteRound(doc)
     publish(doc, seat)
     refreshOpponentAway(doc, seat)
+    refreshTimeoutAlarm(doc)
   }
 
   /**
@@ -926,6 +948,102 @@ class OnlineMatchViewModel(
     _opponentAway.value = false
   }
 
+  /**
+   * S61 — re-arm the timeout alarm after a snapshot. The OLD alarm is always
+   * cancelled first, so at most one is ever armed: a decision that landed, a
+   * phase that changed, or a round that advanced all arrive as a new snapshot
+   * that voids the wait armed against the stale baseline.
+   *
+   * The first arm is an ESTIMATE ([DecisionWindow] — the snapshot arrived
+   * after the write that anchored the deadline, so it is an upper bound and
+   * fires late rather than early). Every later arm is the server's
+   * [DecisionTimeoutPort.Resolution.NotYetExpired.retryAfterMillis], because
+   * `MatchDoc` carries no `updatedAt` and the client cannot derive the anchor.
+   */
+  private fun refreshTimeoutAlarm(doc: MatchDoc) {
+    timeoutAlarm?.cancel()
+    timeoutAlarm = null
+    val id = matchId ?: return
+    if (doc.isComplete) return
+    val decision = timedDecision() ?: return
+    val windowMillis = DecisionWindow.durationSeconds(
+      timerSeconds = doc.decisionTimerSeconds,
+      bidding = decision.bidding,
+      botControlled = decision.seat in doc.botControlledSeats(),
+    ) * MILLIS_PER_SECOND
+    timeoutAlarm = viewModelScope.launch(worker) { runTimeoutAlarm(id, windowMillis.toLong()) }
+  }
+
+  /**
+   * The seat the table is waiting on RIGHT NOW, with its phase — or null when
+   * nobody is: a scored round, a resolving trick, a complete match, or no live
+   * engine yet. Deliberately NOT [opponentActingSeat]: that one filters our
+   * own seat out because the staleness hint is only meaningful for an
+   * opponent, but a timeout resolution must fire for OUR move too — the
+   * constraint is that the table never stalls because the acting player's app
+   * is backgrounded or gone.
+   */
+  private data class TimedDecision(val seat: String, val bidding: Boolean)
+
+  private fun timedDecision(): TimedDecision? {
+    val table = session.getPlayState()
+    if (table != null && session.isPlayStateValidForCurrentRound()) {
+      if (table.phase != TablePhase.PLAY) return null
+      return table.turn?.let { TimedDecision(it, bidding = false) }
+    }
+    val bidding = session.getBiddingState()
+    if (bidding != null && session.isBiddingStateValidForCurrentRound() &&
+      bidding.subPhase != BiddingPhase.DONE
+    ) {
+      return bidding.waitingFor?.let { TimedDecision(it, bidding = true) }
+    }
+    return null
+  }
+
+  /**
+   * The alarm body: wait, ask the resolver once, and act on what it says. The
+   * loop is bounded in two independent ways so it can never spin:
+   *  - [MAX_TIMEOUT_ATTEMPTS] caps TOTAL iterations, even if something
+   *    unexpected repeats;
+   *  - [MAX_TRANSIENT_FAILURES] caps consecutive network/callable failures,
+   *    and each one backs off exponentially — never a tight retry loop.
+   *
+   * [DecisionTimeoutPort.Resolution.NotYetExpired] is NOT a failure and does
+   * not consume the transient budget: it is the server's authoritative
+   * remaining time, and the deadline it points at is fixed for this alarm's
+   * lifetime (only a document change moves it, and a document change cancels
+   * and re-arms). So the wait converges instead of looping.
+   */
+  private suspend fun runTimeoutAlarm(matchId: String, firstWaitMillis: Long) {
+    var waitMillis = firstWaitMillis
+    var attempt = 0
+    var consecutiveFailures = 0
+    while (true) {
+      delay(waitMillis)
+      if (++attempt > MAX_TIMEOUT_ATTEMPTS) return
+      when (val outcome = timeouts.resolve(matchId)) {
+        // The document update is the whole signal: the snapshot listener
+        // delivers it and refreshTimeoutAlarm re-arms for the next decision.
+        DecisionTimeoutPort.Resolution.Applied -> return
+        DecisionTimeoutPort.Resolution.NotActive -> return
+        DecisionTimeoutPort.Resolution.Denied -> return
+        is DecisionTimeoutPort.Resolution.NotYetExpired -> {
+          consecutiveFailures = 0
+          waitMillis = outcome.retryAfterMillis
+        }
+        DecisionTimeoutPort.Resolution.Retryable -> {
+          if (++consecutiveFailures > MAX_TRANSIENT_FAILURES) return
+          waitMillis = transientBackoffMillis(consecutiveFailures)
+        }
+      }
+    }
+  }
+
+  private fun clearTimeoutAlarm() {
+    timeoutAlarm?.cancel()
+    timeoutAlarm = null
+  }
+
   private fun setRejection(message: String?, version: Int?) {
     rejection = message
     rejectionVersion = if (message == null) null else version
@@ -934,5 +1052,25 @@ class OnlineMatchViewModel(
   private companion object {
     /** A full Estemshan hand; anything else is not a deal we can seed. */
     const val HAND_SIZE = 13
+
+    const val MILLIS_PER_SECOND = 1_000
+
+    /** S61 — the hard ceiling on one alarm's iterations, however it got there.
+     *  Generous against the realistic path (an estimate correction or two plus
+     *  a network blip) while guaranteeing the loop cannot spin. */
+    const val MAX_TIMEOUT_ATTEMPTS = 8
+
+    /** S61 — how many consecutive transient failures one alarm tolerates. The
+     *  backoff below makes those ~31 s of patient retrying, not a burst. */
+    const val MAX_TRANSIENT_FAILURES = 6
+
+    /** S61 — exponential backoff for a transient callable/network failure:
+     *  0.5 s, 1 s, 2 s, 4 s, 8 s, 16 s. */
+    const val TRANSIENT_BACKOFF_BASE_MILLIS = 500L
+    const val TRANSIENT_BACKOFF_CAP_MILLIS = 16_000L
   }
+
+  private fun transientBackoffMillis(failure: Int): Long =
+    (TRANSIENT_BACKOFF_BASE_MILLIS shl (failure - 1))
+      .coerceAtMost(TRANSIENT_BACKOFF_CAP_MILLIS)
 }

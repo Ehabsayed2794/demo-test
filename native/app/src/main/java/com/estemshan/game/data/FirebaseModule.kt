@@ -10,6 +10,8 @@ import com.google.firebase.auth.ktx.auth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.ktx.Firebase
+import com.google.firebase.functions.FirebaseFunctions
+import com.google.firebase.functions.ktx.functions
 
 /**
  * Firebase bootstrap. No google-services.json is committed and no
@@ -33,6 +35,26 @@ object FirebaseModule {
   const val AUTH_EMULATOR_PORT = 9099
   const val FIRESTORE_EMULATOR_PORT = 8080
 
+  /**
+   * S61 — the Functions emulator's HTTP port (firebase.json). Debug only:
+   * release talks to real Cloud Functions, and S61's Spark constraint forbids
+   * ever deploying them, so the callable is only ever exercised through this.
+   */
+  const val FUNCTIONS_EMULATOR_PORT = 5001
+
+  /**
+   * S61 — a placeholder that is still a *well-formed* Firebase web API key
+   * (`A` + 38 [A-Za-z0-9_-] chars, the shape `Utils.isValidApiKeyFormat`
+   * requires). The Emulator Suite never checks this value, but the client
+   * SDKs check its FORMAT: every `FirebaseFunctions` call carries a
+   * Firebase-Instance-ID-Token, and `FirebaseInstanceId`'s required-options
+   * check rejects a malformed key with "Please set a valid API key" before
+   * the request is ever sent. The id is minted locally (firebase-iid's Store
+   * is SharedPreferences only), so this costs no network round trip, and the
+   * emulator ignores that header in any case. Never a real key.
+   */
+  private const val EMULATOR_API_KEY = "AIza00000000000000000000000000000000000"
+
   // Correctly-shaped but obviously unpopulated: the project number is real
   // (261597513798), the Android app id is all zeros. The owner replaces it
   // via native/firebase-release.properties or a CI secret.
@@ -48,10 +70,12 @@ object FirebaseModule {
     if (!initialized) {
       if (FirebaseApp.getApps(context).isEmpty()) {
         val options = if (useEmulator) {
-          // Debug: dummy project; the Emulator Suite ignores credentials.
+          // Debug: dummy project; the Emulator Suite ignores credentials,
+          // but the API key still has to be well-formed or the Functions
+          // SDK rejects every callable client-side (see EMULATOR_API_KEY).
           FirebaseOptions.Builder()
             .setApplicationId("1:000000000000:android:0000000000000000000000")
-            .setApiKey("emulator-dummy-key-not-a-secret")
+            .setApiKey(EMULATOR_API_KEY)
             .setProjectId("demo-test-ci")
             .build()
         } else {
@@ -78,9 +102,15 @@ object FirebaseModule {
     if (useEmulator) {
       Firebase.auth.useEmulator(EMULATOR_HOST, AUTH_EMULATOR_PORT)
       Firebase.firestore.useEmulator(EMULATOR_HOST, FIRESTORE_EMULATOR_PORT)
+      // S61: the timeout resolver's callable. useEmulator must be called once
+      // before any getHttpsCallable, the same as the other two.
+      Firebase.functions.useEmulator(EMULATOR_HOST, FUNCTIONS_EMULATOR_PORT)
     }
   }
 
   val auth: FirebaseAuth get() = Firebase.auth
   val db: FirebaseFirestore get() = Firebase.firestore
+
+  /** S61 — the Functions instance the timeout resolver's callable hangs off. */
+  val functions: FirebaseFunctions get() = Firebase.functions
 }

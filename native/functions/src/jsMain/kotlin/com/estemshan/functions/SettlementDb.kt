@@ -83,7 +83,10 @@ private fun claimRecord(
  * serialization boundary (plain JS objects fail Kotlin Map reads).
  */
 suspend fun settleOnce(db: SettlementDb, request: CallableRequest): Map<String, Any?> {
-  val data = request.data as? Map<*, *>
+  // The runtime delivers request.data as a PLAIN JS OBJECT, not a Kotlin map —
+  // `as? Map` returns null on one, silently rejecting every real call with
+  // "matchId is required". Convert at the boundary, as below.
+  val data = dynamicToKotlin(request.data) as? Map<*, *>
   val matchId = data?.get("matchId") as? String
   if (matchId.isNullOrEmpty()) {
     throw HttpsError("invalid-argument", "settleMatch: matchId is required.")
@@ -150,6 +153,9 @@ suspend fun settleOnce(db: SettlementDb, request: CallableRequest): Map<String, 
 /** Admin-SDK implementation. Reads normalize through dynamicToKotlin;
  *  writes normalize through toPlain. */
 class AdminSettlementDb : SettlementDb {
+  // Before getFirestore() resolves the default app — see ensureDefaultAdminApp.
+  init { ensureDefaultAdminApp() }
+
   private val db = getFirestore()
 
   private fun matchRef(matchId: String): DocRef =

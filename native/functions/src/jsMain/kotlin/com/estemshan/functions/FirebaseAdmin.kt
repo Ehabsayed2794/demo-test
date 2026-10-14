@@ -15,7 +15,8 @@ import kotlin.js.Promise
  *
  * Firebase-side facts this encodes:
  * - `getFirestore()` with no args uses the runtime's default app
- *   (FIREBASE_CONFIG) — no init code runs in the bundle;
+ *   (FIREBASE_CONFIG) — which firebase-admin never initializes itself, so the
+ *   DBs call [ensureDefaultAdminApp] before they construct one;
  * - `runTransaction` serializes concurrent settles on the claim doc: two
  *   racers read absent, one commits, the other retries into the recorded
  *   outcome — exactly-once writes, replay-safe reads;
