@@ -91,13 +91,35 @@ The full design narrative, the contradiction register, and the per-screen UI imp
 
 - **RD17** Ties: tie 1st → all are Match King; tie 2nd → all 2nd; tie 3rd → all 3rd; **stats count the placement actually achieved, even when shared**. Tie for last → **no unique Koz → no Vote Kick**; never fabricate a Koz.
 - **RD18** **Vote Kick is RANKED ONLY — not in Rooms** (this corrects frozen Batch 1 text in `docs/UI_UX_ROADMAP.md`; see its contradiction register). Only **after Round 7 has FULLY completed** (first vote is Round 8). Target = the **unique** Koz; the target cannot initiate; any other player may. **2 YES of 3 non-target players** (2Y/1N = kick; 1Y/2N = no; no majority by timeout = no). Failure → **5-round cooldown on that same target only**. Success → **permanent** removal, **no rejoin**, recorded as **Koz**. Purpose: griefing/abuse, **not** normal mistakes.
+  > **RD18 — amended 2026-10-14 (pointer; the text above is left unchanged).** The recorded
+  > result on success is now **2 Koz**, not 1 — per **RD31**, the 2-Koz departure result
+  > (roadmap closure, 2026-10-14). The Vote-Kick mechanism — the gates, the cooldown, and the
+  > permanent removal — is untouched; only the recorded result doubles.
 - **RD19** Inactivity (**50 s**) → the configured bot takes over immediately; the player **may reconnect and reclaim the SAME seat**; the bot stands down. Vote Kick forbids rejoin. Never merge the two.
+  > **RD19 — substantially amended 2026-10-14 (pointer; the sentence above is left unchanged;
+  > the authoritative text is in this document's 2026-10-14 roadmap-closure amendment).** The
+  > 50 s is **decision-point inactivity** (DEC-RD19-01): the clock runs only while the match
+  > waits for that player's decision, accumulates across consecutive ignored decision windows
+  > (a single RD21 window maxes at 25 s, so it can never reach 50 s alone), and resets on any
+  > genuine interaction in the player's own window. Detection is the **player's own app's
+  > activity signal** on their own match-player data (DEC-RD19-02) — frozen rules respected,
+  > no permissions widened. The rule applies in **all modes** (DEC-RD19-03). Reclaim: the bot
+  > **finishes the current trick**, control returns at the next decision point (DEC-RD19-04).
+  > The takeover **never increments the timeout counter** (RD20 separation), and it is **never
+  > a departure** — RD31's 2-Koz result does not apply to a reclaimable takeover. Implemented
+  > by story **S73**.
 - **RD20** **Timeout → MEDIUM bot decision engine regardless of configured difficulty.** Explicit **leave → configured difficulty + configured personality immediately.** Timeouts accumulate across **all** phases (Dash, Bidding, Estimates, Card Play); **15 total decision timeouts during the same match → automatic kick/removal — a SEPARATE mechanism from Vote Kick.** It requires no Round-7 completion, no Koz target, no vote, no 2-of-3 threshold, no cooldown, and does not count as a Vote Kick. **Never merge the two systems.** Reconnect-after-15-timeout-removal behaviour is **not finalized** (OPEN-1). **The timeout counter is cumulative across the whole match and is PRIVATE — opponents must never see another player's timeout count.**
+  > **RD20 — one clause resolved 2026-10-14 (pointer; the sentence above is left unchanged).**
+  > "Reconnect-after-15-timeout-removal behaviour is not finalized (OPEN-1)" → **finalized by
+  > DEC-OPEN1-01: the removal is permanent for that match — no rejoin, exactly like Vote Kick.**
+  > The removed player receives **2 Koz (RD31)** and may enter another match. The MEDIUM pin
+  > above **stands unchanged** — it was not challenged and is not reopened. The explicit-leave
+  > clause is realized by story **S72**.
 
 **Config / timers / voice / stats / seasons / leaderboard / mode**
 
 - **RD21** One Create Game screen for Rooms and Ranked. Replacement-bot difficulty Easy/Medium/Hard/Expert; personality from the existing four only (reuse the Kotlin implementation, invent none); decision timer 5/10/15/20. **Dash/Bidding/Estimates = base + 5; Card Play = base** (15 → 20/20/20/15). **Defaults: Medium bot, the approved default personality, 15 s timer.** (The default-personality constant is a one-line addition at port time — the value is the existing `BALANCED` literal; `BotPersonality.DEFAULT` does not exist yet.)
-- **RD28** **`mode` is three values: `ROOM`, `RANKED`, or `UNRANKED` (amended 2026-10-06; originally two).** Rank-down (formerly Private/Password Ranked) is **NOT a mode** — it is `RANKED` plus a private/password access flag, still awards RP and stats, and allows any tier mix **within RD29** (amended 2026-10-06). `mode` is the authority key that gates voice, Vote Kick, disconnect/pause, settlement, and Ranked statistics; the private flag only gates access. **Unranked IS a first-class `mode: UNRANKED` value** (owner decision, 2026-10-06 — repealing this amendment's original "Unranked is `mode: ROOM` + a marker" framing). Every `mode` switch site therefore has an explicit `UNRANKED` branch: voice absent, Vote Kick absent, disconnect/pause present, settlement absent, statistics absent.
+- **RD28** **`mode` is three values: `ROOM`, `RANKED`, or `UNRANKED` (amended 2026-10-06; originally two).** Rank-down (formerly Private/Password Ranked) is **NOT a mode** — it is `RANKED` plus a private/password access flag, still awards RP and stats, and allows any tier mix **within RD29** (amended 2026-10-06). `mode` is the authority key that gates voice, Vote Kick, disconnect vote, settlement, and Ranked statistics; the private flag only gates access. **Unranked IS a first-class `mode: UNRANKED` value** (owner decision, 2026-10-06 — repealing this amendment's original "Unranked is `mode: ROOM` + a marker" framing). Every `mode` switch site therefore has an explicit `UNRANKED` branch: voice absent, Vote Kick absent, disconnect vote present, settlement absent, statistics absent.
 - **RD22** Voice is **`ROOM`-only** (PTT, press-and-hold, Waiting Room + Rooms match). **Never in Ranked, and never in Unranked** (amended 2026-10-06 — Unranked is a first-class mode, not a Room, so it does not inherit a Room's voice).
 - **RD23** **Exactly 9 career stats:** Games Played, King count, King %, 2nd count, 2nd %, 3rd count, 3rd %, Koz count, Koz %. (**Never "10 values."**) Include Public + Private Ranked; **exclude Placement**. Long-press shows **SHORT stats only**: Rank, Games, King %, 2nd %, 3rd %, Koz %. **No player-facing match history for MVP**; an internal RP audit ledger IS required. Profile records **Highest Rank ever**, never erased by seasonal demotion.
 - **RD24** **Seasons are MVP scope NOW.** Duration **3 months**. End-of-season demotes Tier/Division **two division steps** (Gold I → Gold III), floored at the ladder bottom; **career stats never reset**. Placement never repeats per season. No separate trophy system. **King has no divisions and is demoted to Royal I at season reset** (owner-closed; RD1's division-less King is preserved — this is a destination, not a division).
@@ -132,7 +154,17 @@ The full design narrative, the contradiction register, and the per-screen UI imp
   touching the engine or the UI. Nothing is derived from the `design-ui` mocks —
   their values are non-canonical legacy data.
 - **OPEN-1** **Reconnect after 15-timeout automatic removal — not finalized.** The removal itself is decided (RD20); whether/how that player may rejoin that match is an open implementation detail.
+  > **CLOSED 2026-10-14 — DEC-OPEN1-01 (Option A).** **Permanent removal from that match; the
+  > player may enter another match.** Ratifies S61's shipped `isRemoved()` behaviour and brings
+  > the two removals to one policy line (RD18's Vote Kick). RD31's 2-Koz result applies.
 - **OPEN-2** **Is gameplay paused while a Vote Kick is active?** The vote's target is the *unique current Koz*, so the target must not be able to change mid-vote. Whether the match pauses for the vote duration is **not established by the repository or the design**. Recorded as a small owner decision, not silently assumed.
+  > **CLOSED 2026-10-14 — DEC-OPEN2-01 (Option A).** **Gameplay continues uninterrupted while a
+  > Vote Kick vote is open — no pause.** This records what `VoteKick.kt` was already built and
+  > tested on (its in-file citation of "the S60 amendment" had no recorded decision; this entry
+  > supplies it). No match-pause behaviour is introduced. S63's test plan line for the frozen
+  > target is amended in place.
+- **OPEN-4** **What, precisely, does "2 Koz" record?** (opened 2026-10-14 by the 2-Koz departure rule RD31). The event (permanent departure) and the intent (a last-place-equivalent result at double weight) are decided; the **bookkeeping** is not — +2 to the career Koz count, a forced last-place placement plus the double count, or a distinct "2 Koz" result value the 9-stat accounting and S50 settlement must model. **Blocks the RD31-carrying parts of S72, S63, and the 9-stat accounting. Options and context in the 2026-10-14 amendment.**
+- **OPEN-5** **The disconnect vote's three mechanics** (opened 2026-10-14 by DEC-DISC-01). The 30-second voting window and the configured-bot default on no agreement are decided; **the agreement threshold, what a WAIT does now that D8/D9's pause mechanics are superseded, and the condition for permanent replacement (RD31) are not.** Blocks the WAIT half of S74. Options and context in the 2026-10-14 amendment.
 
 ---
 
@@ -435,7 +467,7 @@ The design view lives in `docs/UI_UX_ROADMAP.md` (§2.1 flow, S36, §4b.4/§4b.5
 - **`mode` does not exist yet as a persisted field** (`MatchDoc` has none) and was planned as exactly `ROOM | RANKED` (RD28 as written 2026-10-05). **The 2026-10-06 owner decision amends this to `ROOM | RANKED | UNRANKED` — Unranked is a first-class, independent `mode` value, not `ROOM` plus a marker** (see "Amendments to existing decisions" below). Every `mode` switch site in the plan must be re-audited for the third value.
 - **But `mode` DOES already exist in-memory in the engine, carrying the legacy enum** — `native/engine/.../Session.kt:128,146,180` holds `mode: String?`, and `GameSessionTest.kt` asserts the values `"ranked"` / `"ai"` / `"friends"` (the same legacy enum `FirestoreSchema.md`'s speculative section documents). **S43 replaces this free string with the persisted three-value authority field**; until then, nothing reads it for gating. The audit note for S43: **do not port `"friends" | "ranked" | "ai"` — the native authority model is `ROOM | RANKED | UNRANKED`, and the private/Rank-down flag is a separate field.**
 - **"Unranked" exists nowhere today** except the transient default profile string (`firestore.rules:41`).
-- **Online bot seat-occupation is already funded** by RD19/RD20 and S61 (inactivity/leave → configured bot takes the seat). Unranked's bot fallback reuses that mechanism; it does not invent online bots.
+- **Online bot seat-occupation is already funded** by RD19/RD20 and S61 (**amended 2026-10-14: as merged, S61 covers the timeout side only — the explicit-leave and inactivity takeovers are stories S72/S73; Unranked's 4-minute bot fallback reuses the S61 seat machinery, which IS shipped, so this line still holds for Unranked**). Unranked's bot fallback reuses that mechanism; it does not invent online bots.
 
 ### Decisions RD29–RD30
 
@@ -497,6 +529,15 @@ Per the owner, **Create Game (S36) presents a match-type choice of three entries
 | **Rank-down** (Ranked + private flag) | `RANKED` | **RD29, server-side at join** | friends fill; pool not used | no / no | yes | full |
 | **Unranked** *(new)* | **`UNRANKED`** | **none — rank-blind** | **shared human pool; bots only after a 4 minute timeout** | **no** / **yes** | **no** | **none** |
 
+> **Pointer (DEC-DISC-01, 2026-10-14; the table and the paragraph above are left
+> unchanged).** The "pause" column of both this table and the switch-site list above it
+> is **repealed as a live rule** — what is present in `ROOM` and `UNRANKED` and absent in
+> `RANKED` is the **disconnect vote**: one question, a **30-second** window, answered while
+> the match keeps running, with the **configured** bot taking the seat on no agreement
+> (DEC-RD21-01). No `pauseDeadline`, no second `CONTINUE_OR_WAIT` vote and no WAIT cap is
+> to be implemented; whether any wait state exists is **OPEN-5**. The gating itself —
+> which mode may ask the question — is unchanged by this amendment.
+
 **The invite-only Room is a fourth product path and is unchanged** — code-shared, fills no seat from any pool, permits a 2–3 player start, and keeps push-to-talk. It is deliberately **not** one of the three match types: some friend groups want no strangers, and removing a designed path would violate "do not invent." S08's "no AI seat is fabricated to fill gaps" rule survives scoped to this path only.
 
 ### Architecture: the join-time gate and the conversion
@@ -538,7 +579,7 @@ Two new stories, added to **E6b** (they extend the Ranked ruleset and the room f
 | Story | Scope | Hours | Deps |
 |---|---|---|---|
 | **S70** | **Ranked party eligibility gate.** Server-side check (Cloud Function, S42 module): at join to a Rank-down Ranked room, resolve each player's tier per RD30 (unplaced → Bronze III) and apply RD29 against the creator; deny with reason `RANK_INCOMPATIBLE`. Client join path surfaces the new denial reason. **The client must never read another player's rank** — the function returns only allow/deny + the plain-language reason. | 14 | S42, S44 |
-| **S71** | **Unranked mode: match-type choice, conversion, and the shared pool.** The three-entry match-type choice on S36; the host-only "Play Unranked" conversion (pre-match only, idempotent, access credential cleared, `mode` → `UNRANKED`); the **rank-blind shared Unranked pool** (one pool serving parties and solos; remaining seats offered to available humans regardless of rank); **bot fallback after a 4 minute fill timeout** reusing the S61 mechanism; the Unranked waiting-room state with the countdown. Asserts: `mode` persisted as `UNRANKED` (not `ROOM` + marker), no RP, no Ranked statistics, **no Vote Kick**, **no push-to-talk voice**, disconnect/pause vote **present**, and rank-blind mixing (King + Bronze seats together). **Every existing `mode` switch site is updated for the third value** (S70's audit list is the checklist). | 26 | S70, S56, S61, S68 |
+| **S71** | **Unranked mode: match-type choice, conversion, and the shared pool.** The three-entry match-type choice on S36; the host-only "Play Unranked" conversion (pre-match only, idempotent, access credential cleared, `mode` → `UNRANKED`); the **rank-blind shared Unranked pool** (one pool serving parties and solos; remaining seats offered to available humans regardless of rank); **bot fallback after a 4 minute fill timeout** reusing the S61 mechanism; the Unranked waiting-room state with the countdown. Asserts: `mode` persisted as `UNRANKED` (not `ROOM` + marker), no RP, no Ranked statistics, **no Vote Kick**, **no push-to-talk voice**, the disconnect vote **present** (2026-10-14: the pause half of this assertion is repealed by DEC-DISC-01 — assert the 30-second vote over a live table, not a paused state; any wait state is OPEN-5), and rank-blind mixing (King + Bronze seats together). **Every existing `mode` switch site is updated for the third value** (S70's audit list is the checklist). | 26 | S70, S56, S61, S68 |
 | — | Documents: `CANONICAL_RULES.md` A3, `UI_UX_ROADMAP.md` amendments, architecture/spec notes | 4 | — |
 | **E6b addition** | | **44** | |
 
@@ -548,12 +589,206 @@ Two new stories, added to **E6b** (they extend the Ranked ruleset and the room f
 
 **Totals become 1,124 pre-contingency (was 1,080) and ~1,293 after 15% (was ~1,242).** The feature total becomes 1,072 (1,028 + 44); with the 12h voice store/policy deltas → 1,084, plus 40 PM → 1,124. **The 20-week MVP / 29-week Full timeline does not change**, because S70/S71 parallel the Ranked core rather than extending it.
 
+> **Superseded 2026-10-14 by the roadmap-closure amendment (pointer; the text above is left
+> unchanged).** The totals above are the RD29/RD30 figures. **They become 1,188 pre-contingency
+> and ~1,366 after 15%** (feature total 1,072 → **1,136**; +12 voice-policy → 1,148; +40 PM →
+> 1,188) once S72–S74 add **64h** to E6b. **The week counts DO move here**, unlike S70/S71:
+> S72/S73/S74 are 64h of net-new work on a one-engineer plan whose dependencies (S61, S68) are
+> already merged, so nothing parallel absorbs them — see §9's scenario table and its 2026-10-14
+> arithmetic note.
+
 ### New risks
 
 - **R30** **Unranked cannibalizes Ranked party play.** If Unranked is the easier way to play with friends, players stop climbing together and the Ranked pool thins. *Mitigation:* Unranked awards **no RP and no Ranked statistics** (RD15/RD23 via `mode: UNRANKED`) and carries **no voice**, so a Ranked party keeps its full feature set; Ranked keeps the RD5/RD6 asymmetry and the full progression loop — the incentive to play Ranked together is preserved by what it awards, not by blocking the alternative.
-- **R32** **The three-value mode model increases the surface of every `mode` switch site (added 2026-10-06).** Making `UNRANKED` first-class (rather than `ROOM` + a marker) means each gate — voice, Vote Kick, disconnect/pause, settlement, statistics — now has an explicit third branch instead of inheriting a Room's behaviour. *Mitigation:* the switch-site audit is a first-class deliverable of S70/S71 and its checklist is an assertion in the testing plan; a gate that silently treats `UNRANKED` as `ROOM` or `RANKED` is a bug, and the disconnect/pause-vote-present assertion catches the most likely collapse (a match where the vote is wrongly unavailable, or wrongly unavailable in Ranked).
+- **R32** **The three-value mode model increases the surface of every `mode` switch site (added 2026-10-06).** Making `UNRANKED` first-class (rather than `ROOM` + a marker) means each gate — voice, Vote Kick, disconnect vote, settlement, statistics — now has an explicit third branch instead of inheriting a Room's behaviour. *Mitigation:* the switch-site audit is a first-class deliverable of S70/S71 and its checklist is an assertion in the testing plan; a gate that silently treats `UNRANKED` as `ROOM` or `RANKED` is a bug, and the disconnect-vote-present assertion catches the most likely collapse (a match where the vote is wrongly unavailable, or wrongly unavailable in Ranked).
 - **R31** **The rank-blind Unranked pool produces lopsided tables.** A King and a Bronze at the same table is **by design** (the owner's explicit rule), but a one-sided match can read as a bug to the players in it. *Mitigation:* present Unranked as rank-blind on S36 and in the waiting room, and never surface a "mismatched" warning — it is the mode's definition, not a malfunction.
 - **R28 — amended (scope narrowed, not removed).** Mixed-tier RP asymmetry now applies only to **public matchmaking** and **within-one-tier private matches** (RD6 as amended). The communication fix (S57 shows the delta and the reason) is unchanged.
+
+### New risks (2026-10-14 roadmap-closure amendment)
+
+- **R33** **The inactivity clock's cumulative semantics are derived, not owner-specified.** DEC-RD19-01 chose "decision-point inactivity" but did not state that 50 s must therefore accumulate *across* consecutive ignored decision windows — that follows from RD21's longest single window being 25 s (20 s + the 5 s Dash/Bidding/Estimates offset). *Mitigation:* the derivation is documented in the amendment as the only arithmetic-coherent reading rather than implemented silently, and S73's acceptance criteria pin it explicitly; a playtest that finds "you took me over while I was only briefly away" is the failure mode to watch, and the reset rule (any genuine interaction in one's own window resets the clock) is its answer.
+- **R34** **Half of S74 cannot be built yet.** DEC-DISC-01 fixed the CONTINUE-with-bot default and the 30-second window, and deliberately left the WAIT half open (OPEN-5: agreement threshold, what a WAIT does now that D9's pause mechanics are superseded, and the permanent-replacement condition). *Mitigation:* S74 is sized on the decided half and may **split** — the disconnect detection + immediate configured-bot takeover + 30-second vote + no-agreement default land first, and the WAIT semantics land as an amendment once OPEN-5 is answered. Do not build WAIT behavior speculatively.
+- **R35** **OPEN-4/OPEN-5 can grow S72 and S74.** The three new stories are estimated against the scope the eleven decisions actually fixed. If the "2 Koz" bookkeeping (OPEN-4) turns out to require a distinct result value that S50 settlement must consume, S72 grows; if the WAIT mechanics (OPEN-5) require a pause state, S74 grows. *Mitigation:* neither answer is guessed, and the 2026-10-14 arithmetic note states that a scope growth re-estimates the affected story and amends the note rather than being absorbed into contingency. R35 is named so the contingency is not silently spent on it.
+
+---
+
+## Owner amendment of record (2026-10-14): Roadmap closure — seat vacancy & departure rules
+
+**Documentation-only.** No Kotlin, no Firestore rules, no UI, no Cloud Functions have been
+changed. This amendment closes the eleven open questions raised by the S61 / PR #107
+roadmap-closure audit (DEC-S61-01, DEC-RD19-01…05, DEC-OPEN1-01, DEC-RD21-01/02,
+DEC-OPEN2-01, DEC-DISC-01), records the cross-cutting **2-Koz departure result as RD31**, and
+adds three new stories (**S72–S74**). The owner's answers below are recorded as instructions,
+not recommendations. No settled decision is reopened: RD20's MEDIUM-on-timeout pin, the
+15-timeout removal itself, and Vote Kick's Ranked-only/no-rejoin rules all stand exactly as
+written.
+
+### RD31 — the 2-Koz departure result (cross-cutting)
+
+**A player whose participation in a match TERMINATES — by Explicit Leave Match (S72), by Vote
+Kick removal (RD18), or by the 15-timeout automatic removal (RD20) — receives 2 Koz as their
+individual match result, regardless of game mode and regardless of the reason for departure.**
+
+- **Koz is a placement, not a score.** Per RD8/RD17/RD23: at match end 1st = King, 2nd, 3rd,
+  last = Koz, and the nine career statistics are King/2nd/3rd/Koz counts and percentages
+  (Ranked only, per RD23). "2 Koz" is therefore a **result/record rule**, not a scoring-formula
+  change — no number in §4 of `docs/rules/CANONICAL_RULES.md` moves, and S47's RP engine is
+  untouched by this amendment.
+- **Temporary takeover is NEVER a departure.** The RD19 inactivity takeover (S73) and a
+  disconnect takeover while the table is still waiting (S74) are **borrowals of the seat**: the
+  seat returns when the player reclaims it (bot finishes the current trick, control returns at
+  the next decision point), the player's result is decided by actual play at match end, and
+  **RD31 does not fire**. RD31 fires only when participation ends permanently.
+- **Games Played is counted once** for such a match — the minimum reading of "one individual
+  match result". The doubling is carried by the result record, not by the seat being played
+  twice. **If OPEN-4 comes back as option (a) or (b), the statistic arithmetic follows that
+  answer; nothing here pre-empts it.**
+- **No formula of anyone else's changes.** The continuing three players' standings, placements
+  and (Ranked) RP are settled from the match's corrected scores exactly as they always were
+  (S47/S50 unchanged), and the departed seat is played out by its bot so the match completes
+  (RD19/RD20/S61). **Conflict flagged, not resolved:** "2 Koz" reads as a last-place-equivalent,
+  which can contradict the placement the departed seat's bot totals actually earned — the
+  question OPEN-4 already asks ("forced below every continuing player, or not?"). Until the
+  owner answers, **no implementation may displace another player's placement** to make the
+  departed player's last-place reading come true.
+
+> **OPEN-4 — the precise record semantics of "2 Koz" (owner follow-up required).** The rule
+> fires on a well-defined event (permanent departure) with well-defined intent (a
+> last-place-equivalent result at double weight). **What is not decided is the bookkeeping:**
+> whether "2 Koz" means the single match contributes **+2 to the career Koz count** (Koz %
+> denominator +1), or a **forced last-place placement in the standings** plus the double count,
+> or a distinct "2 Koz" result value the 9-stat accounting and S50 settlement must model; and
+> whether the departed player is forced below every continuing player even when their bot seat's
+> totals would have placed higher. **S72, S63, and the 9-stat accounting block on this answer.**
+> See "Remaining questions" at the end of this amendment.
+
+### The five seat-vacancy paths — one table, no merging
+
+RD20's separation rule stands: **the timeout counter, Vote Kick, RD19 inactivity, and the
+disconnect flow share no state.** The 2026-10-14 decisions fix the one thing each path had left
+unspecified.
+
+| Path | Trigger | Bot profile used | Timeout counter | Reclaim / rejoin | Match result |
+|---|---|---|---|---|---|
+| **Ordinary timeout** (RD20 — **SHIPPED, S61**) | a decision deadline expires | **MEDIUM** — pinned by RD20 regardless of configuration | **+1 each**; 15 cumulative → automatic removal | none while the match continues | **2 Koz on removal (RD31) — no rejoin (DEC-OPEN1-01)** |
+| **Explicit Leave Match** (**S72 — planned**) | the player chooses to leave the match | **configured tier + personality** (RD20) | no | **none — participation ends** | **2 Koz (RD31)** |
+| **Inactivity takeover** (RD19 — **S73 — planned**) | 50 s of decision-point inactivity | **configured** (RD19; DEC-RD19-01) | **no increment** (RD20 separation) | **same seat returns**: the bot finishes the current trick, control returns at the next decision point (DEC-RD19-04) | decided by play — RD31 never fires |
+| **Disconnect takeover** (**S74 — planned**) | connection loss — **ROOM + UNRANKED only** (DEC-DISC-01) | **configured** (DEC-RD21-01) | no | **yes while the table waits** — mechanics pending (OPEN-5) | decided by play, unless replacement is finalized (pending, OPEN-5) |
+| **Vote Kick** (RD17/18 — SHIPPED, S60) | a manual vote, **RANKED only** | configured (existing `botSeats` model) | no, and shares no cooldown (RD20) | **none — permanent, no rejoin** | **2 Koz (RD31); previously "recorded as Koz"** |
+
+### The eleven decisions — verbatim intent, stable IDs
+
+- **DEC-S61-01 — Option A: a separate follow-up story.** S61 stays **as merged** (PR #107,
+  2026-10-14). Its timer-side deliverables — the MEDIUM engine on timeout, the 15-timeout
+  counter → automatic removal, and Vote-Kick separation — are complete and on `main`. The
+  "configured bot on leave" clause of S61's story row described behaviour for a player action
+  that has never existed: `git log --all -S leaveMatch` is empty across all history, and
+  `RoomService.leaveRoom` is a pre-game lobby-roster action, not a match-scoped one. That clause
+  is now assigned to **S72**, which builds the Leave Match action and the configured-bot
+  takeover together. S61's row is amended in place below.
+- **DEC-RD19-01 — Option B: decision-point inactivity.** The inactivity clock applies **only
+  while the match is waiting for a decision from that player** — it is not a screen-wide
+  activity timer. The ordinary short decision timeout keeps using the existing mechanism (MEDIUM
+  bot decision, counter increment). **Clock semantics (documented here as the only
+  arithmetic-coherent reading, not invented):** the clock starts when a decision point becomes
+  the player's; an ordinary timeout expiry — where the MEDIUM bot resolves the decision — does
+  **not** stop or reset it, because the MEDIUM decision is a substitute for the player's input,
+  not evidence of it; the clock accumulates across consecutive decision points; and **any
+  genuine interaction within one of the player's own decision windows resets it to zero.**
+  Because RD21's longest window is 20 s (25 s with the +5 s Dash/Bidding/Estimates offset), a
+  single window can never reach 50 s — **the 50 s threshold is necessarily cumulative across
+  consecutive ignored windows** (two consecutive ignored full windows, or several partial
+  ones). At ≥ 50 s the configured bot takes the seat (**S73**), with **no timeout-counter
+  increment** (RD20 separation — the MEDIUM resolutions during the inactive stretch still count
+  normally, on their own counter).
+- **DEC-RD19-02 — Option A: the player's own app reports activity.** The activity/heartbeat
+  signal lives on that player's **own match-player data** — the exact field is S73's to define
+  inside the frozen rules (clients already write only their own subtrees). When the signal
+  stops for 50 s per DEC-RD19-01, the seat may become bot-controlled. **Frozen-rules
+  constraint, documented and not widened:** `players/{uid}` is owner-read-only and `list: false`
+  (R7), so the signal rides match-side data the app already writes. **No permissions widen and
+  no Firebase configuration changes as part of this planning task.** **Security limitation
+  (explicit):** a modified client could fake activity — the same known residual as the whole
+  MVP client-converged boundary (R7/R25). S19's `OpponentAwayTracker` (staleness-derived,
+  display-only, deliberately never blocking) is the existing precedent and is untouched.
+- **DEC-RD19-03 — Option A: all modes.** The inactivity/takeover rule applies to Rooms,
+  Unranked, and Ranked alike. **RD31's 2-Koz result likewise applies regardless of mode** —
+  noting that RD23 records the nine statistics for Ranked only, so in Rooms/Unranked the effect
+  is on that match's own standings, not on any career statistic.
+- **DEC-RD19-04 — Option B: the bot finishes the current trick.** On reclaim, the bot completes
+  the current trick and control returns to the original player at the next decision point —
+  same seat. The state transitions and acceptance criteria are **S73's** to define; reclaim is
+  not an RD31 trigger (the seat was borrowed, not lost).
+- **DEC-RD19-05 — Option A: a new v1 story now.** Added as **S73** below, with scope,
+  prerequisites, Firestore/presence constraints, dependencies, testable acceptance criteria,
+  and exclusions. Estimated in the story table once the scope was explicit.
+- **DEC-OPEN1-01 — Option A: permanent removal.** **OPEN-1 is CLOSED.** A player automatically
+  removed after 15 timeouts **cannot rejoin that same match**; they may enter another match.
+  This ratifies the behaviour S61 shipped (`isRemoved()` already treats `timeoutRemovedUids`
+  exactly like Vote-Kick removal) and brings both removals to the same policy line — Vote Kick
+  forbids rejoin (RD18) and so does the 15-timeout removal, by two independent mechanisms that
+  share no state (RD20). RD31 applies to both.
+- **DEC-RD21-01 — Option A: the configured bot profile.** **A disconnect takeover uses the
+  tier/difficulty and personality selected at Create Game** — symmetric with explicit leave
+  (RD20), and deliberately NOT symmetric with the ordinary timeout, which stays pinned to
+  **MEDIUM regardless of configuration** (RD20, unchanged and unchallenged). The five-path table
+  above is the single place these profiles are stated.
+- **DEC-RD21-02 — Option A: human-only.** The configurable decision timer (5/10/15/20 s with
+  the +5 s Dash/Bidding/Estimates offsets) applies to **human players only**. The bot's fixed
+  2 s play pace (`DecisionTimeoutPort.BOT_DECISION_SECONDS`) is a pacing constant, not a skill
+  knob, and never moves with the configured timer.
+- **DEC-OPEN2-01 — Option A: gameplay continues.** **OPEN-2 is CLOSED.** While a Vote Kick vote
+  is open, **gameplay continues uninterrupted — no match pause is introduced.** This is the
+  behaviour `VoteKick.kt` was already built and tested on (its comment cites "the S60
+  amendment", for which no recorded decision existed; this answer supplies that record). S63's
+  test plan line is amended below.
+- **DEC-DISC-01 — Rooms and Unranked only, 30-second vote, configured-bot default.** When a
+  player disconnects in **ROOM or UNRANKED**, the remaining eligible human players get one
+  vote — **"Continue with the bot, or wait for the disconnected player?"** — with a **30-second
+  voting window**; **if no agreement is reached within those 30 seconds, the match resumes with
+  the configured bot profile** (DEC-RD21-01). This decision **supersedes D8/D9's** earlier
+  YES/NO vote, 2-minute bounded pause, required second vote, and max-2-WAIT-cycles flow: their
+  text is preserved verbatim in `docs/UI_UX_ROADMAP.md` §G behind a pointer note, and the
+  superseding is stated there, not silently applied. The flow stays separate from Vote Kick and
+  from RD19 inactivity. **OPEN-5 remains open:** the agreement threshold, what a WAIT actually
+  does now that D9's pause mechanics are superseded, and the condition under which a
+  disconnected player is permanently replaced (and RD31 fires) — see "Remaining questions".
+
+### Amendments to existing decisions (pointer-note convention; superseded text left verbatim)
+
+- **RD18 — one clause amended.** "Success → permanent removal, **no rejoin, recorded as Koz**"
+  → the recorded result is now **2 Koz (RD31)**. The mechanism is untouched; only the recorded
+  result doubles.
+- **RD19 — amended.** The single sentence is now: inactivity (**50 s of decision-point
+  absence**, DEC-RD19-01, detected from **the player's own app's activity signal**, DEC-RD19-02)
+  → the configured bot takes over immediately in **all modes** (DEC-RD19-03); the player may
+  reclaim the **same seat**, the bot finishes the current trick and stands down at the next
+  decision point (DEC-RD19-04); **no timeout-counter increment** (RD20 separation). Implemented
+  by **S73**.
+- **RD20 — one clause resolved.** "Reconnect-after-15-timeout-removal behaviour is not finalized
+  (OPEN-1)" → **finalized by DEC-OPEN1-01: permanent, no rejoin**, with RD31's 2-Koz result
+  applying at removal.
+- **OPEN-1 and OPEN-2 — CLOSED** (annotations added in place below); **OPEN-4 and OPEN-5
+  added** as the two remaining questions.
+
+### Remaining questions after this amendment
+
+1. **OPEN-4 — what "2 Koz" records, exactly.** Blocks the RD31-carrying parts of **S72**
+   (departure result) and **S63** (the 2-Koz assertion), and the 9-stat accounting. Options:
+   **(a)** the match contributes **+2 to the career Koz count** (Koz % denominator +1, Games
+   Played +1); **(b)** a **forced last-place placement** in that match's standings **plus** the
+   +2 Koz count; **(c)** a distinct **"2 Koz" result value** the result model carries and S50
+   settlement consumes. Recommendation absent — none of the three is derivable from RD8/RD23;
+   this is the owner's call.
+2. **OPEN-5 — the disconnect vote's three mechanics.** Blocks the WAIT half of **S74**:
+   **(a)** **Agreement threshold** — majority of the remaining eligible humans (2 of 3, as D8
+   used), or unanimity, or "more CONTINUE/WAIT votes than the other option"? **(b)** **What a
+   WAIT does** — is the match paused for a fixed window (and how long), or does play simply
+   continue with the bot while the seat stays reclaimable? **(c)** **Permanent replacement**
+   — under what condition does the disconnected player's seat stop being reclaimable, and does
+   that trigger RD31? (e.g. after the first WAIT expires, after N WAITs, or never during the
+   match.) Nothing in D8/D9 or the 2026-10-14 decisions determines these; they are asked rather
+   than guessed.
 
 ---
 
@@ -673,10 +908,10 @@ What **does** exist and is reused, not replaced: the Kotlin bot engine (`BotTier
 | **F5 Matchmaking** | Server-side eligible-pool derivation (own tier or one below); queue/search states; **the rank-blind shared Unranked pool (2026-10-06): one pool serving parties and solo, no tier derivation, humans first and configured bots only after a 4 minute fill timeout** |
 | **F6 Seasons + leaderboard** | 3-month season, two-step reset (King → Royal I), career stats untouched, Highest Rank preserved; server-authoritative season-isolated ordering |
 | **F7 Statistics** | The 9 career stats; long-press short stats; Placement excluded; **Unranked excluded (2026-10-06 — `mode: UNRANKED` records none of the nine)** |
-| **F8 Mode model** | `mode` = ROOM \| RANKED \| **UNRANKED** (three values, amended 2026-10-06; originally two); Rank-down is RANKED + a private/password access flag, never a mode; **Unranked is a first-class independent `mode: UNRANKED` value — the authority key itself, not `ROOM` + a marker. Every mode-gated gate (voice, Vote Kick, disconnect/pause, settlement, statistics) carries an explicit `UNRANKED` branch** |
+| **F8 Mode model** | `mode` = ROOM \| RANKED \| **UNRANKED** (three values, amended 2026-10-06; originally two); Rank-down is RANKED + a private/password access flag, never a mode; **Unranked is a first-class independent `mode: UNRANKED` value — the authority key itself, not `ROOM` + a marker. Every mode-gated gate (voice, Vote Kick, disconnect vote, settlement, statistics) carries an explicit `UNRANKED` branch** |
 | **F9 Ranked party eligibility & Unranked mode (2026-10-06)** | RD29 one-tier party gate, server-side at join, `RANK_INCOMPATIBLE` denial; RD30 unplaced = Bronze III (placement optional, explicitly chosen, skip is permanent); the host-only "Play Unranked" conversion (mode → `UNRANKED`, credential cleared); S36's three-entry match-type choice (Ranked / **Rank-down** / Unranked); the shared rank-blind Unranked pool + 4-minute bot fallback; **the `mode` switch-site audit for the third value** |
 
-**See the story table (§E6b, S42–S64) for the hour breakdown, and the appendix essay for the security boundary.**
+**See the story table (§E6b, S42–S64 plus the S70–S74 amendments) for the hour breakdown, and the appendix essay for the security boundary.**
 
 ### E. Push-to-talk voice chat (casual rooms only — new scope from owner)
 
@@ -706,10 +941,14 @@ Verified against `origin/main` before designing this — these facts drove every
 
 **Voice total: 158 hours** (in the Full version only — excluded from MVP; see §4).
 
-**Ranked total: 432 hours** (MVP and launch-blocking — RD25; see §F and the E6b story table. Was 388 before the 2026-10-06 RD29/RD30 amendment added S70/S71 + docs = 44h.)
+**Ranked total: 496 hours** (MVP and launch-blocking — RD25; see §F and the E6b story table. Was 388 before the 2026-10-06 RD29/RD30 amendment added S70/S71 + docs = 44h, and 432 before the 2026-10-14 roadmap-closure amendment added S72/S73/S74 = 64h.)
 **GameType & Calculation total: 48 hours** (E7, S65–S69 + docs — see the 2026-10-06 amendment above; a **prerequisite** for E6b, since S43/S47/S56 consume `gameType`).
 
-**Feature total: 434 + 432 (Ranked) + 48 (GM) + 158 (voice) = 1,072 hours.** Adding the 12h voice store/policy deltas (§3) gives **1,084**; plus 40 PM = **1,124** — the number every downstream section uses. *(Before the 2026-10-05 Ranked amendment this was 592 / 604 / 644; before the 2026-10-06 GM amendment it was 980 / 992 / 1,032; before the 2026-10-06 RD29/RD30 amendment it was 1,028 / 1,040 / 1,080.)*
+**Feature total: 434 + 496 (Ranked) + 48 (GM) + 158 (voice) = 1,136 hours.** Adding the 12h voice store/policy deltas (§3) gives **1,148**; plus 40 PM = **1,188** — the number every downstream section uses. *(Before the 2026-10-05 Ranked amendment this was 592 / 604 / 644; before the 2026-10-06 GM amendment it was 980 / 992 / 1,032; before the 2026-10-06 RD29/RD30 amendment it was 1,028 / 1,040 / 1,080; before the 2026-10-14 roadmap-closure amendment it was 1,072 / 1,084 / 1,124.)*
+
+> **Ranked total amended 2026-10-14 (roadmap closure): 432 → 496 hours.** S72 (18h) + S73 (20h) +
+> S74 (26h) = **64h** of new E6b work — explicit Leave Match, the RD19 inactivity takeover, and the
+> Rooms/Unranked disconnect-vote flow. Nothing else in this line moves.
 
 ---
 
@@ -724,10 +963,10 @@ Verified against `origin/main` before designing this — these facts drove every
 | UI/UX | 42 + 16 = 58 | *(inside the above)* Choose Level 14 + Lobby 16 + Room 14 — reuse the existing gold-on-dark theme; no new design system. +16 for the PTT control + per-seat mic indicators (§E). |
 | Art / animation | 26 | 14 audio + 12 animation. No 2D/3D artist needed at v1 scope: cards render as glyphs today and that is acceptable for launch. |
 | Sound | 14 | Included above (5 SFX + SoundManager). |
-| Backend development | **432** *(Ranked only)* | **Amended 2026-10-05 (RD11), +44h 2026-10-06 (RD29/RD30):** the Ranked authority layer — `functions/` module, correct-and-settle, idempotent RP application, server-side validation, placement, matchmaking pool, seasons, leaderboard — **plus the join-time party-eligibility gate (S70) and the rank-blind shared Unranked pool with bot timeout fallback (S71)**. Deliberately lightweight: Cloud Functions invoked per-match, not an always-on server. `firestore.rules` stays frozen; the functions are the only legitimate Ranked write path. See §F and the appendix essay. |
+| Backend development | **496** *(Ranked only)* | **Amended 2026-10-05 (RD11), +44h 2026-10-06 (RD29/RD30), +64h 2026-10-14 (roadmap closure):** the Ranked authority layer — `functions/` module, correct-and-settle, idempotent RP application, server-side validation, placement, matchmaking pool, seasons, leaderboard — **plus the join-time party-eligibility gate (S70) and the rank-blind shared Unranked pool with bot timeout fallback (S71)**, and **the seat-vacancy trio (S72–S74): Explicit Leave Match, the RD19 inactivity takeover, and the Rooms/Unranked disconnect-vote flow**. Deliberately lightweight: Cloud Functions invoked per-match, not an always-on server. `firestore.rules` stays frozen; the functions are the only legitimate Ranked write path. See §F and the appendix essay. |
 | QA / testing | 46 + 16 = 62 | JVM coverage is already excellent (12 suites, incl. the P1-3 pins). The gap is exclusively the instrumented/emulator tier. The +16 is the voice QA tier (§E), which is *counted inside the Android row above* and restated here only so QA isn't misread as shortchanged — it is not double-counted. |
 | Project management | 40 | ~7% — owner/PM overhead, store-form correspondence, account activation chasing, release coordination, **voice policy correspondence** (mic-justification + data-safety answers). |
-| **Total** | **434 + 432 (Ranked) + 48 (GM) + 158 (voice) + 12 (voice-policy) + 40 (PM) = 1,124** | *(pre-contingency; was 644 before the 2026-10-05 Ranked amendment, 1,032 before the 2026-10-06 GM amendment, and 1,080 before the 2026-10-06 RD29/RD30 amendment)* |
+| **Total** | **434 + 496 (Ranked) + 48 (GM) + 158 (voice) + 12 (voice-policy) + 40 (PM) = 1,188** | *(pre-contingency; was 644 before the 2026-10-05 Ranked amendment, 1,032 before the 2026-10-06 GM amendment, 1,080 before the 2026-10-06 RD29/RD30 amendment, and 1,124 before the 2026-10-14 roadmap-closure amendment added S72–S74 = 64h)* |
 
 ---
 
@@ -748,26 +987,27 @@ One engineer + AI agents, ~22 productive engineering days/month (allowing for re
 | **6b Ranked authority + RP + placement** ⏱ | **6.5 wk** | **5b, 4a (bot engine reused)** | `functions/` module, `mode` field, correct-and-settle, RP engine, placement (S42–S54) |
 | **6c Matchmaking + private Ranked + party eligibility + Unranked** ⏱ | **3 wk** | **6b** | Server-controlled pool, private/password within RD29 (S56–S58), **the join-time party-eligibility gate (S70), and the rank-blind shared Unranked pool + conversion (S71)** — the +44h lands inside this window because S70/S71 parallel the pool work, not after it |
 | **6d Seasons + leaderboard + Vote Kick + timeout tracking** ⏱ | **5 wk** | **6b, 6c** | Two-step reset, King → Royal I, season-isolated board, Ranked-only Vote Kick, 15-timeout removal (S59–S61, S64) |
+| **6e Seat vacancy & departure (S72–S74)** ⏱ | **1.5 wk** | **6d (S61), E7 (S68 — merged)** | Explicit Leave Match + RD19 inactivity takeover + the Rooms/Unranked disconnect-vote flow, all with the **configured** bot profile, and the **2-Koz departure result (RD31)** on permanent exits. Splits from Vote Kick/timeout state per RD20 (added 2026-10-14) |
 | 7 Monetization (AdMob + UMP + RevenueCat) | 1.5 wk | 0b, accounts active | Banner + Remove Ads, test purchases |
 | 12 Store prep (res/, strings, policy, listing, Crashlytics) | 1.5 wk | 0b | Store-ready listing, signed AAB, full AR strings (S41) |
 | 8b Audio + animations (parallel throughout) | 1 wk | — | SFX + polish |
 | 13 Closed track → staged rollout | 1 wk | all | Production v1 |
 
-### MVP Timeline — 20 weeks (~4.6 months) — amended 2026-10-05
+### MVP Timeline — 21 weeks (~4.8 months) — amended 2026-10-14 (20 weeks before 6e)
 
 **The MVP now includes Ranked (RD25).** Ranked is launch-blocking, so it cannot be deferred; voice still is.
 
 The minimum to launch: **AI-only + online + Ranked, no voice, monetization as a rapid v1.0.1 follow-up.**
-0b (1.5) + 4a (2.5) + 4b (1.5) + 5a (1.5) + 5b (2) + 6b (6.5) + 6c (3) + 6d (5) + store basics (1) + stabilization (1).
+0b (1.5) + 4a (2.5) + 4b (1.5) + 5a (1.5) + 5b (2) + 6b (6.5) + 6c (3) + 6d (5) + 6e (1.5) + store basics (1) + stabilization (1).
 Rationale: neither AI nor online depends on ads — and neither depends on voice. **Voice is deliberately outside the MVP:** it adds 170h, it carries the only two new hardware-policy surfaces in the project (mic permission + Play audio disclosure), and its worst-case failure mode (echo, or a NAT pair that can't connect) is a *support burden*, not a blocker. If the AdMob 14-day clock or a UMP edge case slips, this is the line that holds. Voice (2.5) + voice QA (0.5) then land as v1.0.1/v1.1 alongside TURN (see §E).
 
-*(Pre-amendment MVP was 9.5 weeks / ~340h; +388h of launch-blocking Ranked at the same cadence lands at ≈20 weeks.)*
+*(Pre-amendment MVP was 9.5 weeks / ~340h; +388h of launch-blocking Ranked at the same cadence lands at ≈20 weeks; the 2026-10-14 roadmap-closure amendment adds 6e (+1.5 wk, 64h) for ≈21 weeks. The label is calendar time with parallelism — 4a overlaps 0b — not the raw sum.)*
 
-### Full Version Timeline — 29 weeks (~6.7 months) — amended 2026-10-05
+### Full Version Timeline — 32 weeks (~7.4 months) — amended 2026-10-14
 
-Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.5) + monetization (1.5) + store prep overlap + audio/polish (1) + closed-track rollout (1). Calendar time exceeds the raw hours because of the **AdMob 14-day closed-testing clock** — an immovable external dependency. Voice is the single largest week-adder after the Ranked block, and it is sequenced *after* online works, because voice membership is derived from room membership and must never be able to drift from it. Full Arabic (S41) rides inside store prep — +12h absorbed without moving the 29-week label.
+Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.5) + monetization (1.5) + store prep overlap + audio/polish (1) + closed-track rollout (1). Calendar time exceeds the raw hours because of the **AdMob 14-day closed-testing clock** — an immovable external dependency. Voice is the single largest week-adder after the Ranked block, and it is sequenced *after* online works, because voice membership is derived from room membership and must never be able to drift from it. Full Arabic (S41) rides inside store prep — +12h absorbed without moving the week label. *(29 weeks before the 2026-10-14 roadmap-closure amendment added 6e; the +3 weeks rather than +1.5 reflects §8's hours-based realistic figure of 1,366h, which counts the 64h at full contingency-inclusive cadence.)*
 
-**Ranked adds ~14.5 weeks** (6b 6.5 + 6c 3 + 6d 5) and sits on the critical path: `mode` (S43) gates Vote Kick, settlement, and Ranked statistics, so it cannot start after online — it starts *with* it.
+**Ranked adds ~16 weeks** (6b 6.5 + 6c 3 + 6d 5 + 6e 1.5) and sits on the critical path: `mode` (S43) gates Vote Kick, settlement, and Ranked statistics, so it cannot start after online — it starts *with* it. **6e is critical-path only because its dependencies (S61, S68) are already merged** — there is no parallel Ranked-core track left to absorb it, which is exactly the asymmetry against S70/S71 noted in §8.
 
 ---
 
@@ -782,7 +1022,7 @@ Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.
 | QA / manual tester | **Part-time, only in the final 3 weeks** | Device matrix, RTL pass, online 4-human playthroughs, **4-device voice room incl. one symmetric-NAT case**, ad/IAP verification | 16 (folded into §604) |
 | 2D/3D artist, animator | **Not required for v1** | Cards render as glyphs; launcher icon from an icon generator is acceptable at v1 | 0 |
 | Sound designer | **Not required** | License 5 SFX from a royalty-free library (voice uses the WebRTC library's own AEC/NS, not custom DSP work) | 0 |
-| Backend developer | **Not required — but the plan now includes backend *work*** | **Amended 2026-10-05 (RD11), +44h 2026-10-06 (RD29/RD30):** the Ranked authority layer is 432h of Cloud Functions + Firestore, but it is written by the lead engineer in the existing 1-engineer model — it is Kotlin/TS-adjacent Functions over the project's own data model, not a distributed-systems hire. D3 still means no always-on server | 0 (headcount; the hours are in §F) |
+| Backend developer | **Not required — but the plan now includes backend *work*** | **Amended 2026-10-05 (RD11), +44h 2026-10-06 (RD29/RD30), +64h 2026-10-14 (roadmap closure):** the Ranked authority layer and seat-vacancy paths are 496h of Cloud Functions + Firestore, but they are written by the lead engineer in the existing 1-engineer model — it is Kotlin/TS-adjacent Functions over the project's own data model, not a distributed-systems hire. D3 still means no always-on server | 0 (headcount; the hours are in §F) |
 | **WebRTC / real-time media specialist** | **Not required — but flag the learning curve** | The WebRTC engine row (40h, XL) assumes the engineer becomes productive with `PeerConnectionFactory`/SDP/ICE. If the first mesh refuses to connect, that row is the one most likely to blow its estimate. Mitigation: GetStream's `webrtc-android` reference + a deliberate day-1 "two devices, one audio track" spike before the full mesh | 0 (risk, not headcount) |
 | Project manager | **Not separately** | Owner already performs this | (in the 40 PM hours) |
 
@@ -823,7 +1063,10 @@ Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.
 | **R29** | **Cloud Functions cost at scale.** Settlement is one invocation per match — cheap at launch, unbounded at growth | A surprise bill if the game succeeds | RD16 governs: monitor, do not pre-build. The RP audit ledger (S62) is the natural usage signal. Spark plan covers the whole v1 forecast |
 | **R30** | **Unranked cannibalizes Ranked party play.** If Unranked is the easier way to play with friends, players stop climbing together and the Ranked pool thins | Longer solo queues; a ladder that feels empty at the top | Unranked awards **no RP and no Ranked statistics** (RD15/RD23, via `mode: UNRANKED`) and carries **no voice**, so a Ranked party keeps the full feature set. The incentive to play Ranked together is preserved by **what it awards**, not by blocking the alternative. Watch the S62 ledger for the party-mode split at the M11 gate |
 | **R31** | **The rank-blind Unranked pool produces lopsided tables.** A King and a Bronze at the same table is **by owner design** (RD29's "ineligible ≠ cannot play together"), but a one-sided match can read as a bug to the players in it | "Matchmaking is broken" reviews from a mode that is deliberately not matchmaking | Present Unranked as **rank-blind** on S36 and in the waiting room, and never surface a "mismatched ranks" warning — it is the mode's definition, not a malfunction. The 4-minute bot fallback (S71) bounds wait time; it does not balance the table |
-| **R32** | **The three-value mode model widens every `mode` switch site (2026-10-06).** Making `UNRANKED` a first-class value means each gate (voice, Vote Kick, disconnect/pause, settlement, statistics) has an explicit third branch instead of inheriting a Room's behaviour — a gate that collapses `UNRANKED` onto `ROOM` or `RANKED` is a silent rules bug | Voice leaking into an Unranked stranger table, or a Ranked-only feature vanishing from Rank-down | The switch-site audit is a first-class S70/S71 deliverable and its checklist is an assertion in the testing plan; the disconnect/pause vote being **present** in Unranked and **absent** in Ranked is the canary that catches a collapsed gate |
+| **R32** | **The three-value mode model widens every `mode` switch site (2026-10-06).** Making `UNRANKED` a first-class value means each gate (voice, Vote Kick, disconnect vote, settlement, statistics) has an explicit third branch instead of inheriting a Room's behaviour — a gate that collapses `UNRANKED` onto `ROOM` or `RANKED` is a silent rules bug | Voice leaking into an Unranked stranger table, or a Ranked-only feature vanishing from Rank-down | The switch-site audit is a first-class S70/S71 deliverable and its checklist is an assertion in the testing plan; the disconnect vote vote being **present** in Unranked and **absent** in Ranked is the canary that catches a collapsed gate |
+| **R33** | **The inactivity clock's cumulative semantics are derived, not owner-specified (2026-10-14).** DEC-RD19-01 chose "decision-point inactivity" but the plan derives — from RD21's 25 s longest window — that 50 s must therefore accumulate *across* consecutive ignored decision windows, spanning the MEDIUM resolutions between them | A player briefly AFK is taken over by a bot and reads it as a bug; or, at the other extreme, a genuinely absent player is never taken over because each window resets the clock | The derivation is documented as the only arithmetic-coherent reading rather than implemented silently, and S73's acceptance criteria pin it explicitly. The reset rule — any genuine interaction in one's own decision window resets the clock — is the answer to the first failure mode; a playtest at the M11 gate is the answer to the second |
+| **R34** | **Half of S74 cannot be built yet (2026-10-14).** DEC-DISC-01 fixed the CONTINUE-with-bot default and the 30-second window and deliberately left the WAIT half open (OPEN-5: agreement threshold, what a WAIT does now that D9's pause mechanics are superseded, and the permanent-replacement condition) | S74 stalls at implementation, or a developer invents WAIT behaviour the owner did not approve | S74 is sized on the decided half and may **split**: disconnect detection + immediate configured-bot takeover + the 30-second vote + the no-agreement default land first; WAIT semantics land as an amendment once OPEN-5 is answered. Do not build WAIT behaviour speculatively |
+| **R35** | **OPEN-4/OPEN-5 can grow S72 and S74 (2026-10-14).** The three new stories are estimated against the scope the eleven decisions actually fixed; the 2-Koz bookkeeping (OPEN-4) may demand a distinct result value S50 settlement consumes, and the WAIT mechanics (OPEN-5) may demand a pause state | Contingency is silently spent on scope growth rather than on bugs | Neither answer is guessed. The 2026-10-14 arithmetic note states that a scope growth **re-estimates the affected story and amends the note** rather than being absorbed; this row exists so the contingency budget is not spent on it without being noticed |
 
 ---
 
@@ -843,7 +1086,7 @@ Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.
 | **M8 — Production v1** | Staged rollout started; Crashlytics receiving; no P0 crashes for 72h at 5% |
 | **M9 — Ranked settlement is authoritative** | The `functions/` module is live on the emulator; a **forged** `finalScores` is **corrected**, not accepted; settlement is idempotent across replayed calls; RP never goes negative |
 | **M10 — The Ranked loop is playable** | Placement (3 matches, 10/20/70, Platinum ceiling) → matchmaking (own tier or one below, no opt-up) → full match → Ranked result with RP delta, end to end |
-| **M11 — Ranked launch gate** | Seasons (two-step reset, King → Royal I, Highest Rank preserved), Vote Kick (Ranked-only, Round-7 gate, 2-of-3, 5-round cooldown, no rejoin), the 9 statistics, the 15-timeout automatic removal, and the season-isolated leaderboard all green. **Ranked is launch-blocking — v1 does not ship without this** |
+| **M11 — Ranked launch gate** | Seasons (two-step reset, King → Royal I, Highest Rank preserved), Vote Kick (Ranked-only, Round-7 gate, 2-of-3, 5-round cooldown, no rejoin), the 9 statistics, the 15-timeout automatic removal, the season-isolated leaderboard, **and the five seat-vacancy paths distinguishable end-to-end — the 2-Koz departure result (RD31) recorded on every permanent exit (leave, Vote Kick, 15-timeout removal), the configured bot on leave/inactivity/disconnect, the MEDIUM bot and counter on ordinary timeout only, and the inactivity reclaim returning control after the current trick** — all green. **Ranked is launch-blocking — v1 does not ship without this** |
 
 ---
 
@@ -851,11 +1094,11 @@ Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.
 
 | Scenario | Hours | Timeline | Conditions |
 |---|---|---|---|
-| **Conservative** | 1,124 + 25% = **1,405** | **~35 weeks** | Toolchain spike forces Kotlin 2.x migration; AdClock slips; bot balancing needs real playtest iteration; instrumented suite reveals a rules-fidelity bug requiring a client rework; **voice exceeds its 40h XL row** (ICE debugging on real devices is the classic 2x line); **RD26 threshold tuning takes a full playtest cycle** (R26); season-reset dry-run finds a migration defect (R27); **the Unranked pool's timeout-fallback tuning runs long** (R31) |
-| **Realistic** | 1,124 + 15% = **1,293** | **~30 weeks** | Spike stays on Kotlin 1.9.25; bots port cleanly with the SimPort seam; online wiring behaves as the JS reference did; voice mesh connects on the first 4-device attempt using a Maven-Central WebRTC republish; **the settlement layer lands on the emulator without a rules revision** (RD11's promise holds). **Recommended.** |
-| **Aggressive** | 1,124 − 10% (skip animations, minimal audio, Crashlytics only, **defer voice to v1.1**) = **1,012** | **~27 weeks** | Requires the toolchain spike to land clean in week 1, zero rules-fidelity surprises, and the AdMob account already activated. Voice is the cleanest single thing to cut: 170h (158 voice + 12 policy) with no gameplay dependency — **but neither Ranked (RD25) nor the GameType substrate (E7, a Ranked prerequisite) can be cut, so this scenario's floor is higher than the old one's.** Cutting it maps this scenario onto the 954h no-voice baseline. Only viable if accounts are started **today** |
+| **Conservative** | 1,188 + 25% = **1,485** | **~37 weeks** | Toolchain spike forces Kotlin 2.x migration; AdClock slips; bot balancing needs real playtest iteration; instrumented suite reveals a rules-fidelity bug requiring a client rework; **voice exceeds its 40h XL row** (ICE debugging on real devices is the classic 2x line); **RD26 threshold tuning takes a full playtest cycle** (R26); season-reset dry-run finds a migration defect (R27); **the Unranked pool's timeout-fallback tuning runs long** (R31); **the inactivity clock's cumulative semantics need a re-think after playtest (R33)**; **OPEN-4/OPEN-5 answers grow S72/S74 (R35)** |
+| **Realistic** | 1,188 + 15% = **1,366** | **~32 weeks** | Spike stays on Kotlin 1.9.25; bots port cleanly with the SimPort seam; online wiring behaves as the JS reference did; voice mesh connects on the first 4-device attempt using a Maven-Central WebRTC republish; **the settlement layer lands on the emulator without a rules revision** (RD11's promise holds). **Recommended.** |
+| **Aggressive** | 1,188 − 10% (skip animations, minimal audio, Crashlytics only, **defer voice to v1.1**) = **1,069** | **~29 weeks** | Requires the toolchain spike to land clean in week 1, zero rules-fidelity surprises, and the AdMob account already activated. Voice is the cleanest single thing to cut: 170h (158 voice + 12 policy) with no gameplay dependency — **but neither Ranked (RD25) nor the GameType substrate (E7, a Ranked prerequisite) can be cut, so this scenario's floor is higher than the old one's.** Cutting it maps this scenario onto the 1,018h no-voice baseline. Only viable if accounts are started **today** |
 
-> **Voice is still the swing item — but it is no longer the only one.** It remains the only scope block that is simultaneously large (170h), non-blocking for launch, and carrying two policy surfaces. **Ranked (432h) is the new immovable block: RD25 makes it launch-blocking, so it moves the floor of every scenario.** The spread between Realistic and Aggressive is still mostly "voice or not"; the spread between this amendment and the previous plan is entirely "Ranked or not."
+> **Voice is still the swing item — but it is no longer the only one.** It remains the only scope block that is simultaneously large (170h), non-blocking for launch, and carrying two policy surfaces. **Ranked (496h) is the new immovable block: RD25 makes it launch-blocking, so it moves the floor of every scenario.** The spread between Realistic and Aggressive is still mostly "voice or not"; the spread between this amendment and the previous plan is entirely "Ranked or not."
 
 > **Arithmetic, stated rather than hidden (2026-10-05 amendment):** all figures are recomputed from the **388h Ranked subtotal** (S42–S64, §E6b). Pre-amendment this table was 805 / 741 / 427 against 644. The old "defer voice → 474h / 13 weeks" baseline becomes **862h / ~24 weeks**, because Ranked is added to it. Do not carry the old numbers forward.
 
@@ -863,46 +1106,58 @@ Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.
 
 > **Arithmetic, stated rather than hidden (2026-10-06 RD29/RD30 amendment):** all figures are recomputed once more from the **44h addition to E6b** (S70 14h + S71 26h + 4h docs; E6b becomes 432h). The 1,080 / 1,242 / 1,350 / 910 figures above become **1,124 / 1,293 / 1,405 / 954**. **The week counts do not move**: S70 depends only on S42/S44 and S71 reuses the S56 search-lifecycle shape, so both run parallel to the Ranked core and do not extend the critical path. Do not carry the GM-amendment figures forward.
 
+> **Arithmetic, stated rather than hidden (2026-10-14 roadmap-closure amendment):** all figures
+> are recomputed once more from the **64h addition to E6b** (S72 18h + S73 20h + S74 26h; E6b
+> becomes 496h). The 1,124 / 1,293 / 1,405 / 954 figures above become **1,188 / 1,366 / 1,485 /
+> 1,018**; the Aggressive row re-derives as 1,188 − 10% = **1,069**. **The week counts DO move
+> (30→32, 35→37, 27→29, 25→27), unlike the RD29/RD30 amendment:** S72/S73/S74 do not parallel
+> anything — their dependencies (S61, S68) are already merged, so there is no Ranked-core track
+> alongside which to fold them. They are 64h of net-new sequential work on a one-engineer plan.
+> Set against that, the hours are **sized on the decided scope only**: S72's RD31 result-writing
+> waits on OPEN-4 and S74's WAIT half waits on OPEN-5 — if either answer grows the scope, the
+> affected story is re-estimated and this note amended, never silently absorbed (R35). Do not
+> carry the RD29/RD30 figures forward.
+
 ---
 
 # 9. Contingency
 
-| Contingency bucket | % of 1,124 | Hours | Why this rate |
+| Contingency bucket | % of 1,188 | Hours | Why this rate |
 |---|---|---|---|
-| Unknown requirements | 4% | 45 | **Ranked is now the largest undocumented area** (its thresholds are set but unplayed — R26) — this bucket grows with it. AI-bot scope was the previous driver (R13); voice is pinned by V1–V5. **The GM amendment adds a second unplayed surface: MINI's pacing (10 rounds, Quick from 6) has never been played by anyone. The RD29/RD30 amendment adds a third: the rank-blind Unranked pool's seat-filling cadence is untested (R31)** |
-| Bugs | 4% | 45 | Bot tier balance always needs more iterations than planned; **RP tuning will need a playtest cycle or two** (R26); **MINI's one-extension cap is a new rule boundary with a rules-enforcement counterpart** (E7/S67); **the RD29 tier comparison's King/floor edge cases are a new boundary** (S70) |
-| Integration problems | 4% | 45 | The `:app`↔`:services` wiring + instrumented tier is untested territory (R8), **plus a first WebRTC integration** (R15/R16/R21), **plus a first Cloud Functions settlement layer** (R24 cold starts, R25 boundary) |
-| Rework | 2% | 22 | Toolchain decision may force a Compose-compiler migration; the WebRTC artifact choice may need swapping (R21); **a season-reset defect found in dry-run is rework by definition** (R27) |
-| Testing | 1% | 11 | Device-matrix surprises, especially RTL Arabic layouts and the speakerphone echo pass |
-| **Total contingency** | **15%** | **169** | **Conservative = 25% (281h) if the toolchain spike goes badly, voice ICE debugging runs long, RD26 needs more than one tuning cycle, or the Unranked pool needs a fallback rewrite. Bucket rows are rounded independently and sum to 168; the authoritative figure is the 15% total (169)** |
+| Unknown requirements | 4% | 48 | **Ranked is now the largest undocumented area** (its thresholds are set but unplayed — R26) — this bucket grows with it. AI-bot scope was the previous driver (R13); voice is pinned by V1–V5. **The GM amendment adds a second unplayed surface: MINI's pacing (10 rounds, Quick from 6) has never been played by anyone. The RD29/RD30 amendment adds a third: the rank-blind Unranked pool's seat-filling cadence is untested (R31). The 2026-10-14 closure amendment adds a fourth: the seat-vacancy trio (S72–S74) specifies five interaction paths nobody has played — leave, timeout, inactivity, disconnect, Vote Kick — and two of them (R33 inactivity cadence, R34 the WAIT half S74 cannot yet build) are deliberately under-specified** |
+| Bugs | 4% | 48 | Bot tier balance always needs more iterations than planned; **RP tuning will need a playtest cycle or two** (R26); **MINI's one-extension cap is a new rule boundary with a rules-enforcement counterpart** (E7/S67); **the RD29 tier comparison's King/floor edge cases are a new boundary** (S70); **RD31's "2 Koz" bookkeeping will surface accounting bugs wherever the 9-stat model meets a departed seat (OPEN-4)** |
+| Integration problems | 4% | 48 | The `:app`↔`:services` wiring + instrumented tier is untested territory (R8), **plus a first WebRTC integration** (R15/R16/R21), **plus a first Cloud Functions settlement layer** (R24 cold starts, R25 boundary), **plus the first *state transition* paths (S72 leave write, S73 reclaim-after-trick, S74 disconnect-vote) riding on frozen rules that must widen additively without a semantics change** |
+| Rework | 2% | 24 | Toolchain decision may force a Compose-compiler migration; the WebRTC artifact choice may need swapping (R21); **a season-reset defect found in dry-run is rework by definition** (R27); **the S41/S42 disconnect artboards are re-cut by definition (S74 supersedes D8/D9)** |
+| Testing | 1% | 12 | Device-matrix surprises, especially RTL Arabic layouts and the speakerphone echo pass |
+| **Total contingency** | **15%** | **179** | **Conservative = 25% (297h) if the toolchain spike goes badly, voice ICE debugging runs long, RD26 needs more than one tuning cycle, the Unranked pool needs a fallback rewrite, or OPEN-4/OPEN-5 grow S72/S74. Bucket rows are rounded independently and sum to 180; the authoritative figure is the 15% total (179)** |
 
-- **Before contingency:** **1,124 hours**
-- **After contingency (realistic):** **1,293 hours ≈ 30 weeks**
-- **After contingency (conservative):** **1,405 hours ≈ 35 weeks**
-- **If voice is deferred to v1.1:** **1,124 − 170 = 954 hours ≈ 25 weeks** — the pre-voice baseline, **now with Ranked included** (RD25 makes Ranked uncuttable)
-- *(Pre-amendment figures, for traceability only — do not carry forward: 644 / 741 / 805 / 474 / 1,032 / 1,187 / 1,080 / 1,242.)*
+- **Before contingency:** **1,188 hours**
+- **After contingency (realistic):** **1,366 hours ≈ 32 weeks**
+- **After contingency (conservative):** **1,485 hours ≈ 37 weeks**
+- **If voice is deferred to v1.1:** **1,188 − 170 = 1,018 hours ≈ 27 weeks** — the pre-voice baseline, **now with Ranked included** (RD25 makes Ranked uncuttable)
+- *(Pre-amendment figures, for traceability only — do not carry forward: 644 / 741 / 805 / 474 / 1,032 / 1,187 / 1,080 / 1,242 / 1,124 / 1,293.)*
 
 ---
 
 # 10. Final Executive Summary
 
-**Project scope.** Ship "Estemshan," a 4-player Egyptian trick-taking card game, as a native Android (Kotlin/Compose) app with three modes: offline vs AI bots (4 difficulty tiers + personalities), online matches with friends via room code, and offline hot-seat — plus **two selectable game options on every match** (**Game Type**: Full 18 rounds or Mini 10 rounds, Quick Rounds from 14 or 6; **Calculation**: Normal or Classic — GM1/GM4), **a full Ranked progression system** (19-rank ladder, dynamic RP, placement test, server-controlled matchmaking, 3-month seasons, seasonal leaderboard — MVP and launch-blocking per RD25, **open to both Game Types with Mini's RP delta at 50% of Full's — GM5/GM6**), and **push-to-talk voice chat in casual rooms only** (muted by default, max 4 speakers, **never in Ranked** — RD22), fully localized in English and Arabic (EN `strings.xml` infra from S12, full `values-ar` retrofit in S41). Monetized with a single banner ad plus a one-time "Remove Ads" purchase.
+**Project scope.** Ship "Estemshan," a 4-player Egyptian trick-taking card game, as a native Android (Kotlin/Compose) app with three modes: offline vs AI bots (4 difficulty tiers + personalities), online matches with friends via room code, and offline hot-seat — plus **two selectable game options on every match** (**Game Type**: Full 18 rounds or Mini 10 rounds, Quick Rounds from 14 or 6; **Calculation**: Normal or Classic — GM1/GM4), **a full Ranked progression system** (19-rank ladder, dynamic RP, placement test, server-controlled matchmaking, 3-month seasons, seasonal leaderboard — MVP and launch-blocking per RD25, **open to both Game Types with Mini's RP delta at 50% of Full's — GM5/GM6**), **four distinct seat-vacancy paths that never share state** (ordinary timeout → MEDIUM bot + counter; explicit leave → configured bot; 50 s inactivity → configured bot, reclaimable after the current trick; disconnect in Rooms/Unranked → a 30-second continue-or-wait vote), and **the 2-Koz departure result (RD31) recorded whenever a player's participation in a match ends permanently** (2026-10-14 roadmap closure), and **push-to-talk voice chat in casual rooms only** (muted by default, max 4 speakers, **never in Ranked** — RD22), fully localized in English and Arabic (EN `strings.xml` infra from S12, full `values-ar` retrofit in S41). Monetized with a single banner ad plus a one-time "Remove Ads" purchase.
 
 **Where we're starting from.** The game engines, scoring, and online *service* layer are **already built and green on `main`** — including the hardest piece, reload-safe replay — and **the AI bot port is merged and wired** (`BotTier` + `BotPersonality` are reusable by Ranked placement and timeouts). Roughly **half the native v1 is done**. What's left is: wiring the online services into the app, the Ranked authority + progression layer, voice chat, and everything platform-facing.
 
 **MVP scope.** AI play + online multiplayer + **Ranked (launch-blocking)**, with monetization following as a rapid v1.0.1. Neither gameplay mode depends on ads — and neither depends on voice. **Voice is Full-version scope, deliberately outside the MVP. Ranked is not: RD25 puts it in the MVP.**
 
-**Total estimated hours.** **1,124** before contingency (434 base + **432 Ranked** + **48 GameType/Calculation (E7)** + 158 voice + 12 voice-policy deltas + 40 PM), **~1,293 after** (15%). *(Pre-Ranked: 644 / ~741; pre-GM: 1,032 / ~1,187; pre-RD29/RD30: 1,080 / ~1,242.)*
+**Total estimated hours.** **1,188** before contingency (434 base + **496 Ranked** + **48 GameType/Calculation (E7)** + 158 voice + 12 voice-policy deltas + 40 PM), **~1,366 after** (15%). *(Pre-Ranked: 644 / ~741; pre-GM: 1,032 / ~1,187; pre-RD29/RD30: 1,080 / ~1,242; pre-roadmap-closure: 1,124 / ~1,293.)*
 
-**Estimated timeline.** **29 weeks** realistic (MVP in ~20). Conservative 34 weeks if the Android toolchain forces a Kotlin migration, voice ICE debugging runs long, or RD26 threshold tuning needs extra playtest cycles. **Deferring voice to v1.1 gives a 24-week / 862-hour baseline — but Ranked stays, so the floor no longer drops to 13 weeks.**
+**Estimated timeline.** **32 weeks** realistic (MVP in ~21). Conservative 37 weeks if the Android toolchain forces a Kotlin migration, voice ICE debugging runs long, RD26 threshold tuning needs extra playtest cycles, or the seat-vacancy paths (S72–S74) hit unspecified mechanics that grow scope. **Deferring voice to v1.1 gives a 27-week / 1,018-hour baseline — but Ranked stays, so the floor no longer drops to 13 weeks.**
 
-**Required team.** **One engineer (the owner) + AI coding agents**, plus part-time QA for the final 3 weeks (including a 4-physical-device voice room). No artist, animator, sound designer, or backend *hire* needed at v1 scope — **but the plan now contains 432h of backend work**, written by that one engineer as lightweight Cloud Functions (RD11), not as a server.
+**Required team.** **One engineer (the owner) + AI coding agents**, plus part-time QA for the final 3 weeks (including a 4-physical-device voice room). No artist, animator, sound designer, or backend *hire* needed at v1 scope — **but the plan now contains 496h of backend work**, written by that one engineer as lightweight Cloud Functions (RD11), not as a server.
 
 **Major risks.** (1) The app currently targets API 34 — Google requires API 36 as of Aug 31, 2026, so the toolchain must be upgraded before anything can ship. (2) The AdMob 14-day closed-testing clock is the one immovable external deadline. (3) The AI bot files are coupled to the "deferred" Monte-Carlo module more tightly than expected. (4) The frozen security rules make true player presence impossible — by design, not by oversight. (5) **Voice cannot reach every player STUN-only: 5–15% of room-pairs sit behind symmetric NATs and will show "unreachable" — TURN is a v1.1, $0-effort-only fix, not a launch blocker, and the UX must say so rather than spin.** (6) The official WebRTC artifact is no longer on Google's Maven (Bintray sunset) — pin a Maven Central republish deliberately. **(7) The MVP security boundary is a compromise: Cloud Functions validate and settle, but in-play state stays client-converged — a fully colluding table is the known residual (R25, RD14). (8) The 19 RP thresholds are set (RD26, closed 2026-10-05) but unplayed — progression feel is a tuning risk for the first Ranked playtest, not a missing-input risk (R26).**
 
 **Main assumptions.** The 1-engineer + AI-agent cadence observed over Phases 0–10 continues; the AdMob/Play/RevenueCat accounts are activated immediately; bot balancing is "good enough," not tournament-grade; EN + Arabic only; voice is acceptable to players as PTT-only with no open mic; **RD26's RP thresholds are set (2026-10-05) and are treated as v1 values, to be re-tuned from playtest data rather than from judgement**.
 
-**What is NOT included.** EXPERT Monte-Carlo bots and adaptive difficulty (post-launch); **voice in Ranked — never (RD22)**; shop and missions (no economy to sell into — **seasons ARE in scope, RD24**); rewarded video (nothing to reward yet); true presence/abandonment (blocked by frozen rules); custom analytics events beyond crash reporting; full i18n beyond EN/AR; **a dedicated always-on game server (D3 amended — lightweight Cloud Functions are in, a server is not, RD11)**; any **Firestore rules revision** — `firestore.rules` stays frozen and byte-identical, the Functions are the only legitimate Ranked write path; **no TURN server in v1** (STUN-only, symmetric-NAT limitation accepted and disclosed, coturn on a free VM reserved for v1.1); **no recording, transcription, or server-side audio storage of any kind**; no open-mic / always-on voice; no foreground-service background voice; **no player-facing Ranked match history for MVP (RD23 — the profile carries the 9 career statistics instead)**; **no separate seasonal trophy system (RD24)**. Also excluded: re-estimating the ~460 hours of work already merged to `main`.
+**What is NOT included.** EXPERT Monte-Carlo bots and adaptive difficulty (post-launch); **voice in Ranked — never (RD22)**; shop and missions (no economy to sell into — **seasons ARE in scope, RD24**); rewarded video (nothing to reward yet); true presence/abandonment (blocked by frozen rules — **amended 2026-10-14: RD19 inactivity IS now in v1 scope as story S73, detected from the player's OWN app's activity signal on their own match-player data per DEC-RD19-02 — no rules revision, no permissions widened; what stays excluded is TRUE cross-player presence, which R7 keeps blocked**); custom analytics events beyond crash reporting; full i18n beyond EN/AR; **a dedicated always-on game server (D3 amended — lightweight Cloud Functions are in, a server is not, RD11)**; any **Firestore rules revision** — `firestore.rules` stays frozen and byte-identical, the Functions are the only legitimate Ranked write path; **no TURN server in v1** (STUN-only, symmetric-NAT limitation accepted and disclosed, coturn on a free VM reserved for v1.1); **no recording, transcription, or server-side audio storage of any kind**; no open-mic / always-on voice; no foreground-service background voice; **no player-facing Ranked match history for MVP (RD23 — the profile carries the 9 career statistics instead)**; **no separate seasonal trophy system (RD24)**. Also excluded: re-estimating the ~460 hours of work already merged to `main`.
 
 **One decision for management.** Start the AdMob/Play Console/RevenueCat account activations **today** — they're external clocks, and they — not the code — determine the launch date. **RD26's 19 RP threshold numbers are now CLOSED (2026-10-05) — the last owner input on the Ranked critical path is in, and nothing on that path is waiting on a decision anymore.**
 
@@ -973,14 +1228,17 @@ One epic per phase; stories sized in hours; `S/M/L` from §2. Critical path mark
 | | S57 Matchmaking anti-abuse: no client tier selection, no opt-up, pool authority (RD9) | 12 | S56 |
 | | S58 **Rank-down** (formerly Private/Password Ranked): **cross-tier within RD29 only** — one tier from the creator or less, enforced by the S70 join gate; password gate, Ranked integrity retained | 14 | S50, S48 |
 | | S59 Seasons: 3-month cycle, season ID, two-step reset with ladder floor, **King → Royal I**, Highest Rank preserved | 20 | S44, S49 |
-| | S60 Vote Kick Ranked-only enforcement by `mode` + Round-7-complete gate + unique-Koz requirement + **target frozen for the vote duration (OPEN-2)** (RD17/18) | 20 | S43 |
-| | S61 Timeout/inactivity separation: MEDIUM engine on timeout, configured bot on leave, 15-timeout counter → **automatic removal (distinct from Vote Kick)** | 16 | S43 |
+| | S60 Vote Kick Ranked-only enforcement by `mode` + Round-7-complete gate + unique-Koz requirement + **target frozen for the vote duration (OPEN-2 — CLOSED 2026-10-14: gameplay continues while the vote is open, no pause; DEC-OPEN2-01)** (RD17/18) | 20 | S43 |
+| | S61 Timeout/inactivity separation: MEDIUM engine on timeout, configured bot on leave, 15-timeout counter → **automatic removal (distinct from Vote Kick)** — **MERGED 2026-10-14 (PR #107): the timer-side deliverables are complete and on `main`. The "configured bot on leave" clause moved to S72 (DEC-S61-01): no match-scoped leave action has ever existed in the product** | 16 | S43 |
 | | S62 RP audit ledger (internal) + observability hooks | 10 | S51 |
 | | S63 Abuse/edge-case coverage: forged results, replayed settlements, cross-tier injection, tie edge cases | 12 | S61 |
 | | S64 Seasonal Ranked Leaderboard: server-authoritative ordering (position, player, Tier/Rank, RP, season), King ranked by RP above the King lower bound, current player highlighted, season isolation/reset | 18 | S59 |
 | | S70 **Ranked party eligibility gate (RD29/RD30, 2026-10-06):** server-side tier comparison at join to a Rank-down Ranked room — unplaced resolves to Bronze III (RD30), one tier from the creator or less (RD29), else deny `RANK_INCOMPATIBLE`; client surfaces the reason; **the client never reads another player's rank** | 14 | S42, S44 |
-| | S71 **Unranked mode (2026-10-06):** S36's three-entry match-type choice (Ranked / Rank-down / Unranked); the host-only pre-match "Play Unranked" conversion (`mode` → **`UNRANKED`**, access credential cleared, idempotent); the **rank-blind shared Unranked pool** — one pool for parties and solo, remaining seats offered to humans regardless of rank, **configured bots only after a 4-minute fill timeout** (S61 mechanism); Unranked waiting-room state with the countdown. Asserts `mode` persisted as `UNRANKED` (not `ROOM` + marker) / no RP / no Vote Kick / **no voice** / disconnect-pause present / no Ranked stats / King+Bronze seats together; **the `mode` switch-site audit for the third value is part of this story** | 26 | S70, S56, S61, S68 |
-| | **E6b Ranked subtotal** | **432** | |
+| | S71 **Unranked mode (2026-10-06):** S36's three-entry match-type choice (Ranked / Rank-down / Unranked); the host-only pre-match "Play Unranked" conversion (`mode` → **`UNRANKED`**, access credential cleared, idempotent); the **rank-blind shared Unranked pool** — one pool for parties and solo, remaining seats offered to humans regardless of rank, **configured bots only after a 4-minute fill timeout** (S61 mechanism); Unranked waiting-room state with the countdown. Asserts `mode` persisted as `UNRANKED` (not `ROOM` + marker) / no RP / no Vote Kick / **no voice** / **disconnect vote present, no pause** (DEC-DISC-01) / no Ranked stats / King+Bronze seats together; **the `mode` switch-site audit for the third value is part of this story** | 26 | S70, S56, S61, S68 |
+| | S72 **Explicit Leave Match (roadmap closure 2026-10-14, DEC-S61-01):** the in-match leave affordance (confirm dialog, reachable from any match screen, all modes — **needs a design artboard first**); the match-scoped leave write (a rules allowlist widening + SHA re-pin — its own deployment, additive and back-compat); the seat taken immediately by **the configured bot tier + personality** (RD20); **RD31's 2-Koz departure result recorded** with no rejoin and the seat continuing as bot so the match completes. **Depends on OPEN-4** for the exact 2-Koz bookkeeping. Asserts: leaving mid-trick never deadlocks the engine; a leaver's client cannot keep writing match state; RD31 fires exactly once; the remaining players' placements recompute with the leaver last; the leaver returns to the lobby, not the match. **Excludes:** inactivity (S73), the disconnect vote (S74), any Vote-Kick change (RD18, shipped as S60) | 18 | S61, S68 |
+| | S73 **RD19 inactivity takeover (roadmap closure 2026-10-14, DEC-RD19-01…05):** the **decision-point inactivity clock** (starts when a decision point becomes the player's; an ordinary MEDIUM timeout resolution does not stop or reset it, because it substitutes for rather than evidences input; accumulates ≥ 50 s across consecutive ignored windows — a single RD21 window maxes at 25 s, so it alone can never reach 50 s; resets on any genuine interaction in the player's own window); the **own-app activity signal on the player's own match-player data** — `players/{uid}` untouched, frozen rules respected (R7), the client-faking residual documented; takeover by **the configured bot in all three modes** with **zero timeout-counter increment**; **reclaim: the bot finishes the current trick, control returns at the next decision point, same seat**; an INACTIVE seat chip + return-to-seat banner (design S39). Asserts RD20 separation (the counter never moves on takeover), that a reclaim never triggers RD31, and that takeover state survives a process restart. **Excludes:** the 15-timeout removal (S61, shipped) and the disconnect flow (S74) | 20 | S61, S68 |
+| | S74 **Disconnect-vote flow (roadmap closure 2026-10-14, DEC-DISC-01), ROOM + UNRANKED only:** disconnect detection (distinguished from an app kill); the seat taken immediately by **the configured bot profile** (DEC-RD21-01); the remaining eligible humans get **one 30-second vote — "Continue with the bot, or wait for the disconnected player?"** — and **no agreement within those 30 seconds resumes the match with the configured bot**; reconnect during the waiting window restores the seat. **Depends on OPEN-5** for the WAIT half — agreement threshold, what a WAIT does now that D8/D9's pause mechanics are superseded, and the permanent-replacement condition (+ RD31) — that scope is sized when OPEN-5 closes and may split into its own story. Supersedes D8/D9 (pointer-noted in `UI_UX_ROADMAP.md` §G; the S41/S42 artboards are re-cut to this flow before implementation). Asserts: every `mode` switch site carries the explicit UNRANKED branch (RD28 canary), the flow shares no state with Vote Kick or RD19, and a RD31 result is never produced for a still-reclaimable seat | 26 | S61, S68 |
+| | **E6b Ranked subtotal** | **496** | |
 | **E7 GameType & Calculation** ⏱ | S65 `:engine` `GameType` enum (`baseRounds` / `firstFastRound` / `maxExtensions`); parameterize `isFastRound`, `fixedTrumpFor` (the `Math.floorMod` fix for the round-6 crash), `initFastRound`/`initNormalRound`, `computeRoundExtension`, `Session.gameType`; FULL golden regression + MINI ladder/cap tests | 10 | — |
 | | S66 `:services` — `gameType`/`scoringMode` on `RoomDoc` + `MatchDoc` (absent ⇒ FULL/NORMAL, so old docs parse); `buildMatchFields` derives `maxRounds` from the type; `buildRematchMatchFields` inherits the type; `startMatch` propagates room config; `extendMatchRounds` gains the count cap returning `ALREADY_EXTENDED` + unit tests | 12 | S65 |
 | | S67 `firestore.rules` — four function changes (room / match / rematch allowlists, type-derived `maxRounds`, Mini extension count cap), absent-means-FULL back-compat; emulator re-run + re-pin `firestore.rules.sha256` | 6 | S66 |
@@ -989,8 +1247,8 @@ One epic per phase; stories sized in hours; `S/M/L` from §2. Critical path mark
 | | Documents — `CANONICAL_RULES.md` Amendment A2, `UI_UX_ROADMAP.md` amendments, architecture/spec notes | 4 | — |
 | | **E7 GameType subtotal** | **48** | |
 | | **PM overhead** | 40 | — |
-| | **Contingency 15%** | 169 | — |
-| | **TOTAL** | **1,303** | |
+| | **Contingency 15%** | 179 | — |
+| | **TOTAL** | **1,377** | |
 
 > Story-table arithmetic, stated rather than hidden. **Pre-amendment (for traceability):** the 30 non-voice stories summed to **444h** (the 29 pre-voice stories at **432h** — a +10h decomposition granularity, since S7 is sized 26 vs its feature row's 24 and S13 is split out separately — plus S41 at **12h**) against §2's 434h feature line. The 11 voice stories summed to exactly **170h**, matching §2/§3 (158 voice + 12 policy deltas). PM (40) + 15% contingency (97) landed the table at **751**, against the §9 headline of **741** — the 10h difference was precisely that story-vs-feature drift, absorbed by contingency.
 >
@@ -999,6 +1257,8 @@ One epic per phase; stories sized in hours; `S/M/L` from §2. Critical path mark
 > **After the 2026-10-06 GM amendment:** the 5 new **E7** stories (S65–S69, plus a 4h documents row) sum to exactly **48h**, matching §2's GM feature line with zero drift. The table now carries 832 + 48 = **880h** non-voice stories plus **170h** voice = **1,050h** of stories; PM (40) and 15% contingency (**162**, on the new pre-contingency total of 1,080) land the table at **1,252**, against the §9 headline of **1,242** — the same 10h story-vs-feature drift, unchanged in kind and size. E7 is placed **after** E6b in the table only because the table is ordered by story number; **the execution order is E7 → E6b**, since S43/S47/S56 all consume `gameType`.
 >
 > **After the 2026-10-06 RD29/RD30 amendment:** the 2 new **E6b** stories (S70 at 14h, S71 at 26h, plus a 4h documents row) sum to exactly **44h**, matching the amendment block's §F9 feature line with zero drift. E6b becomes **432h** (388 + 44). The table now carries 880 + 44 = **924h** non-voice stories plus **170h** voice = **1,094h** of stories; PM (40) and 15% contingency (**169**, on the new pre-contingency total of 1,124) land the table at **1,303**, against the §9 headline of **1,293** — the same 10h story-vs-feature drift, unchanged in kind and size. **The critical path does not extend**: S70 depends only on S42/S44, and S71 reuses the S56 search-lifecycle shape, so both run parallel to the Ranked core.
+>
+> **After the 2026-10-14 roadmap-closure amendment:** the 3 new **E6b** stories (**S72** at 18h, **S73** at 20h, **S74** at 26h) sum to **64h**. E6b becomes **496h** (432 + 64). The table now carries 924 + 64 = **988h** non-voice stories plus **170h** voice = **1,158h** of stories; PM (40) and 15% contingency (**179**, on the new pre-contingency total of 1,124 + 64 = 1,188) land the table at **1,377**. **The estimates are sized on the decided scope only:** S72's RD31 result-writing waits on OPEN-4, and S74's WAIT half waits on OPEN-5 — if either answer grows the scope, the affected story is re-estimated and this note is amended, not silently absorbed. **Design before code still applies:** S72 has no artboard yet, and S74 supersedes the S41/S42 artboards, which must be re-cut to the 30-second vote before implementation.
 >
 > **Rank-King vs Match-King, once, because it is the single easiest thing to get wrong in this amendment:** Rank King is the account's competitive ceiling (19th rung, no divisions). Match King is whoever finishes first in one match. Koz is the unique current last place in one match — not a rank at all. The `#E8A33D` gold colour in the design tokens belongs to the **Match-King badge**; the **Gold tier** must not reuse it, or "Gold" collapses into "King" in the UI.
 >
@@ -1126,7 +1386,8 @@ The owner's constraint is absolute (V4): **no paid SDK, no metered minutes, no c
    - Vote Kick: Ranked-only enforced by `mode`; unavailable before Round 7 completes; tied last place blocks it; 2-of-3 passes; 1-of-3 or timeout fails; failure puts a 5-round cooldown on that same target only; success removes permanently, forbids rejoin, and records the target as Koz (RD17/18).
    - **15-timeout automatic removal fires with no vote, no Round-7 gate, and no Koz requirement — and it neither consumes nor resets the Vote Kick cooldown. The two mechanisms share no state.** (RD20)
    - **The timeout counter is private: an opponent can never read another player's timeout count** (RD20).
-   - A Vote Kick vote cannot change its target mid-vote — the unique-Koz target is frozen for the vote's duration (OPEN-2, resolved one way or the other before this test is written).
+   - A Vote Kick vote cannot change its target mid-vote — the unique-Koz target is frozen for the vote's duration (**OPEN-2 — CLOSED 2026-10-14 by DEC-OPEN2-01: gameplay CONTINUES while the vote is open, so the frozen-target assertion is made against a live, unpaused match**).
+   - **A departed player (Explicit Leave Match, Vote Kick success, or the 15-timeout automatic removal) is recorded with the 2-Koz departure result exactly once — Games Played counted once, the seat's continued bot play never double-counts it, and the remaining players' placements are unaffected (RD31; the exact bookkeeping follows OPEN-4 when it closes). A temporary, still-reclaimable takeover — RD19 inactivity or a disconnect while the table waits — never produces a 2-Koz result.**
    - Tie for 1st → all tied players render as Match King; shared placements are counted in stats exactly as achieved (RD17).
    - A bot-controlled seat never votes and never pads the eligible-voter count.
    - Long-press short stats never blocks a legal card play; the popup shows exactly the 6 short values (RD23).
@@ -1135,7 +1396,7 @@ The owner's constraint is absolute (V4): **no paid SDK, no metered minutes, no c
 
 ### Honest reconciliation with the previous estimate
 
-`ANDROID_MIGRATION_PLAN.md` says "**~5–8 months, one engineer**" for the whole migration. Before the Ranked amendment this plan said **~4.1 months for what's left** (18 weeks, voice included; 13 weeks without it) — consistent, not contradictory, with roughly 5 months of the original range already spent (Phases 0–10, spec through offline UI). **The 2026-10-05 Ranked amendment (RD25) breaks that envelope: 29 weeks realistic / ~34 conservative**, because Ranked is 388h of launch-blocking scope that the original migration plan never contained. The honest statement is now: **the original "~5–8 months" estimate covered the JS→Kotlin migration, not the competitive system.** Ranked is new product scope, and it is the reason this revision grew from 18 to 29 weeks — just as voice was the reason it previously grew from 13 to 18.
+`ANDROID_MIGRATION_PLAN.md` says "**~5–8 months, one engineer**" for the whole migration. Before the Ranked amendment this plan said **~4.1 months for what's left** (18 weeks, voice included; 13 weeks without it) — consistent, not contradictory, with roughly 5 months of the original range already spent (Phases 0–10, spec through offline UI). **The 2026-10-05 Ranked amendment (RD25) breaks that envelope: 29 weeks realistic / ~34 conservative**, because Ranked is 388h of launch-blocking scope that the original migration plan never contained. The honest statement is now: **the original "~5–8 months" estimate covered the JS→Kotlin migration, not the competitive system.** Ranked is new product scope, and it is the reason this revision grew from 18 to 29 weeks — just as voice was the reason it previously grew from 13 to 18. **The 2026-10-14 roadmap-closure amendment revises that to 32 weeks realistic / ~37 conservative** — not because any scope was invented, but because the eleven closed questions exposed three stories (S72–S74, 64h) the plan had been silently assuming were already covered by S61's row.
 
 The one place this plan disagrees with the existing documentation is the **status snapshot**: the plan's "~45% — session ~5%, Phase 3 untouched" was true on 2026-09-19 but is stale as of 2026-09-21, because PRs #47 and #48 merged the services module and the GameSession store. Estimating from the stale snapshot would have roughly **doubled** the online-multiplayer line. The assumptions that would have caused that error: trusting a status section instead of reading `origin/main`, and not noticing that `:services` is now a CI-tested module.
 
@@ -1175,12 +1436,14 @@ Voice adds no new purchase, no new data collection, and no new server — but it
 ## Final status block (2026-10-05)
 
 ```
-RANKED SYSTEM PLANNING      — UPDATED 2026-10-05 (RD1–RD28; RD26 CLOSED, OPEN-1/OPEN-2 remain)
+RANKED SYSTEM PLANNING      — UPDATED 2026-10-05 (RD1–RD28; RD26 CLOSED)
 GAME TYPE / CALCULATION     — ADDED 2026-10-06 (GM1–GM8, E7 S65–S69, +48h; OPEN-3 CLOSED)
-UI/UX ROADMAP               — UPDATED (§4b + contradiction register)
-CODE/ARCHITECTURE ROADMAP   — UPDATED (E6b S42–S64 + **S70–S71**, E7 S65–S69, R24–**R32**, M9–M11)
-IMPLEMENTATION              — NOT STARTED
-FIGMA                       — NOT STARTED
+PARTY ELIGIBILITY / UNRANKED— ADDED 2026-10-06 (RD29/RD30, S70–S71, +44h)
+ROADMAP CLOSURE             — ADDED 2026-10-14 (RD31 2-Koz; S72–S74 +64h; OPEN-1/OPEN-2 CLOSED; OPEN-4/OPEN-5 opened)
+UI/UX ROADMAP               — UPDATED (§4b + contradiction register + 2026-10-14 §D/§G amendments)
+CODE/ARCHITECTURE ROADMAP   — UPDATED (E6b S42–S64 + **S70–S74**, E7 S65–S69, R24–**R35**, M9–M11)
+IMPLEMENTATION              — IN FLIGHT (E7 complete on `main`; E6b part-merged — S60/S61/S70 among them; the closure's S72–S74 are PLANNED, no code)
+FIGMA                       — NOT STARTED (designs are HTML-first; see the pipeline note in AGENTS-linked docs)
 BATCH 2                     — NOT STARTED
 ```
 
@@ -1194,12 +1457,12 @@ the same 19-rank ladder, the same RD1–RD28 decision set **as amended 2026-10-0
 (RD6 narrowed, RD22 voice pulled from Unranked, RD28 opened to three `mode`
 values, RD29/RD30 added)**, the same `mode`-first
 critical path, and the same four-tier authority model. The code roadmap owns the
-*execution* view (S42–S64 + **S65–S69** + **S70–S71**, +388 h **+48 h +44 h**, R24–**R32**, M9–M11); the UI/UX roadmap owns the
+*execution* view (S42–S64 + **S65–S69** + **S70–S74**, +388 h **+48 h +44 h +64 h**, R24–**R35**, M9–M11); the UI/UX roadmap owns the
 *design* view (screens S45–S58, the Rank Chip and Tier Ladder components, the
 tier-token gaps, the design gates). **RD26's 19 thresholds are CLOSED in both,
 identically (2026-10-05); OPEN-1 and OPEN-2 remain open in both, identically, and
 both are non-blocking.** Neither document
-reopens a closed owner decision. **The GM amendment (GM1–GM8) is carried in both
+reopens a closed owner decision. **(Amended 2026-10-14 — OPEN-1 and OPEN-2 are now CLOSED by DEC-OPEN1-01 and DEC-OPEN2-01 in this document's roadmap-closure amendment; the two questions that remain open are OPEN-4 and OPEN-5, both introduced by that same amendment and both blocking only the stories they name.)** **The GM amendment (GM1–GM8) is carried in both
 identically, with A2 as the shared rule statement; the RD29/RD30 amendment is
 carried in both with A3 as the shared rule statement — and both agree that
 `mode` is `ROOM | RANKED | UNRANKED`, three values, with Rank-down a `RANKED`
@@ -1218,11 +1481,14 @@ configuration and Unranked a first-class mode that has no voice.** **OPEN-3 — 
 > against both calls. OPEN-3's *closure* stands; only the named call did not
 > survive contact with the compiler.
 
-With OPEN-3 closed, **no open item gates a Ranked story** — OPEN-1 and OPEN-2 remain open and non-blocking, and neither blocks E6b or E7.
+With OPEN-3 closed, **no open item gates a Ranked story** — OPEN-1 and OPEN-2 remain open and non-blocking, and neither blocks E6b or E7. **(Amended 2026-10-14: OPEN-1 and OPEN-2 are CLOSED — DEC-OPEN1-01 / DEC-OPEN2-01. The remaining OPEN-4 and OPEN-5 were introduced by the roadmap-closure amendment and gate only the pieces they name: OPEN-4 gates the RD31 result-writing inside S72 and the 2-Koz assertions of S63; OPEN-5 gates the WAIT half of S74. Neither gates a story already on the critical path.)**
 
 **The two small decisions the owner still owes, both on the Ranked critical path
 and both non-blocking for design work:** **OPEN-1** (reconnect after the
 15-timeout automatic removal) and **OPEN-2** (whether a Vote Kick pauses the
 match). Everything else is closed — **RD26's 19 thresholds are in**.
+**Amended 2026-10-14 (roadmap closure): both are now CLOSED — the two questions the owner still owes are
+OPEN-4 (what "2 Koz" records) and OPEN-5 (the disconnect vote's WAIT mechanics). See the 2026-10-14
+amendment block for the options; everything else listed there is decided.**
 
 Arabic translations are provided as a working baseline; **have a native speaker review them before submission** — the same standard the rest of the AR strings should meet.
