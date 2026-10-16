@@ -5,6 +5,7 @@ import com.estemshan.engine.BiddingPhase
 import com.estemshan.engine.Card
 import com.estemshan.engine.Dealer
 import com.estemshan.engine.EmitResult
+import com.estemshan.engine.InactivityClock
 import com.estemshan.engine.emit
 import kotlinx.coroutines.test.runTest
 import kotlin.js.json
@@ -50,6 +51,10 @@ class TimeoutResolutionTest {
 
   /** A server timestamp's epoch-millis; the deadline anchor. */
   private val anchorMillis = 1_000_000L
+
+  /** One round's worth of timed decisions: 52 cards plus the auction, the
+   *  confirmation and the four estimates. Past this the chain is looping. */
+  private val chainSteps = 80
 
   private fun gameState(round: Int): Map<String, Any?> =
     mapOf("initialized" to true, "dealtRound" to round)
@@ -316,6 +321,209 @@ class TimeoutResolutionTest {
     assertEquals(BiddingPhase.DASH, state.subPhase)
     val reemit = emit(state, BiddingIntent.DashCallDecision("p1", declared as Boolean))
     assertTrue(reemit is EmitResult.Applied || reemit is EmitResult.Completed)
+  }
+
+  /**
+   * S73 Stage 2 (RD19) — the resolver's own chain end to end, in memory.
+   *
+   * Every case above hands the resolver a document already sitting on one
+   * expired decision. RD19 needs something neither those cases nor the
+   * instrumented drive can assume: that a table where NOBODY plays is still
+   * owned, decision after decision, until the round is played out — because a
+   * seat's clock only charges for windows the resolver actually closes, and one
+   * round of them is what has to add up to the 50s threshold.
+   *
+   * This runs the callable's own two steps in a loop — detect, then resolve —
+   * feeding every write back into the document, and stops when detection finds
+   * nothing. Silence here is the bug it is looking for: a live, dealt,
+   * un-finished round whose detection returns null is a table no timeout can
+   * ever move again.
+   *
+   * What it found on its first run, and what the hand-closed flag asserts:
+   * detection goes silent after the AUCTION, at `biddingOpen == true` with the
+   * replayed bidding already DONE, because the estimate write's own
+   * `!allSubmitted` can never become false on a round with a Dash Caller (a
+   * Dash Caller has no estimate to submit, so its `bids` entry stays null for
+   * the rest of the round). Clearing that one flag is the only thing this test
+   * has to do by hand; with it, the resolver plays all 52 cards and every seat
+   * crosses RD19's threshold on its own. The flag itself is a separate finding
+   * — S73 changes no production behaviour.
+   */
+  @Test
+  fun theResolverOwnsEveryDecisionOfANormalRoundToTheLastCard() {
+    val hands = dealtHands()
+    var doc = normalRoundDoc(timerSeconds = 5)
+    val ignored = linkedMapOf<String, Int>()
+    val trace = mutableListOf<String>()
+    var stop: String? = null
+    var biddingClosedByHand = false
+
+    while (trace.size < chainSteps) {
+      val pending = TimeoutResolution.pendingDecision(doc)
+      if (pending == null) {
+        // One chance to continue, and only by fixing the flag the way a writer
+        // that knew the auction had closed would have fixed it. If the chain
+        // then runs to the 52nd card, detection's silence was the flag and
+        // nothing else.
+        val corrected = if (biddingClosedByHand) null else chainCloseBidding(doc)
+        if (corrected == null) {
+          stop = "detection found no timed decision while ${describeChain(doc)}"
+          break
+        }
+        biddingClosedByHand = true
+        trace += "CLOSE"
+        doc = corrected
+        continue
+      }
+      val resolution = TimeoutResolution.resolveExpired(doc, hands, pending)
+      if (resolution !is TimeoutResolution.Resolution.Applied) {
+        stop = "seat ${pending.seatId}'s ${pending.phase} decision was not applied: $resolution"
+        break
+      }
+      ignored[pending.seatId] = (ignored[pending.seatId] ?: 0) + pending.durationSeconds
+      trace += "${pending.seatId}/${pending.phase.name.first()}${pending.durationSeconds}"
+      doc = chainApply(doc, resolution.write.updates)
+    }
+
+    val cards = (doc["cardLog"] as? List<Any?>).orEmpty().size
+    assertTrue(
+      cards == 52,
+      "the chain did not play the round out: ${trace.size} steps ($trace), and it stopped because " +
+        "$stop",
+    )
+    assertTrue(
+      biddingClosedByHand,
+      "the round ran without any help from this test — so nothing here proves the stall is real",
+    )
+
+    val richest = ignored.maxByOrNull { it.value }
+    assertTrue(
+      richest != null && richest.value * 1_000L >= InactivityClock.TAKEOVER_THRESHOLD_MILLIS,
+      "one resolver-owned round charges a seat only $ignored seconds and RD19 needs " +
+        "${InactivityClock.TAKEOVER_THRESHOLD_MILLIS / 1_000} (decisions: $trace)",
+    )
+  }
+
+  /**
+   * The half of that finding the fix depends on: is the stale flag load-bearing
+   * anywhere *after* detection? Two copies of one stalled table run side by
+   * side — one with the flag cleared, which is the only way detection will ever
+   * look at its cards, and one that keeps the value a Dash-Caller round really
+   * carries — and every decision the chain produces is resolved against BOTH.
+   *
+   * Identical writes at all 52 cards, and two documents that differ in exactly
+   * one key at the end, is the proof that the resolver's reconstruction,
+   * legality, and write shapes are blind to `biddingOpen`. So making detection
+   * fall through to the cards when its own replay says the auction is DONE is
+   * sufficient by itself: nothing downstream, no client write shape, and no
+   * rules clause that pins that write shape has to move.
+   */
+  @Test
+  fun theStaleOpenFlagIsTheOnlyThingDetectionDependsOn() {
+    val hands = dealtHands()
+    var stale = normalRoundDoc(timerSeconds = 5)
+    var cleared = stale
+    val trace = mutableListOf<String>()
+    var stop: String? = null
+    var diverged = false
+
+    while (trace.size < chainSteps) {
+      val pending = TimeoutResolution.pendingDecision(cleared)
+      if (pending == null) {
+        val corrected = if (diverged) null else chainCloseBidding(cleared)
+        if (corrected == null) {
+          stop = "detection found no timed decision while ${describeChain(cleared)}"
+          break
+        }
+        // Only the copy detection reads gets the corrected flag; the other keeps
+        // the value the writer actually leaves on a Dash-Caller round.
+        diverged = true
+        cleared = corrected
+        trace += "CLOSE"
+        continue
+      }
+      val onStale = TimeoutResolution.resolveExpired(stale, hands, pending)
+      val onCleared = TimeoutResolution.resolveExpired(cleared, hands, pending)
+      if (onStale !is TimeoutResolution.Resolution.Applied ||
+        onCleared !is TimeoutResolution.Resolution.Applied
+      ) {
+        stop = "seat ${pending.seatId}'s ${pending.phase} decision was not applied on both copies: " +
+          "stale=$onStale cleared=$onCleared"
+        break
+      }
+      assertEquals(
+        onCleared.write.toString(),
+        onStale.write.toString(),
+        "the flag changed the decision for seat ${pending.seatId}'s ${pending.phase} turn ($trace)",
+      )
+      trace += "${pending.seatId}/${pending.phase.name.first()}${pending.durationSeconds}"
+      stale = chainApply(stale, onStale.write.updates)
+      cleared = chainApply(cleared, onCleared.write.updates)
+    }
+
+    assertTrue(
+      diverged,
+      "the two copies never diverged, so this test proved nothing about a stale flag",
+    )
+    val cardsOnStale = (stale["cardLog"] as? List<Any?>).orEmpty().size
+    val cardsOnCleared = (cleared["cardLog"] as? List<Any?>).orEmpty().size
+    assertTrue(
+      cardsOnStale == 52 && cardsOnCleared == 52,
+      "the round did not play out on both copies (stale=$cardsOnStale cleared=$cardsOnCleared, " +
+        "${trace.size} steps ($trace), stopped because $stop)",
+    )
+    val differs = (stale.keys + cleared.keys).distinct()
+      .filter { stale[it].toString() != cleared[it].toString() }
+    assertEquals(
+      listOf("biddingOpen"),
+      differs,
+      "one hand-cleared flag is the whole difference between a stalled table and a finished round",
+    )
+    assertTrue(stale["biddingOpen"] == true, "the copy that was never touched still reads open")
+  }
+
+  /** One write, applied the way Firestore would apply it to the document. */
+  private fun chainApply(doc: Map<String, Any?>, updates: Map<String, Any?>): Map<String, Any?> {
+    val next = doc.toMutableMap()
+    for ((key, value) in updates) {
+      next[key] = when (key) {
+        "biddingLog", "cardLog" -> (doc[key] as? List<Any?>).orEmpty() + arrayUnionEntries(value)
+        // serverTimestamp() carries no millis of its own in a double, and the
+        // chain's anchor deliberately does not move: every window it opens is
+        // therefore already expired when the next detection runs.
+        "updatedAt" -> anchorMillis
+        else -> value
+      }
+    }
+    return next
+  }
+
+  /**
+   * The document as it would read had the write that closed the auction also
+   * cleared `biddingOpen`. `!allSubmitted` cannot do it on a round with a Dash
+   * Caller: a Dash Caller never submits an estimate, so its `bids` entry stays
+   * null for the rest of the round even though the engine's own auction is
+   * already DONE. Null for every other silence, so the experiment below can
+   * only ever rescue the one case it is testing.
+   */
+  private fun chainCloseBidding(doc: Map<String, Any?>): Map<String, Any?>? {
+    if (doc["biddingOpen"] != true) return null
+    val replayed = TimeoutResolution.replayBidding(doc, order, 1) ?: return null
+    if (replayed.subPhase != BiddingPhase.DONE) return null
+    return doc.toMutableMap().apply { this["biddingOpen"] = false }
+  }
+
+  /** The document at the moment detection went silent, in exactly the fields
+   *  [TimeoutResolution.pendingDecision] branches on — which of its null
+   *  returns fired is the difference between "the round is over" and "nothing
+   *  can ever move this table again". */
+  private fun describeChain(doc: Map<String, Any?>): String {
+    val replayed = TimeoutResolution.replayBidding(doc, order, 1)
+    return "biddingLog=${(doc["biddingLog"] as? List<Any?>).orEmpty().size} " +
+      "cards=${(doc["cardLog"] as? List<Any?>).orEmpty().size} " +
+      "biddingOpen=${doc["biddingOpen"]} bids=${doc["bids"]} " +
+      "replayed=${replayed?.subPhase}/${replayed?.waitingFor} " +
+      "cardPhase=${doc["cardPhase"]} turn=${doc["turn"]}"
   }
 
   @Test
