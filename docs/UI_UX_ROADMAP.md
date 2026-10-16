@@ -62,6 +62,16 @@ Functions — planning only.**
 > disconnect vote's WAIT mechanics — gates the re-cut S41/S42 artboards and the
 > WAIT half of S74). Both block only the pieces they name. See the 2026-10-14
 > amendment block in §0.5.
+>
+> **Pointer (2026-10-16): the two questions named above are now BOTH CLOSED, and the 2-Koz
+> scope is corrected.** OPEN-4 = option (a), **+2 to the career Koz count** — no forced
+> last-place, no new result value, the bot seat separate from the player, **no penalty on a
+> return when allowed** — applying in `RANKED` **and** `UNRANKED`, while **`ROOM` carries no
+> 2-Koz rule at all**, and with **Vote Kick at 1 Koz**. OPEN-5 = **30-second vote over a live
+> table, agreement = 2 of 3, a winning WAIT pauses for 90 seconds, otherwise the configured
+> bot**. Authority: `docs/rules/CANONICAL_RULES.md` **Amendment A5**; the open-items list
+> (items 7–8) carries the matching pointer. The sentence above remains verbatim Batch-1/2026-10-14
+> history and is **not** current on its own terms.
 
 **A second owner amendment landed 2026-10-06: Game Type & Calculation Mode
 (GM1–GM8).** Two selectable match options — **Game Type** (Full / Mini) and
@@ -543,6 +553,17 @@ existed in the product**.
 **The S41/S42 disconnect artboards must be re-cut to the 30-second vote before
 S74 is implemented; S72 has no artboard yet and needs one (Leave Match
 confirmation + the departing player's seat state).**
+
+> **Pointer (2026-10-16) — the re-cut is now fully specified, and its new element is the
+> 90-second WAIT.** OPEN-5 is closed, so the panel must draw **one question, two outcomes, one
+> 30-second timer, and a bounded 90-second paused state**: the vote runs over a **live table with
+> no pause while the ballot is open** (the panel must not freeze the table — OPEN-2 still binds),
+> **agreement is 2 of 3**, a **winning WAIT pauses the match for 90 seconds** with the bound
+> visible, and **no agreement resumes with the configured bot**. **`ROOM` tables draw no 2-Koz
+> result anywhere** and the **Unranked** permanent-replacement outcome charges **2 Koz**
+> (`CANONICAL_RULES.md` A5.1). The paused state is the element the 2026-10-14 note could not
+> specify and is the reason the re-cut is a **design step, not an implementation permission** —
+> S41/S42 are re-cut before S74 is built.
 
 **Two of the owner's answers are process decisions that bind this document too.**
 **DEC-S61-01:** the shipped timeout story (S61, PR #107, merged 2026-10-14) stays
@@ -2454,6 +2475,31 @@ What remains is:
    disconnected player is permanently replaced (and RD31 fires). **Gates the
    re-cut S41/S42 artboards and the WAIT half of S74.**
 
+> **Pointer — items 7 and 8 are CLOSED (owner ruling 2026-10-16; the list above is left
+> verbatim).** Both questions this list carried as open are answered, and the answers **correct
+> the mode scope** the 2026-10-14 wave wrote too broadly. Authority:
+> `docs/rules/CANONICAL_RULES.md` **Amendment A5** — read A5.1's charge table, not item 7's
+> alternatives.
+>
+> - **Item 7 / OPEN-4 — CLOSED on option (a): +2 to the career Koz count.** **No** forced
+>   last-place (b) and **no** distinct "2 Koz" result value (c): a departure moves one counter and
+>   displaces nobody, so **the Profile result row and S40's success state need no new
+>   representation**. **Scope:** `RANKED` **and** `UNRANKED` — **`ROOM` has no 2-Koz rule at all.**
+>   Explicit leave and the 15-timeout removal charge **2** in Ranked and Unranked and **nothing**
+>   in a Room; a passed **Vote Kick records 1 Koz** (RD18's original wording restored); a
+>   permanently-replaced **Unranked** disconnect charges **2**, a **Room** one charges **nothing**;
+>   a **return when allowed charges nothing**. The gates item 7 named — the S72 confirmation
+>   sheet's result recording, S40's success state, D10's Profile statistics row — are released,
+>   subject to **A5.3.3**'s Unranked-counter caveat.
+> - **Item 8 / OPEN-5 — CLOSED.** **30-second vote over a live table, no pause while the ballot is
+>   open** (OPEN-2 stands and is not reopened); **agreement = majority = 2 of 3**; **a winning
+>   WAIT pauses the match for a bounded 90 seconds**; **no agreement resumes with the configured
+>   bot**. The three items listed above as undecided are decided, and the "**no threshold may be
+>   invented**" hold is now spent.
+>
+> **Nothing above is rewritten** — pointer notes only, per the project's amendment convention.
+> Where this list and A5 disagree, **A5 governs**.
+
 ---
 ---
 
@@ -2544,13 +2590,22 @@ Type scale (from `EstemshanTypography`, to be set as Figma text styles):
 | `bodyMedium` | Saira 14 / 19 | `inkDim` |
 | `labelLarge` | Spline Sans Mono 13 / 17 | `inkDim` |
 
+**Canvas orientation rule (D10, owner amendment 2026-10-10): every screen is LANDSCAPE-ONLY.**
+All artboards are authored against the fixed **932×430 mobile-landscape** frame — the same frame every
+existing screen and HTML artboard already uses, and the same frame the Compose UI targets. **There is no
+portrait screen in the product.** A brief or artboard that specifies a portrait frame (e.g. "390×844" or
+"390 dp-wide") is non-compliant and is re-cut at 932×430. This applies to every artboard in §4.3–§4.5.
+
 **Mobile scaling note for the designer:** the web reference sets very small mono
 sizes (8.5–13 px) because it renders inside a fixed desktop stage. **The Figma
-file targets a phone, so these must be re-scaled for a ~390–430 dp canvas and
+file targets a phone, so these must be re-scaled for the ~430 dp short edge and
 re-audited for contrast and legibility** — the values above are the *systematic*
 scale; the web pixels are the *reference proportions*, not the mobile sizes. The
 minimum body size on mobile should be ≥ 14 dp, and the minimum for any text the
 player must read to play (bid values, timer digits, tally counts) is ≥ 16 dp.
+(The "~390–430 dp" figure in earlier drafts of this note was a **type-scaling**
+range, not a portrait canvas width — it is the landscape short edge. D10 closes
+that reading off.)
 
 ### 4.1.3 Shape, elevation, motion
 

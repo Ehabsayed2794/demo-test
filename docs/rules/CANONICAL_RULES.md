@@ -330,6 +330,15 @@ When a player's **participation in a match ends permanently**, that player's ind
 - **OPEN-4 is pending, and it is purely about the bookkeeping** — whether "2 Koz" means **+2 to the career Koz count**, a **forced last-place placement plus the double count**, or a **distinct result value** that the nine-statistics accounting and S50 settlement must model; and whether the departed player is forced below every continuing player even when the bot left in their seat did better than last. **The trigger and the intent are decided; the record is not.** Until the owner answers: no implementation may displace another player's placement, and no screen may state the form.
 - **Its interaction with A3.5 is flagged, not resolved**: `UNRANKED` records no progression of any kind, so a 2-Koz *statistic* has nowhere to land in that mode even though the trigger fires there. This is a sub-case of OPEN-4, not a new rule.
 
+> **Pointer (owner ruling 2026-10-16 — Amendment A5; the A4.1 text above is left verbatim as
+> history).** A4.1 is superseded in three respects, and A5.1 governs: (1) **OPEN-4 is CLOSED**
+> on option (a) — "**+2 to the career Koz count**"; options (b) and (c) are **rejected**. (2)
+> **`ROOM` is excluded from the 2-Koz rule entirely** — "in all three match types" no longer
+> holds; the rule is `RANKED` + `UNRANKED` only. (3) **A passed Vote Kick records 1 Koz, not 2**,
+> restoring RD18's wording; the doubling is repealed for that path alone.
+> **A4.1's borrowed-seat discriminator and "no displacement of a continuing player" both stand
+> unchanged** — they are the basis for A5.1's "return when allowed = no penalty" line.
+
 ### A4.2 Who plays a vacated seat, and with which bot
 
 | Path | Bot profile | Timeout counter | Seat returns | RD31 |
@@ -359,6 +368,107 @@ When a player's **participation in a match ends permanently**, that player's ind
 - **The disconnect question is put to `ROOM` and `UNRANKED` tables only** (DEC-DISC-01): `mode ∈ {ROOM, UNRANKED}`. **Vote Kick stays Ranked-only**, and the two share no state, no UI and no countdown. On a dropped connection the table is asked **one question** with a **30-second window**; if nobody agrees within 30 s, the match continues with the **Create-Game-configured bot**. D9's "pause the match" branch is **superseded**; what survives of D9 is the invariant that **a wait is always bounded, never indefinite**.
 - **OPEN-5 stays open because the answers do not settle it**: (i) how many answers constitute agreement, (ii) what the table does when they agree to **wait** — D9's pause being gone, the WAIT outcome and its duration are undefined — and (iii) what makes a replacement **permanent**, and whether RD31 fires at that moment. S74's WAIT half and the S41/S42 artboards that draw it are gated on this. **No threshold may be invented and none may be drawn or specified as if it were current.**
 
+> **Pointer (owner ruling 2026-10-16 — Amendment A5; the bullets above are left verbatim as
+> history).** The last bullet above is superseded: **OPEN-5 is CLOSED** — agreement is
+> **2 of 3**, a winning **WAIT** pauses the match for a **bounded 90 seconds**, and no agreement
+> inside the 30-second window resumes with the **configured bot** (that half was already
+> DEC-DISC-01 and is unchanged). **A4.4's OPEN-2 closure still binds and is not reopened**: the
+> vote runs over a **live table with no pause while the ballot is open**; the 90-second pause
+> begins only *after* a WAIT verdict. **OPEN-1 and OPEN-2 stay closed.** See A5.2.
+
 ### A4.5 What this amendment does not change
 
 Every rule in §§1–5 — the deal, the auction, both Game Types, both Calculation Modes, all scoring tables, Sa'ayda, extensions, every win condition —, Amendments A1, A2 and A3 in full (including A3.5's mode table; see the pointer there), the RP engine and its thresholds, the tier ladder, placement mechanics, seasons, the leaderboard, Solo Auto-Match (RD9), the 2 s bot pace, and every timer value in RD21. **No rule number in this document changes and no scoring or ranking formula is modified** — RD31 is a result-recording rule, and the mechanics it reports on are exactly the ones already written above.
+
+---
+
+## Amendment A5 — OPEN-4 and OPEN-5 closed by the owner, and RD31's mode scope corrected (owner ruling 2026-10-16)
+
+> **Provenance:** owner ruling relayed **2026-10-16**. It closes the two questions A4 named as
+> open (A4.1's bookkeeping, A4.4's third bullet) and **narrows the mode scope A4 wrote too
+> broadly**. **Scope correction, stated once and governing everywhere below:** the 2-Koz rule
+> applies in **`RANKED` and `UNRANKED`**; **`ROOM` (normal rooms) has no 2-Koz rule at all.**
+> A5 changes no gameplay mechanic — like A4, it is about what a match *records* and when the
+> disconnect vote may pause. The owner's own wording is still **not captured** in any document
+> (see `docs/decisions/2026-10-16-open4-open5-owner-closure.md` §0).
+
+### A5.1 OPEN-4 — CLOSED: option (a), +2 to the career Koz count
+
+**"2 Koz" is a counter increment — not a placement, and not a new result value.**
+
+- **+2 to the player's career Koz count** — the first option A4.1 enumerated.
+- **Option (b) rejected: no forced last-place.** A departure never positions the player below a
+  continuing player, and never displaces a continuing player's placement.
+- **Option (c) rejected: no distinct "2 Koz" result value.** The nine-statistics accounting and
+  the S50 settlement gain **no new enum**, and no result row changes shape.
+- **The bot seat remains separate from the player.** The bot's play in a vacated seat is not the
+  departed player's placement and is not attributed to them.
+- **Return when allowed = no penalty.** An RD19 reclaim (path C) and a return while the table
+  still waits (path D before permanence) charge nothing. This is A4.1's borrowed-seat
+  discriminator applied, not a new exception.
+
+**The charge table (corrected scope — this table governs over A4.1's fires-on list and A4.2's
+"RD31" column):**
+
+| Departure | `RANKED` | `UNRANKED` | `ROOM` |
+|---|---|---|---|
+| **Explicit Leave Match** (S72) | **2 Koz** | **2 Koz** | **no 2-Koz rule** |
+| **15-timeout** automatic removal (RD20, OPEN-1) | **2 Koz** | **2 Koz** | **no 2-Koz rule** |
+| **Vote Kick** passed (RD18, S63) | **1 Koz** | n/a — Ranked-only | n/a — Ranked-only |
+| **Disconnect** permanently replaced (S74) | n/a — the vote is not held in Ranked | **2 Koz** | **no Koz** |
+| Reclaim / return while the table waits | **no penalty** | **no penalty** | **no penalty** |
+
+- **Vote Kick records 1 Koz, final.** This restores RD18's "recorded as **Koz**" and repeals
+  RD31's doubling **for that path only**; RD31 still doubles the departure paths above.
+- **`ROOM` is out of RD31 entirely.** Neither an explicit leave nor a 15-timeout removal in a
+  normal room charges anything under this rule, and a Room disconnect replacement charges
+  nothing — see A5.3.1.
+
+### A5.2 OPEN-5 — CLOSED: the disconnect vote's three mechanics
+
+- **Window: 30 seconds**, put to the table **while play continues**. No pause while the ballot is
+  open — A4.4's OPEN-2 closure binds both votes and is **not** reopened here.
+- **Agreement threshold: majority = 2 of 3** answers.
+- **A winning WAIT: the match pauses for 90 seconds.** Bounded, never indefinite — the single D9
+  invariant A4.4 preserved. The pause begins **after** the verdict, never during the vote.
+- **No agreement inside 30 s: continue with the configured bot** (DEC-DISC-01, unchanged).
+- **Permanent replacement:** in `UNRANKED` it records **2 Koz** (A5.1); in `ROOM` it records
+  **nothing under RD31**. In `RANKED` the question is not asked at all.
+- **Still shared by all three modes:** the 15-timeout removal itself (RD20/A4.2) — A5 removes its
+  *record* in `ROOM`, not the removal.
+
+### A5.3 Flagged, not silently resolved
+
+1. **`ROOM` exclusion contradicts A4.1's blanket wording, which stays on the page verbatim.**
+   "**regardless of why they left, and in all three match types**" (A4.1) and A4.1's path-D
+   `ROOM` case are superseded by A5.1's table under the pointer-note convention. A reader who
+   stops above A5 will still see the old claim; the pointers at A4.1 and A4.4 are the guard.
+2. **Vote Kick 1 Koz contradicts A4.1's fires-on bullet ("a passed Vote Kick … 2 Koz") and
+   A4.2's path-E "RD31: yes".** Left verbatim; A5.1 governs. This is a **repeal of the doubling
+   for that path**, not of RD31.
+3. **`UNRANKED` charges meet A3.5's "no progression of any kind."** A5.1 now applies the 2-Koz
+   rule in `UNRANKED`, while A3.5 and RD28 state that Unranked accumulates **no Ranked
+   statistics** — the very sub-case A4.1 flagged and called "a sub-case of OPEN-4". A5.1 depends
+   on the reading that **the career Koz counter is a plain departure counter, not Ranked
+   progression** (it moves no tier and no RP). That reading is **not yet written into A3.5**, so
+   implementers must treat it as **owner-ruled but textually unratified** until A3.5 carries its
+   own pointer. If the owner intends Unranked to charge nothing, A5.1's `UNRANKED` column is the
+   line that is wrong.
+4. **The 90-second WAIT pause must not be read as re-opening OPEN-2.** OPEN-2 forbids pausing
+   *while a Vote Kick ballot is open*; A5.2 pauses *after* a disconnect-vote WAIT verdict. The
+   two are compatible only under that reading, and it is recorded here rather than assumed.
+5. **`docs/decisions/2026-10-16-open4-open5-owner-closure.md` predates this scope correction** —
+   it wrote "2 Koz, `RANKED` only" and "no Koz for a Room **or Unranked** replacement". Both are
+   superseded by A5.1. **It was not edited here** (out of scope) and must be corrected before
+   anyone reads it as current.
+
+### A5.4 What A5 does not change
+
+Every gameplay rule in §§1–5 and Amendments A1–A4: the deal, the auction, both Game Types, both
+Calculation Modes, all scoring tables, Sa'ayda, extensions, every win condition, the RP engine
+and its thresholds, the tier ladder, placement mechanics, seasons, the leaderboard, Solo
+Auto-Match (RD9), the 2 s bot pace, every RD21 timer, RD19's decision-point clock and
+trick-bounded reclaim, the five-path taxonomy, MEDIUM's pin to path A, the private cumulative
+timeout counter, the Vote Kick's Ranked-only availability and no-rejoin permanence, and the frozen
+Firestore rules. **A5 changes only what a match records, in which modes it records it, and when
+the disconnect table may pause for a bounded 90 seconds.**

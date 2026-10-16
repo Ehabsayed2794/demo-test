@@ -164,7 +164,17 @@ The full design narrative, the contradiction register, and the per-screen UI imp
   > supplies it). No match-pause behaviour is introduced. S63's test plan line for the frozen
   > target is amended in place.
 - **OPEN-4** **What, precisely, does "2 Koz" record?** (opened 2026-10-14 by the 2-Koz departure rule RD31). The event (permanent departure) and the intent (a last-place-equivalent result at double weight) are decided; the **bookkeeping** is not — +2 to the career Koz count, a forced last-place placement plus the double count, or a distinct "2 Koz" result value the 9-stat accounting and S50 settlement must model. **Blocks the RD31-carrying parts of S72, S63, and the 9-stat accounting. Options and context in the 2026-10-14 amendment.**
+  > **CLOSED 2026-10-16 — option (a): +2 to the career Koz count. Options (b) and (c) rejected.**
+  > No forced last-place placement; the bot seat's play never becomes the departed player's
+  > placement; a return while the seat is still reclaimable carries no penalty. Charge scope as
+  > ruled: **2 Koz (`RANKED` only)** for explicit leave and the 15-timeout removal; **Vote Kick
+  > 1 Koz final**; **no Koz** for a `ROOM`/`UNRANKED` disconnect. See the 2026-10-16 owner-closure
+  > amendment below.
 - **OPEN-5** **The disconnect vote's three mechanics** (opened 2026-10-14 by DEC-DISC-01). The 30-second voting window and the configured-bot default on no agreement are decided; **the agreement threshold, what a WAIT does now that D8/D9's pause mechanics are superseded, and the condition for permanent replacement (RD31) are not.** Blocks the WAIT half of S74. Options and context in the 2026-10-14 amendment.
+  > **CLOSED 2026-10-16 — all three mechanics ruled.** The vote runs **30 s over a live table**
+  > (no pause while the vote is open); agreement = majority = **2 of 3**; a winning WAIT pauses
+  > the match for a bounded **90 s**; no agreement in 30 s continues with the configured bot. See
+  > the 2026-10-16 owner-closure amendment below.
 
 ---
 
@@ -610,6 +620,35 @@ Two new stories, added to **E6b** (they extend the Ranked ruleset and the room f
 - **R34** **Half of S74 cannot be built yet.** DEC-DISC-01 fixed the CONTINUE-with-bot default and the 30-second window, and deliberately left the WAIT half open (OPEN-5: agreement threshold, what a WAIT does now that D9's pause mechanics are superseded, and the permanent-replacement condition). *Mitigation:* S74 is sized on the decided half and may **split** — the disconnect detection + immediate configured-bot takeover + 30-second vote + no-agreement default land first, and the WAIT semantics land as an amendment once OPEN-5 is answered. Do not build WAIT behavior speculatively.
 - **R35** **OPEN-4/OPEN-5 can grow S72 and S74.** The three new stories are estimated against the scope the eleven decisions actually fixed. If the "2 Koz" bookkeeping (OPEN-4) turns out to require a distinct result value that S50 settlement must consume, S72 grows; if the WAIT mechanics (OPEN-5) require a pause state, S74 grows. *Mitigation:* neither answer is guessed, and the 2026-10-14 arithmetic note states that a scope growth re-estimates the affected story and amends the note rather than being absorbed into contingency. R35 is named so the contingency is not silently spent on it.
 
+> **R34/R35 — 2026-10-16 pointer (rows left verbatim).** Both gating questions are CLOSED — see
+> the 2026-10-16 owner-closure amendment below. R34: the WAIT half of **S74** is unblocked
+> (threshold **2 of 3**; a winning WAIT is a bounded **90 s** pause; no pause exists while the
+> vote is open), and S74 may still **split** per its own row. R35: OPEN-4 resolved as **option
+> (a)** — the smallest bookkeeping branch, no distinct result value, so no S50 settlement
+> consequence; any scope change still follows the 2026-10-14 arithmetic note (re-estimate the
+> affected story, never absorb silently).
+
+---
+
+## Owner amendment of record (2026-10-10): Landscape-only UI
+
+**D10 — Every screen is landscape-only.** All user-facing UI is authored against the fixed
+**932×430 mobile-landscape** frame. **There is no portrait screen in the product** — not in the HTML
+artboards, not in the native Compose UI. This carries the same standing as D1–D4, RD1–RD28, and
+GM1–GM8.
+
+**Why this needs recording:** the convention was already de facto — `docs/reviews/Gameplay_Render_Layer_Implementation_Plan.md`
+calls 932×430 "the exact frame every current screen, including `match/index.html`, already uses" — but it
+was **not stated anywhere a designer or agent reads it**: this plan and `docs/UI_UX_ROADMAP.md` had no
+orientation entry, and the roadmap's only canvas note (`§4.1.2`) speaks of a "~390–430 dp canvas", which
+is a **type-scaling** note (web px → mobile dp), not an orientation statement. A brief that paired "390
+dp-wide mobile frame" with "same canvas convention as the matchmaking reference" was therefore
+self-contradictory, and produced the only portrait artboard in the set (S45, delivered 390×844).
+
+**Scope impact:** any artboard or Compose screen delivered in portrait is non-compliant and is re-cut at
+932×430. S45 is the one artboard affected today; it must be re-cut before implementation. The design view
+lives in `docs/UI_UX_ROADMAP.md` `§4.1.2`.
+
 ---
 
 ## Owner amendment of record (2026-10-14): Roadmap closure — seat vacancy & departure rules
@@ -789,6 +828,72 @@ unspecified.
    that trigger RD31? (e.g. after the first WAIT expires, after N WAITs, or never during the
    match.) Nothing in D8/D9 or the 2026-10-14 decisions determines these; they are asked rather
    than guessed.
+
+---
+
+## Owner amendment of record (2026-10-16): OPEN-4 / OPEN-5 owner closure
+
+**Documentation-only. No Kotlin, no Firestore rules, no UI, no Cloud Functions have been
+changed by this amendment.** The owner ruled both questions that the 2026-10-14 amendment left
+open; the rulings are recorded here as instructions, with the full record in
+`docs/decisions/2026-10-16-open4-open5-owner-closure.md` (rulings §1–§2, conflicts C1–C4 flagged
+against `7dece9c`, and §0's integrity note that the owner's Arabic wording was not captured —
+the ruling is recorded as relayed in English). Per the pointer-note convention, no superseded
+text above is rewritten; the affected lines (OPEN-4/OPEN-5 entries, the S72/S74 story rows, and
+R34/R35) carry pointer notes to this block.
+
+### OPEN-4 — CLOSED on option (a); options (b) and (c) rejected
+
+**"2 Koz" means +2 to the career Koz count — nothing else.** Option **(b)** (a forced last-place
+placement plus the double count) and option **(c)** (a distinct "2 Koz" result value for the
+9-stat accounting and S50 settlement) are **explicitly rejected**.
+
+- **No forced placement.** The departed player is **not** displaced below every continuing player,
+  and no continuing player's placement moves to make a last-place reading come true. RD31's
+  "conflict flagged, not resolved" is now resolved as: **never displace**.
+- **The bot seat is separate from the player.** The bot's play produces the seat's own record; it
+  never becomes the departed player's placement and is never double-counted into it.
+- **Charge table (as ruled 2026-10-16):**
+
+| Path | Koz charge |
+|---|---|
+| Explicit Leave Match | **2 Koz** — `RANKED` + `UNRANKED`; `ROOM` excluded |
+| 15-timeout automatic removal | **2 Koz** — `RANKED` + `UNRANKED`; `ROOM` excluded |
+| Vote Kick | **1 Koz final** — supersedes the RD31 doubling for this path (restores RD18's original "recorded as Koz"; conflict C1) |
+| Disconnect — `UNRANKED` | **2 Koz** — on permanent replacement (conflict C3) |
+| Disconnect — `ROOM` | **no Koz** — no 2-Koz rule in `ROOM` |
+| Return when allowed (seat still reclaimable) | **no penalty** (a borrowal is not a departure) |
+
+- **9-stat accounting:** the match contributes **+2 to the career Koz count** (Koz % denominator
+  +1, Games Played +1 — option (a)); **no new result value** is modelled. The A3.5 `UNRANKED`
+  sub-case is resolved: an `UNRANKED` disconnect carries the 2-Koz charge (C4).
+
+### OPEN-5 — CLOSED (all three mechanics ruled)
+
+- **The vote runs 30 seconds over a live table** — **no pause while the vote is open**; OPEN-2's
+  rule is unchanged and still binds both votes (see C2 for the precise reading).
+- **Agreement threshold = majority = 2 of 3** of the remaining eligible humans.
+- **A winning WAIT pauses the match for a bounded 90 seconds** — the only pause in this flow, and
+  it happens **after** the verdict; D9's surviving invariant holds: *a wait is always bounded,
+  never indefinite*.
+- **No agreement within 30 s → continue with the configured bot** (DEC-RD21-01's profile —
+  unchanged).
+- **`ROOM`: no 2 Koz on permanent replacement; `UNRANKED` disconnect carries 2 Koz.**
+
+### Effect on the stories and risks — pointer edits
+
+- **S72** — its "**Depends on OPEN-4**" line is resolved: the RD31 result-writing proceeds on
+  option (a)'s bookkeeping (career count only). Row text left unchanged.
+- **S63** — the departure assertion is **1 Koz** for Vote Kick (per the charge table), not the
+  2 Koz the 2026-10-14 amendment's RD18 pointer line carries.
+- **S74** — its "**Depends on OPEN-5 for the WAIT half**" line is resolved: threshold 2-of-3,
+  then a bounded 90 s pause; **S74 may still split** into its own story per its row and R34. Row
+  text left unchanged.
+- **R34** — amended by pointer: the WAIT half of S74 is buildable; "cannot be built yet" no
+  longer holds. **R35** — amended by pointer: OPEN-4's answer is the smallest-bookkeeping branch
+  (no distinct result value), so the named S50 consequence did not materialise; any scope growth
+  is still handled per the 2026-10-14 arithmetic note (re-estimate the affected story, never
+  absorb silently).
 
 ---
 
@@ -1068,6 +1173,13 @@ Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.
 | **R34** | **Half of S74 cannot be built yet (2026-10-14).** DEC-DISC-01 fixed the CONTINUE-with-bot default and the 30-second window and deliberately left the WAIT half open (OPEN-5: agreement threshold, what a WAIT does now that D9's pause mechanics are superseded, and the permanent-replacement condition) | S74 stalls at implementation, or a developer invents WAIT behaviour the owner did not approve | S74 is sized on the decided half and may **split**: disconnect detection + immediate configured-bot takeover + the 30-second vote + the no-agreement default land first; WAIT semantics land as an amendment once OPEN-5 is answered. Do not build WAIT behaviour speculatively |
 | **R35** | **OPEN-4/OPEN-5 can grow S72 and S74 (2026-10-14).** The three new stories are estimated against the scope the eleven decisions actually fixed; the 2-Koz bookkeeping (OPEN-4) may demand a distinct result value S50 settlement consumes, and the WAIT mechanics (OPEN-5) may demand a pause state | Contingency is silently spent on scope growth rather than on bugs | Neither answer is guessed. The 2026-10-14 arithmetic note states that a scope growth **re-estimates the affected story and amends the note** rather than being absorbed; this row exists so the contingency budget is not spent on it without being noticed |
 
+> **R34/R35 — 2026-10-16 pointer.** OPEN-4 is CLOSED as **option (a)** (career Koz count +2;
+> no forced placement; the bot seat is separate from the player; Vote Kick **1 Koz final**; no
+> Koz for a `ROOM`/`UNRANKED` disconnect; no penalty on an allowed return) and OPEN-5 is CLOSED
+> (30 s live vote; majority **2 of 3**; a winning WAIT is a bounded **90 s** pause; no agreement
+> defaults to the configured bot). See the 2026-10-16 owner-closure amendment earlier in this
+> document. Both rows above are left verbatim.
+
 ---
 
 # 7. Milestones
@@ -1259,6 +1371,15 @@ One epic per phase; stories sized in hours; `S/M/L` from §2. Critical path mark
 > **After the 2026-10-06 RD29/RD30 amendment:** the 2 new **E6b** stories (S70 at 14h, S71 at 26h, plus a 4h documents row) sum to exactly **44h**, matching the amendment block's §F9 feature line with zero drift. E6b becomes **432h** (388 + 44). The table now carries 880 + 44 = **924h** non-voice stories plus **170h** voice = **1,094h** of stories; PM (40) and 15% contingency (**169**, on the new pre-contingency total of 1,124) land the table at **1,303**, against the §9 headline of **1,293** — the same 10h story-vs-feature drift, unchanged in kind and size. **The critical path does not extend**: S70 depends only on S42/S44, and S71 reuses the S56 search-lifecycle shape, so both run parallel to the Ranked core.
 >
 > **After the 2026-10-14 roadmap-closure amendment:** the 3 new **E6b** stories (**S72** at 18h, **S73** at 20h, **S74** at 26h) sum to **64h**. E6b becomes **496h** (432 + 64). The table now carries 924 + 64 = **988h** non-voice stories plus **170h** voice = **1,158h** of stories; PM (40) and 15% contingency (**179**, on the new pre-contingency total of 1,124 + 64 = 1,188) land the table at **1,377**. **The estimates are sized on the decided scope only:** S72's RD31 result-writing waits on OPEN-4, and S74's WAIT half waits on OPEN-5 — if either answer grows the scope, the affected story is re-estimated and this note is amended, not silently absorbed. **Design before code still applies:** S72 has no artboard yet, and S74 supersedes the S41/S42 artboards, which must be re-cut to the 30-second vote before implementation.
+>
+> **2026-10-16 owner closure — pointer (S72/S74 dependency lines resolved; rows left unchanged).**
+> OPEN-4 and OPEN-5 are CLOSED (see the 2026-10-16 owner-closure amendment earlier in this
+> document). S72's "**Depends on OPEN-4**" and S74's "**Depends on OPEN-5 for the WAIT half**"
+> are both resolved: S72 records the departure as **+2 to the career Koz count only** (no forced
+> placement; the bot seat is separate), and S74's WAIT half is buildable — threshold **2 of 3**,
+> a winning WAIT pauses a bounded **90 s**, and no agreement in 30 s continues with the
+> configured bot. S74 may still split per its row; the estimates above are unchanged by this
+> closure — if implementation proves scope growth, R35's re-estimation rule applies.
 >
 > **Rank-King vs Match-King, once, because it is the single easiest thing to get wrong in this amendment:** Rank King is the account's competitive ceiling (19th rung, no divisions). Match King is whoever finishes first in one match. Koz is the unique current last place in one match — not a rank at all. The `#E8A33D` gold colour in the design tokens belongs to the **Match-King badge**; the **Gold tier** must not reuse it, or "Gold" collapses into "King" in the UI.
 >
