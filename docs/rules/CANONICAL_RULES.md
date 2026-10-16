@@ -307,6 +307,58 @@ An Unranked match is a **normal match type**, reached either by choosing it on t
 - **The disconnect vote and pause are available in Unranked**, as in a Room.
 - **The automatic 15-timeout removal is shared by all three modes** — it is not Vote Kick and shares no state with it.
 
+> **Pointer (owner decision DEC-DISC-01, 2026-10-14; the text above is left unchanged).** The row above is labelled "Disconnect vote + pause" and the bullet above it says the same. **The vote is exactly as stated and stays available in `ROOM` and `UNRANKED` and not in `RANKED`; the "pause" half of both lines is superseded** — a disconnected player's seat is answered by a bounded 30-second question while play continues, and no match pauses. See Amendment A4.4. Nothing else in A3 changes: A3.5's mode table, its "no progression of any kind" rule and its Voice/15-timeout rows all stand verbatim.
+
 ### A3.6 What this amendment does not change
 
 Solo Auto-Match (RD9), the tier ladder (19 ranks), the RP engine and its thresholds, mixed-tier asymmetry (RD5) and the ×2 private loss cap (both surviving, scoped to public matchmaking and within-one-tier Rank-down matches), placement mechanics where chosen, seasons, the leaderboard, the rules of §§1–5, and Amendment A2 in full. **Amendment A1 and A2 are untouched, and no rule number in the document above changes** — Unranked is a match type, not a ruleset.
+
+---
+
+## Amendment A4 — Match result on departure, and who plays a vacated seat (owner decisions 2026-10-14)
+
+> **Provenance:** owner decision set **DEC-S61-01, DEC-RD19-01/02/03/04/05, DEC-RD21-01/02, DEC-OPEN1-01, DEC-OPEN2-01, DEC-DISC-01** (2026-10-14), recorded in `docs/NATIVE_V1_PLAN_AND_ESTIMATE.md` (RD31, stories S72–S74, risks R33–R35, M11) and designed in `docs/UI_UX_ROADMAP.md` (§0.5, §1.2-H, §1.3, §2.2, §4.4.2, §4.6, §4.7, §4b.16–§4b.17). **This amendment changes no gameplay rule above.** It settles *what a match records when a player's participation ends* and *who plays a seat its owner has left*, and it names the two details the owner explicitly left open (A4.1, A4.4).
+
+### A4.1 RD31 — a permanent departure records 2 Koz as that player's match result
+
+When a player's **participation in a match ends permanently**, that player's individual match result is **2 Koz** — regardless of why they left, and in all three match types.
+
+- **It fires on**: an explicit **Leave Match** (path B, story S72); a passed **Vote Kick** (path E, S63); the automatic **15-timeout removal** (path A's terminal case, all three modes, OPEN-1 CLOSED); and a **disconnect** whose seat is **permanently replaced** (path D's terminal case, `ROOM`/`UNRANKED`).
+- **It never fires on a borrowed seat.** A temporary takeover that still has a reclaim path is **not** a departure: an RD19 inactivity takeover (path C, S73) or a disconnect takeover while the table is still waiting (S74). The seat returns to its owner, that player's result is decided by actual play at match end, and **RD31 does not fire**. This is the discriminator, and it is the whole reason the five paths must stay distinguishable: *did participation end, or was the seat borrowed?*
+- **Koz is a placement, not a score.** RD31 writes no scoring formula and changes none — §4/§5's tables, Sa'ayda, extensions, both Game Types and both Calculation Modes are untouched, and the RP engine (S47) takes its inputs as before. What RD31 changes is only the *result recorded for the departed player*.
+- **Continuing players are settled from corrected scores exactly as they always have been** (RD20/S61). Nothing in this amendment displaces a continuing player's placement.
+- **OPEN-4 is pending, and it is purely about the bookkeeping** — whether "2 Koz" means **+2 to the career Koz count**, a **forced last-place placement plus the double count**, or a **distinct result value** that the nine-statistics accounting and S50 settlement must model; and whether the departed player is forced below every continuing player even when the bot left in their seat did better than last. **The trigger and the intent are decided; the record is not.** Until the owner answers: no implementation may displace another player's placement, and no screen may state the form.
+- **Its interaction with A3.5 is flagged, not resolved**: `UNRANKED` records no progression of any kind, so a 2-Koz *statistic* has nowhere to land in that mode even though the trigger fires there. This is a sub-case of OPEN-4, not a new rule.
+
+### A4.2 Who plays a vacated seat, and with which bot
+
+| Path | Bot profile | Timeout counter | Seat returns | RD31 |
+|---|---|---|---|---|
+| A — ordinary decision timeout | **MEDIUM** (pinned, RD20/S61) | **+1 per timeout; the 15th removes the player** | no | on the 15-timeout removal only |
+| B — explicit Leave Match (S72) | the match's **configured bot** (the Create-Game choice) | no | no | **yes** |
+| C — RD19 inactivity (S73) | the match's **configured bot** | **not incremented** | **yes** — after the current trick, at the next decision point | **no** |
+| D — disconnect (S74) | the match's **configured bot** (DEC-RD21-01) | no | **yes**, while the table is still waiting | on permanent replacement only |
+| E — Vote Kick (S63) | the match's **configured bot** (`botSeats`) | no | no | **yes** |
+
+- **MEDIUM stays pinned to path A alone.** It is the timeout bot and nothing else; every other vacancy is played with the bot profile the match was configured with. RD20's pin is **not** widened.
+- **The configurable decision timer is for humans only** (DEC-RD21-02). A bot — whichever path put it in the seat — keeps the fixed 2 s pace. No spec, artboard or test may make a bot seat wear the human timer or the human countdown.
+- **The counter counts timeouts, not absence.** Only path A increments it. The 15-timeout removal it drives is shared by all three modes, is not Vote Kick, and shares no state with it (A3.5).
+
+### A4.3 RD19 — inactivity is measured at decision points, reported by the player's own app
+
+- **Decision-point only** (DEC-RD19-01). An ordinary timeout behaves exactly as before (path A: MEDIUM bot, +1 counter). RD19 fires only on sustained absence at decision points.
+- **50 s of sustained absence → the configured bot takes the seat.** **50 s is cumulative across consecutive ignored decision windows, not a gap within one:** RD21's longest single window is 25 s (20 s plus the 5 s Dash/Bidding/Estimates offset), so no single window can reach it. **Clock origin**: the decision point presented to that player. **Deadline**: 50 s of accumulated ignored windows. **Reset**: a genuine interaction inside the player's own window. **Trigger**: expiry of the accumulation. **The takeover does not increment the timeout counter.** *(This accumulation is a derivation from RD21's 25 s ceiling, not an owner-specified clock shape — plan risk **R33**; confirm it before implementing S73 rather than inventing a variant.)*
+- **Reclaim is trick-bounded** (DEC-RD19-04): the bot finishes the **current trick**, control returns at the **next decision point**, in the **same seat**. A reclaim is not a rejoin and not a departure — RD31 does not fire.
+- **Activity is self-reported by the player's own app** (DEC-RD19-02). The frozen Firestore rules are respected and **no permission is widened** to carry this signal. **The security limitation is documented, not hidden:** a client reporting its own activity can lie about it, so RD19 is an experience-quality mechanism and never an anti-abuse control — no rule outcome, placement, RP decision or statistic may depend on that report being honest.
+- **All three match types** (DEC-RD19-03): `ROOM`, `UNRANKED`, and `RANKED`.
+
+### A4.4 What closed on 2026-10-14, and what the answers did not settle
+
+- **OPEN-1 — CLOSED** (DEC-OPEN1-01). The automatic 15-timeout removal is **permanent for that match**; the player may start or join another match afterwards. The removal behaviour as implemented is preserved.
+- **OPEN-2 — CLOSED** (DEC-OPEN2-01). A Vote Kick vote runs while **gameplay continues**. There is no freeze-and-pause and none may be introduced; S63's acceptance criteria and test plan are written to match.
+- **The disconnect question is put to `ROOM` and `UNRANKED` tables only** (DEC-DISC-01): `mode ∈ {ROOM, UNRANKED}`. **Vote Kick stays Ranked-only**, and the two share no state, no UI and no countdown. On a dropped connection the table is asked **one question** with a **30-second window**; if nobody agrees within 30 s, the match continues with the **Create-Game-configured bot**. D9's "pause the match" branch is **superseded**; what survives of D9 is the invariant that **a wait is always bounded, never indefinite**.
+- **OPEN-5 stays open because the answers do not settle it**: (i) how many answers constitute agreement, (ii) what the table does when they agree to **wait** — D9's pause being gone, the WAIT outcome and its duration are undefined — and (iii) what makes a replacement **permanent**, and whether RD31 fires at that moment. S74's WAIT half and the S41/S42 artboards that draw it are gated on this. **No threshold may be invented and none may be drawn or specified as if it were current.**
+
+### A4.5 What this amendment does not change
+
+Every rule in §§1–5 — the deal, the auction, both Game Types, both Calculation Modes, all scoring tables, Sa'ayda, extensions, every win condition —, Amendments A1, A2 and A3 in full (including A3.5's mode table; see the pointer there), the RP engine and its thresholds, the tier ladder, placement mechanics, seasons, the leaderboard, Solo Auto-Match (RD9), the 2 s bot pace, and every timer value in RD21. **No rule number in this document changes and no scoring or ranking formula is modified** — RD31 is a result-recording rule, and the mechanics it reports on are exactly the ones already written above.
