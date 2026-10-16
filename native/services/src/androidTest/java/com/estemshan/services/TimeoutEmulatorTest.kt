@@ -39,6 +39,13 @@ import org.junit.runner.RunWith
  * :app's OnlineMatchViewModelTest, where the alarm loop is driven against
  * a scripted port; this suite's job is the path those tests stand in for.
  *
+ * S73 (C8) adds two things that cost this suite nothing extra: one assertion
+ * inside (f) that a timeout expiry writes NO takeover marker (RD19 and RD20 keep
+ * their own fields), and [theReclaimCallableIsRegisteredAndRefusesEveryoneWithNothingToReclaim],
+ * which is the only device-side coverage of `reclaimInactiveSeat`'s refusal
+ * branches. The borrow itself — the drive to a marker — is
+ * [InactivityEmulatorTest]'s, because that one needs minutes of real expiries.
+ *
  * TIMING. The deadline the resolver expires is the document's `updatedAt`
  * plus the configured timer plus the bidding offset. The shortest legal
  * timer is 5 s (RD21's 5..20 window), so the shortest bidding deadline is
@@ -64,6 +71,10 @@ class TimeoutEmulatorTest {
 
   private companion object {
     const val CALLABLE_NAME = "resolveDecisionTimeout"
+
+    /** S73 (C8): the second callable this suite reaches for, and the only one
+     *  whose CLIENT mapping has no instrumented coverage anywhere else. */
+    const val RECLAIM_NAME = "reclaimInactiveSeat"
 
     /** RD21's shortest legal timer — keeps the expiry this suite waits on
      *  as short as the rules allow. */
@@ -97,12 +108,21 @@ class TimeoutEmulatorTest {
 
   /**
    * Poll the callable until the emulator has discovered it. The empty
-   * payload reaches the resolver and is rejected for a missing matchId,
-   * which is exactly the "the trigger is live" signal; only NOT_FOUND means
-   * discovery has not finished. Bounded, and never a silent pass.
+   * payload reaches it and is rejected for a missing matchId, which is exactly
+   * the "the trigger is live" signal; only NOT_FOUND means discovery has not
+   * finished. Bounded, and never a silent pass.
+   *
+   * S73 (C8) defaulted [name] so the same readiness contract covers
+   * [RECLAIM_NAME]: both are declared in `native/functions/index.js`, and the
+   * reason a probe is needed at all — the emulator's HTTP port answers before
+   * firebase-tools has discovered the bundle's triggers — is a property of the
+   * emulator, not of one callable.
    */
-  private suspend fun awaitTrigger(functions: FirebaseFunctions) {
-    val callable = functions.getHttpsCallable(CALLABLE_NAME)
+  private suspend fun awaitTrigger(
+    functions: FirebaseFunctions,
+    name: String = CALLABLE_NAME,
+  ) {
+    val callable = functions.getHttpsCallable(name)
     val deadline = System.currentTimeMillis() + TRIGGER_TIMEOUT_MS
     var last: Throwable? = null
     while (System.currentTimeMillis() < deadline) {
@@ -118,7 +138,7 @@ class TimeoutEmulatorTest {
       delay(TRIGGER_POLL_MS)
     }
     error(
-      "$CALLABLE_NAME was never registered on the Functions emulator within " +
+      "$name was never registered on the Functions emulator within " +
         "$TRIGGER_TIMEOUT_MS ms (last: ${last?.message}). The port was open, so " +
         "the Kotlin/JS module likely failed to load — read the emulator log.",
     )
@@ -253,6 +273,86 @@ class TimeoutEmulatorTest {
     // Vote Kick's state is untouched — a timeout removal never merges into
     // it, and at count 1 nobody was removed anyway.
     assertNull("no timeout removal at count 1", decided.timeoutRemovedUids.firstOrNull())
+
+    // S73 (RD19/RD20 separation): a human's expired decision is a TIMEOUT, not
+    // a borrow. One expiry is nowhere near the 50 s of ignored windows a takeover
+    // needs, and even past it the two mechanisms keep their own fields — the
+    // counter this call just wrote, and the marker the S39 chip reads. If the
+    // resolver ever stamped a marker on an expiry, a seat that merely bid late
+    // would light up as INACTIVE and start a reclaim the player never asked for.
+    assertTrue(
+      "a timeout expiry writes no takeover marker (takeovers=${decided.inactiveTakeovers})",
+      decided.inactiveTakeoverSeats().isEmpty(),
+    )
+  }
+
+  // ════════════════════════════════════════════════════════════════════
+  // S73 (C8) — the reclaim callable, reached from a device and mapped by the
+  // production port.
+  // ════════════════════════════════════════════════════════════════════
+
+  /**
+   * The four answers a player with nothing to reclaim gets, from the real
+   * callable through the real [CallableSeatReclaim] — the one path in S73 that
+   * has no device coverage anywhere else. [com.estemshan.services.InactivityEmulatorTest]
+   * proves the borrowed-seat branch, but only after a minutes-long drive that
+   * makes a seat borrowable; nothing here needs one, and each of these branches
+   * is the expensive kind to get wrong in production: [SeatReclaimPort.Reclaim.Retryable]
+   * on a denial makes a screen poll a callable that will never say anything else,
+   * and [SeatReclaimPort.Reclaim.Denied] on a real wait stops a player from ever
+   * asking for their own seat back.
+   *
+   * The readiness probe is part of the assertion, not a formality: a Kotlin/JS
+   * export that `native/functions/index.js` failed to re-publish is invisible to
+   * every JVM suite and would 404 here forever.
+   */
+  @Test
+  fun theReclaimCallableIsRegisteredAndRefusesEveryoneWithNothingToReclaim() = runBlocking {
+    val seating = seating()
+    val match = scripted(seating)
+    val matchId = match.start()
+    awaitTrigger(seating.getValue("p1").functions, RECLAIM_NAME)
+    val before = match.standings()
+    assertTrue("nobody is borrowed at the start", before.inactiveTakeoverSeats().isEmpty())
+
+    // (1) A seated player whose seat the table never took. This is the answer a
+    // poll that arrived after another device's reclaim gets, and it comes from
+    // the response MAP (reason NOT_BORROWED), not a code — so it pins the whole
+    // `reclaimed:false` + reason shape across the serializer.
+    val own = CallableSeatReclaim(seating.getValue("p1").functions).reclaim(matchId)
+    assertTrue(
+      "a player who holds their own seat is told exactly that, got $own",
+      own is SeatReclaimPort.Reclaim.HumanHoldsSeat,
+    )
+
+    // (2) A caller who occupies no seat in this match. The callable throws
+    // `permission-denied`, and the transport-code half of the mapping — which
+    // keys on the code's NAME because a JVM test cannot initialize
+    // FirebaseFunctionsException.Code — has never run on a device until now.
+    val context = InstrumentationRegistry.getInstrumentation().targetContext
+    val outsider = EmulatorSuite.client(context, "s61_outsider")
+    val notMine = CallableSeatReclaim(outsider.functions).reclaim(matchId)
+    assertTrue(
+      "a non-player is refused terminally, not polled, got $notMine",
+      notMine is SeatReclaimPort.Reclaim.Denied,
+    )
+
+    // (3)+(4) The two ways the request itself is bad: an empty matchId
+    // (`invalid-argument`) and a match that is not there (`not-found`). Both are
+    // denials — a retry cannot make a malformed payload or a vanished match into
+    // a seat.
+    val malformed = CallableSeatReclaim(seating.getValue("p1").functions).reclaim("")
+    assertTrue("an empty matchId is a denial, got $malformed", malformed is SeatReclaimPort.Reclaim.Denied)
+    val missing = CallableSeatReclaim(seating.getValue("p1").functions)
+      .reclaim("s61-no-such-match")
+    assertTrue("a missing match is a denial, got $missing", missing is SeatReclaimPort.Reclaim.Denied)
+
+    // And four reclaim calls that decided nothing wrote nothing: the marker stays
+    // absent and the document is the one the start committed. A NoWrite reclaim
+    // that bumped `version` would re-arm every client's deadline anchor for free.
+    val after = match.standings()
+    assertTrue("no reclaim wrote a marker", after.inactiveTakeoverSeats().isEmpty())
+    assertEquals("no reclaim wrote anything at all", before.version, after.version)
   }
 
   // ════════════════════════════════════════════════════════════════════
