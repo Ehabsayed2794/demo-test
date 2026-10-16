@@ -1,3 +1,7 @@
+## Safety rule — Node.js usage
+
+Before using Node.js, read `docs/engineering/NODEJS_SAFE_USAGE.md` and follow it.
+
 ## Agent skills
 
 ### Native v1 plan + estimates

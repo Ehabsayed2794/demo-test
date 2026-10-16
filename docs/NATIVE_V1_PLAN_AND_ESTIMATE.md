@@ -367,6 +367,27 @@ New epic **E7 — Game Type & Calculation Mode (GM)**, placed **before** E6b:
 
 ---
 
+## Owner amendment of record (2026-10-10): Landscape-only UI
+
+**D10 — Every screen is landscape-only.** All user-facing UI is authored against the fixed
+**932×430 mobile-landscape** frame. **There is no portrait screen in the product** — not in the HTML
+artboards, not in the native Compose UI. This carries the same standing as D1–D4, RD1–RD28, and
+GM1–GM8.
+
+**Why this needs recording:** the convention was already de facto — `docs/reviews/Gameplay_Render_Layer_Implementation_Plan.md`
+calls 932×430 "the exact frame every current screen, including `match/index.html`, already uses" — but it
+was **not stated anywhere a designer or agent reads it**: this plan and `docs/UI_UX_ROADMAP.md` had no
+orientation entry, and the roadmap's only canvas note (`§4.1.2`) speaks of a "~390–430 dp canvas", which
+is a **type-scaling** note (web px → mobile dp), not an orientation statement. A brief that paired "390
+dp-wide mobile frame" with "same canvas convention as the matchmaking reference" was therefore
+self-contradictory, and produced the only portrait artboard in the set (S45, delivered 390×844).
+
+**Scope impact:** any artboard or Compose screen delivered in portrait is non-compliant and is re-cut at
+932×430. S45 is the one artboard affected today; it must be re-cut before implementation. The design view
+lives in `docs/UI_UX_ROADMAP.md` `§4.1.2`.
+
+---
+
 ## Correction: what's actually already built (sunk, not re-estimated)
 
 Verified on `origin/main`:

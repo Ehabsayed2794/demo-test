@@ -2144,13 +2144,22 @@ Type scale (from `EstemshanTypography`, to be set as Figma text styles):
 | `bodyMedium` | Saira 14 / 19 | `inkDim` |
 | `labelLarge` | Spline Sans Mono 13 / 17 | `inkDim` |
 
+**Canvas orientation rule (D10, owner amendment 2026-10-10): every screen is LANDSCAPE-ONLY.**
+All artboards are authored against the fixed **932×430 mobile-landscape** frame — the same frame every
+existing screen and HTML artboard already uses, and the same frame the Compose UI targets. **There is no
+portrait screen in the product.** A brief or artboard that specifies a portrait frame (e.g. "390×844" or
+"390 dp-wide") is non-compliant and is re-cut at 932×430. This applies to every artboard in §4.3–§4.5.
+
 **Mobile scaling note for the designer:** the web reference sets very small mono
 sizes (8.5–13 px) because it renders inside a fixed desktop stage. **The Figma
-file targets a phone, so these must be re-scaled for a ~390–430 dp canvas and
+file targets a phone, so these must be re-scaled for the ~430 dp short edge and
 re-audited for contrast and legibility** — the values above are the *systematic*
 scale; the web pixels are the *reference proportions*, not the mobile sizes. The
 minimum body size on mobile should be ≥ 14 dp, and the minimum for any text the
 player must read to play (bid values, timer digits, tally counts) is ≥ 16 dp.
+(The "~390–430 dp" figure in earlier drafts of this note was a **type-scaling**
+range, not a portrait canvas width — it is the landscape short edge. D10 closes
+that reading off.)
 
 ### 4.1.3 Shape, elevation, motion
 
