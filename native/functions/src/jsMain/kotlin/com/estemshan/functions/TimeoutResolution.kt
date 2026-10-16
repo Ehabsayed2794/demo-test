@@ -690,6 +690,10 @@ object TimeoutResolution {
    * engine to find `waitingFor` (the same replay Settlement performs), so the
    * acting seat comes from the rules rather than from a client claim. Reads no
    * hands — the caller only spends those reads once a deadline has passed.
+   *
+   * The replay is the authority on which phase is live. `biddingOpen` only says
+   * where to look first, so a flag left true after the auction — which is what
+   * every Dash-Caller round carries — cannot leave a dealt round unowned.
    */
   fun pendingDecision(fields: Map<String, Any?>): Pending? {
     if ((fields["status"] as? String) == "complete") return null
@@ -702,15 +706,23 @@ object TimeoutResolution {
 
     if (fields["biddingOpen"] as? Boolean == true) {
       val state = replayBidding(fields, order, currentRound) ?: return null
-      if (state.subPhase == BiddingPhase.DONE) return null
-      val waiting = state.waitingFor ?: return null
-      if (waiting !in order) return null
-      return Pending(
-        phase = DecisionPhase.BIDDING,
-        seatId = waiting,
-        durationSeconds = durationFor(fields, waiting, timerSeconds, DecisionPhase.BIDDING),
-        anchorMillis = anchor,
-      )
+      if (state.subPhase != BiddingPhase.DONE) {
+        val waiting = state.waitingFor ?: return null
+        if (waiting !in order) return null
+        return Pending(
+          phase = DecisionPhase.BIDDING,
+          seatId = waiting,
+          durationSeconds = durationFor(fields, waiting, timerSeconds, DecisionPhase.BIDDING),
+          anchorMillis = anchor,
+        )
+      }
+      // The flag is a write-shape artifact, not the auction's authority: both
+      // writers derive it from "every seat has a bid", and a Dash Caller never
+      // submits an estimate, so it outlives the auction on every round that has
+      // one — a derivation `firestore.rules:799` pins for client writes. When the
+      // replay says DONE the round is playing cards, so fall through below rather
+      // than leaving the table with no timed decision at all: that silence stops
+      // RD20's card timeouts and RD19's takeover from ever firing.
     }
 
     // Card play. The round is done when every card is on the document —

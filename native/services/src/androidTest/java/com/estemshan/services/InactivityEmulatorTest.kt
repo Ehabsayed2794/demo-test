@@ -19,7 +19,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
-import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -57,14 +56,16 @@ import org.junit.runner.RunWith
  *    survives the JS-write/JVM-read numeric transport as a real
  *    [InactiveTakeover], and its owner's `reclaimInactiveSeat` is answered with
  *    the server's own "the borrowed trick is not down yet" — twice, because a
- *    reclaim that is not due writes nothing. THIS ONE IS `@Ignore`D: the drive
- *    cannot reach a takeover on a round with a Dash Caller, because such a
- *    round never closes `biddingOpen`, detection then reads the phase as still
- *    bidding and finds nothing to time, and the resolver stops owning decisions
- *    at the auction. The reason, the evidence and what to delete are in the
- *    annotation; the same chain, played out in milliseconds, is in
+ *    reclaim that is not due writes nothing. It is also the drive that caught
+ *    the auction stall: a round with a Dash Caller never closes `biddingOpen`,
+ *    because the estimate write derives the flag from "every seat has a bid"
+ *    and a Dash Caller has no bid to submit, and detection used to read that
+ *    flag as the phase — so it found nothing to time and the resolver stopped
+ *    owning decisions at the auction. Detection now reads its own engine replay,
+ *    which is what lets this drive past the auction; the same chain, played out
+ *    in milliseconds and with no hand-clearing, is in
  *    `TimeoutResolutionTest.theResolverOwnsEveryDecisionOfANormalRoundToTheLastCard`
- *    and `theStaleOpenFlagIsTheOnlyThingDetectionDependsOn`.
+ *    and `theStaleOpenFlagChangesNothingAfterTheAuctionCloses`.
  *
  * WHAT THIS SUITE DELIBERATELY DOES NOT CLAIM. The reclaim's RETURNED write —
  * the marker removal plus the zeroed clock — is not driven here. DEC-RD19-04
@@ -393,23 +394,6 @@ class InactivityEmulatorTest {
   // and the owner's reclaim is answered by the real callable.
   // ════════════════════════════════════════════════════════════════════
 
-  @Ignore(
-    "Blocked by a pre-existing defect outside S73, filed separately. On a round with a Dash " +
-      "Caller nothing can ever clear `biddingOpen`: `submitBid`'s own allSubmitted needs a bid from " +
-      "EVERY seat and a Dash Caller never submits one (MatchService: Dash-Call seats stay absent " +
-      "by design), so the flag survives the auction. `pendingDecision` treats that flag as the phase " +
-      "authority, replays the bidding to DONE, returns null, and the resolver owns no further " +
-      "decision of the round — no card window is ever closed, no seat's clock charges past the " +
-      "auction, and no takeover marker can appear. That is this drive's `NotActive for 3 looks in a " +
-      "row`. Proven hermetically, in milliseconds, by TimeoutResolutionTest." +
-      "theResolverOwnsEveryDecisionOfANormalRoundToTheLastCard — the chain dies at the auction and " +
-      "plays all 52 cards once the flag is cleared by hand — and by theStaleOpenFlagIsTheOnlyThing" +
-      "DetectionDependsOn, which resolves that whole chain against a copy whose flag STAYS true and " +
-      "gets identical writes, so detection is the only thing that has to change. Delete this " +
-      "annotation when detection stops trusting the flag over the engine: either the resolver treats " +
-      "a DONE replay as card play, or the writers derive the flag from the closed auction instead of " +
-      "`bids` presence. Nothing below needs to change.",
-  )
   @Test
   fun theResolverBorrowsAnAwaySeatAndEverySeatCanSeeIt() = runBlocking {
     val seating = seating()
