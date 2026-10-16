@@ -327,6 +327,47 @@ object TimeoutResolution {
   private fun botHeldSeat(fields: Map<String, Any?>, seatId: String): Boolean =
     seatId in botControlledSeats(fields) || seatId in inactiveTakeoverSeats(fields)
 
+  /** The bot that plays one expired decision. [tier] is what the card path
+   *  takes ([PlayBrain.decide] has no personality parameter); the bidding path
+   *  takes both. */
+  data class BotProfile(
+    val tier: BotTier,
+    val personality: BotPersonality,
+  )
+
+  /**
+   * S73 (RD19, the fork-1 amendment): WHICH bot plays [seatId]'s expired
+   * decision.
+   *
+   * A **borrowed** seat plays the table's CONFIGURED difficulty. The takeover is
+   * the human's own seat played on their behalf, and the host picked that
+   * difficulty for every seat at this table — an EXPERT table whose absent player
+   * is suddenly played by a MEDIUM bot is a different game, and the seat's owner
+   * returns to the middle of it.
+   *
+   * Everything else keeps RD20's pin, byte-identical to Stage 1: a permanently
+   * bot-controlled seat (`botSeats`, and the 15-timeout removals S61 shipped) is
+   * played by the brain the room created it with, never through here, and a seat
+   * with no takeover marker — a human whose own timer expired — stays
+   * MEDIUM/[BotPersonality.DEFAULT]. So no non-S73 path changes value, and the
+   * only documents that can produce a different tier are exactly the ones
+   * carrying a marker the resolver itself wrote.
+   *
+   * The configured pair is read through the `RoomDoc` fallbacks
+   * ([parseBotTier]/[parseBotPersonality]): a match created before the trio's
+   * persistence, or a value no client could have written, resolves to
+   * MEDIUM/BALANCED rather than throwing or guessing.
+   */
+  fun botProfileFor(fields: Map<String, Any?>, seatId: String): BotProfile =
+    if (seatId in inactiveTakeoverSeats(fields)) {
+      BotProfile(
+        tier = parseBotTier(fields["botTier"]),
+        personality = parseBotPersonality(fields["botPersonality"]),
+      )
+    } else {
+      BotProfile(tier = BotTier.MEDIUM, personality = BotPersonality.DEFAULT)
+    }
+
   /** One log entry's (seat, round), or null when the entry cannot be attributed. */
   private fun entrySeatAndRound(value: Any?): Pair<String, Int>? {
     val map = strMap(value) ?: return null
@@ -541,6 +582,19 @@ object TimeoutResolution {
     else DEFAULT_DECISION_TIMER_SECONDS
   }
 
+  /** Mirrors RoomDoc.parseBotTier: absent/unrecognised ⇒ MEDIUM. The rules
+   *  layer refuses an unknown name, so a read that cannot map one is a document
+   *  from before the trio's persistence, not a difficulty nobody chose. */
+  fun parseBotTier(value: Any?): BotTier =
+    (value as? String)?.let { runCatching { BotTier.valueOf(it) }.getOrNull() }
+      ?: BotTier.MEDIUM
+
+  /** Mirrors RoomDoc.parseBotPersonality: absent/unrecognised ⇒ BALANCED
+   *  (RD21's default) — the value the client would have shown in the lobby. */
+  fun parseBotPersonality(value: Any?): BotPersonality =
+    (value as? String)?.let { runCatching { BotPersonality.valueOf(it) }.getOrNull() }
+      ?: BotPersonality.BALANCED
+
   /** The doc's `updatedAt` as epoch millis (see JsBridging.timestampToMillis). */
   fun parseUpdatedAtMillis(fields: Map<String, Any?>): Long? =
     timestampToMillis(fields["updatedAt"])
@@ -726,9 +780,9 @@ object TimeoutResolution {
   // ── reconstruction + decision ────────────────────────────────────────
 
   /**
-   * Rebuilds the acting seat's engine state from the document and asks the
-   * MEDIUM bot for the one decision the timer expired on. The bot's intent is
-   * re-validated by the brain itself before any write is built (BidBrain and
+   * Rebuilds the acting seat's engine state from the document and asks its
+   * [botProfileFor] bot for the one decision the timer expired on. The bot's
+   * intent is re-validated by the brain itself before any write is built (BidBrain and
    * PlayBrain both assert legality or throw), so an impossible reconstruction
    * fails closed instead of writing an illegal move.
    *
@@ -785,7 +839,7 @@ object TimeoutResolution {
     }
   }
 
-  // ── bidding: replay the auction, then BidBrain at MEDIUM ─────────────
+  // ── bidding: replay the auction, then BidBrain ───────────────────────
 
   /**
    * The match doc carries no round multiplier: MatchService never persists
@@ -887,7 +941,8 @@ object TimeoutResolution {
     return BiddingReplay(state, null)
   }
 
-  /** Runs BidBrain at MEDIUM and builds the write the human path would make. */
+  /** Runs the seat's [botProfileFor] bot and builds the write the human path
+   *  would make. */
   private fun decideBidding(
     fields: Map<String, Any?>,
     order: List<String>,
@@ -895,8 +950,9 @@ object TimeoutResolution {
     seatId: String,
     hand: List<Card>,
   ): Resolution {
+    val profile = botProfileFor(fields, seatId)
     val intent = try {
-      BidBrain.decide(state, hand, seatId, BotTier.MEDIUM, BotPersonality.DEFAULT)
+      BidBrain.decide(state, hand, seatId, profile.tier, profile.personality)
     } catch (e: Throwable) {
       return Resolution.NoWrite(
         Reason.HISTORY_UNAVAILABLE,
@@ -924,7 +980,7 @@ object TimeoutResolution {
             "phase" to state.subPhase.name,
             "seatId" to seatId,
             "estimate" to intent.tricks,
-            "botTier" to BotTier.MEDIUM.name,
+            "botTier" to profile.tier.name,
           ),
         ))
       }
@@ -934,7 +990,7 @@ object TimeoutResolution {
           "phase" to state.subPhase.name,
           "seatId" to seatId,
           "declaredDashCall" to intent.declaredDashCall,
-          "botTier" to BotTier.MEDIUM.name,
+          "botTier" to profile.tier.name,
         ),
       )
       is BiddingIntent.AuctionBid -> biddingWrite(
@@ -945,7 +1001,7 @@ object TimeoutResolution {
           "isPass" to intent.isPass,
           "tricks" to intent.tricks,
           "suit" to intent.suit?.name,
-          "botTier" to BotTier.MEDIUM.name,
+          "botTier" to profile.tier.name,
         ),
       )
       is BiddingIntent.ConfirmCall -> biddingWrite(
@@ -955,7 +1011,7 @@ object TimeoutResolution {
           "seatId" to seatId,
           "tricks" to intent.tricks,
           "suit" to intent.suit.name,
-          "botTier" to BotTier.MEDIUM.name,
+          "botTier" to profile.tier.name,
         ),
       )
     }
@@ -1066,14 +1122,15 @@ object TimeoutResolution {
     return table
   }
 
-  /** Runs PlayBrain at MEDIUM and builds submitCard's own write shape. */
+  /** Runs the seat's [botProfileFor] tier and builds submitCard's own write shape. */
   private fun decideCard(
     fields: Map<String, Any?>,
     table: TableState,
     seatId: String,
   ): Resolution {
+    val profile = botProfileFor(fields, seatId)
     val play = try {
-      PlayBrain.decide(table, seatId, BotTier.MEDIUM)
+      PlayBrain.decide(table, seatId, profile.tier)
     } catch (e: Throwable) {
       return Resolution.NoWrite(
         Reason.HISTORY_UNAVAILABLE,
@@ -1127,7 +1184,7 @@ object TimeoutResolution {
         "seatId" to seatId,
         "card" to storedCardFields(play.card),
         "trickNo" to table.trickNo,
-        "botTier" to BotTier.MEDIUM.name,
+        "botTier" to profile.tier.name,
       ),
     ))
   }
