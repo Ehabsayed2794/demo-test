@@ -1,6 +1,8 @@
 package com.estemshan.functions
 
 import com.estemshan.engine.Card
+import com.estemshan.engine.InactiveTakeover
+import com.estemshan.engine.InactivityClock
 import com.estemshan.engine.RANKS
 import com.estemshan.engine.Suit
 import com.estemshan.functions.TimeoutResolution.DecisionWrite
@@ -72,6 +74,37 @@ interface TimeoutDb {
 
     /** S61 Stage 2: writes `timeoutCounts/{uid}`'s single `count` field. */
     fun writeTimeoutCount(matchId: String, uid: String, count: Int)
+
+    /**
+     * S73 (RD19): the seat's private `matches/{id}/inactivity/{uid}` document —
+     * the accumulation, its window anchor and the seat-action cursor. Read
+     * INSIDE the transaction, for the same reason the count is: the clock the
+     * takeover decision is made against must be under the same lock as the
+     * write it authorises.
+     *
+     * null means the document does not exist: "this seat's inactivity has never
+     * been recorded", which [InactivityClock.fromStored] trusts as a fresh
+     * clock, as distinct from a present-but-invalid field, which fails closed.
+     *
+     * Defaulted to "no document" so the Stage-1/Stage-2 suites' fakes — which
+     * model only the counter — keep pinning exactly the behaviour they pin
+     * today: a fresh clock that never reaches the threshold, and a discarded
+     * write. [AdminTimeoutDb] replaces both with the real thing.
+     */
+    suspend fun readInactivity(matchId: String, uid: String): Map<String, Any?>? = null
+
+    /**
+     * S73 (RD19): replaces `inactivity/{uid}` with [fields] — all three of its
+     * fields at once, never a merge, because those three are the complete state
+     * this mechanism owns and a merge could leave a stale cursor behind.
+     *
+     * A separate document from `timeoutCounts/{uid}` on purpose: RD20's
+     * separation means the two mechanisms share no state, no doc and no field,
+     * so neither one's replacement write can ever clobber the other's.
+     */
+    fun writeInactivity(matchId: String, uid: String, fields: Map<String, Any?>) {
+      // Default: the fake's transaction does not model inactivity.
+    }
   }
 }
 
@@ -211,10 +244,41 @@ suspend fun resolveTimeoutOnce(
         val seatUid = TimeoutResolution.seatUid(fresh, freshPending.seatId)
         val alreadyBotControlled =
           freshPending.seatId in TimeoutResolution.botControlledSeats(fresh)
-        val counter = if (seatUid != null && !alreadyBotControlled) {
+        // S73 (RD19): a BORROWED seat's expiries are this mechanism's own doing,
+        // not fresh human timeouts, so the counter suppresses for them too.
+        // Without this, a 50 s pause would march the player through RD20's
+        // removal at the fifteenth 2 s window — under thirty seconds of table
+        // time — which is the opposite of "INACTIVE never increments the
+        // counter" (§0.5-C). The expiry that EARNED the takeover still counted:
+        // it was a genuine human timeout, and the marker written below is not
+        // yet in `fresh`.
+        val alreadyBorrowed =
+          freshPending.seatId in TimeoutResolution.inactiveTakeoverSeats(fresh)
+        val humanHeldSeat = seatUid != null && !alreadyBotControlled && !alreadyBorrowed
+
+        // S73 (RD19): the clock is read under the same lock as the decision that
+        // advances it, and only for a seat a human still holds. Every read in
+        // this transaction happens before every write, as Firestore requires.
+        val storedInactivity =
+          if (humanHeldSeat) tx.readInactivity(matchId, seatUid!!) else null
+
+        val counter = if (humanHeldSeat) {
           TimeoutCounter.fromStored(
-            tx.readTimeoutCount(matchId, seatUid),
+            tx.readTimeoutCount(matchId, seatUid!!),
             docExists = tx.timeoutCountExists(matchId, seatUid),
+          )
+        } else {
+          null
+        }
+
+        val inactivity = if (humanHeldSeat) {
+          TimeoutResolution.inactivityAfterExpiredWindow(
+            fields = fresh,
+            pending = freshPending,
+            seatUid = seatUid,
+            storedDoc = storedInactivity,
+            nowMillis = clock.nowMillis(),
+            write = outcome.write,
           )
         } else {
           null
@@ -224,23 +288,47 @@ suspend fun resolveTimeoutOnce(
           tx.writeTimeoutCount(matchId, seatUid!!, counter.nextCount)
         }
 
-        val updates = if (counter != null && counter.shouldRemove) {
-          // The 15th: the decision (still the Stage 1 MEDIUM policy) lands in
-          // the SAME write that records the removal — the removal takes
-          // effect WITH the deciding move, never before it. Subsequent
-          // decisions for this seat are still MEDIUM: RD20 pins the timeout
-          // engine to MEDIUM regardless of the match's configured difficulty.
-          // The configured profile is the explicit-leave path's (RD20), which
-          // this resolver never runs.
+        val removal = counter != null && counter.shouldRemove
+        val takeover = inactivity?.takeover
+        val updates = if (removal || takeover != null) {
           val merged = LinkedHashMap(outcome.write.updates)
-          merged["timeoutRemovedUids"] =
-            TimeoutResolution.removalWrite(fresh, seatUid!!)
+          if (removal) {
+            // The 15th: the decision (still the Stage 1 MEDIUM policy) lands in
+            // the SAME write that records the removal — the removal takes
+            // effect WITH the deciding move, never before it. Subsequent
+            // decisions for this seat are still MEDIUM: RD20 pins the timeout
+            // engine to MEDIUM regardless of the match's configured difficulty.
+            // The configured profile is the explicit-leave path's (RD20), which
+            // this resolver never runs.
+            merged["timeoutRemovedUids"] =
+              TimeoutResolution.removalWrite(fresh, seatUid!!)
+          }
+          takeover?.let {
+            // RD19: the takeover rides the SAME write as the decision that
+            // earned it, so no client can ever observe the accumulation without
+            // the seat being borrowed — and no separate write can be lost
+            // between the two. [InactiveTakeover.withTakeover] is surgical: the
+            // other seats' entries are carried verbatim, so one resolver can
+            // never discard another seat's takeover.
+            merged[InactiveTakeover.TAKEOVER_FIELD] = InactiveTakeover.withTakeover(
+              fresh[InactiveTakeover.TAKEOVER_FIELD],
+              freshPending.seatId,
+              it,
+            )
+          }
           merged
         } else {
           outcome.write.updates
         }
 
         tx.updateMatch(matchId, updates)
+        if (inactivity != null && seatUid != null) {
+          // The clock and the marker commit together with the decision, and the
+          // clock it persists is ZEROED whenever the marker is written — an
+          // accumulation at or above the threshold is one `fromStored` rejects,
+          // so leaving it behind would kill the seat's clock permanently.
+          tx.writeInactivity(matchId, seatUid, inactivity.docFields)
+        }
         appliedResponse(freshPending, outcome.write, matchId)
       }
     }
@@ -338,11 +426,47 @@ class AdminTimeoutDb : TimeoutDb {
     override fun writeTimeoutCount(matchId: String, uid: String, count: Int) {
       tx.set(countRef(matchId, uid), toPlain(mapOf(COUNT_FIELD to count)))
     }
+
+    /**
+     * S73 (RD19): the whole private document, normalized exactly like the match
+     * read, so a JS object handed to [InactivityClock.fromStored]'s validators
+     * behaves the same as one built in a test. Missing doc ⇒ null ⇒ "never
+     * recorded", which is the trusted first-window state.
+     */
+    override suspend fun readInactivity(matchId: String, uid: String): Map<String, Any?>? {
+      val snap = tx.get(inactivityRef(matchId, uid)).await()
+      if (!snap.exists) return null
+      @Suppress("UNCHECKED_CAST")
+      return dynamicToKotlin(snap.data()) as? Map<String, Any?>
+    }
+
+    /**
+     * Replacement write, the counter's own idiom: the three fields ARE this
+     * mechanism's complete state for the player, so merging could only leave a
+     * stale cursor or an accumulation the takeover was supposed to zero.
+     */
+    override fun writeInactivity(matchId: String, uid: String, fields: Map<String, Any?>) {
+      tx.set(inactivityRef(matchId, uid), toPlain(fields))
+    }
   }
 
   /** `matches/{matchId}/timeoutCounts/{uid}` — owner-read-only by the rules. */
   private fun countRef(matchId: String, uid: String): DocRef =
     matchRef(matchId).collection("timeoutCounts").doc(uid)
+
+  /**
+   * `matches/{matchId}/inactivity/{uid}` — RD19's private accumulator, keyed by
+   * PLAYER like the counter and for the same reason: how long someone has been
+   * ignoring the table is not their opponents' business. It has NO rules block
+   * at all, which is what makes it admin-only: an admin-written field no
+   * validator names is unwritable by every client (the update dispatch falls
+   * through to `false`) while the match's own whole-document `allow get` still
+   * lets every seat read the marker on the match. `firestore.rules` is
+   * therefore byte-identical for S73 — the same zero-rules path
+   * `timeoutRemovedUids` proved.
+   */
+  private fun inactivityRef(matchId: String, uid: String): DocRef =
+    matchRef(matchId).collection(InactiveTakeover.INACTIVITY_COLLECTION).doc(uid)
 
   companion object {
     private val TxScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
