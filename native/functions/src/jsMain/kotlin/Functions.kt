@@ -14,6 +14,7 @@ import com.estemshan.functions.AdminTimeoutDb
 import com.estemshan.functions.CallableAuth
 import com.estemshan.functions.DecisionClock
 import com.estemshan.functions.onCall
+import com.estemshan.functions.reclaimOnce
 import com.estemshan.functions.settleOnce
 import com.estemshan.functions.resolveTimeoutOnce
 import com.estemshan.functions.toPlain
@@ -93,6 +94,29 @@ val settleMatch = onCall { request ->
 val resolveDecisionTimeout = onCall { request ->
   SettleScope.promise {
     toPlain(resolveTimeoutOnce(AdminTimeoutDb(), request, ServerClock))
+  }
+}
+
+/**
+ * S73 Stage 2, C4 — the return of an RD19 borrowed seat (DEC-RD19-04). The
+ * counterpart of [resolveDecisionTimeout]: where that callable is host-less
+ * because ANY seat may trigger an expired deadline, this one is owner-only, and
+ * the seat it returns is derived from the caller's verified identity through the
+ * document's own seats map — a client never names a seat, so it can reclaim
+ * nothing but its own.
+ *
+ * The bot that took the seat keeps playing it until the trick in progress at the
+ * takeover finishes; until then this answers TRICK_NOT_FINISHED with the server's
+ * own `retryAfterMillis`, which is what the caller re-arms its bounded poll on
+ * instead of a client estimate. Nothing is written on that answer, and nothing
+ * but the marker and the seat's private clock is written on success: a return of
+ * control is not a timeout, not a removal and not a departure.
+ */
+@JsExport
+@JsName("reclaimInactiveSeat")
+val reclaimInactiveSeat = onCall { request ->
+  SettleScope.promise {
+    toPlain(reclaimOnce(AdminTimeoutDb(), request, ServerClock))
   }
 }
 

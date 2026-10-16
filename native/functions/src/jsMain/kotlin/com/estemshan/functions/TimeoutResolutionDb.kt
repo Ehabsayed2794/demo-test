@@ -38,6 +38,10 @@ import kotlinx.coroutines.promise
  * Ports keep every Firestore touch behind interfaces so the orchestration
  * (detect → deadline → reconstruct → decide → write) is unit-testable with
  * fakes; only AdminTimeoutDb loads the SDK.
+ *
+ * Pointer note (S73 Stage 2, C4): [reclaimOnce] joins [resolveTimeoutOnce] here
+ * because it needs the same seam and the same clock — the `TimeoutTx` interface
+ * itself did not change for it, so the Stage-1/2 suites' fakes are untouched.
  */
 interface TimeoutDb {
   suspend fun readMatch(matchId: String): Map<String, Any?>?
@@ -340,6 +344,130 @@ private fun extractRound(fields: Map<String, Any?>): Int =
 
 private fun extractSeats(fields: Map<String, Any?>): List<String> =
   TimeoutResolution.parseOrder(fields) ?: emptyList()
+
+/**
+ * S73 Stage 2, C4 — a reclaim outcome. `reclaimed`, not `resolved`: the two
+ * callables answer different questions and a client must never conflate a
+ * no-write that means "the bot still owes a trick" with one that means "the
+ * deadline has not passed". [retryAfterMillis] is present ONLY on
+ * TRICK_NOT_FINISHED, and it is the only timing fact this response gives away —
+ * never the accumulation, never the cursor, never the timeout count, which live
+ * in subcollections the other three players cannot read and which no seat has
+ * any business seeing.
+ */
+private fun reclaimNoWrite(
+  reason: String,
+  message: String,
+  retryAfterMillis: Long?,
+): Map<String, Any?> = buildMap {
+  put("ok", true)
+  put("reclaimed", false)
+  put("reason", reason)
+  put("message", message)
+  if (retryAfterMillis != null) put("retryAfterMillis", retryAfterMillis)
+}
+
+/** The seat is back. It names the seat the DOCUMENT gave the caller, never an echo. */
+private fun reclaimedResponse(matchId: String, seatId: String): Map<String, Any?> = mapOf(
+  "ok" to true,
+  "reclaimed" to true,
+  "matchId" to matchId,
+  "seatId" to seatId,
+)
+
+/**
+ * Runs one reclaim: auth → read → membership → transacted re-derive → write.
+ *
+ * The boundary discipline is the resolver's, unchanged, because both are entered
+ * by a client whose clock is not the server's: the payload is converted with
+ * [dynamicToKotlin] (the runtime hands a PLAIN JS OBJECT, so `as? Map` on it
+ * silently yields null — the trap [resolveTimeoutOnce] documents and
+ * CallablePayloadBridgingTest pins), identity comes from
+ * [CallableAuth.requireUid] and never from the body, membership is gated on the
+ * LIVE document through [TimeoutResolution.parsePlayers] rather than
+ * `Settlement.parseMatch` (which requires the `completedRound` only `endMatch`
+ * ever writes), and everything is re-derived from the in-transaction read so a
+ * takeover or a trick that resolved a moment ago is seen rather than assumed.
+ *
+ * **Both writes ride one transaction**: the marker loses this seat's entry, the
+ * private document is replaced by the zeroed clock and its new baseline cursor,
+ * `version` ticks and `updatedAt` is re-stamped — so no client can observe a
+ * seat whose chip says INACTIVE while its clock says otherwise, and no delivery
+ * can lose half of the return. A reclaim reads NOTHING it does not write: the
+ * counter doc is not touched (RD20 — a return is not a timeout) and the stored
+ * clock is not read (it is being replaced, and its validity has no bearing on
+ * returning control to its own player).
+ *
+ * **Why `version` and `updatedAt` move.** The version bump is what makes the
+ * removal stick: a client holding a pre-reclaim snapshot fails its own version
+ * guard instead of silently writing the marker back. Re-stamping `updatedAt`
+ * gives the returning player a complete window for the decision that is pending
+ * when control lands, which is what "returns at the next decision point" means in
+ * a machine whose only deadline anchor is that timestamp — and it costs nothing
+ * to trust: the marker is gone once it succeeds, so a player cannot farm deadline
+ * extensions, and earning one costs 50 s of ignored windows.
+ *
+ * No `status` gate: a match that completed while a seat was borrowed has nothing
+ * left to stall, and the removal on a finished document is inert. The client's
+ * poll is bounded and stops with the snapshot that says `complete`.
+ */
+suspend fun reclaimOnce(
+  db: TimeoutDb,
+  request: CallableRequest,
+  clock: DecisionClock,
+): Map<String, Any?> {
+  val data = dynamicToKotlin(request.data) as? Map<*, *>
+  val matchId = data?.get("matchId") as? String
+  if (matchId.isNullOrEmpty()) {
+    throw HttpsError("invalid-argument", "reclaimInactiveSeat: matchId is required.")
+  }
+  val uid = CallableAuth.requireUid(request)
+
+  val fields = db.readMatch(matchId)
+    ?: throw HttpsError("not-found", "reclaimInactiveSeat: match '$matchId' was not found.")
+  val players = TimeoutResolution.parsePlayers(fields)
+    ?: throw HttpsError(
+      "failed-precondition",
+      "reclaimInactiveSeat: match '$matchId' is not a match document.",
+    )
+  if (uid !in players) {
+    throw HttpsError(
+      "permission-denied",
+      "reclaimInactiveSeat: you are not a player in this match.",
+    )
+  }
+
+  return db.transact { tx ->
+    val fresh = tx.readMatch(matchId)
+      ?: throw HttpsError("not-found", "reclaimInactiveSeat: match '$matchId' was not found.")
+    when (val decision = SeatReclaim.decide(fresh, uid, clock.nowMillis())) {
+      is SeatReclaim.Decision.NoWrite -> reclaimNoWrite(
+        decision.reason,
+        decision.message,
+        decision.retryAfterMillis,
+      )
+      is SeatReclaim.Decision.Reclaim -> {
+        val write = decision.write
+        tx.updateMatch(
+          matchId,
+          mapOf(
+            // A replacement of the whole marker, built by
+            // [InactiveTakeover.withoutTakeover] so every OTHER seat's entry is
+            // carried over verbatim — one player's return can never discard
+            // another's takeover.
+            InactiveTakeover.TAKEOVER_FIELD to write.marker,
+            "version" to ((fresh["version"] as? Number)?.toInt() ?: 0) + 1,
+            "updatedAt" to FieldValue.serverTimestamp(),
+          ),
+        )
+        // Keyed by the CALLER, which is the seat's owner by construction: the
+        // seat came from the document's own seats map for this uid.
+        tx.writeInactivity(matchId, uid, write.inactivityFields)
+        reclaimedResponse(matchId, write.seatId)
+      }
+    }
+  }
+}
 
 /** Admin-SDK implementation. Reads normalize through dynamicToKotlin;
  *  writes normalize through toPlain. */

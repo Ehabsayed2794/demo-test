@@ -21,6 +21,7 @@ const callables = {
   engineSmoke: kotlin.engineSmoke,
   settleMatch: kotlin.settleMatch,
   resolveDecisionTimeout: kotlin.resolveDecisionTimeout,
+  reclaimInactiveSeat: kotlin.reclaimInactiveSeat,
 };
 
 for (const [name, fn] of Object.entries(callables)) {
