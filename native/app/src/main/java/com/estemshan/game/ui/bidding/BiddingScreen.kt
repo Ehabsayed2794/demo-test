@@ -38,6 +38,14 @@ fun BiddingScreen(
   forbidden: Int?,
   floor: Int?,
   onIntent: (BiddingIntent) -> Unit,
+  /**
+   * S73 (RD19): seats the configured bot is borrowing for inactivity. Marks
+   * this seat's turn line so a player who returns mid-bid is told the bot is
+   * bidding for them instead of being invited to bid. Controls stay live on
+   * purpose: a genuine bid by the owner is the activity that resets the
+   * inactivity clock.
+   */
+  borrowedSeats: Set<String> = emptySet(),
 ) {
   val turn = state.waitingFor
   Column(
@@ -50,6 +58,7 @@ fun BiddingScreen(
     Text(
       when {
         state.subPhase == BiddingPhase.DONE -> "Bidding complete"
+        turn == userSeat && userSeat in borrowedSeats -> "Bot bidding for your seat"
         turn == userSeat -> "Your turn ($userSeat)"
         turn != null -> "Waiting for $turn"
         else -> ""

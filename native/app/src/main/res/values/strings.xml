@@ -124,6 +124,17 @@
   -->
   <string name="online_opponent_away">Opponent appears away</string>
 
+  <!--
+    S73 (RD19)'s banner for the player whose seat the configured bot is
+    borrowing. Persistent, non-blocking, and never an accusation: inactivity
+    is not network loss, and no error colour is used. It names the two things
+    the roadmap requires the returning player to see — which seat is
+    bot-controlled, and that return is possible — because the reclaim is
+    automatic and there is no "I'm back" screen. EN only; AR is deferred to
+    S41 with the rest of the online strings.
+  -->
+  <string name="online_seat_borrowed">The bot is playing your seat while you\'re away. It hands the seat back as soon as the trick finishes.</string>
+
   <!-- S36 — Create Game: the host's five match-scoped selections. -->
   <string name="create_game_title">Create Game</string>
   <string name="create_game_subtitle">Configure · Private room</string>

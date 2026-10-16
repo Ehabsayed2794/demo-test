@@ -3,6 +3,7 @@ package com.estemshan.game.data
 import com.estemshan.engine.GameSession
 import com.estemshan.services.CoroutineMatchScheduler
 import com.estemshan.services.CallableDecisionTimeout
+import com.estemshan.services.CallableSeatReclaim
 import com.estemshan.services.DecisionTimeoutPort
 import com.estemshan.services.Heartbeat
 import com.estemshan.services.MatchAdapter
@@ -14,6 +15,7 @@ import com.estemshan.services.PlayerPort
 import com.estemshan.services.PlayerService
 import com.estemshan.services.RoomPort
 import com.estemshan.services.RoomService
+import com.estemshan.services.SeatReclaimPort
 import com.estemshan.services.session.AuthPort
 import com.estemshan.services.session.GameSessionBridge
 import com.estemshan.services.session.GameSessionPort
@@ -96,6 +98,18 @@ object OnlineServices {
    */
   val timeouts: DecisionTimeoutPort by lazy {
     CallableDecisionTimeout(FirebaseModule.functions)
+  }
+
+  /**
+   * S73 (RD19) — the seat-reclaim seam, the `reclaimInactiveSeat` callable.
+   * It is the only door from this process back into a borrowed seat: the
+   * takeover marker is admin-written and named by no client validator, so the
+   * frozen rules deny a direct write, and the poll below can only ask the
+   * server. Lazy for the same reason as [timeouts]: it reads
+   * [FirebaseModule.functions].
+   */
+  val reclaims: SeatReclaimPort by lazy {
+    CallableSeatReclaim(FirebaseModule.functions)
   }
 
   /**
