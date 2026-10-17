@@ -167,8 +167,9 @@ The full design narrative, the contradiction register, and the per-screen UI imp
   > **CLOSED 2026-10-16 — option (a): +2 to the career Koz count. Options (b) and (c) rejected.**
   > No forced last-place placement; the bot seat's play never becomes the departed player's
   > placement; a return while the seat is still reclaimable carries no penalty. Charge scope as
-  > ruled: **2 Koz (`RANKED` only)** for explicit leave and the 15-timeout removal; **Vote Kick
-  > 1 Koz final**; **no Koz** for a `ROOM`/`UNRANKED` disconnect. See the 2026-10-16 owner-closure
+  > ruled: **2 Koz in `RANKED` + `UNRANKED`** (`ROOM` excluded) for explicit leave and the
+  > 15-timeout removal; **Vote Kick 1 Koz final**; a permanently-replaced disconnect carries
+  > **2 Koz** in `UNRANKED` and **no Koz** in `ROOM`. See the 2026-10-16 owner-closure
   > amendment below.
 - **OPEN-5** **The disconnect vote's three mechanics** (opened 2026-10-14 by DEC-DISC-01). The 30-second voting window and the configured-bot default on no agreement are decided; **the agreement threshold, what a WAIT does now that D8/D9's pause mechanics are superseded, and the condition for permanent replacement (RD31) are not.** Blocks the WAIT half of S74. Options and context in the 2026-10-14 amendment.
   > **CLOSED 2026-10-16 — all three mechanics ruled.** The vote runs **30 s over a live table**
@@ -589,7 +590,7 @@ Two new stories, added to **E6b** (they extend the Ranked ruleset and the room f
 | Story | Scope | Hours | Deps |
 |---|---|---|---|
 | **S70** | **Ranked party eligibility gate.** Server-side check (Cloud Function, S42 module): at join to a Rank-down Ranked room, resolve each player's tier per RD30 (unplaced → Bronze III) and apply RD29 against the creator; deny with reason `RANK_INCOMPATIBLE`. Client join path surfaces the new denial reason. **The client must never read another player's rank** — the function returns only allow/deny + the plain-language reason. | 14 | S42, S44 |
-| **S71** | **Unranked mode: match-type choice, conversion, and the shared pool.** The three-entry match-type choice on S36; the host-only "Play Unranked" conversion (pre-match only, idempotent, access credential cleared, `mode` → `UNRANKED`); the **rank-blind shared Unranked pool** (one pool serving parties and solos; remaining seats offered to available humans regardless of rank); **bot fallback after a 4 minute fill timeout** reusing the S61 mechanism; the Unranked waiting-room state with the countdown. Asserts: `mode` persisted as `UNRANKED` (not `ROOM` + marker), no RP, no Ranked statistics, **no Vote Kick**, **no push-to-talk voice**, the disconnect vote **present** (2026-10-14: the pause half of this assertion is repealed by DEC-DISC-01 — assert the 30-second vote over a live table, not a paused state; any wait state is OPEN-5), and rank-blind mixing (King + Bronze seats together). **Every existing `mode` switch site is updated for the third value** (S70's audit list is the checklist). | 26 | S70, S56, S61, S68 |
+| **S71** | **Unranked mode: match-type choice, conversion, and the shared pool.** The three-entry match-type choice on S36; the host-only "Play Unranked" conversion (pre-match only, idempotent, access credential cleared, `mode` → `UNRANKED`); the **rank-blind shared Unranked pool** (one pool serving parties and solos; remaining seats offered to available humans regardless of rank); **bot fallback after a 4 minute fill timeout** reusing the S61 mechanism; the Unranked waiting-room state with the countdown. Asserts: `mode` persisted as `UNRANKED` (not `ROOM` + marker), no RP, no Ranked statistics, **no Vote Kick**, **no push-to-talk voice**, the disconnect vote **present** (2026-10-14: the pause half of this assertion is repealed by DEC-DISC-01 — assert the 30-second vote over a live table, not a paused state; the wait state is ruled — a winning WAIT pauses the match for a bounded 90 s; OPEN-5 closed 2026-10-16), and rank-blind mixing (King + Bronze seats together). **Every existing `mode` switch site is updated for the third value** (S70's audit list is the checklist). | 26 | S70, S56, S61, S68 |
 | — | Documents: `CANONICAL_RULES.md` A3, `UI_UX_ROADMAP.md` amendments, architecture/spec notes | 4 | — |
 | **E6b addition** | | **44** | |
 
@@ -712,8 +713,8 @@ unspecified.
 | **Ordinary timeout** (RD20 — **SHIPPED, S61**) | a decision deadline expires | **MEDIUM** — pinned by RD20 regardless of configuration | **+1 each**; 15 cumulative → automatic removal | none while the match continues | **2 Koz on removal (RD31) — no rejoin (DEC-OPEN1-01)** |
 | **Explicit Leave Match** (**S72 — planned**) | the player chooses to leave the match | **configured tier + personality** (RD20) | no | **none — participation ends** | **2 Koz (RD31)** |
 | **Inactivity takeover** (RD19 — **S73 — planned**) | 50 s of decision-point inactivity | **configured** (RD19; DEC-RD19-01) | **no increment** (RD20 separation) | **same seat returns**: the bot finishes the current trick, control returns at the next decision point (DEC-RD19-04) | decided by play — RD31 never fires |
-| **Disconnect takeover** (**S74 — planned**) | connection loss — **ROOM + UNRANKED only** (DEC-DISC-01) | **configured** (DEC-RD21-01) | no | **yes while the table waits** — mechanics pending (OPEN-5) | decided by play, unless replacement is finalized (pending, OPEN-5) |
-| **Vote Kick** (RD17/18 — SHIPPED, S60) | a manual vote, **RANKED only** | configured (existing `botSeats` model) | no, and shares no cooldown (RD20) | **none — permanent, no rejoin** | **2 Koz (RD31); previously "recorded as Koz"** |
+| **Disconnect takeover** (**S74 — planned**) | connection loss — **ROOM + UNRANKED only** (DEC-DISC-01) | **configured** (DEC-RD21-01) | no | **yes while the table waits** — 30 s vote; a winning WAIT pauses the match for a bounded 90 s (OPEN-5 closed 2026-10-16) | decided by play, unless replacement is finalized — then `UNRANKED` 2 Koz / `ROOM` no Koz (OPEN-5 closed 2026-10-16) |
+| **Vote Kick** (RD17/18 — SHIPPED, S60) | a manual vote, **RANKED only** | configured (existing `botSeats` model) | no, and shares no cooldown (RD20) | **none — permanent, no rejoin** | **1 Koz final** — supersedes the RD31 doubling for this path (RD18's wording restored; conflict C1) |
 
 ### The eleven decisions — verbatim intent, stable IDs
 

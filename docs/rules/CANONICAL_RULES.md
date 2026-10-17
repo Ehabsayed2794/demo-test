@@ -457,10 +457,11 @@ Every rule in §§1–5 — the deal, the auction, both Game Types, both Calcula
 4. **The 90-second WAIT pause must not be read as re-opening OPEN-2.** OPEN-2 forbids pausing
    *while a Vote Kick ballot is open*; A5.2 pauses *after* a disconnect-vote WAIT verdict. The
    two are compatible only under that reading, and it is recorded here rather than assumed.
-5. **`docs/decisions/2026-10-16-open4-open5-owner-closure.md` predates this scope correction** —
-   it wrote "2 Koz, `RANKED` only" and "no Koz for a Room **or Unranked** replacement". Both are
-   superseded by A5.1. **It was not edited here** (out of scope) and must be corrected before
-   anyone reads it as current.
+5. **`docs/decisions/2026-10-16-open4-open5-owner-closure.md` carries A5.1's scope as committed.**
+   An earlier draft of the record wrote "2 Koz, `RANKED` only" and "no Koz for a Room **or
+   Unranked** replacement"; the record as committed (`cd02a71`) was corrected before landing —
+   2 Koz in `RANKED` + `UNRANKED` with `ROOM` excluded, and Vote Kick 1 Koz final. No outstanding
+   correction; this note stands only as the guard against re-reading the older draft.
 
 ### A5.4 What A5 does not change
 
