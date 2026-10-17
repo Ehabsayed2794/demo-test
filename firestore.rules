@@ -1428,6 +1428,39 @@ service cloud.firestore {
                && oldData.get('removedUids', []).hasOnly(newData.removedUids);
       }
 
+      // S72 (Explicit Leave Match): the seat's uid is added to leftUids exactly
+      // once, and the seat is added to botSeats so the configured bot drives it.
+      // The seat's own uid is the only valid leaver; the write touches only
+      // leftUids, botSeats, version and updatedAt.
+      function isValidLeaveWrite() {
+        let oldData = resource.data;
+        let newData = request.resource.data;
+        let leavingSeat =
+          (oldData.seats.get('p1', null) == request.auth.uid) ? 'p1' :
+          (oldData.seats.get('p2', null) == request.auth.uid) ? 'p2' :
+          (oldData.seats.get('p3', null) == request.auth.uid) ? 'p3' :
+          (oldData.seats.get('p4', null) == request.auth.uid) ? 'p4' : null;
+        return request.auth != null
+               && request.auth.uid in oldData.players
+               && leavingSeat != null
+               && !(request.auth.uid in oldData.get('leftUids', []))
+               && !(leavingSeat in oldData.get('botSeats', []))
+               && newData.diff(oldData).affectedKeys().hasOnly(
+                    ['leftUids', 'botSeats', 'version', 'updatedAt'])
+               && newData.version == oldData.version + 1
+               && newData.leftUids is list
+               && newData.leftUids.hasOnly(oldData.players)
+               && newData.botSeats is list
+               && newData.botSeats.hasOnly(oldData.seats.keys())
+               // Leave only grows: nothing is ever un-left, never un-botted.
+               && oldData.get('leftUids', []).hasOnly(newData.leftUids)
+               && oldData.get('botSeats', []).hasOnly(newData.botSeats)
+               && newData.leftUids.size() == oldData.get('leftUids', []).size() + 1
+               && newData.botSeats.size() == oldData.get('botSeats', []).size() + 1
+               && request.auth.uid in newData.leftUids
+               && leavingSeat in newData.botSeats;
+      }
+
     match /matches/{matchId} {
       // Player Hand Synchronization sprint (Architecture Gate-approved
       // Option A): structural validation for `MatchService.dealRound()`'s
@@ -1766,10 +1799,18 @@ service cloud.firestore {
            // removal write each own their exact field set — never mixed
            // with gameplay writes, never each other.
            ('failedVoteKickCooldown' in affected) ? isValidVoteKickCooldownWrite() :
+           // S72: a leave write touches leftUids AND botSeats (the configured bot
+           // takes the seat in the same write). The leftUids branch MUST precede
+           // the botSeats/removedUids branch, otherwise a leave write routes to
+           // isValidVoteKickRemovalWrite(), whose hasOnly() rejects leftUids and
+           // every first-time explicit leave is denied.
+           ('leftUids' in affected) ? isValidLeaveWrite() :
            ('botSeats' in affected || 'removedUids' in affected) ? isValidVoteKickRemovalWrite() :
            false;
       }
-      allow update: if request.auth != null && isValidMatchUpdateDispatch();
+      allow update: if request.auth != null
+             && !(request.auth.uid in resource.data.get('leftUids', []))
+             && isValidMatchUpdateDispatch();
       allow delete: if false;
 
       // ── matches/{matchId}/roundArchive/{archiveId} ────────────────

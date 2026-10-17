@@ -10,6 +10,8 @@ import com.estemshan.engine.EmitResult
 import com.estemshan.engine.GameSession
 import com.estemshan.engine.GameType
 import com.estemshan.engine.InactiveTakeover
+import com.estemshan.engine.KozCharge
+import com.estemshan.engine.LeaveReason
 import com.estemshan.engine.PlayCard
 import com.estemshan.engine.PlayEmit
 import com.estemshan.engine.RANKS
@@ -41,6 +43,7 @@ import com.estemshan.services.model.EndMatchResult
 import com.estemshan.services.model.ExtendResult
 import com.estemshan.services.model.GameState
 import com.estemshan.services.model.HandDoc
+import com.estemshan.services.model.LeaveResult
 import com.estemshan.services.model.MatchDoc
 import com.estemshan.services.model.StoredCard
 import com.estemshan.services.model.SubmitBidResult
@@ -1637,6 +1640,17 @@ class OnlineMatchViewModelTest {
         complete = true, reason = null, matchId = matchId,
         completedRound = completedRound, winnerIds = winnerIds, finalScores = finalScores,
       )
+    }
+
+    override suspend fun leaveMatch(matchId: String): LeaveResult {
+      val uid = doc.seats.entries.firstOrNull { it.value == "uid-a" }?.value ?: ""
+      val seatId = doc.uidToSeat(uid) ?: ""
+      doc = doc.copy(
+        leftUids = doc.leftUids + uid,
+        botSeats = doc.botSeats + seatId,
+        version = doc.version + 1,
+      )
+      return LeaveResult(matchId, seatId, uid, KozCharge.Koz2, doc.version)
     }
   }
 

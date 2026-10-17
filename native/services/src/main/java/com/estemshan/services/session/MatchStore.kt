@@ -7,6 +7,7 @@ import com.estemshan.services.model.DealResult
 import com.estemshan.services.model.EndMatchResult
 import com.estemshan.services.model.ExtendResult
 import com.estemshan.services.model.HandDoc
+import com.estemshan.services.model.LeaveResult
 import com.estemshan.services.model.MatchDoc
 import com.estemshan.services.model.SubmitBidResult
 import com.estemshan.services.model.SubmitBiddingActionResult
@@ -64,4 +65,12 @@ interface MatchStore {
     finalScores: Map<String, Int>,
     winnerIds: List<String>,
   ): EndMatchResult
+
+  /**
+   * S72 — explicit leave: the acting seat's uid is recorded as departed, the seat
+   * is taken by the configured bot, and the RD31 Koz charge is computed. Idempotent:
+   * a second leave for the same seat is a no-op with ALREADY_LEFT. The leaver's
+   * client can no longer write match state (sealed by firestore.rules).
+   */
+  suspend fun leaveMatch(matchId: String): LeaveResult
 }
