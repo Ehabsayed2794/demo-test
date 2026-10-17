@@ -296,7 +296,7 @@ An Unranked match is a **normal match type**, reached either by choosing it on t
 | All gameplay in §§1–5, both Game Types, both Calculation Modes | yes | yes | **yes** |
 | RP / Ranked progression | no | yes | **no** |
 | The 9 career statistics | no | yes | **no** |
-| Manual Vote Kick | no | yes (incl. Rank-down) | **no** |
+| Manual Vote Kick | no | yes (incl. Rank-down) | **yes** |
 | Automatic 15-timeout removal | yes | yes | **yes** |
 | Push-to-talk voice | yes | no | **no** |
 | Disconnect vote + pause | yes | no | **yes** |
@@ -308,6 +308,14 @@ An Unranked match is a **normal match type**, reached either by choosing it on t
 - **The automatic 15-timeout removal is shared by all three modes** — it is not Vote Kick and shares no state with it.
 
 > **Pointer (owner decision DEC-DISC-01, 2026-10-14; the text above is left unchanged).** The row above is labelled "Disconnect vote + pause" and the bullet above it says the same. **The vote is exactly as stated and stays available in `ROOM` and `UNRANKED` and not in `RANKED`; the "pause" half of both lines is superseded** — a disconnected player's seat is answered by a bounded 30-second question while play continues, and no match pauses. See Amendment A4.4. Nothing else in A3 changes: A3.5's mode table, its "no progression of any kind" rule and its Voice/15-timeout rows all stand verbatim.
+
+> **Pointer (owner clarification, 2026-10-17; the Manual Vote Kick row above is updated in
+> place).** `UNRANKED` is `RANKED` in every rule except RP (frozen both ways), so **Vote Kick
+> is available in `UNRANKED`** — `ROOM` is the only mode without it — under RD17/18's
+> conditions exactly as in `RANKED`. The career Koz counter is a **plain departure counter,
+> not Ranked progression** (it moves no tier and no RP), which is why A5.1's `UNRANKED`
+> charges record (A5.3 item 3 now ratified). See
+> `docs/decisions/2026-10-17-unranked-scope-owner-clarification.md`.
 
 ### A3.6 What this amendment does not change
 
@@ -365,7 +373,7 @@ When a player's **participation in a match ends permanently**, that player's ind
 
 - **OPEN-1 — CLOSED** (DEC-OPEN1-01). The automatic 15-timeout removal is **permanent for that match**; the player may start or join another match afterwards. The removal behaviour as implemented is preserved.
 - **OPEN-2 — CLOSED** (DEC-OPEN2-01). A Vote Kick vote runs while **gameplay continues**. There is no freeze-and-pause and none may be introduced; S63's acceptance criteria and test plan are written to match.
-- **The disconnect question is put to `ROOM` and `UNRANKED` tables only** (DEC-DISC-01): `mode ∈ {ROOM, UNRANKED}`. **Vote Kick stays Ranked-only**, and the two share no state, no UI and no countdown. On a dropped connection the table is asked **one question** with a **30-second window**; if nobody agrees within 30 s, the match continues with the **Create-Game-configured bot**. D9's "pause the match" branch is **superseded**; what survives of D9 is the invariant that **a wait is always bounded, never indefinite**.
+- **The disconnect question is put to `ROOM` and `UNRANKED` tables only** (DEC-DISC-01): `mode ∈ {ROOM, UNRANKED}`. **Vote Kick serves `RANKED` and `UNRANKED`** (amended 2026-10-17 — `ROOM` alone excludes it), and the two share no state, no UI and no countdown. On a dropped connection the table is asked **one question** with a **30-second window**; if nobody agrees within 30 s, the match continues with the **Create-Game-configured bot**. D9's "pause the match" branch is **superseded**; what survives of D9 is the invariant that **a wait is always bounded, never indefinite**.
 - **OPEN-5 stays open because the answers do not settle it**: (i) how many answers constitute agreement, (ii) what the table does when they agree to **wait** — D9's pause being gone, the WAIT outcome and its duration are undefined — and (iii) what makes a replacement **permanent**, and whether RD31 fires at that moment. S74's WAIT half and the S41/S42 artboards that draw it are gated on this. **No threshold may be invented and none may be drawn or specified as if it were current.**
 
 > **Pointer (owner ruling 2026-10-16 — Amendment A5; the bullets above are left verbatim as
@@ -414,7 +422,7 @@ Every rule in §§1–5 — the deal, the auction, both Game Types, both Calcula
 |---|---|---|---|
 | **Explicit Leave Match** (S72) | **2 Koz** | **2 Koz** | **no 2-Koz rule** |
 | **15-timeout** automatic removal (RD20, OPEN-1) | **2 Koz** | **2 Koz** | **no 2-Koz rule** |
-| **Vote Kick** passed (RD18, S63) | **1 Koz** | n/a — Ranked-only | n/a — Ranked-only |
+| **Vote Kick** passed (RD18, S63) | **1 Koz** | **1 Koz** (amended 2026-10-17) | n/a — not held in `ROOM` |
 | **Disconnect** permanently replaced (S74) | n/a — the vote is not held in Ranked | **2 Koz** | **no Koz** |
 | Reclaim / return while the table waits | **no penalty** | **no penalty** | **no penalty** |
 
@@ -446,14 +454,15 @@ Every rule in §§1–5 — the deal, the auction, both Game Types, both Calcula
 2. **Vote Kick 1 Koz contradicts A4.1's fires-on bullet ("a passed Vote Kick … 2 Koz") and
    A4.2's path-E "RD31: yes".** Left verbatim; A5.1 governs. This is a **repeal of the doubling
    for that path**, not of RD31.
-3. **`UNRANKED` charges meet A3.5's "no progression of any kind."** A5.1 now applies the 2-Koz
-   rule in `UNRANKED`, while A3.5 and RD28 state that Unranked accumulates **no Ranked
-   statistics** — the very sub-case A4.1 flagged and called "a sub-case of OPEN-4". A5.1 depends
-   on the reading that **the career Koz counter is a plain departure counter, not Ranked
-   progression** (it moves no tier and no RP). That reading is **not yet written into A3.5**, so
-   implementers must treat it as **owner-ruled but textually unratified** until A3.5 carries its
-   own pointer. If the owner intends Unranked to charge nothing, A5.1's `UNRANKED` column is the
-   line that is wrong.
+3. **`UNRANKED` charges meet A3.5's "no progression of any kind." — RESOLVED (owner
+   clarification, 2026-10-17).** A5.1 applies the 2-Koz rule in `UNRANKED`, while A3.5 and RD28
+   state that Unranked accumulates **no Ranked statistics** — the sub-case A4.1 flagged and
+   called "a sub-case of OPEN-4". A5.1 depends on the reading that **the career Koz counter is
+   a plain departure counter, not Ranked progression** (it moves no tier and no RP). That
+   reading is now **owner-ratified**, and **A3.5 carries its own pointer** (added 2026-10-17):
+   `UNRANKED` is `RANKED` in every rule except RP (frozen both ways). The former fallback — "if
+   the owner intends Unranked to charge nothing" — is **closed**; A5.1's `UNRANKED` column
+   stands as written. See `docs/decisions/2026-10-17-unranked-scope-owner-clarification.md`.
 4. **The 90-second WAIT pause must not be read as re-opening OPEN-2.** OPEN-2 forbids pausing
    *while a Vote Kick ballot is open*; A5.2 pauses *after* a disconnect-vote WAIT verdict. The
    two are compatible only under that reading, and it is recorded here rather than assumed.
@@ -470,6 +479,6 @@ Calculation Modes, all scoring tables, Sa'ayda, extensions, every win condition,
 and its thresholds, the tier ladder, placement mechanics, seasons, the leaderboard, Solo
 Auto-Match (RD9), the 2 s bot pace, every RD21 timer, RD19's decision-point clock and
 trick-bounded reclaim, the five-path taxonomy, MEDIUM's pin to path A, the private cumulative
-timeout counter, the Vote Kick's Ranked-only availability and no-rejoin permanence, and the frozen
+timeout counter, the Vote Kick's availability (`RANKED` + `UNRANKED` since 2026-10-17) and no-rejoin permanence, and the frozen
 Firestore rules. **A5 changes only what a match records, in which modes it records it, and when
 the disconnect table may pause for a bounded 90 seconds.**
