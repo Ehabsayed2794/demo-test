@@ -202,6 +202,20 @@ suspend fun resolveTimeoutOnce(
       Reason.NOT_ACTIVE,
       "resolveDecisionTimeout: match '$matchId' is not waiting on a decision.",
     )
+  // S74 (DEC-DISC-01): a granted disconnect-vote WAIT pauses the table — no
+  // decision resolves while the pause is live, and the caller re-arms on the
+  // pause's own remaining millis. The gate sits BEFORE the expiry check on
+  // purpose: an already-expired decision must not resolve either. The
+  // replacement write that ends the pause re-stamps `updatedAt`, which is the
+  // decision machine's only anchor, so the pending decision gets a complete
+  // window when play resumes — the exact logic the S73 return documents.
+  TimeoutResolution.disconnectPauseRemaining(fields, clock.nowMillis())?.let { remaining ->
+    return noWriteResponse(
+      Reason.NOT_YET_EXPIRED,
+      "resolveDecisionTimeout: the match is paused for a disconnect vote.",
+      retryAfterMillis = remaining,
+    )
+  }
   if (!TimeoutResolution.isExpired(pending, clock.nowMillis())) {
     return noWriteResponse(
       Reason.NOT_YET_EXPIRED,
@@ -223,6 +237,17 @@ suspend fun resolveTimeoutOnce(
         Reason.NOT_ACTIVE,
         "resolveDecisionTimeout: match '$matchId' is not waiting on a decision.",
       )
+    // S74: the same pause gate on the committed document — a pause that went
+    // live between the pre-check and this transaction stops the expiry here,
+    // and one that ENDED makes `updatedAt` newer, so this re-anchors the
+    // window instead of resolving against the pre-pause clock.
+    TimeoutResolution.disconnectPauseRemaining(fresh, clock.nowMillis())?.let { remaining ->
+      return@transact noWriteResponse(
+        Reason.NOT_YET_EXPIRED,
+        "resolveDecisionTimeout: the match is paused for a disconnect vote.",
+        retryAfterMillis = remaining,
+      )
+    }
     if (!TimeoutResolution.isExpired(freshPending, clock.nowMillis())) {
       return@transact noWriteResponse(
         Reason.NOT_YET_EXPIRED,
@@ -258,7 +283,17 @@ suspend fun resolveTimeoutOnce(
         // yet in `fresh`.
         val alreadyBorrowed =
           freshPending.seatId in TimeoutResolution.inactiveTakeoverSeats(fresh)
-        val humanHeldSeat = seatUid != null && !alreadyBotControlled && !alreadyBorrowed
+        // S74 (DEC-DISC-01): a disconnect-held seat is bot-played from the
+        // instant of detection, so its expiries are the mechanism's own doing
+        // too — the counter counts HUMAN timeouts and suppresses for this
+        // borrowing exactly as it does for RD19's. The detection that opened
+        // the flow is not written into `fresh` yet when the seat keeps
+        // resolving before its hold lands, so the window that expires just
+        // before the hold still counts: it was a genuine human timeout.
+        val alreadyDisconnectHeld =
+          freshPending.seatId in TimeoutResolution.disconnectHeldSeats(fresh)
+        val humanHeldSeat =
+          seatUid != null && !alreadyBotControlled && !alreadyBorrowed && !alreadyDisconnectHeld
 
         // S73 (RD19): the clock is read under the same lock as the decision that
         // advances it, and only for a seat a human still holds. Every read in

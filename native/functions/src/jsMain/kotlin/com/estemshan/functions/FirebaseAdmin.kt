@@ -61,6 +61,11 @@ external interface Transaction {
   fun get(ref: DocRef): Promise<DocSnapshot>
   fun set(ref: DocRef, data: Any?)
   fun update(ref: DocRef, data: Any?)
+  /**
+   * S74: the disconnect flow's ballots are removed the moment their vote ends
+   * (close, settle, or a reconnect), so a transaction must be able to delete.
+   */
+  fun delete(ref: DocRef)
 }
 
 external object FieldValue {

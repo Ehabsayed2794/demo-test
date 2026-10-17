@@ -6,6 +6,7 @@ import com.estemshan.engine.BiddingPhase
 import com.estemshan.engine.BiddingState
 import com.estemshan.engine.Card
 import com.estemshan.engine.DEFAULT_SEATS
+import com.estemshan.engine.DisconnectVoteState
 import com.estemshan.engine.EmitResult
 import com.estemshan.engine.GameType
 import com.estemshan.engine.InactiveTakeover
@@ -318,14 +319,64 @@ object TimeoutResolution {
     InactiveTakeover.takeoverSeats(fields[InactiveTakeover.TAKEOVER_FIELD])
 
   /**
-   * Whether [seatId] is being driven by a bot right now, for either reason:
-   * permanently ([botControlledSeats]) or borrowed ([inactiveTakeoverSeats]).
-   * Both shorten the window to [BOT_DECISION_SECONDS] and neither may
-   * increment the timeout counter; only the permanence differs, and RD19's
-   * whole point is that the borrowed half is temporary.
+   * S74 — the seats the disconnect vote is holding RIGHT NOW, every phase of
+   * it: `HOLD` (detected, queued for the ballot), `VOTE` (the 30 s ballot
+   * open), `WAIT` (the granted pause) and `REPLACED` (the waiting ended; the
+   * seat is the configured bot's for the rest of the match). From the instant
+   * of detection the seat is bot-played, so this is the read every pacing
+   * site consults — and, like [inactiveTakeoverSeats], it is READ-SIDE ONLY
+   * and deliberately NOT folded into [botControlledSeats]: the mirror of
+   * MatchDoc.botControlledSeats() stays Vote Kick + timeout removal, and a
+   * disconnect-held seat keeps its Vote Kick slot exactly as a borrowed one
+   * does.
+   *
+   * Malformed entries parse as "not held" ([DisconnectVoteState.parseAll]
+   * drops them, fail-closed); the resolver re-detects a genuinely dropped
+   * player on its next pass. Gated on the mode the same way every S74 write
+   * is: a RANKED document never asks the question, so even a tampered marker
+   * left on one can change no seat's pace there (the RD28 canary lives in
+   * [DisconnectVoteFlow.modeEligible], consulted once, here).
+   */
+  fun disconnectHeldSeats(fields: Map<String, Any?>): Set<String> =
+    if (!DisconnectVoteFlow.modeEligible(fields)) {
+      emptySet()
+    } else {
+      DisconnectVoteState.heldSeats(fields[DisconnectVoteState.VOTE_FIELD])
+    }
+
+  /**
+   * S74 — the pause a granted `WAIT` window is running, in millis remaining,
+   * or null when no pause is live. A winning WAIT stops the table for a
+   * bounded 90 seconds BEGINNING AFTER the verdict (A5.3 item 4): during that
+   * window no decision resolves and no deadline runs, because the pause is
+   * "the table waits for its player". The bound is the entry's own
+   * [DisconnectVoteState.DEADLINE_FIELD] — a server stamp the resolver wrote —
+   * and an expired pause returns null the moment it is overdue: the pause is
+   * bounded, never indefinite, even if no one has flipped the marker to
+   * `REPLACED` yet.
+   */
+  fun disconnectPauseRemaining(fields: Map<String, Any?>, nowMillis: Long): Long? {
+    if (!DisconnectVoteFlow.modeEligible(fields)) return null
+    val deadline = DisconnectVoteState.waitDeadlineMillis(
+      fields[DisconnectVoteState.VOTE_FIELD],
+    ) ?: return null
+    val remaining = deadline - nowMillis
+    if (remaining <= 0L) return null
+    return remaining.coerceAtLeast(DisconnectVoteFlow.MIN_RETRY_AFTER_MILLIS)
+  }
+
+  /**
+   * Whether [seatId] is being driven by a bot right now, for any reason:
+   * permanently ([botControlledSeats]), borrowed ([inactiveTakeoverSeats]), or
+   * held by the S74 disconnect vote ([disconnectHeldSeats]). All of them
+   * shorten the window to [BOT_DECISION_SECONDS] and none may increment the
+   * timeout counter; only the permanence differs, and the disconnect flow is
+   * the one billed as reclaimable while the table waits.
    */
   private fun botHeldSeat(fields: Map<String, Any?>, seatId: String): Boolean =
-    seatId in botControlledSeats(fields) || seatId in inactiveTakeoverSeats(fields)
+    seatId in botControlledSeats(fields) ||
+      seatId in inactiveTakeoverSeats(fields) ||
+      seatId in disconnectHeldSeats(fields)
 
   /** The bot that plays one expired decision. [tier] is what the card path
    *  takes ([PlayBrain.decide] has no personality parameter); the bidding path
@@ -357,9 +408,14 @@ object TimeoutResolution {
    * ([parseBotTier]/[parseBotPersonality]): a match created before the trio's
    * persistence, or a value no client could have written, resolves to
    * MEDIUM/BALANCED rather than throwing or guessing.
+   *
+   * S74 adds the third reason the configured pair is used: a disconnect-held
+   * seat (DEC-DISC-01's configured-bot default — \"no agreement inside 30 s
+   * continues with the configured bot\", A5.2:434). Same seat-played-on-its-
+   * owner's-behalf logic as the borrowed half, same fallbacks.
    */
   fun botProfileFor(fields: Map<String, Any?>, seatId: String): BotProfile =
-    if (seatId in inactiveTakeoverSeats(fields)) {
+    if (seatId in inactiveTakeoverSeats(fields) || seatId in disconnectHeldSeats(fields)) {
       BotProfile(
         tier = parseBotTier(fields["botTier"]),
         personality = parseBotPersonality(fields["botPersonality"]),

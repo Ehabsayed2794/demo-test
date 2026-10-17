@@ -1,6 +1,8 @@
 package com.estemshan.services.model
 
 import com.estemshan.engine.Card
+import com.estemshan.engine.DisconnectVotePhase
+import com.estemshan.engine.DisconnectVoteState
 import com.estemshan.engine.GameType
 import com.estemshan.engine.InactiveTakeover
 import com.estemshan.engine.MatchMode
@@ -290,6 +292,33 @@ data class MatchDoc(
    */
   val inactiveTakeovers: Map<String, InactiveTakeover> = emptyMap(),
   /**
+   * S74 (DEC-DISC-01): the disconnect vote's public marker, keyed by seat id
+   * (`matches/{id}.disconnectVote`) — the seats the flow currently holds,
+   * every phase of it. Like [inactiveTakeovers] this is the mechanism's own
+   * provenance and no other path writes it, and like it the seats stay the
+   * players' own: a held seat is a BORROWING (reclaimable through the ballot
+   * and any paused wait), it is deliberately kept out of the [botSeats]/
+   * [botControlledSeats] union, and it stays kickable. Parsed fail-closed by
+   * [DisconnectVoteState.parseAll], so a present but untrustworthy entry reads
+   * as no flow rather than stranding a human out of their seat. Absent in
+   * older docs ⇒ nobody held (no migration).
+   */
+  val disconnectVote: Map<String, DisconnectVoteState> = emptyMap(),
+  /**
+   * S74: uids the disconnect flow replaced PERMANENTLY — the waiting ended
+   * with no reconnect. This is the flow's OWN provenance list, deliberately
+   * separate from [removedUids] (Vote Kick) and [timeoutRemovedUids] (the
+   * 15-timeout counter), exactly as those are separate from each other; the
+   * charge table (`DisconnectVote.permanentCharge`) is applied to it
+   * downstream, so the document records the termination and never the
+   * penalty. Recognition is read-side only and deliberately NOT folded into
+   * [isRemoved]/[botControlledSeats] in this slice: a replaced seat's RANKED
+   * path does not exist at all, and the ROOM/UNRANKED consumption sites land
+   * with the flow's UI. Absent in older docs ⇒ nobody replaced (no
+   * migration).
+   */
+  val disconnectReplacedUids: List<String> = emptyList(),
+  /**
    * S60 (D8): the 5-round same-target cooldown, verbatim
    * `failedVoteKickCooldown: { targetSeat, blockedUntilRound }`. Single
    * slot by spec. Absent ⇒ no live cooldown (no migration).
@@ -354,6 +383,24 @@ data class MatchDoc(
    * [botControlledSeats] for why they are never merged.
    */
   fun inactiveTakeoverSeats(): Set<String> = inactiveTakeovers.keys
+
+  /**
+   * S74 (DEC-DISC-01): the seats the disconnect flow is driving RIGHT NOW —
+   * `HOLD`, `VOTE`, `WAIT` and `REPLACED` alike, because the seat is
+   * bot-played from the instant of detection. Read-side only and never merged
+   * into [botControlledSeats], for [inactiveTakeoverSeats]'s exact reason: a
+   * held seat is still its owner's seat and must keep its Vote Kick slot.
+   */
+  fun disconnectHeldSeats(): Set<String> = disconnectVote.keys
+
+  /**
+   * S74: the held seats their owner can still take BACK — `HOLD`, `VOTE` or
+   * `WAIT`, i.e. the whole time the table waits. A `REPLACED` seat is not
+   * reclaimable: the waiting ended with no reconnect, and the seat is the
+   * configured bot's for the rest of the match.
+   */
+  fun disconnectReclaimableSeats(): Set<String> =
+    disconnectVote.filterValues { it.phase != DisconnectVotePhase.REPLACED }.keys
 
   /**
    * S60: seated AND not removed — the gate every match write path
@@ -437,6 +484,9 @@ data class MatchDoc(
         timeoutRemovedUids = (fields["timeoutRemovedUids"] as? List<*>)
           ?.mapNotNull { it as? String } ?: emptyList(),
         inactiveTakeovers = InactiveTakeover.parseAll(fields["inactiveTakeovers"]),
+        disconnectVote = DisconnectVoteState.parseAll(fields["disconnectVote"]),
+        disconnectReplacedUids = (fields["disconnectReplacedUids"] as? List<*>)
+          ?.mapNotNull { it as? String } ?: emptyList(),
         failedVoteKickCooldown = VoteKickCooldownData.fromFields(fields["failedVoteKickCooldown"]),
       )
     }
