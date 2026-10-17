@@ -1,0 +1,116 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="design_doc_mode" content="canvas"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Estimation Ranked Rank Progress (S51)</title>
+<link href="https://fonts.googleapis.com/css2?family=Marcellus&family=Saira:wght@400;500;600;700&family=Spline+Sans+Mono:wght@400;500;600;700&family=Noto+Naskh+Arabic:wght@500;600&display=swap" rel="stylesheet">
+<style>:root{--accent:#E8A33D;--accent-hi:#F4B860;--ink:#F0EADA;--ink-dim:#A89F8E;--ink-faint:#8A8272;--bg:#0D0A07;--panel:#17130E;--hi:#1D1912;--line:rgba(255,240,210,.07);--pill:#1D1A16;--legal:#69C87E;--mono:"Spline Sans Mono",monospace;--serif:"Marcellus",serif;--sans:"Saira","Noto Naskh Arabic",sans-serif}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#2a2622;font-family:var(--sans);color:var(--ink)}
+a{color:var(--accent)}a:hover{color:var(--accent-hi)}
+.lab{position:absolute;white-space:nowrap;font:600 13px var(--mono);letter-spacing:.12em;color:#d9d2c2;text-transform:uppercase}
+.scr{position:absolute;width:932px;height:430px;overflow:hidden;border-radius:20px;color:var(--ink);background:radial-gradient(140% 65% at 50% -18%,rgba(141,84,32,.33),transparent 70%),linear-gradient(180deg,#171008 0%,var(--bg) 48%,#080604 100%)}
+.top{position:absolute;top:16px;left:26px;right:26px;display:flex;justify-content:space-between;align-items:center}
+.kick{font:500 10px var(--mono);letter-spacing:.18em;color:var(--ink-dim);text-transform:uppercase}
+h1{font:400 22px/1 var(--serif);letter-spacing:.05em;margin-top:4px}
+.chip{display:flex;align-items:center;gap:8px;height:44px;padding:0 16px;border-radius:22px;background:var(--pill);border:1px solid var(--line);font:600 10px var(--mono);letter-spacing:.14em;color:var(--ink-dim);text-decoration:none;transition:border-color .12s ease,color .12s ease}
+.chip i{font-style:normal;color:var(--ink-faint);font-size:16px}.chip:hover{border-color:rgba(232,163,61,.4);color:var(--accent-hi)}.chip:focus-visible{outline:2px solid var(--accent-hi);outline-offset:2px}
+.body{position:absolute;left:26px;right:26px;top:84px;bottom:28px;display:flex;flex-direction:column;gap:12px}
+.cols{flex:1;min-height:0;display:grid;grid-template-columns:300px 1fr;gap:14px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:22px;display:flex;flex-direction:column;animation:up .6s ease both}
+.cols .panel+.panel{animation-delay:.12s}.strip{animation-delay:.5s}
+@keyframes up{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+i.n{font-style:normal;font-family:var(--mono)}
+.idr{display:flex;align-items:center;gap:16px}
+.shield,.shield:before{clip-path:polygon(50% 0,100% 22%,100% 64%,50% 100%,0 64%,0 22%)}
+.shield{width:52px;height:60px;flex:none;position:relative;background:var(--ink-faint);display:grid;place-items:center;font:22px var(--serif);color:var(--ink)}
+.shield:before{content:"";position:absolute;inset:1.5px;background:var(--hi)}.shield span{position:relative}
+.nm small{display:block;font:600 9px var(--mono);letter-spacing:.14em;color:var(--ink-faint);margin-bottom:4px}
+.nm b{display:block;font:400 18px/1 var(--serif);letter-spacing:.04em}
+.nm span{display:block;margin-top:7px;font:600 15px/1.2 "Noto Naskh Arabic",serif;color:var(--ink-dim)}
+.rp{margin-top:auto}.rp small{display:block;font:600 9px var(--mono);letter-spacing:.14em;color:var(--ink-faint);margin-bottom:4px}
+.rp b{display:block;font:600 52px/1 var(--mono);letter-spacing:-.02em}
+.k2{font:600 10px var(--mono);letter-spacing:.14em;color:var(--ink-dim);text-transform:uppercase}
+.dist{margin-top:10px;display:flex;align-items:baseline;gap:10px;font:500 15px var(--sans);color:var(--ink-dim)}
+.dist b{font:700 40px/1 var(--mono);letter-spacing:-.02em;color:var(--ink)}.dist em{font:400 20px/1 var(--serif);font-style:normal;letter-spacing:.04em;color:var(--ink)}.dist i.n{font-weight:600;font-size:14px}
+.tb{margin-top:auto;position:relative}
+.tag{position:absolute;bottom:calc(100% + 0px);font:600 12px var(--mono);color:var(--ink);background:var(--hi);border:1px solid rgba(255,240,210,.18);border-radius:6px;padding:3px 8px;white-space:nowrap}
+.tag:after{content:"";position:absolute;top:100%;left:var(--p);margin-left:-4px;width:8px;height:8px;background:var(--hi);border-right:1px solid rgba(255,240,210,.18);border-bottom:1px solid rgba(255,240,210,.18);transform:rotate(45deg) translate(-3px,-3px);display:none}
+.tr{position:relative;height:6px;margin-top:38px;border-radius:3px;background:var(--pill);border:1px solid var(--line)}
+.tr .f{position:absolute;left:0;top:-1px;bottom:-1px;border-radius:3px;background:var(--ink-dim)}
+.tr .m{position:absolute;top:50%;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 3px var(--panel)}
+.tr .e{position:absolute;top:-6px;width:2px;height:18px;border-radius:1px;background:var(--ink-dim)}
+.bl{display:flex;justify-content:space-between;align-items:flex-start;margin-top:14px}
+.bl div{display:flex;flex-direction:column;gap:5px}.bl div:last-child{align-items:flex-end}
+.bl strong{font:400 15px/1 var(--serif);letter-spacing:.04em;color:var(--ink);font-weight:400}.bl i.n{font:600 15px/1 var(--mono);color:var(--ink)}
+.bl .st{align-self:flex-end;font:500 11px var(--mono);letter-spacing:.06em;color:var(--ink-dim)}.bl .st i.n{font-size:11px;color:var(--ink-dim);font-weight:600}
+.line{font:500 20px/1.35 var(--sans);color:var(--ink);margin-top:14px;max-width:420px;text-wrap:pretty}
+.sub{font:400 13px/1.45 var(--sans);color:var(--ink-dim);margin-top:10px}.sub i.n{font-weight:600;color:var(--ink);font-size:13px}
+.strip{height:64px;flex:none;flex-direction:row;align-items:center;gap:16px;padding:0 22px}
+.sh2,.sh2:before{clip-path:polygon(50% 0,100% 22%,100% 64%,50% 100%,0 64%,0 22%)}
+.sh2{width:32px;height:37px;flex:none;position:relative;background:var(--legal);display:grid;place-items:center}
+.sh2:before{content:"";position:absolute;inset:1.5px;background:var(--hi)}.sh2 i.n{position:relative;font:700 15px var(--mono);color:var(--legal)}
+.pt{display:flex;flex-direction:column;gap:3px}.pt b{font:600 14px var(--sans);color:var(--ink);letter-spacing:.02em}.pt b i.n{font-weight:700}.pt span{font:400 13px var(--sans);color:var(--ink-dim)}.pt span i.n{font-size:13px;font-weight:600;color:var(--ink)}
+.cd{margin-left:auto;display:flex;align-items:baseline;gap:8px;height:34px;padding:0 14px;align-self:center;border-radius:17px;background:var(--pill);border:1px solid var(--line);font:600 10px var(--mono);letter-spacing:.14em;color:var(--ink-dim);text-transform:uppercase;align-items:center}
+.cd i.n{font:700 15px var(--mono);color:var(--legal);letter-spacing:0}
+.sk{background:linear-gradient(90deg,var(--pill),var(--hi),var(--pill));background-size:200% 100%;animation:sh 2.4s ease-in-out infinite;border-radius:6px}
+@keyframes sh{0%,100%{background-position:100% 0}50%{background-position:0 0}}
+.set{font:400 13px var(--sans);color:var(--ink-dim)}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+.doc{position:absolute;width:880px;background:#17130E;border:1px solid var(--line);border-radius:12px;padding:22px 24px;font-size:13px;line-height:1.5;color:var(--ink)}
+.doc h3{font:400 20px var(--serif);letter-spacing:.04em;margin-bottom:12px}.doc h4{font:600 10px var(--mono);letter-spacing:.14em;color:var(--accent);margin:14px 0 6px;text-transform:uppercase}
+.doc table{border-collapse:collapse;width:100%}.doc td,.doc th{border-top:1px solid var(--line);padding:6px 8px 6px 0;text-align:left;vertical-align:top}.doc th{font:600 10px var(--mono);color:var(--ink-dim);letter-spacing:.1em}
+.doc td:first-child{font:500 11px var(--mono);color:var(--ink-dim);width:170px}.doc li{margin:0 0 5px 16px;color:var(--ink-dim)}.doc li b{color:var(--ink)}
+.doc code{font:11px var(--mono);color:var(--accent-hi)}.doc p{color:var(--ink-dim)}.doc .ok{font-family:var(--mono);color:var(--legal);margin-right:6px}</style></head><body>
+<script>
+window.rankProgressBinding={source:'bound sample · the client supplies the settled server value (RD4, R24)',frames:[
+{id:'climbing',title:'1 · Climbing (primary)',rp:640,protection:false},
+{id:'protection',title:'2 · Protection active (RD7)',rp:596,protection:true},
+{id:'king',title:'3 · At King',rp:3140,protection:false},
+{id:'settling',title:'4 · Settling (loading)',rp:null,protection:false},
+{id:'crossing',title:'5 · Tier-crossing step',rp:870,protection:false}]};
+const L=[['Bronze','III',0],['Bronze','II',75],['Bronze','I',150],['Silver','III',250],['Silver','II',350],['Silver','I',450],['Gold','III',575],['Gold','II',700],['Gold','I',825],['Platinum','III',1000],['Platinum','II',1200],['Platinum','I',1400],['Diamond','III',1600],['Diamond','II',1800],['Diamond','I',2000],['Royal','III',2250],['Royal','II',2500],['Royal','I',2750],['King','',3000]];
+const AR={Bronze:'مبتدئ',Silver:'لاعب',Gold:'معلم',Platinum:'وزير',Diamond:'أمير',Royal:'سلطان',King:'ملك'};
+const fmt=x=>x.toLocaleString('en-US'),n=x=>'<i class="n">'+x+'</i>',nm=r=>r[0]+(r[1]?' '+r[1]:'');
+const rungAt=rp=>{let i=0;L.forEach((r,k)=>{if(r[2]<=Math.max(0,rp))i=k});return i};
+const hdr='<div class="top"><div><div class="kick">Ranked · Solo</div><h1>Rank Progress</h1></div><a class="chip" href="#" aria-label="Back to Ranked Home"><i>‹</i><span>RANKED</span></a></div>';
+const idp=(r,rp)=>'<div class="panel"><div class="idr"><div class="shield"><span>'+r[0][0]+'</span></div><div class="nm"><small>YOUR RANK</small><b>'+nm(r)+'</b><span lang="ar" dir="rtl">'+AR[r[0]]+'</span></div></div><div class="rp"><small>RP</small><b>'+fmt(rp)+'</b></div></div>';
+function prog(i,rp){const a=L[i],b=L[i+1],gap=b[2]-a[2],d=b[2]-rp,p=(rp-a[2])/gap*100,ps=p.toFixed(3)+'%';
+return '<div class="panel"><div class="k2">Next rung</div><div class="dist"><b>'+fmt(d)+'</b><span>RP to</span><em>'+nm(b)+'</em></div><div class="tb"><div class="tag" style="left:'+ps+';transform:translateX(-'+ps+')">'+fmt(rp)+'</div><div class="tr" role="progressbar" aria-valuemin="'+a[2]+'" aria-valuemax="'+b[2]+'" aria-valuenow="'+rp+'" aria-valuetext="'+rp+' RP, '+d+' RP to '+nm(b)+'"><div class="f" style="width:'+ps+'"></div><span class="e" style="left:0"></span><span class="e" style="right:0"></span><span class="m" style="left:'+ps+'"></span></div><div class="bl"><div><strong>'+nm(a)+'</strong>'+n(fmt(a[2]))+'</div><span class="st">'+n(fmt(gap))+' RP step</span><div><strong>'+nm(b)+'</strong>'+n(fmt(b[2]))+'</div></div></div></div>'}
+const kingP='<div class="panel"><div class="k2">Rank ceiling</div><p class="line">Further RP counts on the leaderboard only.</p><p class="sub">King starts at '+n('3,000')+' RP and has no divisions.</p></div>';
+const strip='<div class="panel strip" role="status"><div class="sh2" aria-hidden="true">'+n(1)+'</div><div class="pt"><b>Demotion protection · '+n(1)+' match</b><span>Lasts for '+n(1)+' match, then it ends.</span></div><div class="cd"><i class="n">1</i><span>match left</span></div></div>';
+const load='<div class="body" aria-busy="true" aria-label="Loading rank"><div class="cols"><div class="panel"><div class="idr"><div class="sk" style="width:52px;height:60px"></div><div style="display:flex;flex-direction:column;gap:8px"><div class="sk" style="width:64px;height:9px"></div><div class="sk" style="width:110px;height:16px"></div><div class="sk" style="width:60px;height:14px"></div></div></div><div style="margin-top:auto"><div class="sk" style="width:24px;height:9px;margin-bottom:8px"></div><div class="sk" style="width:150px;height:48px"></div></div></div><div class="panel"><div class="set">settling…</div><div class="sk" style="width:240px;height:38px;margin-top:12px"></div><div class="tb"><div class="sk" style="height:6px;margin-top:38px"></div><div class="bl"><div style="gap:8px"><div class="sk" style="width:80px;height:14px"></div><div class="sk" style="width:44px;height:14px"></div></div><div style="gap:8px;align-items:flex-end"><div class="sk" style="width:80px;height:14px"></div><div class="sk" style="width:44px;height:14px"></div></div></div></div></div></div></div>';
+function build(f){if(f.rp===null)return hdr+load;const i=rungAt(f.rp),r=L[i];let m=i===18?kingP:prog(i,f.rp);return hdr+'<div class="body"><div class="cols">'+idp(r,f.rp)+m+'</div>'+(f.protection?strip:'')+'</div>'}
+const lab=f=>{const s=f.rp===null?'no value':'sample · '+nm(L[rungAt(f.rp)])+' · '+fmt(f.rp)+' RP';return f.title+' <span style="color:#a89f8e;font-weight:500">('+s+')</span>'};
+document.write(rankProgressBinding.frames.map((f,k)=>{const x=40+(k%3)*992,y=60+Math.floor(k/3)*520;return '<div class="lab" style="left:'+x+'px;top:'+(y-26)+'px">'+lab(f)+'</div><div class="scr" data-screen-label="'+f.title+'" style="left:'+x+'px;top:'+y+'px">'+build(f)+'</div>'}).join(''));
+</script>
+<div class="doc" id="audit" style="left:2024px;top:580px"><h3>Contrast, colour audit</h3><p>Ratios computed live from the hex values below. Every text pairing used on the artboards.</p><table id="ct"><tr><th>TEXT</th><th>ON</th><th>USED FOR</th><th>RATIO</th></tr></table>
+<h4>Colour audit</h4><ul><li><b>Backdrop (owner-approved shared token):</b> same gradient as S45/S46/S50, under the radial glow. Nothing else undocumented.</li><li><b>Tokens used:</b> Accent #E8A33D (player position marker only), AccentHi #F4B860, Ink, InkDim, InkFaint, Background, Surface, SurfaceHigh, Pill, PanelLine, <b>Legal #69C87E</b> (protection shield and its "1" only).</li><li>Inherited from siblings, not new: marker ring and tag border use Surface / the .18 alpha line from S45's button border. <b>Gold is not used for any tier</b>; no crown glyph anywhere. Error, Koz and #6F685B unused.</li></ul></div>
+<div class="doc" style="left:40px;top:1100px"><h3>Copy table</h3><table><tr><th>ELEMENT</th><th>TEXT</th><th>SOURCE</th></tr>
+<tr><td>Kicker / title</td><td>Ranked · Solo / Rank Progress</td><td>sibling kicker; title agent-written (no rank fact)</td></tr>
+<tr><td>Back chip</td><td>‹ RANKED</td><td>agent-written; assumption: reached from S45's identity block</td></tr>
+<tr><td>Identity label</td><td>YOUR RANK</td><td>approved-verbatim</td></tr>
+<tr><td>Rung sample</td><td>Gold III · معلم · RP 640</td><td>bound sample; titles from Rules §1</td></tr>
+<tr><td>RP label</td><td>RP</td><td>sibling</td></tr>
+<tr><td>Track kicker</td><td>Next rung</td><td>agent-written (no rank fact)</td></tr>
+<tr><td>Remaining distance</td><td>60 RP to Gold II</td><td>approved; bound 700 − 640</td></tr>
+<tr><td>Bounds</td><td>Gold III 575 · Gold II 700 · 125 RP step</td><td>real ladder values; gap = 700 − 575</td></tr>
+<tr><td>Protection title</td><td>Demotion protection · 1 match</td><td>agent-written (brief e.g.)</td></tr>
+<tr><td>Protection line</td><td>Lasts for 1 match, then it ends.</td><td>agent-written; no trigger stated (OD #3)</td></tr>
+<tr><td>Protection counter</td><td>1 match left</td><td>agent-written; countdown of one</td></tr>
+<tr><td>King kicker / line</td><td>Rank ceiling / Further RP counts on the leaderboard only.</td><td>kicker agent-written; line approved-verbatim</td></tr>
+<tr><td>King fact</td><td>King starts at 3,000 RP and has no divisions.</td><td>Rules §1</td></tr>
+<tr><td>Settling</td><td>settling… + skeleton blocks, no numbers</td><td>approved</td></tr></table>
+<h4>Binding</h4><p><code>window.rankProgressBinding</code> declares the five frames' RP values. Rung, next rung, remaining distance and marker position are all derived on the page from the real 19-rung table (<code>nextRung.lowerBound − rp</code> and <code>(rp − rung.lowerBound) ÷ gap</code>). Sample values: 640, 596, 3,140, 870. Bounds are real, not samples.</p></div>
+<div class="doc" style="left:1032px;top:1100px"><h3>State notes, assumptions, open decisions</h3>
+<h4>States</h4><ul><li><b>1 Climbing:</b> Gold III · 640. Marker at 65/125 = 52.0%. Protection absent (not drawn at all).</li><li><b>2 Protection active:</b> Gold III · 596, marker at 21/125 = 16.8%. A bottom strip appears with a Legal-green shield holding "1", the label, the one-match line and a "1 match left" counter. Strip is the only difference from frame 1; nothing is added to the track or the rung block, so it cannot read as a lasting stripe or badge.</li><li><b>3 King:</b> no track, no next bar, no divisions. Overflow line verbatim.</li><li><b>4 Settling:</b> skeletons where shield, name, RP, distance, track and bounds land. Slow low-amplitude shimmer. "settling…" is the only text.</li><li><b>5 Tier-crossing:</b> Gold I · 870 → Platinum III at 1,000. 175 RP step, marker at 45/175 = 25.7%. Destination is Platinum <b>III</b>, not I.</li></ul>
+<h4>Open decisions, designed around, not resolved</h4><ul><li><b>1 Tier tokens:</b> the identity mark is one neutral shield slot (tier initial, Marcellus). No per-tier colour or crest; gate #2's Royal clause cannot be met today. If seven tier colours land, only <code>.shield</code> changes.</li><li><b>2 Entry point:</b> assumed reached by tapping S45's identity block; back chip returns there. No bottom nav.</li><li><b>3 RD7 trigger:</b> the shield renders only the closed fact, one match left. It is a self-contained <code>.strip</code> component; no stack, no fractions, no trigger wording.</li><li><b>4 Downward reading:</b> only the track's lower bound is labelled. Suggestion, not rendered: if wanted, a single "RP above Gold III" line could sit beside the step label; it was left out to keep the screen from reading as a demotion gauge.</li></ul>
+<h4>Motion</h4><p>Panels fade up (600ms, staggered, within the 950ms budget); the strip arrives last. Numbers and marker appear in place; the track never fills.</p>
+<h4>Findings</h4><ul><li>Token gap: the shield slot has no approved tier mark (OD #1).</li><li>The marker uses Gold as the player's own position, per S55's pattern; it identifies no tier.</li></ul></div>
+<div class="doc" style="left:2024px;top:1100px"><h3>Acceptance checklist</h3>
+<h4>A · Twelve criteria</h4><ul style="list-style:none;margin:0"><li><span class="ok">✓</span><b>1</b> One HTML file, 932×430, landscape, approved tokens, four approved faces.</li><li><span class="ok">✓</span><b>2</b> Rung block is S45's: shield, YOUR RANK, Marcellus name, Naskh title, mono RP.</li><li><span class="ok">✓</span><b>3</b> Arabic title beside every tier name (معلم, ملك), Noto Naskh Arabic.</li><li><span class="ok">✓</span><b>4</b> Every digit in Spline Sans Mono (RP, bounds, step, distance, tag, the "1"s).</li><li><span class="ok">✓</span><b>5</b> Track spans one real step; uneven gap labelled; marker at true proportion (52.0%, 16.8%, 25.7%).</li><li><span class="ok">✓</span><b>6</b> Bounds from Rules §1; only RP is a bound sample.</li><li><span class="ok">✓</span><b>7</b> King: no track, no destination, overflow line verbatim, no divisions.</li><li><span class="ok">✓</span><b>8</b> Shield labelled "1 match", counter "1 match left"; absent otherwise.</li><li><span class="ok">✓</span><b>9</b> No per-win, average, streak or matches-to-go copy.</li><li><span class="ok">✓</span><b>10</b> No negative values; distance is always N − rp with rp below N.</li><li><span class="ok">✓</span><b>11</b> All pairings ≥ 4.5:1 (table, computed live).</li><li><span class="ok">✓</span><b>12</b> Skeleton only, plus "settling…".</li></ul>
+<h4>B · Gates</h4><ul style="list-style:none;margin:0"><li><span class="ok">✓</span>#1 No ladder drawn; King division-less. <span class="ok">✗</span>#2 Royal clause blocked by OD #1. <span class="ok">✓</span>#4 AR titles. <span class="ok">✓</span>#8 shield. <span class="ok">✓</span>#11 no mic. <span class="ok">✓</span>#13 closed values only.</li></ul>
+<h4>C · Banned phrasing sweep</h4><p>Zero hits. Gold accent used only for the player marker; no crown; tier-crossing shown as Gold I → Platinum III; no Gold I → Gold III demotion shown.</p>
+<h4>D · Self-review</h4><ul><li><b>1</b> The shield says "1 match" three times (title, line, counter) and is a single shield.</li><li><b>2</b> Distance and lower bound share the track's end labels; covering 575 leaves "60 RP to Gold II" valid because it depends on 700.</li><li><b>3</b> The number most wanted: a "RP above Gold III" margin. Left out (OD #4).</li><li><b>4</b> King swaps the right panel for the overflow note; nothing implies a next rank.</li><li><b>5</b> Frame 5 covers it.</li><li><b>6</b> Seven tier colours would change the shield slot only.</li><li><b>7</b> Nothing outside the brief scope.</li></ul></div>
+<script>
+const hx=h=>[1,3,5].map(i=>parseInt(h.slice(i,i+2),16)/255).map(c=>c<=.03928?c/12.92:Math.pow((c+.055)/1.055,2.4)),lum=h=>{const c=hx(h);return .2126*c[0]+.7152*c[1]+.0722*c[2]},cr=(a,b)=>{const x=lum(a),y=lum(b);return ((Math.max(x,y)+.05)/(Math.min(x,y)+.05))};
+const P=[['Ink #F0EADA','Surface #17130E','names, RP, labels'],['InkDim #A89F8E','Surface #17130E','Arabic title, body, kickers'],['InkFaint #8A8272','Surface #17130E','YOUR RANK / RP (9px, 600; sibling pairing)'],['Ink #F0EADA','SurfaceHigh #1D1912','marker tag'],['InkDim #A89F8E','Pill #1D1A16','back chip, counter label'],['Legal #69C87E','SurfaceHigh #1D1912','shield "1"'],['Legal #69C87E','Pill #1D1A16','"1" in counter'],['InkDim #A89F8E','Background #0D0A07','header kicker (over glow ≈ 6.5)']];
+document.getElementById('ct').insertAdjacentHTML('beforeend',P.map(p=>'<tr><td>'+p[0]+'</td><td style="font:500 11px var(--mono);color:var(--ink-dim)">'+p[1]+'</td><td>'+p[2]+'</td><td style="font:600 12px var(--mono);color:var(--ink)">'+cr(p[0].split('#')[1]&&'#'+p[0].split('#')[1],'#'+p[1].split('#')[1]).toFixed(2)+':1</td></tr>').join(''));
+</script>
+</body></html>
