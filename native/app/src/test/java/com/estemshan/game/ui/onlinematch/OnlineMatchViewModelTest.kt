@@ -9,6 +9,7 @@ import com.estemshan.engine.DECK_SUITS
 import com.estemshan.engine.EmitResult
 import com.estemshan.engine.GameSession
 import com.estemshan.engine.GameType
+import com.estemshan.engine.InactiveTakeover
 import com.estemshan.engine.PlayCard
 import com.estemshan.engine.PlayEmit
 import com.estemshan.engine.RANKS
@@ -1198,6 +1199,58 @@ class OnlineMatchViewModelTest {
       val firedAt = timeouts.callTimes.single()
       assertTrue(
         "the bot-controlled seat fired at its short window (${firedAt - armedAt} ms), " +
+          "not the 20 s human one",
+        firedAt - armedAt <= 3_000,
+      )
+      stopAndDrain(vm)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * A borrowed seat arms at the short window too — the resolver times it at
+   * the fixed 2 s bot pace (C3 shortWindowSeats), so the client must not arm
+   * the 20 s human window or it stalls the table on the first decision.
+   * Mirrors aBotControlledSeatArmsAtTheShortWindow, but through S73's own
+   * provenance (inactiveTakeovers, never botSeats/timeoutRemovedUids).
+   */
+  @Test
+  fun aBorrowedSeatArmsAtTheShortWindow() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastRoundDoc()
+      val timeouts = ScriptedTimeouts(DecisionTimeoutPort.Resolution.Applied, clock = { currentTime })
+      val vm = makeVm("uid-a", Dispatchers.Main, timeouts = timeouts)
+      vm.start("m-to")
+      advanceUntilIdle()
+      deliverNow("m-to")
+
+      val waiting = biddingOf(vm.state.value).waitingFor
+        ?: error("expected a live bidding decision to wait on")
+      // Mark the deciding seat borrowed through the takeover marker — the
+      // owner's uid stays seated, so this is a borrow, not a removal.
+      store.doc = fastRoundDoc().copy(
+        version = 2,
+        inactiveTakeovers = mapOf(
+          waiting to InactiveTakeover(
+            takenOverAtMillis = currentTime,
+            roundAtTakeover = 14,
+            trickAtTakeover = 0,
+          ),
+        ),
+      )
+      deliverNow("m-to")
+      val armedAt = currentTime
+
+      advanceUntilIdle()
+      assertEquals(1, timeouts.callTimes.size)
+      val firedAt = timeouts.callTimes.single()
+      assertTrue(
+        "the borrowed seat fired at its short window (${firedAt - armedAt} ms), " +
           "not the 20 s human one",
         firedAt - armedAt <= 3_000,
       )

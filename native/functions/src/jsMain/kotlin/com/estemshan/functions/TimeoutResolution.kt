@@ -968,7 +968,7 @@ object TimeoutResolution {
     } catch (e: Throwable) {
       return Resolution.NoWrite(
         Reason.HISTORY_UNAVAILABLE,
-        "resolveDecisionTimeout: the MEDIUM bot could not decide for seat " +
+        "resolveDecisionTimeout: the bot could not decide for seat " +
           "'$seatId' (${state.subPhase}) — the reconstructed state disagrees " +
           "with the document.",
       )
@@ -1146,7 +1146,7 @@ object TimeoutResolution {
     } catch (e: Throwable) {
       return Resolution.NoWrite(
         Reason.HISTORY_UNAVAILABLE,
-        "resolveDecisionTimeout: the MEDIUM bot could not play for seat " +
+        "resolveDecisionTimeout: the bot could not play for seat " +
           "'$seatId' — the reconstructed table disagrees with the document.",
       )
     }
@@ -1154,7 +1154,7 @@ object TimeoutResolution {
     if (!preview.legal) {
       return Resolution.NoWrite(
         Reason.HISTORY_UNAVAILABLE,
-        "resolveDecisionTimeout: the MEDIUM bot's card was rejected for seat '$seatId'.",
+        "resolveDecisionTimeout: the bot's card was rejected for seat '$seatId'.",
       )
     }
 
