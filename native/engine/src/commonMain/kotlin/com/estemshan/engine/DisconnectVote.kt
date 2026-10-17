@@ -81,3 +81,15 @@ enum class DisconnectVoteStatus { CONTINUE, WAIT, NO_AGREEMENT }
 
 /** The Koz a permanent disconnect replacement records: +2 in UNRANKED, none in ROOM. */
 enum class DisconnectVoteCharge { KOZ2, NONE }
+
+/**
+ * The disconnect charge rides the same [KozCharge] shape the leave paths
+ * record through, so a caller can feed
+ * [RankedStats.accumulateDepartureCharge] without a translation of its own:
+ * KOZ2 → [KozCharge.Koz2], NONE → [KozCharge.None] (a Room replacement
+ * records nothing).
+ */
+fun DisconnectVoteCharge.toKozCharge(): KozCharge = when (this) {
+  DisconnectVoteCharge.KOZ2 -> KozCharge.Koz2
+  DisconnectVoteCharge.NONE -> KozCharge.None
+}

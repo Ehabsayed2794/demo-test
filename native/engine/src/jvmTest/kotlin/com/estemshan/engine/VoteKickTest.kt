@@ -86,13 +86,16 @@ class VoteKickTest {
   }
 
   @Test
-  fun roomsAndUnrankedNeverVote() {
+  fun roomsNeverVoteAndUnrankedVotesLikeRanked() {
+    // RD18 as amended by the 2026-10-17 owner clarification: ROOM is the
+    // only mode without the vote — its entry is absent. UNRANKED is
+    // RANKED minus RP and votes under identical conditions.
     assertEquals(
       VoteKickAvailability.Unavailable(VoteKickUnavailability.WRONG_MODE),
       available(mode = MatchMode.ROOM),
     )
     assertEquals(
-      VoteKickAvailability.Unavailable(VoteKickUnavailability.WRONG_MODE),
+      VoteKickAvailability.Available,
       available(mode = MatchMode.UNRANKED),
     )
   }

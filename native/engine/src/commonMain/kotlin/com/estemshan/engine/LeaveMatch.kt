@@ -10,7 +10,10 @@ package com.estemshan.engine
  * - The 15-timeout automatic removal → same scope as explicit leave (RD20:
  *   the timeout counter is S61's; this file shares nothing with it).
  * - Vote Kick → +1 Koz final (restores RD18's original "recorded as Koz";
- *   the RD31 doubling is repealed for this path — conflict C1).
+ *   the RD31 doubling is repealed for this path — conflict C1). The vote
+ *   holds in RANKED + UNRANKED since the 2026-10-17 owner clarification —
+ *   ROOM is the only mode without it — so this charge is deliberately
+ *   mode-independent.
  * - Seat still reclaimable and the human returns → no departure, no Koz.
  *
  * Layering: everything here is pure Kotlin over caller-supplied inputs — no

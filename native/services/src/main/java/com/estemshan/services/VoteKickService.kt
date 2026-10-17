@@ -47,7 +47,9 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Transaction
 
 /**
- * S60 — manual Vote Kick (RD18, Ranked-only) writer. The ONE authority for
+ * S60 — manual Vote Kick (RD18; `RANKED` + `UNRANKED` since the 2026-10-17
+ * owner clarification — `ROOM` is the only mode without it) writer. The ONE
+ * authority for
  * `matches/{matchId}/voteKick/current` plus the two parent fields it owns
  * (`botSeats`/`removedUids` on removal, `failedVoteKickCooldown` on
  * failure). Standalone class — MatchService is untouched except the
@@ -419,7 +421,7 @@ class VoteKickService(
 
   private fun availabilityMessage(reason: VoteKickUnavailability, targetSeat: String): String = when (reason) {
     VoteKickUnavailability.WRONG_MODE ->
-      "Vote Kick is Ranked-only."
+      "Vote Kick is not held in a Room."
     VoteKickUnavailability.ROUNDS_SHORT ->
       "Vote Kick opens once Round 7 has fully completed."
     VoteKickUnavailability.NO_UNIQUE_KOZ ->

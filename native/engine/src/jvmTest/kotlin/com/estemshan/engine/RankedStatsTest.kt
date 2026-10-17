@@ -9,6 +9,9 @@ import org.junit.Test
  * S44 — the exactly-nine career statistics: the grid is nine and no tenth,
  * the two inclusion gates (mode == RANKED, not placement) are both real, and
  * percentages derive from completed Ranked matches (RD23 / RD10 / RD28).
+ * Below that: the A5.1 departure-charge fold — the one career movement
+ * UNRANKED carries (the Koz counter as a plain departure counter,
+ * 2026-10-17).
  */
 class RankedStatsTest {
 
@@ -168,5 +171,144 @@ class RankedStatsTest {
     assertEquals(2, carried.gamesPlayed)
     assertEquals(1, carried.kingCount)
     assertEquals(1, carried.secondCount)
+  }
+
+  // ── A5.1 departure charges (2026-10-16 closure option (a), with the
+  //    2026-10-17 owner clarification on Unranked) ───────────────────────
+
+  @Test
+  fun theTwoKozDeparturesChargeTwoKozAndOneGamesPlayedInRankedAndUnranked() {
+    // A5.1's first two rows (explicit leave + the 15-timeout removal):
+    // "2 Koz" exactly in RANKED and UNRANKED. The recorded form is option
+    // (a) — +2 to the career Koz count with the Koz % denominator +1,
+    // Games Played +1 (`NATIVE_V1_PLAN_AND_ESTIMATE.md:883-884`) — and
+    // never a placement: no outcome row moves.
+    for (mode in listOf(MatchMode.RANKED, MatchMode.UNRANKED)) {
+      for (reason in listOf(LeaveReason.EXPLICIT_LEAVE, LeaveReason.FIFTEEN_TIMEOUT)) {
+        val after = accumulateDepartureCharge(
+          RankedStats(), settled, mode, LeaveMatch.decideLeave(mode, reason),
+        )
+        assertEquals("$reason in $mode: Games Played +1", 1, after.gamesPlayed)
+        assertEquals("$reason in $mode: Koz +2", 2, after.kozCount)
+        assertEquals("$reason in $mode: no outcome row is modelled",
+          0, after.kingCount + after.secondCount + after.thirdCount)
+        assertEquals("$reason in $mode: the charge is a counter increment, not a placement",
+          200, after.kozPct)
+      }
+    }
+  }
+
+  @Test
+  fun roomDeparturesRecordNothing() {
+    // A5.1's scope correction: ROOM is out of RD31 entirely — "no 2-Koz
+    // rule". The removal still fires in a Room; the record does not.
+    for (reason in listOf(LeaveReason.EXPLICIT_LEAVE, LeaveReason.FIFTEEN_TIMEOUT)) {
+      val before = RankedStats(gamesPlayed = 5, kozCount = 2)
+      val after = accumulateDepartureCharge(
+        before, settled, MatchMode.ROOM, LeaveMatch.decideLeave(MatchMode.ROOM, reason),
+      )
+      assertEquals("ROOM records nothing for a $reason departure", before, after)
+    }
+  }
+
+  @Test
+  fun aChargedDepartureForRoomRecordsNothingEvenWhenFedDirectly() {
+    // The same scope correction as a second line of defense: the decision
+    // cores never produce a charge for a ROOM match (decideLeave → None,
+    // permanentCharge → NONE), so this branch only guards a caller that
+    // bypasses the cores. Feed it the exact state such a caller would — a
+    // 2-Koz departure charged against a Room — and the fold must refuse.
+    val before = RankedStats(gamesPlayed = 6, kingCount = 3, kozCount = 2)
+    val after = accumulateDepartureCharge(before, settled, MatchMode.ROOM, KozCharge.Koz2)
+    assertEquals("a caller-fed charge for a ROOM match records nothing", before, after)
+  }
+
+  @Test
+  fun aVoteKickDepartureChargesOneKozFinalInBothVotableModes() {
+    // A5.1's third row + the repeal: Vote Kick records 1 Koz, final — the
+    // RD31 doubling is repealed for this path — in RANKED and, since the
+    // 2026-10-17 clarification, in UNRANKED. Seed one natural Koz so the
+    // assertion is unambiguous: a doubling would read 3.
+    for (mode in listOf(MatchMode.RANKED, MatchMode.UNRANKED)) {
+      val after = accumulateDepartureCharge(
+        RankedStats(gamesPlayed = 1, kozCount = 1), settled, mode,
+        LeaveMatch.decideLeave(mode, LeaveReason.VOTE_KICK),
+      )
+      assertEquals("vote kick in $mode: Games Played +1", 2, after.gamesPlayed)
+      assertEquals("vote kick in $mode: 1 Koz, final (never doubled)", 2, after.kozCount)
+    }
+  }
+
+  @Test
+  fun anUnrankedDisconnectReplacementChargesTwoKozAndRoomRecordsNothing() {
+    // A5.1's fourth row: a permanently replaced disconnect records 2 Koz in
+    // UNRANKED; ROOM's verdict is "no Koz"; RANKED is "n/a — the vote is
+    // not held in Ranked" (no such path ever calls the fold there). The
+    // natural outcome rows stay untouched in every case.
+    val unranked = accumulateDepartureCharge(
+      RankedStats(gamesPlayed = 2, kingCount = 2), settled, MatchMode.UNRANKED,
+      DisconnectVote.permanentCharge(MatchMode.UNRANKED)!!.toKozCharge(),
+    )
+    assertEquals(3, unranked.gamesPlayed)
+    assertEquals(2, unranked.kozCount)
+    assertEquals("the bot's play is never attributed to the departed player",
+      2, unranked.kingCount)
+
+    val room = accumulateDepartureCharge(
+      RankedStats(gamesPlayed = 4, kozCount = 2), settled, MatchMode.ROOM,
+      DisconnectVote.permanentCharge(MatchMode.ROOM)!!.toKozCharge(),
+    )
+    assertEquals(4, room.gamesPlayed)
+    assertEquals(2, room.kozCount)
+  }
+
+  @Test
+  fun aReclaimableReturnRecordsNothingInAnyMode() {
+    // A5.1's fifth row + the borrowed-seat discriminator: a seat still
+    // reclaimable whose human returns is no departure — "no penalty" in
+    // all three modes, and not one of the nine moves.
+    for (mode in MatchMode.entries) {
+      val before = RankedStats(
+        gamesPlayed = 7, kingCount = 2, secondCount = 1, thirdCount = 1, kozCount = 3,
+      )
+      val after = accumulateDepartureCharge(
+        before, settled, mode, LeaveMatch.decideLeave(mode, LeaveReason.RETURNED_ALLOWED),
+      )
+      assertEquals("no row of the nine moves on a return ($mode)", before, after)
+    }
+  }
+
+  @Test
+  fun aDepartureChargeDuringPlacementRecordsNothing() {
+    // RD10: placement matches count toward NOTHING — not Games Played, not
+    // any percentage. A departure charge feeds exactly those counters, so
+    // it records nothing mid-placement (implementation reading; flagged in
+    // the S63 report).
+    val placing = beginPlacement("2026Q4")
+    val before = RankedStats(gamesPlayed = 1, kingCount = 1)
+    val after = accumulateDepartureCharge(
+      before, placing, MatchMode.RANKED,
+      LeaveMatch.decideLeave(MatchMode.RANKED, LeaveReason.EXPLICIT_LEAVE),
+    )
+    assertEquals(before, after)
+  }
+
+  @Test
+  fun theGridCarriesTheChargedKozWeight() {
+    // The nine are still exactly nine (RD23): a charge never adds a row —
+    // it rides the existing Koz counters. One natural Koz plus one 2-Koz
+    // departure reads 3 Koz over 2 Games Played — 150%, the counter
+    // increment form's own arithmetic, not a placement.
+    var stats = accumulateRankedStat(RankedStats(), MatchOutcome.KOZ, settled, MatchMode.RANKED)
+    stats = accumulateDepartureCharge(
+      stats, settled, MatchMode.RANKED,
+      LeaveMatch.decideLeave(MatchMode.RANKED, LeaveReason.EXPLICIT_LEAVE),
+    )
+    assertEquals(2, stats.gamesPlayed)
+    assertEquals(3, stats.kozCount)
+    assertEquals(150, stats.kozPct)
+    assertEquals("the grid is still the nine", 9, stats.grid.size)
+    assertEquals(3, stats.grid[7].value) // KOZ_COUNT
+    assertEquals(150, stats.grid[8].value) // KOZ_PCT
   }
 }

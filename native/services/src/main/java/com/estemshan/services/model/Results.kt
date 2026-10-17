@@ -85,6 +85,10 @@ object Reasons {
 
   // S60 manual Vote Kick (RD18) — gate denials, thrown. Each maps one
   // engine VoteKickUnavailability for S40's in-place explanations.
+  // VOTE_NOT_RANKED is the constant's historical name: since the
+  // 2026-10-17 owner clarification the vote is refused in ROOM only
+  // (RANKED + UNRANKED both serve it), and the string stays stable for
+  // clients.
   const val VOTE_NOT_RANKED = "VOTE_NOT_RANKED"
   const val VOTE_ROUNDS_SHORT = "VOTE_ROUNDS_SHORT"
   const val VOTE_NO_UNIQUE_KOZ = "VOTE_NO_UNIQUE_KOZ"
