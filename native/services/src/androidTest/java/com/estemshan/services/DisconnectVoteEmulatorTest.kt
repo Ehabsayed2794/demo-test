@@ -7,8 +7,10 @@ import com.estemshan.engine.bot.BotPersonality
 import com.estemshan.engine.bot.BotTier
 import com.estemshan.services.model.MatchDoc
 import com.estemshan.services.model.SEAT_IDS
+import com.google.firebase.FirebaseApp
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.tasks.await
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -58,6 +60,30 @@ class DisconnectVoteEmulatorTest {
   @Before
   fun wipeEmulatorsBetweenTests() {
     EmulatorSuite.reset()
+  }
+
+  /**
+   * S74 — release THIS class's four Firebase clients after every test.
+   *
+   * Every [EmulatorSuite.client] call mints a named `FirebaseApp` whose
+   * Firestore stack registers ConnectivityManager callbacks, under a hard
+   * per-process quota the suite was already close to. Nothing has ever
+   * released them: pre-S74 the accumulated peak was 48 clients and the
+   * suite passed. CI run 39001269460 (2026-10-17) added this class's 16
+   * extra clients (4 tests × 4 seats) and the running count crossed the
+   * quota mid-suite — the instrumented process died with `Internal error in
+   * Cloud Firestore` / `ConnectivityManager$TooManyRequestsException`
+   * during VoteKickEmulatorTest.failFlow_cooldownBlocksSameTarget, leaving
+   * the job red with two tests unrun. Deleting our named apps
+   * (`emu-<n>-s74_*`) after each test gives the suite back its pre-S74
+   * footprint, so no other suite pays for this one.
+   */
+  @After
+  fun releaseOurFirebaseClients() {
+    val context = InstrumentationRegistry.getInstrumentation().targetContext
+    for (app in FirebaseApp.getApps(context).filter { it.name.contains("-s74_") }) {
+      app.delete()
+    }
   }
 
   private companion object {
@@ -201,7 +227,7 @@ class DisconnectVoteEmulatorTest {
   fun theWindowIsThirtySecondsPutToTheTableWhilePlayContinues() = runBlocking {
     val seating = seating()
     val match = ScriptedMatch(seating, SEED)
-    val matchId = match.start(MatchMode.UNRANKED)
+    match.start(MatchMode.UNRANKED)
     val open = match.dealAndOpenAuction()
 
     // The rule's own shape on the document that exists today.
