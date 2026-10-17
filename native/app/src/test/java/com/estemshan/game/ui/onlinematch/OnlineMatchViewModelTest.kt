@@ -47,6 +47,7 @@ import com.estemshan.services.model.SubmitBiddingActionResult
 import com.estemshan.services.model.SubmitCardResult
 import com.estemshan.services.session.MatchStore
 import com.estemshan.services.DecisionTimeoutPort
+import com.estemshan.services.SeatReclaimPort
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -149,6 +150,10 @@ class OnlineMatchViewModelTest {
       clock = clock,
       heartbeat = heartbeat,
       timeouts = timeouts,
+      // S73: every seam of this constructor must be passed, not defaulted —
+      // the defaults read OnlineServices, whose lazy getters touch Firebase
+      // before any Context exists on a JVM test thread.
+      reclaims = SeatReclaimPortStub,
     )
   }
 
@@ -1384,6 +1389,18 @@ class OnlineMatchViewModelTest {
    */
   private object DecisionTimeoutPortStub : DecisionTimeoutPort {
     override suspend fun resolve(matchId: String) = DecisionTimeoutPort.Resolution.NotActive
+  }
+
+  /**
+   * [makeVm]'s reclaim seam: no section of this suite puts an
+   * `inactiveTakeovers` marker on the document, so no poll ever arms and this
+   * is never reached — and if one did, DENIED ends it without a retry. The
+   * poll's own semantics are pinned in SeatReclaimPollTest with a scripted
+   * port. Like every other seam here, it exists so the constructor never
+   * defaults into [com.estemshan.game.data.OnlineServices] and Firebase.
+   */
+  private object SeatReclaimPortStub : SeatReclaimPort {
+    override suspend fun reclaim(matchId: String) = SeatReclaimPort.Reclaim.Denied
   }
 
   /**

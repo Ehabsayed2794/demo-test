@@ -2,6 +2,7 @@ package com.estemshan.services.model
 
 import com.estemshan.engine.Card
 import com.estemshan.engine.GameType
+import com.estemshan.engine.InactiveTakeover
 import com.estemshan.engine.MatchMode
 import com.estemshan.engine.RANKS
 import com.estemshan.engine.Rank
@@ -276,6 +277,19 @@ data class MatchDoc(
    */
   val timeoutRemovedUids: List<String> = emptyList(),
   /**
+   * S73 Stage 2 (RD19): seats currently BORROWED by the configured bot for
+   * decision-point inactivity, keyed by seat id. Like [timeoutRemovedUids]
+   * this is the takeover mechanism's own provenance and no other path writes
+   * it — and it is deliberately kept out of the [botSeats]/[botControlledSeats]
+   * union, because a borrowed seat is still the player's own seat: they stay
+   * seated, stay kickable, keep their vote, and DEC-RD19-04 returns the same
+   * seat to them. Parsed fail-closed by [InactiveTakeover.parseAll], so a
+   * present but untrustworthy entry reads as no takeover rather than stranding
+   * a human out of their seat. Absent in older docs ⇒ nobody borrowed (no
+   * migration).
+   */
+  val inactiveTakeovers: Map<String, InactiveTakeover> = emptyMap(),
+  /**
    * S60 (D8): the 5-round same-target cooldown, verbatim
    * `failedVoteKickCooldown: { targetSeat, blockedUntilRound }`. Single
    * slot by spec. Absent ⇒ no live cooldown (no migration).
@@ -324,9 +338,22 @@ data class MatchDoc(
    * Read-side union only: no mechanism writes the other's field. This is
    * what makes a timeout-removed seat bot-driven for the timeout resolver
    * and already-excluded from Vote Kick eligibility.
+   *
+   * S73 (RD19) deliberately does NOT extend this union. An inactivity-borrowed
+   * seat is not a removed or replaced one — adding [inactiveTakeoverSeats]
+   * here would silently make a still-present player unvotable and unkickable,
+   * which is the opposite of DEC-RD19-04. Ask that set separately.
    */
   fun botControlledSeats(): Set<String> =
     botSeats.toSet() + seats.filterValues { it in timeoutRemovedUids }.keys
+
+  /**
+   * S73 (RD19): the seats currently borrowed by the configured bot because
+   * their owner ignored decision points. Seat ids, so the S39 chip and the
+   * resolver's pacing check can each read one set without any union — see
+   * [botControlledSeats] for why they are never merged.
+   */
+  fun inactiveTakeoverSeats(): Set<String> = inactiveTakeovers.keys
 
   /**
    * S60: seated AND not removed — the gate every match write path
@@ -409,6 +436,7 @@ data class MatchDoc(
         removedUids = (fields["removedUids"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
         timeoutRemovedUids = (fields["timeoutRemovedUids"] as? List<*>)
           ?.mapNotNull { it as? String } ?: emptyList(),
+        inactiveTakeovers = InactiveTakeover.parseAll(fields["inactiveTakeovers"]),
         failedVoteKickCooldown = VoteKickCooldownData.fromFields(fields["failedVoteKickCooldown"]),
       )
     }

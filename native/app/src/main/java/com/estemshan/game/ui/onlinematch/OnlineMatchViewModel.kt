@@ -42,6 +42,7 @@ import com.estemshan.services.Heartbeat
 import com.estemshan.services.DecisionTimeoutPort
 import com.estemshan.services.DecisionWindow
 import com.estemshan.services.PlayerPort
+import com.estemshan.services.SeatReclaimPort
 import com.estemshan.services.ROUND_CARD_TOTAL
 import com.estemshan.services.model.BiddingActionInput
 import com.estemshan.services.model.BiddingLogEntry
@@ -109,6 +110,7 @@ class OnlineMatchViewModel(
   private val clock: () -> Long = System::currentTimeMillis,
   private val heartbeat: Heartbeat = OnlineServices.heartbeat,
   private val timeouts: DecisionTimeoutPort = OnlineServices.timeouts,
+  private val reclaims: SeatReclaimPort = OnlineServices.reclaims,
 ) : ViewModel() {
 
   private val _state = MutableStateFlow<MatchUiState>(MatchUiState.Connecting)
@@ -135,6 +137,19 @@ class OnlineMatchViewModel(
   val opponentAway: StateFlow<Boolean> = _opponentAway.asStateFlow()
 
   /**
+   * S73 (RD19): the seats the configured bot is currently BORROWING because
+   * their owner ignored decision points — the S39 chip's source, for every
+   * seat at the table. Published straight from
+   * [MatchDoc.inactiveTakeoverSeats], so it is a document read and nothing
+   * else: no local guess about who is away, and never merged with
+   * [MatchDoc.botControlledSeats] (a borrowed seat is still its owner's —
+   * seated, kickable, still holding its vote). Empty when no seat is borrowed
+   * or no match is live.
+   */
+  private val _borrowedSeats = MutableStateFlow<Set<String>>(emptySet())
+  val borrowedSeats: StateFlow<Set<String>> = _borrowedSeats.asStateFlow()
+
+  /**
    * S19's staleness derivation — document progress + the local clock. Pure:
    * the only timer state lives in the alarm below.
    */
@@ -159,6 +174,16 @@ class OnlineMatchViewModel(
    * for the whole match.
    */
   private var timeoutAlarm: Job? = null
+
+  /**
+   * S73 (RD19) — the ONE pending reclaim poll, and only ever armed for OUR
+   * own borrowed seat. Distinct from [timeoutAlarm]: that one resolves a
+   * stalled table for whoever holds the turn, this one asks the server whether
+   * the trick the bot is mid-way through has finished yet, so our seat can
+   * come back. Same cancel-then-re-arm rule, so at most one poll is live for
+   * the whole match.
+   */
+  private var reclaimPoll: Job? = null
 
   /** The running lastSeenAt cadence, dropped with the binding. */
   private var heartbeatJob: Job? = null
@@ -261,6 +286,7 @@ class OnlineMatchViewModel(
     heartbeatJob = null
     clearOpponentAway()
     clearTimeoutAlarm()
+    clearReclaimSignal()
     matchId = null
     boundSeat = null
   }
@@ -382,6 +408,7 @@ class OnlineMatchViewModel(
       }
       clearOpponentAway()
       clearTimeoutAlarm()
+      clearReclaimSignal()
       return
     }
 
@@ -392,6 +419,7 @@ class OnlineMatchViewModel(
       _reconnecting.value = false
       clearOpponentAway()
       clearTimeoutAlarm()
+      clearReclaimSignal()
       publishComplete(doc)
       return
     }
@@ -401,6 +429,7 @@ class OnlineMatchViewModel(
       _state.value = MatchUiState.Failed("Not signed in.")
       clearOpponentAway()
       clearTimeoutAlarm()
+      clearReclaimSignal()
       return
     }
     val seat = adapter.uidToSeat(doc, myUid)
@@ -409,6 +438,7 @@ class OnlineMatchViewModel(
       _reconnecting.value = false
       clearOpponentAway()
       clearTimeoutAlarm()
+      clearReclaimSignal()
       return
     }
     bindSeat(seat)
@@ -429,6 +459,7 @@ class OnlineMatchViewModel(
     publish(doc, seat)
     refreshOpponentAway(doc, seat)
     refreshTimeoutAlarm(doc)
+    refreshReclaimPoll(doc, seat)
   }
 
   /**
@@ -1044,6 +1075,87 @@ class OnlineMatchViewModel(
     timeoutAlarm = null
   }
 
+  /**
+   * S73 (RD19) — publish the borrowed-seat set for the chip, and arm the
+   * reclaim poll when the seat the bot is borrowing is OURS. Cancel-then-re-arm
+   * on every delivery, exactly like [refreshTimeoutAlarm]: at most one poll is
+   * live, and any document change voids the wait armed against the older one.
+   *
+   * Only our own seat is polled. The callable derives the seat from the
+   * verified uid — there is no "reclaim p2" — so asking for anyone else could
+   * only ever be a NOT_OWNER.
+   *
+   * The arm is bounded rather than persistent, and that is safe because it is
+   * self-healing: every bot play for a borrowed seat is a document write, and
+   * every write comes back through here. A poll that exits on its attempt cap,
+   * or on a [SeatReclaimPort.Reclaim.Denied], is recreated by the next trick
+   * instead of stranding the player out of their seat.
+   *
+   * The first arm waits one bot window. The client cannot know when the bot's
+   * trick will finish, and the server floors its own answer at the same
+   * window, so the estimate is late-rather-than-early; every later arm is the
+   * server's authoritative `retryAfterMillis`.
+   */
+  private fun refreshReclaimPoll(doc: MatchDoc, ourSeat: String) {
+    reclaimPoll?.cancel()
+    reclaimPoll = null
+    val borrowed = doc.inactiveTakeoverSeats()
+    _borrowedSeats.value = borrowed
+    val id = matchId ?: return
+    if (ourSeat !in borrowed) return
+    val firstWaitMillis = DecisionWindow.BOT_DECISION_SECONDS * MILLIS_PER_SECOND.toLong()
+    reclaimPoll = viewModelScope.launch(worker) { runReclaimPoll(id, firstWaitMillis) }
+  }
+
+  /**
+   * The poll body: wait, ask once, act on what the server said. Bounded the
+   * same two independent ways as [runTimeoutAlarm] — [MAX_RECLAIM_ATTEMPTS] on
+   * total iterations, [MAX_TRANSIENT_FAILURES] on consecutive failures with
+   * [transientBackoffMillis] between them — so a flaky network can never turn
+   * it into a tight loop.
+   *
+   * [SeatReclaimPort.Reclaim.WaitingForTrick] is NOT a failure and costs
+   * nothing from the transient budget: it is the server's authoritative "the
+   * trick is not down yet, ask again in N", so the wait converges on it the
+   * way the timeout alarm converges on `NotYetExpired`.
+   *
+   * Every terminal outcome exits and lets the next snapshot decide — including
+   * [SeatReclaimPort.Reclaim.Returned], whose document write IS the signal that
+   * clears the chip, and [SeatReclaimPort.Reclaim.HumanHoldsSeat], which means
+   * there is nothing to reclaim. No "I'm back" screen anywhere: the player's
+   * return is the signal, and the seat comes back by itself.
+   */
+  private suspend fun runReclaimPoll(matchId: String, firstWaitMillis: Long) {
+    var waitMillis = firstWaitMillis
+    var attempt = 0
+    var consecutiveFailures = 0
+    while (true) {
+      delay(waitMillis)
+      if (++attempt > MAX_RECLAIM_ATTEMPTS) return
+      when (val outcome = reclaims.reclaim(matchId)) {
+        SeatReclaimPort.Reclaim.Returned -> return
+        SeatReclaimPort.Reclaim.HumanHoldsSeat -> return
+        SeatReclaimPort.Reclaim.Denied -> return
+        is SeatReclaimPort.Reclaim.WaitingForTrick -> {
+          consecutiveFailures = 0
+          waitMillis = outcome.retryAfterMillis
+        }
+        SeatReclaimPort.Reclaim.Retryable -> {
+          if (++consecutiveFailures > MAX_TRANSIENT_FAILURES) return
+          waitMillis = transientBackoffMillis(consecutiveFailures)
+        }
+      }
+    }
+  }
+
+  /** The chip and the poll mean nothing without a live match: drop the pending
+   *  poll and the published set together. */
+  private fun clearReclaimSignal() {
+    reclaimPoll?.cancel()
+    reclaimPoll = null
+    _borrowedSeats.value = emptySet()
+  }
+
   private fun setRejection(message: String?, version: Int?) {
     rejection = message
     rejectionVersion = if (message == null) null else version
@@ -1059,6 +1171,12 @@ class OnlineMatchViewModel(
      *  Generous against the realistic path (an estimate correction or two plus
      *  a network blip) while guaranteeing the loop cannot spin. */
     const val MAX_TIMEOUT_ATTEMPTS = 8
+
+    /** S73 (RD19) — the same ceiling for one reclaim poll. A trick is at most
+     *  four plays and each play re-arms this poll from a fresh snapshot, so a
+     *  single lifetime rarely needs more than a couple of asks; the cap exists
+     *  to guarantee the loop cannot spin, not to bound the reclaim. */
+    const val MAX_RECLAIM_ATTEMPTS = 8
 
     /** S61 — how many consecutive transient failures one alarm tolerates. The
      *  backoff below makes those ~31 s of patient retrying, not a burst. */

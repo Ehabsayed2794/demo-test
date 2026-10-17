@@ -87,6 +87,15 @@ fun TableScreen(
   rejection: String?,
   onPlay: (String, EngineCard) -> Unit,
   onResolve: () -> Unit,
+  /**
+   * S73 (RD19): the seats the configured bot is borrowing right now, from the
+   * match document. Marks the chip and suppresses the play invitation for a
+   * borrowed seat — the ring on it is the bot's, not ours. Deliberately does
+   * NOT disable [onPlay]: a genuine move by the owner is the activity signal
+   * that resets the inactivity clock, and gating it would punish exactly the
+   * return this mechanism is meant to welcome.
+   */
+  borrowedSeats: Set<String> = emptySet(),
 ) {
   // The 900 ms trick-resolution beat (S28: deliberate, not a transition).
   // The sweep/highlight animate *within* it; this delay is unchanged.
@@ -115,7 +124,13 @@ fun TableScreen(
         TablePhase.DONE -> "Round complete"
         TablePhase.RESOLVING -> "${currentWinnerId(state) ?: ""} takes the trick"
         TablePhase.PLAY ->
-          if (state.turn == userSeat) "Your turn ($userSeat)" else "Waiting for ${state.turn}"
+          when {
+            // A borrowed seat is not an invitation, even when the engines are
+            // waiting on it — the bot is the one due to move.
+            state.turn == userSeat && userSeat in borrowedSeats -> "Bot playing your seat"
+            state.turn == userSeat -> "Your turn ($userSeat)"
+            else -> "Waiting for ${state.turn}"
+          }
       },
       style = MaterialTheme.typography.labelLarge,
       color = MaterialTheme.colorScheme.primary,
@@ -123,7 +138,7 @@ fun TableScreen(
 
     TrickArea(state)
 
-    TallyRow(state)
+    TallyRow(state, borrowedSeats)
 
     if (state.phase == TablePhase.PLAY) {
       val turn = state.turn
@@ -148,7 +163,7 @@ fun TableScreen(
 
 /** Everyone else's hand renders as a count — no peeking. */
 @Composable
-private fun TallyRow(state: TableState) {
+private fun TallyRow(state: TableState, borrowedSeats: Set<String>) {
   Row(
     modifier = Modifier.fillMaxWidth(),
     horizontalArrangement = Arrangement.SpaceEvenly,
@@ -156,6 +171,17 @@ private fun TallyRow(state: TableState) {
     for (seat in state.seats) {
       Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Text(seat, style = MaterialTheme.typography.labelLarge)
+        // S73 (RD19): the borrowed-seat mark, visible to every seat at the
+        // table. A text label in the existing vocabulary — the S39 artboard
+        // has not landed the approved bot-controlled treatment yet, and this
+        // is the placeholder it replaces, not a competing design.
+        if (seat in borrowedSeats) {
+          Text(
+            "Bot playing",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.primary,
+          )
+        }
         Text(
           "${state.tricksWon[seat] ?: 0} won · ${state.cfg.hands[seat]?.size ?: 0} left",
           style = MaterialTheme.typography.bodyMedium,
