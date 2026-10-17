@@ -22,6 +22,9 @@ const callables = {
   settleMatch: kotlin.settleMatch,
   resolveDecisionTimeout: kotlin.resolveDecisionTimeout,
   reclaimInactiveSeat: kotlin.reclaimInactiveSeat,
+  resolveDisconnectVote: kotlin.resolveDisconnectVote,
+  castDisconnectVote: kotlin.castDisconnectVote,
+  restoreDisconnectedSeat: kotlin.restoreDisconnectedSeat,
 };
 
 for (const [name, fn] of Object.entries(callables)) {
