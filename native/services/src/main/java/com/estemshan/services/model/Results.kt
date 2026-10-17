@@ -102,6 +102,12 @@ object Reasons {
   // S60: a permanently-removed uid attempting any match write. Distinct
   // from PERMISSION_DENIED so S40 (and clients) can name the removal.
   const val REMOVED_FROM_MATCH = "REMOVED_FROM_MATCH"
+
+  // S72: a left uid attempting any match write. Distinct from
+  // REMOVED_FROM_MATCH so S40 can name the departure.
+  const val LEFT_MATCH = "LEFT_MATCH"
+  // S72: idempotent no-op when the seat has already been left.
+  const val ALREADY_LEFT = "ALREADY_LEFT"
 }
 
 /** startMatch(roomId): the room↔match atomic write. */
@@ -260,4 +266,16 @@ data class RematchCreateResult(
   val newMatchId: String?,
   val reason: String? = null,
   val status: String? = null,
+)
+
+/** S72 — explicit leave outcome: the departed seat, its Koz charge, and the
+ *  next match version after the leave write. */
+data class LeaveResult(
+  val matchId: String,
+  val seatId: String,
+  val uid: String,
+  val kozCharge: com.estemshan.engine.KozCharge,
+  val version: Int,
+  /** ALREADY_LEFT on the idempotent replay no-op; null on a successful first leave. */
+  val reason: String? = null,
 )

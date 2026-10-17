@@ -9,6 +9,8 @@ import com.estemshan.engine.Suit
 import com.estemshan.engine.TablePhase
 import com.estemshan.engine.canSubmit
 import com.estemshan.engine.compareForSort
+import com.estemshan.engine.LeaveMatch
+import com.estemshan.engine.KozCharge
 import com.estemshan.engine.previewPlay
 import com.estemshan.engine.trickWinner
 import com.estemshan.services.model.BiddingActionInput
@@ -41,6 +43,7 @@ import com.estemshan.services.model.VoteCreateResult
 import com.estemshan.services.model.VoteDoc
 import com.estemshan.services.model.VoteSubmitResult
 import com.estemshan.services.model.VoteTimeoutResult
+import com.estemshan.services.model.LeaveResult
 import com.estemshan.services.model.Reasons.ALREADY_ADVANCED
 import com.estemshan.services.model.Reasons.ALREADY_BID
 import com.estemshan.services.model.Reasons.ALREADY_COMPLETE
@@ -48,6 +51,7 @@ import com.estemshan.services.model.Reasons.ALREADY_DEALT
 import com.estemshan.services.model.Reasons.ALREADY_EXTENDED
 import com.estemshan.services.model.Reasons.ALREADY_RESOLVED
 import com.estemshan.services.model.Reasons.ALREADY_VOTED
+import com.estemshan.services.model.Reasons.ALREADY_LEFT
 import com.estemshan.services.model.Reasons.BIDDING_CLOSED
 import com.estemshan.services.model.Reasons.DEADLINE_UNKNOWN
 import com.estemshan.services.model.Reasons.ENGINE_UNAVAILABLE
@@ -64,6 +68,7 @@ import com.estemshan.services.model.Reasons.NOT_YET_EXPIRED
 import com.estemshan.services.model.Reasons.NOT_YOUR_TURN
 import com.estemshan.services.model.Reasons.PERMISSION_DENIED
 import com.estemshan.services.model.Reasons.REMOVED_FROM_MATCH
+import com.estemshan.services.model.Reasons.LEFT_MATCH
 import com.estemshan.services.model.Reasons.ROUND_NOT_COMPLETE
 import com.estemshan.services.model.Reasons.STALE_GAME_STATE
 import com.estemshan.services.model.Reasons.TRICK_WINNER_UNAVAILABLE
@@ -173,6 +178,66 @@ class MatchService(
     // Self-sync only — every other seat does this for itself via loadRoom().
     auth.currentUid()?.let { syncProfileMatch(it, result.matchId) }
     return result.matchId
+  }
+
+  // ── S72. leaveMatch: explicit leave, configured bot takes the seat ────
+
+  /**
+   * leaveMatch(matchId) — the acting seat's uid is recorded as departed exactly
+   * once; the seat is immediately taken by the match's configured bot tier +
+   * personality so the match continues to completion; the RD31 Koz charge is
+   * computed from [LeaveMatch.decideLeave] and returned. Idempotent: a second
+   * leave for the same uid is ALREADY_LEFT, no write. After leaving, the uid's
+   * client can no longer write match state (sealed by firestore.rules).
+   */
+  override suspend fun leaveMatch(matchId: String): LeaveResult {
+    require(matchId.isNotEmpty()) { "leaveMatch: matchId is required." }
+    val callingUid = auth.currentUid()
+      ?: throw ServiceException(UNAUTHENTICATED, "leaveMatch: no signed-in user.")
+    val matchRef = matches.document(matchId)
+    return runTx(db) { tx ->
+      val match = readMatch(tx, matchRef) ?: return@runTx noMatchTx("leaveMatch")
+      if (!match.isPlayer(callingUid)) {
+        return@runTx TxOutcome.Err(ServiceException(PERMISSION_DENIED,
+          "leaveMatch: you are not a player in this match."))
+      }
+      if (match.isRemoved(callingUid)) {
+        return@runTx TxOutcome.Err(ServiceException(REMOVED_FROM_MATCH,
+          "leaveMatch: you were removed from this match and cannot leave."))
+      }
+      if (match.isLeft(callingUid)) {
+        return@runTx TxOutcome.Ok(
+          LeaveResult(
+            matchId = matchId,
+            seatId = match.uidToSeat(callingUid) ?: "",
+            uid = callingUid,
+            kozCharge = KozCharge.None,
+            version = match.version,
+            reason = ALREADY_LEFT,
+          ),
+        )
+      }
+      val seatId = match.uidToSeat(callingUid)
+        ?: return@runTx TxOutcome.Err(ServiceException(UNKNOWN_SEAT,
+          "leaveMatch: you do not own a seat in this match."))
+      val kozCharge = LeaveMatch.decideLeave(match.mode, com.estemshan.engine.LeaveReason.EXPLICIT_LEAVE)
+      val nextLeftUids = match.leftUids + callingUid
+      val nextBotSeats = match.botSeats + seatId
+      val nextVersion = match.version + 1
+      tx.update(matchRef, mapOf(
+        "leftUids" to nextLeftUids,
+        "botSeats" to nextBotSeats,
+        "version" to nextVersion,
+        "updatedAt" to FieldValue.serverTimestamp(),
+      ))
+      TxOutcome.Ok(LeaveResult(
+        matchId = matchId,
+        seatId = seatId,
+        uid = callingUid,
+        kozCharge = kozCharge,
+        version = nextVersion,
+      ))
+    }
   }
 
   /** Read-only fetch; null (never an error) when the match is gone. */

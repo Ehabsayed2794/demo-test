@@ -19,6 +19,7 @@ import com.estemshan.services.model.EndMatchResult
 import com.estemshan.services.model.ExtendResult
 import com.estemshan.services.model.GameState
 import com.estemshan.services.model.HandDoc
+import com.estemshan.services.model.LeaveResult
 import com.estemshan.services.model.MatchDoc
 import com.estemshan.services.model.StoredCard
 import com.estemshan.services.model.SubmitBidResult
@@ -752,6 +753,8 @@ class SeatReclaimPollTest {
       finalScores: Map<String, Int>,
       winnerIds: List<String>,
     ): EndMatchResult = notReached("endMatch")
+
+    override suspend fun leaveMatch(matchId: String): LeaveResult = notReached("leaveMatch")
   }
 
   /** players/{uid}.currentMatchId, in memory. */

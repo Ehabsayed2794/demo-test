@@ -279,6 +279,15 @@ data class MatchDoc(
    */
   val timeoutRemovedUids: List<String> = emptyList(),
   /**
+   * S72 (E6b, RD31): uids who have explicitly left the match via Explicit Leave Match.
+   * A left uid can never play, vote, or rejoin this match again — every match write
+   * path checks [isLeft], and the seat is taken by the configured bot so the match
+   * continues to completion. This list is additive only: once a uid is here it stays,
+   * which makes the departure idempotent and replay-safe. Absent in older docs ⇒
+   * nobody left (no migration).
+   */
+  val leftUids: List<String> = emptyList(),
+  /**
    * S73 Stage 2 (RD19): seats currently BORROWED by the configured bot for
    * decision-point inactivity, keyed by seat id. Like [timeoutRemovedUids]
    * this is the takeover mechanism's own provenance and no other path writes
@@ -359,6 +368,12 @@ data class MatchDoc(
   fun isRemoved(uid: String): Boolean = uid in removedUids || uid in timeoutRemovedUids
 
   /**
+   * S72: explicitly left the match. The seat is taken by the configured bot; the
+   * leaver cannot rejoin or write match state. Read-side check only.
+   */
+  fun isLeft(uid: String): Boolean = uid in leftUids
+
+  /**
    * S61 Stage 2: seats currently driven by a bot, for EITHER reason — a
    * Vote Kick removal ([botSeats], written by that mechanism) or a seat
    * whose uid was removed by the 15-timeout counter (resolved here from
@@ -374,7 +389,7 @@ data class MatchDoc(
    * which is the opposite of DEC-RD19-04. Ask that set separately.
    */
   fun botControlledSeats(): Set<String> =
-    botSeats.toSet() + seats.filterValues { it in timeoutRemovedUids }.keys
+    (botSeats.toSet() + seats.filterValues { it in timeoutRemovedUids }.keys + seats.filterValues { it in leftUids }.keys)
 
   /**
    * S73 (RD19): the seats currently borrowed by the configured bot because
@@ -483,6 +498,7 @@ data class MatchDoc(
         removedUids = (fields["removedUids"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
         timeoutRemovedUids = (fields["timeoutRemovedUids"] as? List<*>)
           ?.mapNotNull { it as? String } ?: emptyList(),
+        leftUids = (fields["leftUids"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
         inactiveTakeovers = InactiveTakeover.parseAll(fields["inactiveTakeovers"]),
         disconnectVote = DisconnectVoteState.parseAll(fields["disconnectVote"]),
         disconnectReplacedUids = (fields["disconnectReplacedUids"] as? List<*>)
