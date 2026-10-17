@@ -15,7 +15,7 @@ function rungHTML(i,role,vert){var r=rung(i);return '<div class="rung '+role+'" 
 var NOTE={'v2':'Platinum begins at division III.','v3':'The highest rank on the ladder.'};
 function build(b){var f=rung(b.from),t=rung(b.to),el=document.getElementById(b.id),h='<div class="top"><div class="kick">Promotion</div></div>';
 var say='You reached <b>'+t.en+(t.div?' '+t.div:'')+'</b> at <span class="n">'+fmt(t.rp)+'</span> RP.';
-var rpb='<div class="rpb"><small>SETTLED RP</small><span class="n">'+fmt(b.rp)+'</span></div>';
+var rpb='<div class="rpb"><small>FINAL RP</small><span class="n">'+fmt(b.rp)+'</span></div>';
 if(b.id==='v3'){
 h+='<div class="k3"><div class="lft">'+rungHTML(b.from,'prev')+'<div class="link"><i></i></div></div><div><div class="rung new" role="group" aria-label="New rank: '+label(t)+'"><div class="sh"><div class="sd"><span class="slot">K</span></div></div><div class="rtxt"><div class="nm"><b>King</b><em lang="ar" dir="rtl">ملك</em></div><div class="r2"><span class="bd">STARTS AT <span class="n">3,000</span> RP</span></div></div></div><p class="st">'+say+'</p></div><div class="rgt">'+rpb+'<p>'+NOTE.v3+' Further RP counts on the leaderboard only.</p></div></div>';
 }else{
