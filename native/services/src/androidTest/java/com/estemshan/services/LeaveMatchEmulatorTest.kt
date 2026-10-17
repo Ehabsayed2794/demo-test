@@ -10,16 +10,15 @@ import com.estemshan.engine.bot.BotTier
 import com.estemshan.services.model.LeaveResult
 import com.estemshan.services.model.MatchDoc
 import com.estemshan.services.model.Reasons
-import com.estemshan.services.model.SEAT_IDS
-import com.estemshan.services.model.ServiceException
 import com.estemshan.services.session.AuthPort
 import com.estemshan.services.session.GameSessionBridge
+import com.google.firebase.FirebaseApp
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.tasks.await
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
-import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -36,7 +35,11 @@ import org.junit.runner.RunWith
  *  3. Replay of the first leave: completes as an idempotent no-op
  *     (reason == ALREADY_LEFT); version and leftUids unchanged.
  *
- * Isolation: [EmulatorSuite.reset] wipes between tests.
+ * Isolation: [EmulatorSuite.reset] wipes between tests, and
+ * [releaseOurFirebaseClients] gives this class's two clients back after
+ * every test — the same S74 hygiene, because the instrumented process sits
+ * one client away from ConnectivityManager's per-UID callback quota and an
+ * unreleased pair here is enough to kill a LATER class's test.
  * Execution is CI-only (no emulator in this sandbox); this file compiles
  * locally via :services:assembleDebugAndroidTest.
  */
@@ -46,6 +49,28 @@ class LeaveMatchEmulatorTest {
   @Before
   fun wipeEmulatorsBetweenTests() {
     EmulatorSuite.reset()
+  }
+
+  /**
+   * S72 — release THIS class's two Firebase clients after every test.
+   *
+   * Every [EmulatorSuite.client] call mints a named `FirebaseApp` whose
+   * Firestore gRPC channel registers a ConnectivityManager default-network
+   * callback, under a hard per-process quota. [DisconnectVoteEmulatorTest]
+   * documents the same crash for the s74 clients: crossing the quota kills
+   * the instrumentation process with `Internal error in Cloud Firestore` /
+   * `ConnectivityManager$TooManyRequestsException`, and the victim is
+   * whichever test happens to run last, not the one that leaked. CI run
+   * 39046825374 died that way in `VoteKickEmulatorTest.gates_denyWithoutPlayingARound`
+   * with this class's two clients left unreleased. Deleting our own named
+   * apps (`emu-<n>-s72_*`) keeps the suite at its pre-S72 footprint.
+   */
+  @After
+  fun releaseOurFirebaseClients() {
+    val context = InstrumentationRegistry.getInstrumentation().targetContext
+    for (app in FirebaseApp.getApps(context).filter { it.name.contains("-s72_") }) {
+      app.delete()
+    }
   }
 
   private suspend fun twoClients(): Map<String, EmulatorSuite.ClientFirebase> {
@@ -61,7 +86,6 @@ class LeaveMatchEmulatorTest {
     seat: String,
   ): com.estemshan.services.MatchService {
     val client = seating.getValue(seat)
-      ?: error("no client for seat $seat")
     val engine = GameSession()
     val port = GameSessionBridge(engine)
     return com.estemshan.services.MatchService(
@@ -75,9 +99,8 @@ class LeaveMatchEmulatorTest {
   private suspend fun startTwoSeatMatch(
     seating: Map<String, EmulatorSuite.ClientFirebase>,
   ): String {
-    val context = InstrumentationRegistry.getInstrumentation().targetContext
-    val p1 = seating.getValue("p1") ?: error("missing p1")
-    val p2 = seating.getValue("p2") ?: error("missing p2")
+    val p1 = seating.getValue("p1")
+    val p2 = seating.getValue("p2")
 
     val roomService1 = com.estemshan.services.RoomService(
       p1.db,
@@ -117,7 +140,7 @@ class LeaveMatchEmulatorTest {
     seating: Map<String, EmulatorSuite.ClientFirebase>,
     matchId: String,
   ): MatchDoc {
-    val snap = seating.getValue("p1")!!.db
+    val snap = seating.getValue("p1").db
       .collection("matches").document(matchId).get().await()
     if (!snap.exists()) error("match $matchId disappeared mid-test")
     return MatchDoc.fromFields(snap.data ?: emptyMap())
@@ -132,26 +155,26 @@ class LeaveMatchEmulatorTest {
     // ── 1. uid1 (p1) leaves ──
     val svc1 = leaveServiceFor(seating, "p1")
     val result1 = svc1.leaveMatch(matchId)
-    assertEquals("first leave completes", result1.uid, seating.getValue("p1")!!.uid)
+    assertEquals("first leave completes", result1.uid, seating.getValue("p1").uid)
     assertNull("first leave has no ALREADY_LEFT reason", result1.reason)
 
     val after1 = loadMatch(seating, matchId)
     assertTrue("leftUids contains uid1",
-      after1.leftUids.contains(seating.getValue("p1")!!.uid))
+      after1.leftUids.contains(seating.getValue("p1").uid))
     assertTrue("uid1's seat is bot-held",
       after1.botSeats.contains("p1"))
 
     // ── 2. uid2 (p2) leaves ──
     val svc2 = leaveServiceFor(seating, "p2")
     val result2 = svc2.leaveMatch(matchId)
-    assertEquals("second leave completes", result2.uid, seating.getValue("p2")!!.uid)
+    assertEquals("second leave completes", result2.uid, seating.getValue("p2").uid)
     assertNull("second leave has no ALREADY_LEFT reason", result2.reason)
 
     val after2 = loadMatch(seating, matchId)
     assertTrue("leftUids contains uid1",
-      after2.leftUids.contains(seating.getValue("p1")!!.uid))
+      after2.leftUids.contains(seating.getValue("p1").uid))
     assertTrue("leftUids contains uid2",
-      after2.leftUids.contains(seating.getValue("p2")!!.uid))
+      after2.leftUids.contains(seating.getValue("p2").uid))
     assertEquals(2, after2.leftUids.size)
 
     // ── 3. uid1 replays leave: idempotent no-op ──
@@ -166,13 +189,5 @@ class LeaveMatchEmulatorTest {
       after2.leftUids, after3.leftUids)
     assertEquals("version unchanged after replay",
       after2.version, after3.version)
-  }
-
-  private fun expectNoException(block: suspend () -> Unit) {
-    try {
-      runBlocking { block() }
-    } catch (e: Exception) {
-      fail("expected no exception, got $e")
-    }
   }
 }
