@@ -1,12 +1,14 @@
 package com.estemshan.engine
 
 /**
- * S60 — manual Vote Kick (RD18, RANKED-only): the pure state machine.
+ * S60 — manual Vote Kick (RD18; `RANKED` + `UNRANKED` since the 2026-10-17
+ * owner clarification — `ROOM` is the only mode without it): the pure state
+ * machine.
  *
  * A mid-match vote that permanently removes a griefer. Seven gates, an
  * immutable once-vote, majority over eligible HUMANS, a frozen target, a
- * 5-round same-target cooldown on failure, and terminal removal recorded
- * as a Koz outcome (D10).
+ * 5-round same-target cooldown on failure, and terminal removal recorded as
+ * the Vote Kick departure (D10 / A5.1: 1 Koz, final).
  *
  * Layering: everything here is pure Kotlin over caller-supplied inputs —
  * no Firestore, no clock, no GameSession. The standings this reasons
@@ -42,7 +44,10 @@ enum class VoteKickChoice { YES, NO }
  * in-place (RD18/S40: never merely absent).
  */
 enum class VoteKickUnavailability {
-  /** mode != RANKED (Rooms + Unranked never vote — entry absent, RD18). */
+  /**
+   * mode == ROOM — the entry is absent (RD18 as amended 2026-10-17:
+   * UNRANKED votes exactly as RANKED; ROOM is the only exclusion).
+   */
   WRONG_MODE,
 
   /** Fewer than 7 fully complete rounds (vote opens Round 8+). */
@@ -145,7 +150,7 @@ fun voteKickAvailability(
   cooldown: VoteKickCooldown?,
   currentRound: Int,
 ): VoteKickAvailability {
-  if (mode != MatchMode.RANKED) return VoteKickAvailability.Unavailable(VoteKickUnavailability.WRONG_MODE)
+  if (mode == MatchMode.ROOM) return VoteKickAvailability.Unavailable(VoteKickUnavailability.WRONG_MODE)
   if (completedRounds < 7) return VoteKickAvailability.Unavailable(VoteKickUnavailability.ROUNDS_SHORT)
   val koz = uniqueKozSeat(standings)
     ?: return VoteKickAvailability.Unavailable(VoteKickUnavailability.NO_UNIQUE_KOZ)
@@ -237,8 +242,14 @@ fun resolveVoteKick(
 /**
  * The removal a PASSED vote resolves to, for services to execute: the
  * seat goes bot-held, the uid is banned from rejoin, and the removal is
- * recorded as a Koz outcome (D10 — feed [MatchOutcome.KOZ] to
- * [accumulateRankedStat] wherever the 9 statistics settle).
+ * recorded as the Vote Kick departure (D10) — **1 Koz, final** (A5.1; the
+ * RD31 doubling is repealed for this path). Wherever the 9 statistics
+ * settle, the record rides [LeaveMatch.decideLeave]([MatchMode],
+ * [LeaveReason.VOTE_KICK]) — [KozCharge.Koz1] — consumed through
+ * [accumulateDepartureCharge], which records in both votable modes. Feeding
+ * [MatchOutcome.KOZ] through [accumulateRankedStat] computes the same +1
+ * Koz / +1 Games Played in `RANKED`; in `UNRANKED` the charge fold is the
+ * only route, because that natural-outcome fold stays RANKED-only (A3.5).
  */
 fun removalForVoteKick(
   vote: VoteKickVote,

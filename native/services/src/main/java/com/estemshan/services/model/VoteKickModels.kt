@@ -3,7 +3,8 @@ package com.estemshan.services.model
 import com.estemshan.engine.VoteKickChoice
 
 /**
- * S60 — manual Vote Kick (RD18, Ranked-only) document model.
+ * S60 — manual Vote Kick (RD18; `RANKED` + `UNRANKED` since the 2026-10-17
+ * owner clarification — ROOM is the only mode without it) document model.
  *
  * One vote at a time per match at `matches/{matchId}/voteKick/current`
  * (the rematchVote/current single-doc pattern): the target is frozen at

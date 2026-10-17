@@ -54,6 +54,14 @@ class LeaveMatchTest {
   }
 
   @Test
+  fun voteKickInUnrankedRecordsKoz1() {
+    // The vote holds in UNRANKED since the 2026-10-17 owner clarification
+    // (ROOM is the only excluded mode) — same 1 Koz, final.
+    assertEquals("kick UNRANKED = Koz1",
+      KozCharge.Koz1, LeaveMatch.decideLeave(MatchMode.UNRANKED, LeaveReason.VOTE_KICK))
+  }
+
+  @Test
   fun returnedAllowedSeatRecordsNone() {
     assertEquals("returned-allowed = None (no departure)",
       KozCharge.None, LeaveMatch.decideLeave(MatchMode.RANKED, LeaveReason.RETURNED_ALLOWED))
