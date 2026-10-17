@@ -1000,7 +1000,12 @@ class OnlineMatchViewModel(
     val windowMillis = DecisionWindow.durationSeconds(
       timerSeconds = doc.decisionTimerSeconds,
       bidding = decision.bidding,
-      botControlled = decision.seat in doc.botControlledSeats(),
+      // Mirrors the resolver's shortWindowSeats (C3): a borrowed seat is on the
+      // bot's fixed 2 s pace, not the human window. botControlledSeats()
+      // deliberately excludes borrowed seats (DEC-RD19-04 provenance), so the
+      // marker set must be read separately here.
+      botControlled = decision.seat in doc.botControlledSeats() ||
+        decision.seat in doc.inactiveTakeoverSeats(),
     ) * MILLIS_PER_SECOND
     timeoutAlarm = viewModelScope.launch(worker) { runTimeoutAlarm(id, windowMillis.toLong()) }
   }
