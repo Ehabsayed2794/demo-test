@@ -463,9 +463,14 @@ Every rule in §§1–5 — the deal, the auction, both Game Types, both Calcula
    `UNRANKED` is `RANKED` in every rule except RP (frozen both ways). The former fallback — "if
    the owner intends Unranked to charge nothing" — is **closed**; A5.1's `UNRANKED` column
    stands as written. See `docs/decisions/2026-10-17-unranked-scope-owner-clarification.md`.
-4. **The 90-second WAIT pause must not be read as re-opening OPEN-2.** OPEN-2 forbids pausing
-   *while a Vote Kick ballot is open*; A5.2 pauses *after* a disconnect-vote WAIT verdict. The
-   two are compatible only under that reading, and it is recorded here rather than assumed.
+4. **The 90-second WAIT pause must not be read as re-opening OPEN-2. — RATIFIED (owner,
+   2026-10-17).** He walked the disconnect scenario end-to-end and confirmed it: the 30-second
+   vote runs over a live table, nothing pauses while the ballot is open, the pause happens only
+   after a WAIT verdict wins and is bounded at 90 seconds, a returning player resumes the seat,
+   and a non-returning player is continued with the bot. His verdict: *"the old rule — play does
+   not stop while you vote — is followed to the letter; the pause happens after the vote, not
+   during it; there was no contradiction in the first place"* (Arabic verbatim in the record §6).
+   The compatibility reading is therefore no longer an assumption — it is his, recorded there.
 5. **`docs/decisions/2026-10-16-open4-open5-owner-closure.md` carries A5.1's scope as committed.**
    An earlier draft of the record wrote "2 Koz, `RANKED` only" and "no Koz for a Room **or
    Unranked** replacement"; the record as committed (`cd02a71`) was corrected before landing —

@@ -77,3 +77,36 @@ Stale-reading spots that are not Vote Kick scope/result claims; all governed by 
   sentence “no Vote Kick” — historical pre-writing note); ≈ 1368 (S74 “Depends on OPEN-5” —
   resolved by the pointer at ≈ 1392).
 - S41/S42 artboards remain “re-cut before S74” carry items (a design step).
+
+## 6. Same-day follow-up (2026-10-17): A5.3 item 4 — the 90-second WAIT reading, owner-ratified
+
+The owner walked the disconnect scenario himself and confirmed it end-to-end, so the
+compatibility reading A5.3 item 4 had flagged as ours (“recorded here rather than assumed”) is
+now **his**. His message, verbatim (Arabic):
+
+> مثال بند 2 — النت وقع في نص مباراة
+>
+> بنلعب، وفجأة النت بتاع سامي قطع.
+> الباقيين بيعملوا تصويت سريع مدته 30 ثانية: «نستنى سامي يرجع؟» ولا «كمّلوا بالبوت (لاعب آلي)؟» — واللعب ماشي عادي أثناء الـ30 ثانية دي (محدش أوقف حاجة).
+> لو الأغلبية قالت «كمّلوا بالبوت» → اللعب بيكمل عادي.
+> لو الأغلبية قالت «نستنى سامي» → دلوقتي بس، بعد ما التصويت خلص، اللعبة تتوقف لحد 90 ثانية كحد أقصى: لو سامي رجع خلالهم يكمل بنفسه، ولو مرجعش اللعبة تكمل بالبوت.
+> القاعدة القديمة بتقول: «اللعب مايتوقفش وانتوا بتصوّتوا». إحنا ماشيين على كده بالحرف — التوقف بيحصل بعد التصويت لما قرار «استنوا» يفوز، مش وقت التصويت. فمفيش تناقض من الأصل.
+>
+> كله صح تمام مفيش مشكلة
+
+*(Plain-Arabic reading: “Example, item 2 — the connection dropped mid-match. We're playing, and
+suddenly Sami's connection drops. The others run a quick 30-second vote: ‘Do we wait for Sami to
+come back?’ or ‘Continue with the bot?’ — and play keeps running normally during those 30
+seconds (nobody stops anything). If the majority says ‘continue with the bot’ → play just
+continues. If the majority says ‘wait for Sami’ → only now, after the vote has finished, the
+game pauses for at most 90 seconds: if Sami returns within them he continues himself, and if he
+does not return the game continues with the bot. The old rule says: ‘play does not stop while
+you are voting’. We are following it to the letter — the pause happens after the vote, when the
+‘wait’ decision wins, not during the vote. So there was no contradiction in the first place.’
+His verdict: “it is all correct, no problem.”)*
+
+**Result:** `CANONICAL_RULES.md` A5.3 item 4 is updated from “recorded here rather than assumed”
+to **owner-ratified (2026-10-17)**. Nothing else changes: A5.2, the roadmap's 2026-10-16 re-cut
+pointer, and the plan's closure section already state exactly this reading — a 30-second ballot
+over a live table; the pause only after the verdict, bounded at 90 seconds; reconnect resumes
+the seat; otherwise the bot continues.
