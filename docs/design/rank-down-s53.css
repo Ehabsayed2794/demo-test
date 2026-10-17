@@ -54,8 +54,9 @@
 .play .link i{animation:draw .6s ease-out .5s both}
 .play .card.new{animation:settle .95s cubic-bezier(.2,.8,.2,1) 1s both}
 .play .foot{animation:fade .7s ease-out 1.5s both}
-.rp{display:inline-flex;gap:14px;align-items:center;margin-left:14px;border:1px solid var(--ink-dim);color:var(--ink);background:none;border-radius:15px;padding:6px 14px;font:600 10px var(--mono);letter-spacing:.14em;cursor:pointer;vertical-align:middle}
-.rp:hover{border-color:var(--ink)}.rp:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+/* Replay pill — .replay, not .rp: S45/S51/S52's readout block owns .rp in the shared language. */
+.replay{display:inline-flex;gap:14px;align-items:center;margin-left:14px;border:1px solid var(--ink-dim);color:var(--ink);background:none;border-radius:15px;padding:6px 14px;font:600 10px var(--mono);letter-spacing:.14em;cursor:pointer;vertical-align:middle}
+.replay:hover{border-color:var(--ink)}.replay:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .doc.w{width:1904px}.doc td{color:var(--ink-dim)}.doc td:first-child{width:170px}.doc .n{font:500 12px var(--mono);color:var(--ink)}
 .doc.w td:nth-child(2),.doc.w td:nth-child(3){width:420px}
 .doc .ck li{list-style:none;margin-left:0}.doc .ck{columns:2;column-gap:28px;padding:0}.doc .ck li{break-inside:avoid}

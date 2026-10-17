@@ -17,7 +17,7 @@ return '<div class="card '+role+'" role="group" aria-label="'+(cur?'Current rank
 var NOTE={v2:'Gold I is the top division of Gold.'};
 function build(b){var f=rung(b.from),t=rung(b.to),el=document.getElementById(b.id);
 var say='Below <b>'+f.en+' '+f.div+'</b> at <span class="n">'+fmt(f.rp)+'</span> RP — now <b>'+t.en+' '+t.div+'</b>.';
-el.innerHTML='<div class="top"><div class="kick">Rank change</div></div><div class="pair">'+card(b.from,'prev')+'<div class="link"><i></i></div>'+card(b.to,'new')+'</div><div class="foot"><div><p class="st">'+say+'</p>'+(NOTE[b.id]?'<p class="nt">'+NOTE[b.id]+'</p>':'')+'</div><div class="rpb"><small>SETTLED RP</small><span class="n">'+fmt(b.rp)+'</span></div></div>'}
+el.innerHTML='<div class="top"><div class="kick">Rank change</div></div><div class="pair">'+card(b.from,'prev')+'<div class="link"><i></i></div>'+card(b.to,'new')+'</div><div class="foot"><div><p class="st">'+say+'</p>'+(NOTE[b.id]?'<p class="nt">'+NOTE[b.id]+'</p>':'')+'</div><div class="rpb"><small>FINAL RP</small><span class="n">'+fmt(b.rp)+'</span></div></div>'}
 window.rankDownBinding.variants.forEach(build);
 function play(el){el.classList.remove('play');void el.offsetWidth;el.classList.add('play')}
 [].slice.call(document.querySelectorAll('.scr[data-play]')).forEach(play);
