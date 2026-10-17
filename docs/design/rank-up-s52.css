@@ -1,0 +1,79 @@
+/* S52 Rank Up — approved tokens only. Tier identity = one swappable slot: --tier-ring / --tier-ink (unset today → neutral Ink). */
+:root{--sh:polygon(50% 0,100% 22%,100% 64%,50% 100%,0 64%,0 22%);--glow:rgba(240,234,218,.26)}
+.scr{--ring-prev:var(--ink-faint)}
+.lab{white-space:nowrap}
+.kick{color:var(--ink-dim)}
+/* Rank chip component (shield + EN/AR pair + division + bound) */
+.rung{display:flex;align-items:center;gap:22px;min-width:0}
+.sh{position:relative;width:var(--s);height:calc(var(--s)*1.1547);flex:none}
+.sd{position:absolute;inset:0;background:var(--ring);clip-path:var(--sh);display:grid;place-items:center;padding-bottom:calc(var(--s)*.08)}
+.sd:before{content:"";position:absolute;inset:calc(var(--s)*.05);background:var(--pill);clip-path:var(--sh)}
+.sd .slot{position:relative;font:400 calc(var(--s)*.42)/1 var(--serif);color:var(--ink-c)}
+.rtxt{display:flex;flex-direction:column;gap:10px;min-width:0}
+.nm{display:flex;align-items:baseline;gap:14px}
+.nm b{font:400 var(--fs)/1.05 var(--serif);letter-spacing:.04em;color:var(--ink-c)}
+.nm em{font:600 calc(var(--fs)*.72)/1 "Noto Naskh Arabic",serif;font-style:normal;color:var(--ink-t)}
+.r2{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.dv{display:inline-flex;align-items:center;height:calc(var(--fs)*.78);padding:0 calc(var(--fs)*.34);border:1px solid var(--ink-t);border-radius:15px;font:600 calc(var(--fs)*.42)/1 var(--mono);letter-spacing:.06em;color:var(--ink-c)}
+.bd{display:flex;align-items:baseline;gap:6px;font:500 11px/1 var(--mono);letter-spacing:.12em;color:var(--ink-dim)}
+.bd .n{font:600 16px/1 var(--mono);letter-spacing:.02em;color:var(--ink-c)}
+.n{font-family:var(--mono)}
+.rung.prev{--s:64px;--fs:24px;--ring:var(--ring-prev);--ink-c:var(--ink-dim);--ink-t:var(--ink-dim)}
+.rung.new{--s:104px;--fs:42px;--ring:var(--tier-ring,var(--ink));--ink-c:var(--ink);--ink-t:var(--ink-dim)}
+.rung.new .sh{filter:drop-shadow(0 0 16px var(--glow))}
+.rung.new .bd .n{font-size:18px}
+.link{display:flex;align-items:center;padding:0 12px}
+.link i{display:block;position:relative;width:100%;height:2px;background:linear-gradient(90deg,var(--ink-faint),var(--ink));transform-origin:left}
+.link i:after{content:"";position:absolute;right:-1px;top:-4px;border:5px solid transparent;border-left:8px solid var(--ink);border-right:0}
+/* variants 1 / 2 */
+.pair{position:absolute;top:48px;left:26px;right:26px;height:236px;display:grid;grid-template-columns:280px 96px minmax(0,1fr);align-items:center;padding:0 16px 0 28px;background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.pair .new{height:196px;padding:0 26px;background:var(--hi);border:1px solid var(--line);border-radius:12px;box-shadow:0 0 28px rgba(240,234,218,.07)}
+.foot{position:absolute;top:304px;left:26px;right:26px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:24px;align-items:start}
+.st{font:400 21px/1.35 var(--sans);color:var(--ink)}
+.st b{font:400 22px/1 var(--serif);letter-spacing:.04em}
+.st .n{font-weight:600;font-size:20px}
+.nt{margin-top:8px;font:400 15px/1.4 var(--sans);color:var(--ink-dim)}
+.rpb{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+.rpb small{font:600 10px/1 var(--mono);letter-spacing:.16em;color:var(--ink-dim)}
+.rpb .n{font:600 40px/1 var(--mono);color:var(--ink)}
+/* variant 3 — the ceiling: scale, stillness, no next rung */
+.k3{position:absolute;top:44px;left:26px;right:26px;height:366px;display:grid;grid-template-columns:minmax(0,1fr) 340px minmax(0,1fr);align-items:center}
+.k3 .lft{display:flex;align-items:center;justify-content:flex-end}
+.k3 .rung.prev{flex-direction:column;gap:12px;text-align:center}
+.k3 .rung.prev .rtxt{align-items:center;gap:8px}
+.k3 .link{width:84px}
+.k3 .rung.new{--s:136px;--fs:54px;flex-direction:column;gap:16px;text-align:center}
+.k3 .rung.new .rtxt{align-items:center;gap:12px}
+.k3 .rung.new .sh{filter:drop-shadow(0 0 22px rgba(240,234,218,.2))}
+.k3 .st{text-align:center;margin-top:14px;font-size:19px}
+.k3 .rgt{display:flex;flex-direction:column;align-items:flex-start;gap:16px;padding-left:44px}
+.k3 .rgt .rpb{align-items:flex-start}
+.k3 .rgt p{font:400 14px/1.45 var(--sans);color:var(--ink-dim);max-width:200px}
+/* settling */
+.sk{background:linear-gradient(90deg,var(--pill) 0,var(--hi) 50%,var(--pill) 100%);background-size:220% 100%;border-radius:6px}
+.sk.sh{clip-path:var(--sh);border-radius:0}
+.sset{position:absolute;top:304px;left:26px;right:26px}
+.sset p{font:400 21px/1.35 var(--sans);color:var(--ink-dim)}
+.sset .sk{height:14px;width:300px;margin-top:12px}
+.pair .sk-col{display:flex;flex-direction:column;gap:12px}
+/* motion — 5px up + restrained glow, ≈2,200ms total, no loop */
+@keyframes fade{from{opacity:0}to{opacity:1}}
+@keyframes draw{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes arrive{from{opacity:0;transform:translateY(0)}to{opacity:1;transform:translateY(-5px)}}
+@keyframes glowS{from{filter:drop-shadow(0 0 0 rgba(240,234,218,0))}}
+@keyframes glowC{from{box-shadow:0 0 0 rgba(240,234,218,0)}}
+@keyframes shim{from{background-position:120% 0}to{background-position:-100% 0}}
+.rung.new,.k3 .rung.new{transform:translateY(-5px)}
+.play .kick{animation:fade .5s both}
+.play .prev{animation:fade .6s both}
+.play .link i{animation:draw .6s ease-out .5s both}
+.play .rung.new{animation:arrive .95s cubic-bezier(.2,.8,.2,1) 1s both}
+.play .pair .new{animation:arrive .95s cubic-bezier(.2,.8,.2,1) 1s both,glowC .9s ease-out 1.3s both}
+.play .rung.new .sh{animation:glowS .9s ease-out 1.3s both}
+.play .foot,.play .rgt{animation:fade .7s ease-out 1.5s both}
+.play .k3 .st{animation:fade .7s ease-out 1.5s both}
+.sk{animation:shim 2.2s linear infinite}
+.rp{display:inline-flex;gap:14px;align-items:center;margin-left:14px;border:1px solid var(--ink-dim);color:var(--ink);background:none;border-radius:15px;padding:6px 14px;font:600 10px var(--mono);letter-spacing:.14em;cursor:pointer;vertical-align:middle}
+.rp:hover{border-color:var(--ink);color:var(--ink)}.rp:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+.doc.w{width:1904px}.doc td{color:var(--ink-dim)}.doc td:first-child{width:170px}.doc .n{font:500 12px var(--mono);color:var(--ink)}
+.doc.w td:nth-child(2),.doc.w td:nth-child(3),.doc.w td:nth-child(4){width:300px}
