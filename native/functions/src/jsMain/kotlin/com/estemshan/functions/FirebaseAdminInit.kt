@@ -12,9 +12,10 @@ package com.estemshan.functions
  * no arguments of its own; the bundle's only job is to call it.
  *
  * Guarded because [initializeApp] throws when the default app already exists,
- * and the admin DBs construct this guard's caller once per request. jsTest
- * constructs neither DB, so a test environment with no `FIREBASE_CONFIG` never
- * reaches this.
+ * and the admin DBs construct this guard's caller once per request. The
+ * fake-port jsTest classes construct neither DB, so a test environment with no
+ * `FIREBASE_CONFIG` never reaches this; only `SettlementLedgerEmulatorTest`
+ * does, and it skips unless `FIRESTORE_EMULATOR_HOST` is set.
  *
  * Lives outside the `@JsModule` files on purpose: a file annotated
  * `@JsModule` may hold external declarations only.
