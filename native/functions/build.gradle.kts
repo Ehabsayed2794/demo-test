@@ -78,3 +78,18 @@ kotlin {
 rootProject.extensions.configure<NodeJsRootExtension> {
   nodeVersion = "22.14.0"
 }
+
+// Mocha's default per-test timeout is 2000 ms, and one test in
+// SettlementLedgerEmulatorTest cannot fit in it: the first Admin round trip of a
+// Node process pays firebase-admin's cold start (module load, app init, the
+// first gRPC dial), measured at 2.2 s for a three-operation test, while every
+// later test of the same class runs warm at 0.1-0.5 s for a dozen round trips.
+// Raised for this task only, and the class still skips itself (loudly) unless
+// FIRESTORE_EMULATOR_HOST is set, so an ordinary CI run starts no I/O and pays
+// nothing: the fake-port suites all finish in milliseconds. The ceiling is a
+// ceiling, not a wait: a hung test still fails, 20 s later instead of 2.
+tasks.withType<org.jetbrains.kotlin.gradle.targets.js.testing.KotlinJsTest>()
+  .matching { it.name == "jsNodeTest" }
+  .configureEach {
+    useMocha { timeout = "20000" }
+  }

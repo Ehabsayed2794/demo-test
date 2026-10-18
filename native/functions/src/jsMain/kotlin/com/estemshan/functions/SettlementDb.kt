@@ -32,6 +32,27 @@ interface SettlementDb {
   suspend fun readArchives(matchId: String): Map<String, Map<String, Any?>>
   suspend fun <T> transact(block: suspend (SettlementTx) -> T): T
 
+  /**
+   * S62 RP audit ledger: best-effort append of one audit record. Abstract
+   * so every port wires the ledger consciously; the Admin implementation
+   * writes create-if-absent, once per [SettlementLedger.appendTargets] entry,
+   * keyed by [SettlementLedger.ledgerDocId], and settleOnce calls this inside
+   * a catch - an append failure is logged and never changes the settlement
+   * outcome.
+   */
+  suspend fun appendLedger(record: Map<String, Any?>)
+
+  /**
+   * S62: the bounded, most-recent-first window of CORRECTIONS the repeat
+   * detector reads ([SettlementLedger.DETECT_WINDOW] documents, drawn from
+   * [SettlementLedger.COLLECTION_CORRECTIONS]). Called only after a correction
+   * applied; the caller catches failures. Reading corrections alone, instead
+   * of the whole ledger, is what stops R25 going blind as settlement volume
+   * grows - and it is a write-time materialization precisely so this read
+   * needs no composite index. See [AdminSettlementDb.readCorrectionWindow].
+   */
+  suspend fun readCorrectionWindow(): List<Map<String, Any?>>
+
   interface SettlementTx {
     suspend fun readClaim(matchId: String): Map<String, Any?>?
     fun writeCorrection(matchId: String, scores: Map<String, Int>, winners: List<String>, version: Int)
@@ -101,33 +122,54 @@ suspend fun settleOnce(db: SettlementDb, request: CallableRequest): Map<String, 
       "settleMatch: match '$matchId' is not a match document.",
     )
   when (val gate = Settlement.decide(uid, parsed)) {
-    is SettleDecision.NoOp -> return noOpResponse(gate.mode.name)
-    is SettleDecision.Failed -> throw HttpsError(
-      if (gate.reason == Settlement.Reason.NOT_MEMBER) "permission-denied" else "failed-precondition",
-      gate.message,
-    )
+    is SettleDecision.NoOp -> {
+      // S62 decision: ROOM/UNRANKED no-ops are console-only - no ledger
+      // document (not a settlement outcome; the ledger stays free of
+      // routine traffic), cheap structured line for retry forensics.
+      console.log(SettlementLedger.noOpLine(matchId, gate.mode.name))
+      return noOpResponse(gate.mode.name)
+    }
+    is SettleDecision.Failed -> {
+      // S62 decision: a denied attempt is console-only (no write - an
+      // authenticated prober must not be able to amplify documents).
+      console.log(SettlementLedger.deniedLine(matchId, uid, gate.reason))
+      throw HttpsError(
+        if (gate.reason == Settlement.Reason.NOT_MEMBER) "permission-denied" else "failed-precondition",
+        gate.message,
+      )
+    }
     SettleDecision.Proceed -> Unit
     else -> throw HttpsError("internal", "settleMatch: unreachable gate.")
   }
 
-  val archives = db.readArchives(matchId).mapNotNull { (docId, archiveFields) ->
-    Settlement.parseArchive(docId, archiveFields)?.let { docId to it }
-      ?: throw HttpsError(
-        "failed-precondition",
-        "settleMatch: roundArchive/$docId is malformed.",
-      )
-  }.toMap()
-  val withHistory = parsed.copy(archives = archives.values.toList())
+  val parsedArchives = LinkedHashMap<String, Settlement.ArchivedRound>()
+  for ((docId, archiveFields) in db.readArchives(matchId)) {
+    val archive = Settlement.parseArchive(docId, archiveFields)
+    if (archive == null) {
+      val message = "settleMatch: roundArchive/$docId is malformed."
+      // S62: a malformed archive is corrupt history - the same FAILED
+      // ledger record and console line as a closed recompute.
+      SettlementLedger.reportFailure(db, parsed, uid, Settlement.Reason.HISTORY_CORRUPT, message)
+      throw HttpsError("failed-precondition", message)
+    }
+    parsedArchives[docId] = archive
+  }
+  val withHistory = parsed.copy(archives = parsedArchives.values.toList())
 
   val decision = Settlement.recompute(withHistory)
   val recomputed = when (decision) {
     is SettleDecision.Agreed -> decision.recomputed
     is SettleDecision.Corrected -> decision.recomputed
-    is SettleDecision.Failed -> throw HttpsError("failed-precondition", decision.message)
+    is SettleDecision.Failed -> {
+      // S62: recompute failures are ledger-recorded (FAILED) before the
+      // denial is thrown; reporting is best-effort and never replaces it.
+      SettlementLedger.reportFailure(db, withHistory, uid, decision.reason, decision.message)
+      throw HttpsError("failed-precondition", decision.message)
+    }
     else -> throw HttpsError("internal", "settleMatch: unreachable recompute.")
   }
 
-  return db.transact { tx ->
+  val settled = db.transact { tx ->
     val existing = tx.readClaim(matchId)
     if (existing != null) {
       @Suppress("UNCHECKED_CAST")
@@ -148,6 +190,14 @@ suspend fun settleOnce(db: SettlementDb, request: CallableRequest): Map<String, 
     tx.writeClaim(matchId, claimRecord(uid, response))
     response
   }
+
+  // S62: only the invocation that applied the settlement appends to the
+  // ledger - the replay path (replayed=true) is a read-only no-op for it,
+  // which makes the ledger append exactly-once across retries.
+  if (settled["settled"] == true && settled["replayed"] != true) {
+    SettlementLedger.recordSettlement(db, parsed, recomputed, uid)
+  }
+  return settled
 }
 
 /** Admin-SDK implementation. Reads normalize through dynamicToKotlin;
@@ -185,6 +235,51 @@ class AdminSettlementDb : SettlementDb {
     }.await()
     @Suppress("UNCHECKED_CAST")
     return outcome as T
+  }
+
+  override suspend fun appendLedger(record: Map<String, Any?>) {
+    // S62: create-if-absent in its own Admin transaction, keyed by
+    // SettlementLedger.ledgerDocId - the append is idempotent even if the
+    // same event is ever delivered twice, and a failure here cannot touch
+    // the settlement (that transaction has already committed).
+    // appendTargets decides which collections the row lands in, and they all
+    // commit together: the corrections window can never hold a row the ledger
+    // lacks, or miss one it should mirror.
+    val docId = SettlementLedger.ledgerDocId(record) ?: return
+    val refs = SettlementLedger.appendTargets(record).map { collection ->
+      db.collection(collection).doc(docId)
+    }
+    db.runTransaction { tx ->
+      TxScope.promise {
+        // Firestore requires EVERY read in a transaction to precede EVERY
+        // write (the SDK throws on a get after a set), so the create-if-absent
+        // test is done for all targets first and only then written.
+        val existed = refs.map { tx.get(it).await().exists }
+        val plain = toPlain(record)
+        refs.forEachIndexed { index, ref ->
+          if (!existed[index]) tx.set(ref, plain)
+        }
+      }
+    }.await()
+  }
+
+  override suspend fun readCorrectionWindow(): List<Map<String, Any?>> {
+    // S62: newest-first over ONE field of the corrections collection, so the
+    // window is genuinely "the last DETECT_WINDOW corrections" and includes
+    // the record the correction just wrote. An un-ordered equality query on
+    // the ledger instead would return index order, not recency, and would
+    // freeze on the oldest documents once the collection grows - silently
+    // blinding the detector. Mirror the correction at write time and the read
+    // stays on the automatic single-field index: no composite index, no
+    // indexes artifact, no deployment.
+    val snapshot = db.collection(SettlementLedger.COLLECTION_CORRECTIONS)
+      .orderBy("appendedAt", "desc")
+      .limit(SettlementLedger.DETECT_WINDOW)
+      .get().await()
+    return snapshot.docs.mapNotNull { doc ->
+      @Suppress("UNCHECKED_CAST")
+      dynamicToKotlin(doc.data()) as? Map<String, Any?>
+    }
   }
 
   private inner class AdminTx(private val tx: Transaction) : SettlementDb.SettlementTx {

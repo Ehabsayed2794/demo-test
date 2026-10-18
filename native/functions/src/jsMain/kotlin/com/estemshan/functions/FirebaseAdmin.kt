@@ -36,6 +36,21 @@ external interface FirestoreDb {
 external interface CollectionRef {
   fun doc(id: String): DocRef
   fun get(): Promise<QuerySnapshot>
+  /**
+   * S62: a bounded, recency-ordered window for the RP audit ledger's repeat
+   * detector. The runtime object is a CollectionReference, which is a Query -
+   * both methods exist on it. Only `get()` is called on the result, so typing
+   * them as CollectionRef keeps this file's minimal-surface doctrine.
+   *
+   * `orderBy` on ONE field is deliberate: Firestore's automatic single-field
+   * indexes serve it in both directions. Pairing an equality filter with an
+   * orderBy on a different field would need a composite index, i.e. an
+   * indexes artifact and a deployment - so the detector's window is a
+   * corrections-only collection, materialized at write time by
+   * [SettlementLedger.appendTargets], and this read filters nothing.
+   */
+  fun orderBy(fieldPath: String, directionStr: String): CollectionRef
+  fun limit(count: Int): CollectionRef
 }
 
 external interface DocRef {

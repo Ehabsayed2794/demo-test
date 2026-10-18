@@ -233,3 +233,28 @@ Everything below this line describes the eventual full-gameplay shape this colle
 - **Read frequency:** Low-medium — polled or live-listened on Lobby.
 - **Write frequency:** Low.
 - **Security requirements:** owner-only read; **write should come from whatever produced the event, not the recipient** — e.g. the sender of a friend request writes the recipient's notification. This is a case to flag for the Cloud Functions migration (a function fan-out is the clean long-term shape); until then, rules must allow a *different* uid than the document owner to create it, which is a narrower and more carefully-scoped rule than most of this schema needs.
+
+## `settlementLedger/{matchId}`
+
+> **Cloud Functions only (plan S62, native) — not in the deployed web build.** The internal RP audit ledger (risks R25/R29): one admin-written document per settlement event, recording the claimed-vs-recomputed diff. Nothing client-facing reads it.
+
+- **Purpose:** The settlement watchtower. Every APPLIED/CORRECTED Ranked settlement is recorded with its correction diff (the R25 signature); a recompute failure or malformed archive is recorded as FAILED. NoOp (ROOM/UNRANKED) and gate-denied attempts deliberately write nothing — one console line each instead, so an authenticated prober cannot amplify writes.
+- **Document ID:** the `matchId` for an APPLIED/CORRECTED settlement (a match settles at most once — the S50 claim); `"{matchId}-fail-{reason}"` for a FAILED settlement, so identical retried failures coalesce onto one document.
+- **Fields:** `schemaVersion: number` (pinned, currently `1`), `matchId`, `mode: "ROOM" | "RANKED" | "UNRANKED"`, `gameType`, `players: string[]`, `outcomeKind: "APPLIED" | "CORRECTED" | "FAILED"`, `corrected: boolean`, `settledBy: string` (the settling claimant — always one of `players[]`; membership is gated before settlement), `rounds: number`, `claimedScores`/`finalScores: map<string, number>`, `claimedWinners`/`winnerIds: string[]`, `changedSeats: string[]`, `winnerChanged: boolean`, `appendedAt: timestamp`. FAILED rows instead carry `failureReason`/`failureMessage`. **Every row is RANKED by design** — see the R30 note below.
+- **Relationships:** `matchId` → `matches/{matchId}`; `players[]`/`settledBy` → `players/{uid}`; a CORRECTED row is also mirrored into `settlementCorrections/{matchId}` in the same transaction.
+- **Read frequency:** None at runtime — operator/Firestore-console audits, the R29 usage watch, and the S62 repeat detector (which reads `settlementCorrections`, not this collection).
+- **Write frequency:** At most one document per settled match, plus at most one per failure-reason class. Post-commit and best-effort: the settlement has already committed, and a failed append can never fail or change it (a process crash in the write window loses the row — accepted).
+- **Security requirements:** **No `firestore.rules` entry — clients are denied by default and the rules file stays byte-identical (no SHA-pin event).** The Admin SDK (Cloud Functions) is the only writer; it bypasses rules by design.
+- **R30 note (amended 2026-10-18):** because every row here is RANKED, the Ranked-vs-Unranked party-mode split is *not* read from this ledger; it is counted at the M11 gate from the `matches` documents' own `mode` field.
+
+## `settlementCorrections/{matchId}`
+
+> **Cloud Functions only (plan S62, native).** The repeat detector's bounded read window: a materialized copy of CORRECTED `settlementLedger` rows alone.
+
+- **Purpose:** Keep the detector's newest-50 sample counting *corrections* rather than settlement traffic. Not a second source of truth: the row commits in the SAME transaction as its ledger row, so a correction can never appear in one and not the other.
+- **Document ID:** the same `matchId` as its ledger row — the two rows are the same event seen twice.
+- **Fields:** identical to the corresponding CORRECTED `settlementLedger` row.
+- **Relationships:** mirror of `settlementLedger/{matchId}` (CORRECTED rows only).
+- **Read frequency:** Low — one bounded newest-50 read per corrected settlement, by the S62 detector.
+- **Write frequency:** Same events as CORRECTED ledger rows — at most one per corrected match.
+- **Security requirements:** Same as `settlementLedger` — no rules entry (denied by default; rules file unchanged), Admin SDK only. **Why it exists at all:** narrowing `settlementLedger` itself to corrections means an equality filter plus an `orderBy` on a different field, which Firestore serves only from a composite index (a new indexes artifact plus a deployment); reading the newest 50 *ledger* documents instead would go blind exactly when corrections get rare — the case the fraud watch must see.
