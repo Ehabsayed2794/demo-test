@@ -222,11 +222,38 @@ internal object SettlementFixtures {
     return parsed
   }
 
-  /** A profile document as `players/{uid}` holds it: RP only. */
-  fun profile(uid: String, rp: Int?): Map<String, Any?> {
+  /**
+   * A profile document as `players/{uid}` holds it. [rp] is the only field
+   * the original goldens needed; every ranked-progression contract field is
+   * optional, and the DEFAULT — none of them present — is the legacy/unplaced
+   * shape those goldens were derived against, so new fields must never move
+   * an existing number. [stats] keys are the stored counters' field names
+   * (e.g. "rankedKozCount" to 1); percentages have no setter because the
+   * contract never stores them.
+   */
+  fun profile(
+    uid: String,
+    rp: Int?,
+    tier: String? = null,
+    division: String? = null,
+    highestRankTier: String? = null,
+    highestRankDivision: String? = null,
+    seasonId: String? = null,
+    placementState: String? = null,
+    demotionShield: Boolean? = null,
+    stats: Map<String, Int> = emptyMap(),
+  ): Map<String, Any?> {
     val out = LinkedHashMap<String, Any?>()
     out["uid"] = uid
     if (rp != null) out["rp"] = rp
+    if (tier != null) out["tier"] = tier
+    if (division != null) out["division"] = division
+    if (highestRankTier != null) out["highestRankTier"] = highestRankTier
+    if (highestRankDivision != null) out["highestRankDivision"] = highestRankDivision
+    if (seasonId != null) out["seasonId"] = seasonId
+    if (placementState != null) out["placementState"] = placementState
+    if (demotionShield != null) out["demotionShield"] = demotionShield
+    for ((field, value) in stats) out[field] = value
     return out
   }
 

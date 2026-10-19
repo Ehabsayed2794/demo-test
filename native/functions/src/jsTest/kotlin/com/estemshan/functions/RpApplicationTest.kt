@@ -37,6 +37,45 @@ class RpApplicationTest {
   private fun profilesWith(rps: Map<String, Int?>): Map<String, Map<String, Any?>> =
     uids.associateWith { uid -> SettlementFixtures.profile(uid, rps[uid]) }
 
+  /**
+   * The FULL 13-field ranked-progression contract write for one seat, with
+   * the defaults a settled Ranked profile carries: season "s1", shield off,
+   * the written rung also recorded as the Highest Rank, placement SKIPPED
+   * (the default for an rp > 0 account), one completed match folded, and no
+   * outcome counter beyond the ones named. Exact-map equality against
+   * [FakeRpDb.writeFor] — any field the fold adds or drops fails here, not
+   * in production.
+   */
+  private fun expectedWrite(
+    rp: Int,
+    tier: String,
+    division: String,
+    demotionShield: Boolean = false,
+    highestRankTier: String = tier,
+    highestRankDivision: String = division,
+    seasonId: String = "s1",
+    placementState: String = "SKIPPED",
+    gamesPlayed: Int = 1,
+    king: Int = 0,
+    second: Int = 0,
+    third: Int = 0,
+    koz: Int = 0,
+  ): Map<String, Any?> = linkedMapOf(
+    "rp" to rp,
+    "tier" to tier,
+    "division" to division,
+    "demotionShield" to demotionShield,
+    "highestRankTier" to highestRankTier,
+    "highestRankDivision" to highestRankDivision,
+    "seasonId" to seasonId,
+    "placementState" to placementState,
+    "rankedGamesPlayed" to gamesPlayed,
+    "rankedKingCount" to king,
+    "rankedSecondCount" to second,
+    "rankedThirdCount" to third,
+    "rankedKozCount" to koz,
+  )
+
   // ── fake ports ────────────────────────────────────────────────────
 
   /**
@@ -177,11 +216,23 @@ class RpApplicationTest {
     assertEquals(4, db.profileReads)
     assertEquals(4, db.profileWrites.size)
     // p1 KING → 732, p4 SECOND → 717: both cross the Gold II threshold (700).
-    assertEquals(mapOf("rp" to 732, "tier" to "Gold", "division" to "II"), db.writeFor("u1"))
-    assertEquals(mapOf("rp" to 717, "tier" to "Gold", "division" to "II"), db.writeFor("u4"))
+    assertEquals(
+      expectedWrite(rp = 732, tier = "Gold", division = "II", king = 1),
+      db.writeFor("u1"),
+    )
+    assertEquals(
+      expectedWrite(rp = 717, tier = "Gold", division = "II", second = 1),
+      db.writeFor("u4"),
+    )
     // p3 THIRD lands on 0 (sign clamp), p4's seat-3 neighbour p2 keeps the KOZ loss.
-    assertEquals(mapOf("rp" to 690, "tier" to "Gold", "division" to "III"), db.writeFor("u3"))
-    assertEquals(mapOf("rp" to 682, "tier" to "Gold", "division" to "III"), db.writeFor("u2"))
+    assertEquals(
+      expectedWrite(rp = 690, tier = "Gold", division = "III", third = 1),
+      db.writeFor("u3"),
+    )
+    assertEquals(
+      expectedWrite(rp = 682, tier = "Gold", division = "III", koz = 1),
+      db.writeFor("u2"),
+    )
 
     // The caller's own slice, and nothing else, rides on the response (RD13).
     assertEquals(
@@ -221,14 +272,20 @@ class RpApplicationTest {
   // ── the field set ────────────────────────────────────────────────
 
   /**
-   * RD1/RD12 give settlement exactly three owned fields. The Admin SDK
-   * bypasses firestore.rules, so nothing but this call site bounds the write —
-   * a stray `rank`, `stats`, `highestRank`, `seasonId` or `demotionShield` key
-   * here is a silent client-trustable-field escalation, and this assertion is
-   * the only place it would be caught.
+   * The settlement owns EXACTLY the 13 ranked-progression contract fields —
+   * `rp`, `tier`, `division`, `demotionShield`, `highestRankTier`,
+   * `highestRankDivision`, `seasonId`, `placementState` and the five stored
+   * counters — and nothing else. The Admin SDK bypasses firestore.rules, so
+   * nothing but this call site bounds the write: a stray `rank`, `stats`,
+   * `kingPct` or `you` key here is a silent client-trustable-field
+   * escalation, and this assertion is the only place it would be caught.
+   * The four derived percentages are never persisted (RD23 — they are
+   * derived over gamesPlayed, not stored), and every pre-existing profile
+   * field — the legacy `rank` string, displayName, the rest — is left to the
+   * merge-write's update() semantics.
    */
   @Test
-  fun progressionWritesOwnExactlyThreeFields() = runTest {
+  fun progressionWritesOwnExactlyTheThirteenContractFields() = runTest {
     val db = FakeRpDb(
       match = SettlementFixtures.matchFields(uids),
       archives = archives,
@@ -240,9 +297,15 @@ class RpApplicationTest {
     assertEquals(4, db.profileWrites.size)
     db.profileWrites.forEach { (uid, fields) ->
       assertEquals(
-        setOf("rp", "tier", "division"),
+        setOf(
+          "rp", "tier", "division", "demotionShield",
+          "highestRankTier", "highestRankDivision",
+          "seasonId", "placementState",
+          "rankedGamesPlayed", "rankedKingCount", "rankedSecondCount",
+          "rankedThirdCount", "rankedKozCount",
+        ),
         fields.keys,
-        "the write for '$uid' owns exactly the progression fields",
+        "the write for '$uid' owns exactly the progression contract fields",
       )
     }
   }
@@ -268,10 +331,34 @@ class RpApplicationTest {
 
     val response = settleOnce(db, SettlementFixtures.settleRequest("u2", "m1"))
 
-    assertEquals(mapOf("rp" to 30, "tier" to "Bronze", "division" to "III"), db.writeFor("u1"))
-    assertEquals(mapOf("rp" to 15, "tier" to "Bronze", "division" to "III"), db.writeFor("u4"))
-    assertEquals(mapOf("rp" to 0, "tier" to "Bronze", "division" to "III"), db.writeFor("u2"))
-    assertEquals(mapOf("rp" to 0, "tier" to "Bronze", "division" to "III"), db.writeFor("u3"))
+    assertEquals(
+      expectedWrite(
+        rp = 30, tier = "Bronze", division = "III",
+        king = 1, placementState = "NOT_STARTED",
+      ),
+      db.writeFor("u1"),
+    )
+    assertEquals(
+      expectedWrite(
+        rp = 15, tier = "Bronze", division = "III",
+        second = 1, placementState = "NOT_STARTED",
+      ),
+      db.writeFor("u4"),
+    )
+    assertEquals(
+      expectedWrite(
+        rp = 0, tier = "Bronze", division = "III",
+        koz = 1, placementState = "NOT_STARTED",
+      ),
+      db.writeFor("u2"),
+    )
+    assertEquals(
+      expectedWrite(
+        rp = 0, tier = "Bronze", division = "III",
+        third = 1, placementState = "NOT_STARTED",
+      ),
+      db.writeFor("u3"),
+    )
 
     // The KOZ seat's own view: the loss is real (-20) but its effective delta
     // is 0, because RP never goes below the floor.
@@ -331,7 +418,7 @@ class RpApplicationTest {
     assertEquals(30, (onWeak["you"] as Map<*, *>)["delta"])
     // 150 → 184: still Bronze I (lower bound 150, next rung 250).
     assertEquals(
-      mapOf("rp" to 184, "tier" to "Bronze", "division" to "I"),
+      expectedWrite(rp = 184, tier = "Bronze", division = "I", king = 1),
       strong.writeFor("u1"),
     )
     assertEquals(34, (onStrong["you"] as Map<*, *>)["delta"])
@@ -360,15 +447,327 @@ class RpApplicationTest {
 
     val response = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
 
-    assertEquals(mapOf("rp" to 48, "tier" to "Bronze", "division" to "III"), db.writeFor("u1"))
-    assertEquals(mapOf("rp" to 163, "tier" to "Bronze", "division" to "I"), db.writeFor("u4"))
-    assertEquals(mapOf("rp" to 139, "tier" to "Bronze", "division" to "II"), db.writeFor("u3"))
+    assertEquals(
+      expectedWrite(
+        rp = 48, tier = "Bronze", division = "III",
+        king = 1, placementState = "NOT_STARTED",
+      ),
+      db.writeFor("u1"),
+    )
+    assertEquals(
+      expectedWrite(rp = 163, tier = "Bronze", division = "I", second = 1),
+      db.writeFor("u4"),
+    )
+    assertEquals(
+      expectedWrite(
+        rp = 139, tier = "Bronze", division = "II",
+        third = 1, highestRankTier = "Bronze", highestRankDivision = "I",
+      ),
+      db.writeFor("u3"),
+    )
     // 150 → 125 crosses a rung: Bronze II, a demotion (movement -1).
-    assertEquals(mapOf("rp" to 125, "tier" to "Bronze", "division" to "II"), db.writeFor("u2"))
+    assertEquals(
+      expectedWrite(
+        rp = 125, tier = "Bronze", division = "II",
+        koz = 1, highestRankTier = "Bronze", highestRankDivision = "I",
+      ),
+      db.writeFor("u2"),
+    )
 
     assertEquals(
       mapOf("previousRp" to 0, "rp" to 48, "delta" to 48),
       response["you"],
+    )
+  }
+
+  // ── Highest Rank, the shield, the counters, season, legacy ──────
+
+  /**
+   * Highest Rank only ever raises (RD23): u1 carries a stored Platinum III
+   * peak into the uniform 690 table, its KING climbs to Gold II — below the
+   * peak — and the write must re-persist the STORED peak, never the rung the
+   * match reached. A fold that wrote the resolved rung into the peak fields
+   * would silently erase the career record on every ordinary match.
+   */
+  @Test
+  fun theHighestRankOnlyEverRaises() = runTest {
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = mapOf(
+        "u1" to SettlementFixtures.profile(
+          "u1", 690, highestRankTier = "Platinum", highestRankDivision = "III",
+        ),
+        "u2" to SettlementFixtures.profile("u2", 690),
+        "u3" to SettlementFixtures.profile("u3", 690),
+        "u4" to SettlementFixtures.profile("u4", 690),
+      ),
+    )
+
+    settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+
+    assertEquals(
+      expectedWrite(
+        rp = 732, tier = "Gold", division = "II", king = 1,
+        highestRankTier = "Platinum", highestRankDivision = "III",
+      ),
+      db.writeFor("u1"),
+    )
+  }
+
+  /**
+   * A demotion never lowers the Highest Rank — both shapes of "peak" in one
+   * mixed table: u2 carries a seeded Platinum III peak and demotes 150 → 125
+   * (Bronze I → Bronze II), so the write must name Platinum III; u3's peak is
+   * DEFAULTED (no stored fields ⇒ the pre-match rung, Bronze I) and its
+   * demotion to Bronze II must leave the write at Bronze I — never at the
+   * rung the match landed on.
+   */
+  @Test
+  fun aDemotionNeverLowersTheHighestRank() = runTest {
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = mapOf(
+        "u1" to SettlementFixtures.profile("u1", 0),
+        "u2" to SettlementFixtures.profile(
+          "u2", 150, highestRankTier = "Platinum", highestRankDivision = "III",
+        ),
+        "u3" to SettlementFixtures.profile("u3", 150),
+        "u4" to SettlementFixtures.profile("u4", 150),
+      ),
+    )
+
+    settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+
+    assertEquals(
+      expectedWrite(
+        rp = 125, tier = "Bronze", division = "II", koz = 1,
+        highestRankTier = "Platinum", highestRankDivision = "III",
+      ),
+      db.writeFor("u2"),
+    )
+    assertEquals(
+      expectedWrite(
+        rp = 139, tier = "Bronze", division = "II", third = 1,
+        highestRankTier = "Bronze", highestRankDivision = "I",
+      ),
+      db.writeFor("u3"),
+    )
+  }
+
+  /**
+   * An armed shield holds the rank on a would-be demotion (RD7): u2 is armed
+   * at 150 (Bronze I) in the mixed table and its KOZ resolves to 125
+   * (Bronze II, movement -1). The shield blocks it, so the WRITE persists the
+   * held rung at the previous rung's lower bound — rp 150, Bronze I — the
+   * shield is consumed (demotionShield=false), and the caller's `you` and the
+   * claim's movement both report the held numbers: the effective delta is the
+   * truthful clamped 0, not the raw -25 the unshielded resolution carried.
+   */
+  @Test
+  fun anArmedShieldHoldsTheRankOnDemotion() = runTest {
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = mapOf(
+        "u1" to SettlementFixtures.profile("u1", 0),
+        "u2" to SettlementFixtures.profile("u2", 150, demotionShield = true),
+        "u3" to SettlementFixtures.profile("u3", 150),
+        "u4" to SettlementFixtures.profile("u4", 150),
+      ),
+    )
+
+    val response = settleOnce(db, SettlementFixtures.settleRequest("u2", "m1"))
+
+    assertEquals(
+      expectedWrite(
+        rp = 150, tier = "Bronze", division = "I",
+        koz = 1, demotionShield = false,
+      ),
+      db.writeFor("u2"),
+    )
+    assertEquals(
+      mapOf("previousRp" to 150, "rp" to 150, "delta" to 0),
+      response["you"],
+    )
+    @Suppress("UNCHECKED_CAST")
+    val movements = db.claim!!["movements"] as Map<String, Map<String, Any?>>
+    assertEquals(
+      mapOf("previousRp" to 150, "rp" to 150, "delta" to 0),
+      movements["u2"],
+      "the claim records the held movement, not the raw one",
+    )
+  }
+
+  /**
+   * A promotion resolved while armed REPLACES the shield atomically (RD7):
+   * u1 is armed at 690, its KING resolves +42 → 732 (Gold II), the resolution
+   * passes through unchanged, and the write comes out RE-ARMED — a promotion
+   * while armed never drops the new shield. u4's SECOND resolves unarmed and
+   * stays false, pinning that the re-arm belongs to the armed seat alone.
+   */
+  @Test
+  fun anArmedPromotionKeepsItsShieldArmed() = runTest {
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = mapOf(
+        "u1" to SettlementFixtures.profile("u1", 690, demotionShield = true),
+        "u2" to SettlementFixtures.profile("u2", 690),
+        "u3" to SettlementFixtures.profile("u3", 690),
+        "u4" to SettlementFixtures.profile("u4", 690),
+      ),
+    )
+
+    settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+
+    assertEquals(
+      expectedWrite(
+        rp = 732, tier = "Gold", division = "II",
+        king = 1, demotionShield = true,
+      ),
+      db.writeFor("u1"),
+    )
+    assertEquals(
+      expectedWrite(rp = 717, tier = "Gold", division = "II", second = 1),
+      db.writeFor("u4"),
+    )
+  }
+
+  /**
+   * The armed shield is consumed by the NEXT resolved match whatever its
+   * outcome (RD7's countdown of one): u3 is armed at 690 and its THIRD
+   * resolves to a neutral 0 delta — movement 0 spends the shield, the write
+   * carries demotionShield=false, and the resolution passes through
+   * unchanged (690, Gold III). Neutral neither re-arms nor holds anything.
+   */
+  @Test
+  fun anArmedNeutralMatchConsumesTheShield() = runTest {
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = mapOf(
+        "u1" to SettlementFixtures.profile("u1", 690),
+        "u2" to SettlementFixtures.profile("u2", 690),
+        "u3" to SettlementFixtures.profile("u3", 690, demotionShield = true),
+        "u4" to SettlementFixtures.profile("u4", 690),
+      ),
+    )
+
+    settleOnce(db, SettlementFixtures.settleRequest("u3", "m1"))
+
+    assertEquals(
+      expectedWrite(
+        rp = 690, tier = "Gold", division = "III",
+        third = 1, demotionShield = false,
+      ),
+      db.writeFor("u3"),
+    )
+  }
+
+  /**
+   * RD10: a placement match counts toward NO statistic. u1 is mid-placement
+   * (IN_PROGRESS), and its counters come back all zeros — not Games Played,
+   * not any percentage — even though its RP still resolves (+30 from the
+   * floor, this fold leaves placement's RP resolution to the settlement) and
+   * all 13 fields are still written. u2..u4 are NOT_STARTED — not placement —
+   * so their counters fold their one outcome in normally.
+   */
+  @Test
+  fun aPlacementProfileAccumulatesNoStats() = runTest {
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = mapOf(
+        "u1" to SettlementFixtures.profile("u1", null, placementState = "IN_PROGRESS"),
+        "u2" to SettlementFixtures.profile("u2", null),
+        "u3" to SettlementFixtures.profile("u3", null),
+        "u4" to SettlementFixtures.profile("u4", null),
+      ),
+    )
+
+    settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+
+    assertEquals(
+      expectedWrite(
+        rp = 30, tier = "Bronze", division = "III",
+        placementState = "IN_PROGRESS", gamesPlayed = 0,
+      ),
+      db.writeFor("u1"),
+    )
+    assertEquals(
+      expectedWrite(
+        rp = 0, tier = "Bronze", division = "III",
+        koz = 1, placementState = "NOT_STARTED",
+      ),
+      db.writeFor("u2"),
+    )
+  }
+
+  /**
+   * An existing seasonId is PRESERVED and a missing one defaults to "s1"
+   * (RD24): u1 carries "s2", u2 carries nothing, and the writes must differ
+   * exactly so — nothing in this fold ever moves a season forward (S59's
+   * reset is the only writer that does).
+   */
+  @Test
+  fun seasonIdIsPreservedWhenPresentAndDefaultedWhenAbsent() = runTest {
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = mapOf(
+        "u1" to SettlementFixtures.profile("u1", 690, seasonId = "s2"),
+        "u2" to SettlementFixtures.profile("u2", 690),
+        "u3" to SettlementFixtures.profile("u3", 690),
+        "u4" to SettlementFixtures.profile("u4", 690),
+      ),
+    )
+
+    settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+
+    assertEquals(
+      expectedWrite(rp = 732, tier = "Gold", division = "II", king = 1, seasonId = "s2"),
+      db.writeFor("u1"),
+    )
+    assertEquals(
+      expectedWrite(rp = 682, tier = "Gold", division = "III", koz = 1),
+      db.writeFor("u2"),
+    )
+  }
+
+  /**
+   * A legacy pre-Ranked profile — `rank: "Unranked"`, `rp: 0`, none of the
+   * new contract fields — settles on its defaults: NOT_STARTED placement (an
+   * "Unranked" legacy rank is not a placed rank), Bronze III, season "s1",
+   * shield off, peak defaulted to the rung. And the write copies NOTHING but
+   * the 13 contract fields: the legacy `rank` string and `displayName` are
+   * untouched by the merge-write, which is exactly what
+   * [progressionWritesOwnExactlyTheThirteenContractFields] pins per key.
+   */
+  @Test
+  fun aLegacyProfileSettlesOnItsDefaults() = runTest {
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = uids.associateWith { uid ->
+        linkedMapOf<String, Any?>(
+          "uid" to uid,
+          "displayName" to "Player $uid",
+          "rank" to "Unranked",
+          "rp" to 0,
+        )
+      },
+    )
+
+    settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+
+    assertEquals(
+      expectedWrite(
+        rp = 30, tier = "Bronze", division = "III",
+        king = 1, placementState = "NOT_STARTED",
+      ),
+      db.writeFor("u1"),
     )
   }
 
@@ -391,10 +790,22 @@ class RpApplicationTest {
 
     settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
 
-    assertEquals(mapOf("rp" to 711, "tier" to "Gold", "division" to "II"), db.writeFor("u1"))
-    assertEquals(mapOf("rp" to 704, "tier" to "Gold", "division" to "II"), db.writeFor("u4"))
-    assertEquals(mapOf("rp" to 690, "tier" to "Gold", "division" to "III"), db.writeFor("u3"))
-    assertEquals(mapOf("rp" to 686, "tier" to "Gold", "division" to "III"), db.writeFor("u2"))
+    assertEquals(
+      expectedWrite(rp = 711, tier = "Gold", division = "II", king = 1),
+      db.writeFor("u1"),
+    )
+    assertEquals(
+      expectedWrite(rp = 704, tier = "Gold", division = "II", second = 1),
+      db.writeFor("u4"),
+    )
+    assertEquals(
+      expectedWrite(rp = 690, tier = "Gold", division = "III", third = 1),
+      db.writeFor("u3"),
+    )
+    assertEquals(
+      expectedWrite(rp = 686, tier = "Gold", division = "III", koz = 1),
+      db.writeFor("u2"),
+    )
   }
 
   // ── exactly-once ─────────────────────────────────────────────────
@@ -605,9 +1016,174 @@ class RpApplicationTest {
 
     assertEquals(absentKey.profileWrites.toList(), explicitNull.profileWrites.toList())
     assertEquals(
-      mapOf("rp" to 30, "tier" to "Bronze", "division" to "III"),
+      expectedWrite(
+        rp = 30, tier = "Bronze", division = "III",
+        king = 1, placementState = "NOT_STARTED",
+      ),
       explicitNull.writeFor("u1"),
     )
+  }
+
+  /**
+   * A placed account that names its rank identity (`tier` + `division`) but
+   * carries no `rp` is corrupt, not unplaced: reading it as 0 would award a
+   * placed account a first match's progression. The whole table is denied —
+   * nothing writes for ANY seat.
+   */
+  @Test
+  fun aPlacedRankIdentityWithNoRpFailsTheWholeSettlementClosed() = runTest {
+    expectWholeSettlementDenied(
+      mapOf(
+        "u1" to SettlementFixtures.profile("u1", 690),
+        "u2" to SettlementFixtures.profile("u2", 690),
+        "u3" to SettlementFixtures.profile("u3", null, tier = "Gold", division = "III"),
+        "u4" to SettlementFixtures.profile("u4", 690),
+      ),
+      "no players/rp under a placed rank",
+    )
+  }
+
+  /**
+   * The same fabrication, one layer down: a legacy `players/rank` that names
+   * a placed rung ("Gold III") with no `rp` is denied the same way — an
+   * unparseable-or-unplaced legacy string defaults, a PLACED one does not.
+   */
+  @Test
+  fun aPlacedLegacyRankWithNoRpFailsTheWholeSettlementClosed() = runTest {
+    expectWholeSettlementDenied(
+      mapOf(
+        "u1" to SettlementFixtures.profile("u1", 690),
+        "u2" to SettlementFixtures.profile("u2", 690),
+        "u3" to linkedMapOf<String, Any?>("uid" to "u3", "rank" to "Gold III"),
+        "u4" to SettlementFixtures.profile("u4", 690),
+      ),
+      "placed legacy rank",
+    )
+  }
+
+  /**
+   * Every present-but-invalid contract field fails the WHOLE settlement
+   * closed — the battery, one shape per test. Corrupt VALUES: a rank
+   * identity that names no rung of the one ladder, a half-written identity
+   * (one of the two keys), a placement state that is not a placement state,
+   * a Highest Rank that names no rung, and a negative counter. Corrupt
+   * TYPES: a non-string seasonId, a non-string legacy rank, a non-string
+   * placementState, a non-boolean shield, a non-numeric counter — a field
+   * whose JSON type is not the contract's is denied exactly like a field
+   * whose value is out of range. Each refusal names the offending uid, and
+   * nothing commits — no claim (the match stays settleable once the data is
+   * repaired), no profile write for any seat, no correction.
+   */
+  @Test
+  fun anInvalidRankIdentityFailsTheWholeSettlementClosed() = runTest {
+    expectWholeSettlementDenied(
+      corruptingU3(mapOf("tier" to "Wood", "division" to "III")),
+      "names no rung of the rank ladder",
+    )
+  }
+
+  @Test
+  fun aHalfWrittenRankIdentityFailsTheWholeSettlementClosed() = runTest {
+    expectWholeSettlementDenied(
+      corruptingU3(mapOf("tier" to "Gold")),
+      "the pair is written together or not at all",
+    )
+  }
+
+  @Test
+  fun anInvalidPlacementStateFailsTheWholeSettlementClosed() = runTest {
+    expectWholeSettlementDenied(
+      corruptingU3(mapOf("placementState" to "MAYBE")),
+      "not a placement state",
+    )
+  }
+
+  @Test
+  fun anInvalidHighestRankFailsTheWholeSettlementClosed() = runTest {
+    expectWholeSettlementDenied(
+      corruptingU3(mapOf("highestRankTier" to "Platinum", "highestRankDivision" to "IV")),
+      "players/highestRankTier",
+    )
+  }
+
+  @Test
+  fun aNegativeStatCounterFailsTheWholeSettlementClosed() = runTest {
+    expectWholeSettlementDenied(
+      corruptingU3(mapOf("rankedKingCount" to -1)),
+      "a negative players/rankedKingCount",
+    )
+  }
+
+  @Test
+  fun aNonStringSeasonIdFailsTheWholeSettlementClosed() = runTest {
+    expectWholeSettlementDenied(
+      corruptingU3(mapOf("seasonId" to 2)),
+      "a non-string players/seasonId",
+    )
+  }
+
+  @Test
+  fun aNonStringLegacyRankFailsTheWholeSettlementClosed() = runTest {
+    expectWholeSettlementDenied(
+      corruptingU3(mapOf("rank" to 7)),
+      "a non-string legacy players/rank",
+    )
+  }
+
+  @Test
+  fun aNonStringPlacementStateFailsTheWholeSettlementClosed() = runTest {
+    expectWholeSettlementDenied(
+      corruptingU3(mapOf("placementState" to true)),
+      "a non-string players/placementState",
+    )
+  }
+
+  @Test
+  fun aNonBooleanDemotionShieldFailsTheWholeSettlementClosed() = runTest {
+    expectWholeSettlementDenied(
+      corruptingU3(mapOf("demotionShield" to "yes")),
+      "a non-boolean players/demotionShield",
+    )
+  }
+
+  @Test
+  fun aNonNumericStatCounterFailsTheWholeSettlementClosed() = runTest {
+    expectWholeSettlementDenied(
+      corruptingU3(mapOf("rankedKingCount" to "2")),
+      "a non-numeric players/rankedKingCount",
+    )
+  }
+
+  /** The uniform-690 table with u3's profile corrupted by [corrupt] fields. */
+  private fun corruptingU3(corrupt: Map<String, Any?>): Map<String, Map<String, Any?>> =
+    mapOf(
+      "u1" to SettlementFixtures.profile("u1", 690),
+      "u2" to SettlementFixtures.profile("u2", 690),
+      "u3" to (SettlementFixtures.profile("u3", 690) + corrupt),
+      "u4" to SettlementFixtures.profile("u4", 690),
+    )
+
+  /**
+   * The shared body of the fail-closed battery: the whole settlement is
+   * denied with [messagePart] in the refusal, and NOTHING commits — no claim,
+   * no profile write for any seat, no correction. The absence of the claim is
+   * what keeps the match settleable once the corrupt field is repaired.
+   */
+  private suspend fun expectWholeSettlementDenied(
+    profiles: Map<String, Map<String, Any?>>,
+    messagePart: String,
+  ) {
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = profiles,
+    )
+    expectDenied("failed-precondition", messagePart) {
+      settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    }
+    assertEquals(0, db.claims, "a fail-closed settlement writes no claim")
+    assertEquals(0, db.profileWrites.size, "a fail-closed settlement writes no profile")
+    assertEquals(0, db.corrections, "a fail-closed settlement writes no correction")
   }
 
   // ── ordering, gates, untouched surfaces ──────────────────────────
@@ -728,7 +1304,10 @@ class RpApplicationTest {
     assertEquals(mapOf("p1" to 25, "p2" to -11, "p3" to 12, "p4" to 14), response["finalScores"])
     // Recomputed: u2 is alone at the bottom → KOZ −8, exactly as in the agreed
     // golden table. Its invented 99 bought nothing.
-    assertEquals(mapOf("rp" to 682, "tier" to "Gold", "division" to "III"), db.writeFor("u2"))
+    assertEquals(
+      expectedWrite(rp = 682, tier = "Gold", division = "III", koz = 1),
+      db.writeFor("u2"),
+    )
     assertEquals(1, db.corrections)
     assertEquals(1, db.appends.size, "the S62 ledger row is still written once")
     @Suppress("UNCHECKED_CAST")

@@ -25,6 +25,8 @@ const callables = {
   resolveDisconnectVote: kotlin.resolveDisconnectVote,
   castDisconnectVote: kotlin.castDisconnectVote,
   restoreDisconnectedSeat: kotlin.restoreDisconnectedSeat,
+  getMyRankedProfile: kotlin.getMyRankedProfile,
+  getRankedLeaderboard: kotlin.getRankedLeaderboard,
 };
 
 for (const [name, fn] of Object.entries(callables)) {

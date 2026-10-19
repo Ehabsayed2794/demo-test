@@ -1,0 +1,383 @@
+package com.estemshan.functions
+
+import kotlinx.coroutines.test.runTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+
+/**
+ * S44/S51 — the Ranked profile read/normalisation matrix.
+ *
+ * The fake port records transaction runs, reads and merges, so each test can
+ * assert the two properties the contract turns on: a valid profile is never
+ * rewritten, and a migration writes exactly the missing (or highest-repair)
+ * fields. Error cases assert both the HttpsError code and that no write ran.
+ */
+class RankedProfileDbTest {
+
+  // ── fixtures ─────────────────────────────────────────────────────────
+
+  private fun validProfile(): MutableMap<String, Any?> = mutableMapOf(
+    "displayName" to "Nour",
+    "avatarInitial" to "N",
+    "currentMatchId" to "m-1",
+    "tier" to "Gold",
+    "division" to "II",
+    "rp" to 732,
+    "seasonId" to "s1",
+    "highestRankTier" to "Gold",
+    "highestRankDivision" to "II",
+    "placementState" to "SKIPPED",
+    "demotionShield" to false,
+    "rankedGamesPlayed" to 12,
+    "rankedKingCount" to 4,
+    "rankedSecondCount" to 3,
+    "rankedThirdCount" to 3,
+    "rankedKozCount" to 2,
+  )
+
+  private fun fakeRequest(uid: String?): CallableRequest = object : CallableRequest {
+    override val data: Any? = null
+    override val auth: AuthData? = uid?.let {
+      object : AuthData {
+        override val uid: String = it
+        override val token: AuthToken? = null
+      }
+    }
+    override val instanceIdToken: String? = null
+    override val rawRequest: Any? = null
+    override val app: Any? = null
+  }
+
+  @Suppress("UNCHECKED_CAST")
+  private fun section(response: Map<String, Any?>, key: String): Map<String, Any?> =
+    response.getValue(key) as Map<String, Any?>
+
+  private suspend fun thrownCode(block: suspend () -> Any?): String {
+    try {
+      block()
+    } catch (e: Throwable) {
+      return e.asDynamic().code as String
+    }
+    throw AssertionError("expected HttpsError")
+  }
+
+  private suspend fun assertPreconditionNoWrite(
+    db: FakeDb,
+    block: suspend () -> Any?,
+  ) {
+    assertEquals("failed-precondition", thrownCode(block))
+    assertEquals(0, db.writes, "a failed normalization must never write")
+  }
+
+  // ── the fully valid profile ──────────────────────────────────────────
+
+  @Test
+  fun aFullyValidProfileReturnsEveryContractValueAndWritesNothing() = runTest {
+    val db = FakeDb(validProfile())
+
+    val response = loadOnce(db, fakeRequest("u1"))
+
+    assertEquals(setOf("ok", "migrated", "profile", "stats"), response.keys)
+    assertEquals(true, response["ok"])
+    assertEquals(false, response["migrated"])
+    assertEquals(0, db.writes)
+
+    val profile = section(response, "profile")
+    assertEquals(
+      setOf(
+        "tier", "division", "rp", "seasonId",
+        "highestRankTier", "highestRankDivision",
+        "placementState", "demotionShield",
+      ),
+      profile.keys,
+    )
+    assertEquals("Gold", profile["tier"])
+    assertEquals("II", profile["division"])
+    assertEquals(732, profile["rp"])
+    assertEquals("s1", profile["seasonId"])
+    assertEquals("Gold", profile["highestRankTier"])
+    assertEquals("II", profile["highestRankDivision"])
+    assertEquals("SKIPPED", profile["placementState"])
+    assertEquals(false, profile["demotionShield"])
+
+    val stats = section(response, "stats")
+    assertEquals(
+      setOf(
+        "gamesPlayed",
+        "kingCount", "kingPct",
+        "secondCount", "secondPct",
+        "thirdCount", "thirdPct",
+        "kozCount", "kozPct",
+      ),
+      stats.keys,
+    )
+    assertEquals(12, stats["gamesPlayed"])
+    assertEquals(4, stats["kingCount"])
+    assertEquals(33, stats["kingPct"])
+    assertEquals(3, stats["secondCount"])
+    assertEquals(25, stats["secondPct"])
+    assertEquals(3, stats["thirdCount"])
+    assertEquals(25, stats["thirdPct"])
+    assertEquals(2, stats["kozCount"])
+    assertEquals(16, stats["kozPct"])
+  }
+
+  // ── legacy initialization ────────────────────────────────────────────
+
+  @Test
+  fun aLegacyUnrankedProfileInitializesOnlyRankedFieldsAndLeavesIdentityAlone() = runTest {
+    val db = FakeDb(
+      mutableMapOf(
+        "displayName" to "Nour",
+        "avatarInitial" to "N",
+        "rank" to "Unranked",
+        "rp" to 0,
+      ),
+    )
+
+    val response = loadOnce(db, fakeRequest("u1"))
+
+    assertEquals(true, response["migrated"])
+    val profile = section(response, "profile")
+    assertEquals("Bronze", profile["tier"])
+    assertEquals("III", profile["division"])
+    assertEquals(0, profile["rp"])
+    assertEquals("s1", profile["seasonId"])
+    assertEquals("Bronze", profile["highestRankTier"])
+    assertEquals("III", profile["highestRankDivision"])
+    assertEquals("NOT_STARTED", profile["placementState"])
+    assertEquals(false, profile["demotionShield"])
+
+    val stats = section(response, "stats")
+    assertEquals(0, stats["gamesPlayed"])
+    assertEquals(0, stats["kingPct"])
+    assertEquals(0, stats["secondPct"])
+    assertEquals(0, stats["thirdPct"])
+    assertEquals(0, stats["kozPct"])
+
+    assertEquals(1, db.writes)
+    val written = db.merges.single()
+    assertEquals(
+      setOf(
+        "tier", "division", "seasonId",
+        "highestRankTier", "highestRankDivision",
+        "placementState", "demotionShield",
+        "rankedGamesPlayed",
+        "rankedKingCount", "rankedSecondCount", "rankedThirdCount", "rankedKozCount",
+      ),
+      written.keys,
+    )
+    assertFalse("rp" in written, "the stored rp = 0 is present and must not be rewritten")
+    assertFalse("displayName" in written)
+    assertFalse("avatarInitial" in written)
+    assertEquals("Nour", db.doc?.get("displayName"))
+    assertEquals("N", db.doc?.get("avatarInitial"))
+  }
+
+  @Test
+  fun aLegacyProfileWithRpDerivesGoldIiiAndSkippedPlacement() = runTest {
+    val db = FakeDb(
+      mutableMapOf(
+        "displayName" to "Nour",
+        "rank" to "Unranked",
+        "rp" to 690,
+      ),
+    )
+
+    val response = loadOnce(db, fakeRequest("u1"))
+
+    assertEquals(true, response["migrated"])
+    val profile = section(response, "profile")
+    assertEquals("Gold", profile["tier"])
+    assertEquals("III", profile["division"])
+    assertEquals(690, profile["rp"])
+    assertEquals("SKIPPED", profile["placementState"])
+    assertEquals("Gold", profile["highestRankTier"])
+    assertEquals("III", profile["highestRankDivision"])
+    assertEquals("s1", profile["seasonId"])
+    assertEquals(690, profile["rp"])
+    assertEquals(1, db.writes)
+    assertFalse("rp" in db.merges.single(), "the present rp is not a missing field")
+  }
+
+  // ── failing closed ───────────────────────────────────────────────────
+
+  @Test
+  fun aMissingProfileFailsPreconditionAndCreatesNothing() = runTest {
+    val db = FakeDb(null)
+
+    assertPreconditionNoWrite(db) { loadOnce(db, fakeRequest("u1")) }
+    assertEquals(1, db.txRuns)
+    assertEquals(1, db.reads)
+  }
+
+  @Test
+  fun nonNumericAndNegativeRpFailPreconditionWithoutWrite() = runTest {
+    val nonNumeric = FakeDb(validProfile().apply { put("rp", "690") })
+    assertPreconditionNoWrite(nonNumeric) { loadOnce(nonNumeric, fakeRequest("u1")) }
+
+    val negative = FakeDb(validProfile().apply { put("rp", -1) })
+    assertPreconditionNoWrite(negative) { loadOnce(negative, fakeRequest("u1")) }
+
+    val fractional = FakeDb(validProfile().apply { put("rp", 690.5) })
+    assertPreconditionNoWrite(fractional) { loadOnce(fractional, fakeRequest("u1")) }
+  }
+
+  @Test
+  fun invalidTierDivisionPairsFailPreconditionWithoutWrite() = runTest {
+    val foreignRung = FakeDb(validProfile().apply {
+      put("tier", "Gold")
+      put("division", "IV")
+    })
+    assertPreconditionNoWrite(foreignRung) { loadOnce(foreignRung, fakeRequest("u1")) }
+
+    val onlyTier = FakeDb(validProfile().apply { remove("division") })
+    assertPreconditionNoWrite(onlyTier) { loadOnce(onlyTier, fakeRequest("u1")) }
+
+    val onlyDivision = FakeDb(validProfile().apply { remove("tier") })
+    assertPreconditionNoWrite(onlyDivision) { loadOnce(onlyDivision, fakeRequest("u1")) }
+  }
+
+  @Test
+  fun missingRpWithAHigherRungFailsInsteadOfAwardingZero() = runTest {
+    val db = FakeDb(validProfile().apply { remove("rp") })
+
+    assertPreconditionNoWrite(db) { loadOnce(db, fakeRequest("u1")) }
+  }
+
+  @Test
+  fun anInvalidPlacementStateFailsPreconditionWithoutWrite() = runTest {
+    val db = FakeDb(validProfile().apply { put("placementState", "DONE") })
+
+    assertPreconditionNoWrite(db) { loadOnce(db, fakeRequest("u1")) }
+  }
+
+  @Test
+  fun anUnauthenticatedRequestFailsBeforeTheTransaction() = runTest {
+    val db = FakeDb(validProfile())
+
+    assertEquals("unauthenticated", thrownCode { loadOnce(db, fakeRequest(null)) })
+    assertEquals(0, db.txRuns)
+    assertEquals(0, db.writes)
+  }
+
+  // ── highest-ever repair ──────────────────────────────────────────────
+
+  @Test
+  fun aStoredHighestBelowTheCurrentRungIsRaisedAndWritten() = runTest {
+    val db = FakeDb(validProfile().apply {
+      put("highestRankTier", "Silver")
+      put("highestRankDivision", "I")
+    })
+
+    val response = loadOnce(db, fakeRequest("u1"))
+
+    assertEquals(true, response["migrated"])
+    val profile = section(response, "profile")
+    assertEquals("Gold", profile["highestRankTier"])
+    assertEquals("II", profile["highestRankDivision"])
+    assertEquals(1, db.writes)
+    assertEquals(
+      mapOf("highestRankTier" to "Gold", "highestRankDivision" to "II"),
+      db.merges.single(),
+    )
+  }
+
+  @Test
+  fun aHigherStoredHighestIsNeverLoweredOrRewritten() = runTest {
+    val db = FakeDb(validProfile().apply {
+      put("highestRankTier", "Platinum")
+      put("highestRankDivision", "I")
+    })
+
+    val response = loadOnce(db, fakeRequest("u1"))
+
+    assertEquals(false, response["migrated"])
+    assertEquals("Platinum", section(response, "profile")["highestRankTier"])
+    assertEquals("I", section(response, "profile")["highestRankDivision"])
+    assertEquals(0, db.writes)
+  }
+
+  // ── percentage math ──────────────────────────────────────────────────
+
+  @Test
+  fun zeroGamesDeriveZeroPercentagesRatherThanDividingByZero() = runTest {
+    val db = FakeDb(validProfile().apply {
+      put("rankedGamesPlayed", 0)
+      put("rankedKingCount", 0)
+      put("rankedSecondCount", 0)
+      put("rankedThirdCount", 0)
+      put("rankedKozCount", 0)
+    })
+
+    val response = loadOnce(db, fakeRequest("u1"))
+
+    val stats = section(response, "stats")
+    assertEquals(0, stats["gamesPlayed"])
+    assertEquals(0, stats["kingPct"])
+    assertEquals(0, stats["secondPct"])
+    assertEquals(0, stats["thirdPct"])
+    assertEquals(0, stats["kozPct"])
+    assertEquals(0, db.writes)
+  }
+
+  @Test
+  fun aMigrationWithOnlyStatisticsMissingWritesOnlyThoseFields() = runTest {
+    val db = FakeDb(validProfile().apply {
+      remove("rankedGamesPlayed")
+      remove("rankedKingCount")
+      remove("rankedSecondCount")
+      remove("rankedThirdCount")
+      remove("rankedKozCount")
+    })
+
+    val response = loadOnce(db, fakeRequest("u1"))
+
+    assertEquals(true, response["migrated"])
+    assertEquals(
+      setOf(
+        "rankedGamesPlayed",
+        "rankedKingCount", "rankedSecondCount", "rankedThirdCount", "rankedKozCount",
+      ),
+      db.merges.single().keys,
+    )
+    // Absent counters default to 0; the write initialises exactly those zeros.
+    assertEquals(0, section(response, "stats")["gamesPlayed"])
+    assertFalse("displayName" in db.merges.single())
+  }
+
+  // ── the fake port ────────────────────────────────────────────────────
+
+  /**
+   * One document behind one transaction. The doc is updated by [merge] so a
+   * second transaction in the same test would see the committed result; each
+   * test uses one call, and the write log is what assertions inspect.
+   */
+  private class FakeDb(var doc: Map<String, Any?>?) : RankedProfileDb {
+    var txRuns = 0
+      private set
+    var reads = 0
+      private set
+    var writes = 0
+      private set
+    val merges = mutableListOf<Map<String, Any?>>()
+
+    override suspend fun <T> transact(block: suspend (RankedProfileDb.Tx) -> T): T {
+      txRuns++
+      return block(object : RankedProfileDb.Tx {
+        override suspend fun read(uid: String): Map<String, Any?>? {
+          reads++
+          return doc
+        }
+
+        override fun merge(uid: String, fields: Map<String, Any?>) {
+          writes++
+          merges += fields
+          doc = (doc ?: emptyMap()) + fields
+        }
+      })
+    }
+  }
+}

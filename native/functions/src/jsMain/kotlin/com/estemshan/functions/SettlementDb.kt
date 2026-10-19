@@ -1,14 +1,22 @@
 package com.estemshan.functions
 
 import com.estemshan.engine.GameType
+import com.estemshan.engine.LadderRank
+import com.estemshan.engine.MatchMode
+import com.estemshan.engine.PlacementState
+import com.estemshan.engine.RankedProfile
+import com.estemshan.engine.RankedStats
 import com.estemshan.engine.RpMatchInput
 import com.estemshan.functions.Settlement.ConvergedMatch
 import com.estemshan.functions.Settlement.SettleDecision
+import com.estemshan.engine.accumulateRankedStat
+import com.estemshan.engine.applyDemotionShield
 import com.estemshan.engine.finalRpDelta
 import com.estemshan.engine.placementOutcome
 import com.estemshan.engine.rankAt
 import com.estemshan.engine.rankLadder
 import com.estemshan.engine.resolveRanked
+import com.estemshan.engine.updateHighestRank
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -83,11 +91,16 @@ interface SettlementDb {
     fun writeClaim(matchId: String, record: Map<String, Any?>)
 
     /**
-     * Merge-write ONLY the ranked-progression fields of `players/{uid}`
-     * (`rp`, `tier`, `division`). Anything else the document holds — the
-     * nine statistics, highestRank, season fields — is untouched by
-     * construction: the Admin SDK bypasses rules, so the field set is exactly
-     * what the caller passes here.
+     * Merge-write ONLY the ranked-progression contract fields of
+     * `players/{uid}`: `rp`, `tier`, `division`, `demotionShield`,
+     * `highestRankTier`, `highestRankDivision`, `seasonId`,
+     * `placementState`, `rankedGamesPlayed`, `rankedKingCount`,
+     * `rankedSecondCount`, `rankedThirdCount`, `rankedKozCount`. Anything
+     * else the document holds — displayName, the room/match pointers, the
+     * legacy `rank` string — is untouched by construction: the Admin SDK
+     * bypasses rules, so the field set is exactly what the caller passes
+     * here. The four derived percentages are never written (RD23: they are
+     * derived over gamesPlayed, not stored).
      */
     fun writeProfile(uid: String, fields: Map<String, Any?>)
   }
@@ -138,25 +151,240 @@ private fun claimRecord(
   "movements" to movements,
 )
 
-/** One seat's progression inputs, all read before any write is issued. */
-private data class SeatInput(val uid: String, val seat: String, val previousRp: Int)
+/**
+ * One seat's raw pre-image, read before any write is issued. The typed
+ * parse into [ParsedSeat] runs only after every profile has been read and
+ * before the first write, so a corrupt field aborts the whole settlement
+ * before anything lands (Firestore forbids a read after a write anyway).
+ */
+private data class SeatInput(val uid: String, val seat: String, val profile: Map<String, Any?>)
+
+// ── the players/{uid} ranked contract, parsed fail-closed ─────────────
 
 /**
- * RD30: an account that carries no `rp` — the key absent, or the JSON null a
- * client can write — is unplaced, and Bronze III starts at 0 RP, so it reads as
- * 0. A missing DOCUMENT is not a 0 at all — see the fail-closed rule in
- * [settleOnce].
- *
- * Something in the field that is not a number is corrupt, not unplaced: `"700"`
- * read as 0 would award a Gold player the +30 of a first match, which is the
- * same fabrication the missing-document rule refuses, one level down. Null here
- * means "malformed" and the caller fails the settlement closed.
+ * The season id a settlement DEFAULTS a missing `players/seasonId` to
+ * (RD24's seasons start at one; an existing seasonId is never changed here —
+ * S59's reset is the only writer that moves a season forward).
  */
-private fun previousRpOf(profile: Map<String, Any?>): Int? = when (val rp = profile["rp"]) {
-  null -> 0
-  is Number -> rp.toInt()
-  else -> null
+private const val DEFAULT_SEASON_ID = "s1"
+
+/** The legacy `players/rank` string meaning "no rank has ever been assigned". */
+private const val LEGACY_UNRANKED = "Unranked"
+
+/**
+ * A corrupt or missing profile value fails the WHOLE settlement closed: no
+ * profile write for any seat, no claim, so the match stays settleable once
+ * the data is repaired — and no seat is settled ahead of the seat that
+ * failed. Fabricating a default for one seat while the other three settle
+ * is the same fabrication the missing-document rule refuses, one level
+ * down.
+ */
+private fun failClosed(uid: String, matchId: String, because: String): Nothing =
+  throw HttpsError(
+    "failed-precondition",
+    "settleMatch: seated player '$uid' of match '$matchId' has $because — nothing writes; " +
+      "a Ranked table applies every seat's progression or none.",
+  )
+
+/**
+ * One seated player's parsed pre-match Ranked state: the profile fields the
+ * pipeline reads ([profile]) and the five STORED statistic counters
+ * ([stats]) — both exactly as the profile document held them before this
+ * settlement touches anything, with the contract's defaults applied.
+ */
+private data class ParsedSeat(
+  val uid: String,
+  val seat: String,
+  val profile: RankedProfile,
+  val stats: RankedStats,
+)
+
+/**
+ * The ladder rung named by a tier/division pair on [raw], or null when both
+ * keys are absent (the caller derives the rung from the RP itself, the only
+ * derivation that cannot disagree with the resolution). A pair that names no
+ * rung of the one [rankLadder] table — or a pair with exactly one of the two
+ * keys — is corrupt, not partial: fail the whole settlement closed rather
+ * than guess which rung was meant.
+ */
+private fun rankIdentityOf(
+  uid: String,
+  matchId: String,
+  raw: Map<String, Any?>,
+  tierKey: String,
+  divisionKey: String,
+): LadderRank? {
+  val tier = raw[tierKey]
+  val division = raw[divisionKey]
+  if (tier == null && division == null) return null
+  if (tier !is String || division !is String) {
+    failClosed(
+      uid, matchId,
+      "a half-written players/$tierKey + players/$divisionKey identity " +
+        "(${tier ?: "absent"} / ${division ?: "absent"}) — the pair is written together or not at all",
+    )
+  }
+  val rung = rankLadder.firstOrNull { it.tier == tier && it.division == division }
+    ?: failClosed(
+      uid, matchId,
+      "a players/$tierKey + players/$divisionKey identity ('$tier' / '$division') that " +
+        "names no rung of the rank ladder",
+    )
+  return rung
 }
+
+/**
+ * The rung a legacy `players/rank` string names — "Gold III" / "King" — or
+ * null when it names none. The legacy field is a plain word-and-division
+ * string ("Unranked" among them); nothing else about its shape is trusted,
+ * and an unparseable value is never defaulted from.
+ */
+private fun legacyRankRung(value: String): LadderRank? =
+  rankLadder.firstOrNull { it.tier == value || "${it.tier} ${it.division}".trim() == value }
+
+/**
+ * Parses one `players/{uid}` document into the engine's [RankedProfile] —
+ * the shared contract every seated profile is read through, fail-closed on
+ * every present-but-invalid value:
+ *
+ * - `rp` missing (absent, or the JSON null a client can leave) reads as 0
+ *   ONLY for an account that is Bronze III or unplaced — RD30's unplaced
+ *   read. A placed higher rung — named by tier/division, or by a legacy
+ *   `players/rank` that resolves to one — with no rp is corrupt: inventing
+ *   0 would award a placed account a first match's progression. A present
+ *   non-number is the long-standing non-numeric refusal.
+ * - tier/division missing ⇒ [rankAt] of the RP itself; present must name a
+ *   rung of the one ladder table ([rankIdentityOf]).
+ * - seasonId missing ⇒ [DEFAULT_SEASON_ID]; present must be a String. The
+ *   settlement NEVER changes an existing seasonId (RD24).
+ * - highestRank missing (highestRankTier + highestRankDivision absent) ⇒
+ *   the current rung; present must name a rung. [updateHighestRank] below
+ *   never lowers whatever it holds.
+ * - placementState missing ⇒ SKIPPED for an account that carries
+ *   progression (rp > 0) or a legacy rank other than [LEGACY_UNRANKED] — a
+ *   legacy placed account, RD30 — and NOT_STARTED otherwise (a fresh
+ *   account). Present must be one of the four states.
+ * - demotionShield missing ⇒ false (RD7's default: every profile written
+ *   before the shield existed reads as unshielded); present must be a
+ *   Boolean.
+ */
+private fun parseRankedProfile(
+  uid: String,
+  matchId: String,
+  raw: Map<String, Any?>,
+): RankedProfile {
+  val rank = rankIdentityOf(uid, matchId, raw, "tier", "division")
+  val rp = when (val value = raw["rp"]) {
+    null -> {
+      if (rank != null && rank.lowerBound > 0) {
+        failClosed(
+          uid, matchId,
+          "no players/rp under a placed rank (${rank.tier} ${rank.division}) — it is not read " +
+            "as 0 RP, which would award a placed account a first match's progression",
+        )
+      }
+      // No tier/division identity: the unplaced read still refuses a legacy
+      // rank that NAMES a higher rung — the same fabrication, one layer down.
+      if (rank == null) {
+        val legacyRung = (raw["rank"] as? String)?.let { legacyRankRung(it) }
+        if (legacyRung != null && legacyRung.lowerBound > 0) {
+          failClosed(
+            uid, matchId,
+            "no players/rp under a placed legacy rank ('${legacyRung.tier} ${legacyRung.division}') — " +
+              "it is not read as 0 RP, which would award a placed account a first match's progression",
+          )
+        }
+      }
+      0
+    }
+    is Number -> value.toInt()
+    else -> throw HttpsError(
+      "failed-precondition",
+      "settleMatch: seated player '$uid' of match '$matchId' has a non-numeric players/rp " +
+        "(${raw["rp"]}) — nothing wrote; it is not read as 0 RP, which would award " +
+        "the seat a first match's progression.",
+    )
+  }
+  val rung = rank ?: rankAt(rp)
+  val highest = rankIdentityOf(uid, matchId, raw, "highestRankTier", "highestRankDivision") ?: rung
+  val seasonId = when (val value = raw["seasonId"]) {
+    null -> DEFAULT_SEASON_ID
+    is String -> value
+    else -> failClosed(uid, matchId, "a non-string players/seasonId ($value)")
+  }
+  val legacyRank = when (val value = raw["rank"]) {
+    null -> null
+    is String -> value
+    else -> failClosed(uid, matchId, "a non-string legacy players/rank ($value)")
+  }
+  val placementState = when (val value = raw["placementState"]) {
+    null ->
+      if (rp > 0 || (legacyRank != null && legacyRank != LEGACY_UNRANKED)) {
+        PlacementState.SKIPPED
+      } else {
+        PlacementState.NOT_STARTED
+      }
+    is String -> PlacementState.entries.firstOrNull { it.name == value }
+      ?: failClosed(uid, matchId, "a players/placementState ('$value') that is not a placement state")
+    else -> failClosed(uid, matchId, "a non-string players/placementState ($value)")
+  }
+  val demotionShield = when (val value = raw["demotionShield"]) {
+    null -> false
+    is Boolean -> value
+    else -> failClosed(uid, matchId, "a non-boolean players/demotionShield ($value)")
+  }
+  return RankedProfile(
+    tier = rung.tier,
+    division = rung.division,
+    rp = rp,
+    seasonId = seasonId,
+    highestRank = highest,
+    placementState = placementState,
+    demotionShield = demotionShield,
+  )
+}
+
+/**
+ * Parses the five STORED statistic counters off a profile (RD23: the four
+ * percentages are derived over gamesPlayed, never stored, and a settlement
+ * never writes them). Missing ⇒ 0; present must be a non-negative number.
+ * Anything else — a string, a negative counter — is corrupt, and the whole
+ * settlement fails closed rather than fold a table whose counters cannot
+ * be trusted.
+ */
+private fun parseRankedStats(
+  uid: String,
+  matchId: String,
+  raw: Map<String, Any?>,
+): RankedStats {
+  fun counter(field: String): Int = when (val value = raw[field]) {
+    null -> 0
+    is Number -> value.toInt().also { count ->
+      if (count < 0) {
+        failClosed(uid, matchId, "a negative players/$field ($value) — a counter cannot be negative")
+      }
+    }
+    else -> failClosed(
+      uid, matchId, "a non-numeric players/$field ($value) — a counter is a number or absent",
+    )
+  }
+  return RankedStats(
+    gamesPlayed = counter("rankedGamesPlayed"),
+    kingCount = counter("rankedKingCount"),
+    secondCount = counter("rankedSecondCount"),
+    thirdCount = counter("rankedThirdCount"),
+    kozCount = counter("rankedKozCount"),
+  )
+}
+
+/** [SeatInput] + the typed parse, so the fold reads engine types only. */
+private fun parseRankedSeat(seat: SeatInput, matchId: String): ParsedSeat =
+  ParsedSeat(
+    uid = seat.uid,
+    seat = seat.seat,
+    profile = parseRankedProfile(seat.uid, matchId, seat.profile),
+    stats = parseRankedStats(seat.uid, matchId, seat.profile),
+  )
 
 /** The ladder ordinal [previousRp] sits on now (RD4 input 1). */
 private fun ladderOrdinal(previousRp: Int): Int = rankLadder.indexOf(rankAt(previousRp))
@@ -193,14 +421,19 @@ private fun youOf(movements: Any?, uid: String): Map<String, Any?>? {
  * another player.
  *
  * FAILS CLOSED as a whole settlement when a seated uid has no `players/{uid}`
- * document, or when that document's `rp` is not a number: the settlement cannot
- * tell whether that account is Bronze III or King, and a missing RP would have
- * to be invented. Fabricating one profile while the other three settle is the
- * same bug one level down — a Ranked table either applies four awards in this
- * transaction or applies none. Refusing here leaves the claim absent, so the
- * match stays settleable once the profile is repaired; silently skipping the
- * seat would strand that player's progression at nothing, permanently, because
- * the claim then forbids any second execution.
+ * document: the settlement cannot tell whether that account is Bronze III or
+ * King, and an RP would have to be invented. Fabricating one profile while
+ * the other three settle is the same bug one level down — a Ranked table
+ * either applies four awards in this transaction or applies none. Refusing
+ * here leaves the claim absent, so the match stays settleable once the
+ * profile is repaired; silently skipping the seat would strand that player's
+ * progression at nothing, permanently, because the claim then forbids any
+ * second execution.
+ *
+ * The TYPED parse ([parseRankedSeat]) runs after these reads and before the
+ * first write: every present-but-invalid field — a non-numeric rp, a rank
+ * pair that names no rung, a bad placement state, a negative counter —
+ * fails the whole settlement the same way, before anything lands.
  */
 private suspend fun readSeatInputs(
   tx: SettlementDb.SettlementTx,
@@ -219,13 +452,7 @@ private suspend fun readSeatInputs(
       "settleMatch: seated player '$uid' of match '$matchId' has no players/ profile — " +
         "nothing wrote, the match stays settleable once that profile exists.",
     )
-    val previousRp = previousRpOf(profile) ?: throw HttpsError(
-      "failed-precondition",
-      "settleMatch: seated player '$uid' of match '$matchId' has a non-numeric players/rp " +
-        "(${profile["rp"]}) — nothing wrote; it is not read as 0 RP, which would award " +
-        "the seat a first match's progression.",
-    )
-    SeatInput(uid, seat, previousRp)
+    SeatInput(uid, seat, profile)
   }
 }
 
@@ -243,7 +470,12 @@ private data class RankedProgression(
 /**
  * One pass of the ranked progression fold: the engine's own chain, per seat —
  * placement (RD8/RD17) → dynamic delta (RD4/RD5/RD6, GM6's Mini ×0.5) →
- * floor-clamped resolution (RD3) → the ladder rung it lands on (RD26).
+ * floor-clamped resolution (RD3) → the demotion shield wrapped around that
+ * already-final resolution (RD7) → Highest Rank raised, never lowered
+ * (RD23/RD24) → the career statistics folded through the engine's own
+ * placement gate (RD23/RD10) → season and placement state preserved or
+ * defaulted (RD24/RD30). The parse ([parseRankedSeat]) supplied the exact
+ * pre-match profile every step consumes.
  *
  * `rankDown` is false and stays that way by choice, not by absence: S43 keeps
  * the flag on `rooms/{roomId}` (`MatchModels`: "Matches never carry rankDown:
@@ -255,23 +487,42 @@ private data class RankedProgression(
  *
  * Opponent strength is the mean of the OTHER seats' ordinals; a table of one
  * seat has no opponents and reads as strength 0.
+ *
+ * The shield (RD7): [applyDemotionShield] wraps the resolution, never a
+ * delta. Unarmed it is a pass-through — the RP numbers are exactly the
+ * branch's goldens. Armed, [ShieldedResolution.resolution] is what the
+ * movements report and the write persists (a blocked demotion holds the rung
+ * at its lower bound and clamps the RP to it), and
+ * [ShieldedResolution.profile] carries the consumed / re-armed shield state
+ * that is persisted. An UNARMED promotion does not arm anything here:
+ * [com.estemshan.engine.armShieldOnPromotion] is the engine's unarmed entry
+ * point, deliberately outside this settlement — the fold persists the
+ * parsed shield and the armed state machine (consume / block / keep-armed),
+ * never a brand-new arming.
+ *
+ * Highest Rank (RD23) and the statistics ride the PARSED pre-match profile:
+ * [accumulateRankedStat] reads the profile's own placement state, so a
+ * mid-placement account's counters come back unchanged (RD10 — placement
+ * counts toward NO statistic) and every other seat folds its one outcome in.
+ * The percentages are never persisted (RD23 — derived, not stored).
  */
 private fun foldRankedProgression(
-  seated: List<SeatInput>,
+  seated: List<ParsedSeat>,
   finalScores: Map<String, Int>,
   gameType: GameType,
 ): RankedProgression {
-  val ordinals = seated.map { ladderOrdinal(it.previousRp) }
+  val ordinals = seated.map { ladderOrdinal(it.profile.rp) }
   val movements = LinkedHashMap<String, Map<String, Any?>>()
   val writes = LinkedHashMap<String, Map<String, Any?>>()
   seated.forEachIndexed { index, seat ->
     val others = ordinals.filterIndexed { i, _ -> i != index }
     val opponentStrength = if (others.isEmpty()) 0 else others.sum() / others.size
+    val outcome = placementOutcome(finalScores, seat.seat)
     val resolution = resolveRanked(
-      seat.previousRp,
+      seat.profile.rp,
       finalRpDelta(
         RpMatchInput(
-          outcome = placementOutcome(finalScores, seat.seat),
+          outcome = outcome,
           playerOrdinal = ordinals[index],
           opponentStrength = opponentStrength,
           gameType = gameType,
@@ -279,15 +530,38 @@ private fun foldRankedProgression(
         ),
       ),
     )
+    val shielded = applyDemotionShield(seat.profile, resolution)
+    val held = updateHighestRank(shielded.profile, shielded.resolution.next)
+    val stats = accumulateRankedStat(seat.stats, outcome, seat.profile, MatchMode.RANKED)
     movements[seat.uid] = linkedMapOf(
-      "previousRp" to resolution.previousRP,
-      "rp" to resolution.rp,
-      "delta" to resolution.delta,
+      "previousRp" to shielded.resolution.previousRP,
+      "rp" to shielded.resolution.rp,
+      "delta" to shielded.resolution.delta,
     )
     writes[seat.uid] = linkedMapOf(
-      "rp" to resolution.rp,
-      "tier" to resolution.next.tier,
-      "division" to resolution.next.division,
+      // RP/rank/delta are the SHIELDED resolution's — the held rung when a
+      // demotion was blocked, the plain one otherwise.
+      "rp" to shielded.resolution.rp,
+      "tier" to shielded.resolution.next.tier,
+      "division" to shielded.resolution.next.division,
+      // The shield state applyDemotionShield left the profile in: consumed
+      // (any armed match), re-armed (armed promotion), or untouched (unarmed).
+      "demotionShield" to shielded.profile.demotionShield,
+      // Highest Rank only ever raises (RD23): the parsed peak, or the rung
+      // this match climbed to — never a step down.
+      "highestRankTier" to held.highestRank.tier,
+      "highestRankDivision" to held.highestRank.division,
+      // Preserved when present, defaulted when missing; never moved (RD24).
+      "seasonId" to held.seasonId,
+      // Preserved when present, defaulted when missing (RD30).
+      "placementState" to held.placementState.name,
+      // The five STORED counters, folded once per completed Ranked match
+      // (RD23/RD28); placement profiles come back unchanged (RD10).
+      "rankedGamesPlayed" to stats.gamesPlayed,
+      "rankedKingCount" to stats.kingCount,
+      "rankedSecondCount" to stats.secondCount,
+      "rankedThirdCount" to stats.thirdCount,
+      "rankedKozCount" to stats.kozCount,
     )
   }
   return RankedProgression(movements, writes)
@@ -389,8 +663,11 @@ suspend fun settleOnce(db: SettlementDb, request: CallableRequest): Map<String, 
 
     // Reads before writes, all four seats, inside this transaction: two racers
     // that both read absent cannot both write, and the profile a racer reads
-    // is the one its claim commits against.
+    // is the one its claim commits against. The typed contract parse runs
+    // after the reads and before the first write, so a corrupt profile field
+    // fails the whole settlement closed with nothing behind it.
     val seated = readSeatInputs(tx, fields, parsed.order, matchId)
+      .map { parseRankedSeat(it, matchId) }
     val progression = foldRankedProgression(
       seated,
       recomputed.finalScores,
@@ -545,7 +822,8 @@ class AdminSettlementDb : SettlementDb {
     override fun writeProfile(uid: String, fields: Map<String, Any?>) {
       // update(), not set(): it merges these fields into the profile and
       // leaves everything else the account holds (name, avatar, room/match
-      // pointers, and every field this path does not own) exactly as it is.
+      // pointers, the legacy `rank`, and every field this path does not own)
+      // exactly as it is.
       tx.update(playerRef(uid), toPlain(fields))
     }
 

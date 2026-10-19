@@ -51,6 +51,25 @@ external interface CollectionRef {
    */
   fun orderBy(fieldPath: String, directionStr: String): CollectionRef
   fun limit(count: Int): CollectionRef
+  /**
+   * S64: the seasonal leaderboard's one read - an equality filter on ONE
+   * top-level field of `players`. Firestore indexes every single field
+   * automatically, so this needs no composite index, no `firestore.indexes.json`
+   * artifact and no new collection, which is what keeps `firestore.rules` and
+   * its SHA pin untouched for the whole story. The runtime object is a Query,
+   * not a CollectionReference; only `get()` is called on the result, so typing
+   * it as CollectionRef keeps this file's minimal-surface doctrine - the same
+   * narrowing [orderBy] and [limit] accept.
+   *
+   * The three-argument shape is the SDK's, not a style choice: `where` is the
+   * only filter method firebase-admin 13.10.0 exposes (verified against the
+   * installed package - `Query.prototype.where` is a function of arity 3,
+   * `whereEqualTo` is undefined). A two-argument `whereEqualTo` declaration
+   * compiles, because external declarations are never checked against the real
+   * object, and then dies at runtime as `db.whereEqualTo is not a function` on
+   * the first request. [SeasonLeaderboardEmulatorTest] pins that.
+   */
+  fun where(fieldPath: String, opStr: String, value: Any?): CollectionRef
 }
 
 external interface DocRef {
