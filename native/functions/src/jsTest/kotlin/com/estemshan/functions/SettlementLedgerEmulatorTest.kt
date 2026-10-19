@@ -27,9 +27,9 @@ import kotlin.test.assertTrue
  *   composite index, and keeps both corrections of a repeat while a same-shaped
  *   read over the whole ledger loses one to the agreed settles around it.
  *
- * SKIPS ITSELF (loudly) unless FIRESTORE_EMULATOR_HOST is set, so the ordinary
- * CI run of :functions:jsNodeTest neither fails nor quietly depends on an
- * emulator. To run it, the already-cached jar and no installation:
+ * SKIPS ITSELF (loudly) unless FIRESTORE_EMULATOR_HOST is set: an env-unset run
+ * still skips and says so. CI boots Firestore for :functions:jsNodeTest and fails
+ * on any *_EMULATOR_SKIPPED, so a green CI run means this class executed. To run:
  *   java -jar ~/.cache/firebase/emulators/cloud-firestore-emulator-*.jar \
  *     --host 127.0.0.1 --port 8991 --rules firestore.rules --project_id s62-verify
  *   FIRESTORE_EMULATOR_HOST=127.0.0.1:8991 GCLOUD_PROJECT=s62-verify \
