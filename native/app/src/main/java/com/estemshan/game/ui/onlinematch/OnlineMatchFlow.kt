@@ -206,7 +206,12 @@ private fun OnlineRoundStandings(state: MatchUiState.RoundStandings) {
 @Composable
 private fun OnlineMatchComplete(state: MatchUiState.MatchComplete, onLeft: () -> Unit) {
   Column(Modifier.fillMaxSize()) {
-    Box(Modifier.weight(1f)) { FinalStandingsScreen(state.standings) }
+    Box(Modifier.weight(1f)) {
+      // The ranked reveal rides the state when the settlement callable
+      // answered with the caller's own movement (RD13); a null ranked keeps
+      // the plain standings rendering byte-identically to before.
+      FinalStandingsScreen(state.standings, ranked = state.ranked)
+    }
     Button(
       onClick = onLeft,
       modifier = Modifier.fillMaxWidth().padding(16.dp),
