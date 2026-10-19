@@ -285,6 +285,34 @@ object Settlement {
     )
   }
 
+  /**
+   * seat → uid for the converged document, from its `seats` map — the same
+   * authority [parseMatch] resolves the dealer marker with. Null when the map
+   * is absent or holds an occupant that is not a uid string.
+   *
+   * RP needs this link and nothing else does: [RecomputedMatch.finalScores] is
+   * seat-keyed (the engine seats are p1..p4) while progression is written to
+   * `players/{uid}`. `players` is JOIN order, not seat order, so index-
+   * correlating the two lists would hand one seat's award to another player.
+   *
+   * Key order is [DEFAULT_SEATS], not the document's own: a plain JS object's
+   * key order would otherwise decide which seat a settlement walks. A seat the
+   * document does not name is absent from the result — [parseMatch] builds
+   * `order` from those same `seats` keys, so such a seat is already out of the
+   * settlement before this fold runs, never a hole it silently skips. A seat
+   * the document DOES name with a non-uid occupant refuses the whole map: one
+   * untrustable entry makes every seat's link untrustable.
+   */
+  fun parseSeats(fields: Map<String, Any?>): Map<String, String>? {
+    val raw = strMap(fields["seats"]) ?: return null
+    val out = LinkedHashMap<String, String>(raw.size)
+    for (seat in DEFAULT_SEATS) {
+      val value = raw[seat] ?: continue
+      out[seat] = value as? String ?: return null
+    }
+    return out
+  }
+
   fun parseArchive(docId: String, fields: Map<String, Any?>): ArchivedRound? {
     val round = docId.toIntOrNull() ?: return null
     if (num(fields["round"]) != round) return null

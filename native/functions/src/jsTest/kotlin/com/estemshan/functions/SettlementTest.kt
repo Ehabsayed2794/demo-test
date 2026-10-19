@@ -574,16 +574,26 @@ class SettlementTest {
     var match: Map<String, Any?>?,
     var archives: Map<String, Map<String, Any?>> = emptyMap(),
     var claim: Map<String, Any?>? = null,
+    /** Seated profiles by uid. A uid absent here still reads as an existing,
+     *  unplaced profile — the way a real `players/{uid}` doc with no `rp`. */
+    var profiles: Map<String, Map<String, Any?>> = emptyMap(),
+    /** Uids whose profile DOCUMENT is absent (the fail-closed case). */
+    var missingProfiles: Set<String> = emptySet(),
   ) : SettlementDb {
     var archiveReads = 0
     var txRuns = 0
     var corrections = 0
     var claims = 0
+    var profileReads = 0
     var appendAttempts = 0
     var appendThrows = false
     val appends = mutableListOf<Map<String, Any?>>()
     var recentReads = 0
     var recentCorrections: List<Map<String, Any?>>? = null
+    /** Every profile write, in call order: (uid, merged fields). */
+    val profileWrites = mutableListOf<Pair<String, Map<String, Any?>>>()
+    /** Port calls in order, so the reads-before-writes rule is observable. */
+    val events = mutableListOf<String>()
 
     override suspend fun readMatch(matchId: String): Map<String, Any?>? = match
 
@@ -595,7 +605,25 @@ class SettlementTest {
     override suspend fun <T> transact(block: suspend (SettlementDb.SettlementTx) -> T): T {
       txRuns++
       return block(object : SettlementDb.SettlementTx {
-        override suspend fun readClaim(matchId: String): Map<String, Any?>? = claim
+        override suspend fun readClaim(matchId: String): Map<String, Any?>? {
+          events.add("read-claim")
+          return claim
+        }
+
+        override suspend fun readProfile(uid: String): Map<String, Any?>? {
+          profileReads++
+          events.add("read-profile:$uid")
+          // The Admin SDK throws on a read issued after a write in one
+          // transaction, so the fake refuses it too: a fake that allowed the
+          // order would hide the only bug class this port shape exists to stop.
+          if (events.any { it.startsWith("write-") }) {
+            throw IllegalStateException(
+              "Firestore transactions require all reads to be executed before all writes",
+            )
+          }
+          if (uid in missingProfiles) return null
+          return profiles[uid] ?: emptyMap()
+        }
 
         override fun writeCorrection(
           matchId: String,
@@ -603,14 +631,22 @@ class SettlementTest {
           winners: List<String>,
           version: Int,
         ) {
+          events.add("write-correction")
           corrections++
         }
 
+        override fun writeProfile(uid: String, fields: Map<String, Any?>) {
+          events.add("write-profile:$uid")
+          profileWrites.add(uid to fields)
+        }
+
         override fun writeClaim(matchId: String, record: Map<String, Any?>) {
+          events.add("write-claim")
           claims++
-          @Suppress("UNCHECKED_CAST")
-          val outcome = record["outcome"] as Map<String, Any?>
-          claim = mapOf("outcome" to outcome, "settledBy" to (record["settledBy"] as String))
+          // The whole record is kept, movements included: a replay has to be
+          // able to slice the caller's own movement back out of it, exactly as
+          // the claim document allows in Firestore.
+          claim = record
         }
       })
     }
