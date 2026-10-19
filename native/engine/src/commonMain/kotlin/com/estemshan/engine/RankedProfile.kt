@@ -87,6 +87,41 @@ fun ladderRankOf(profile: RankedProfile): LadderRank {
   return rung
 }
 
+/**
+ * Validate the RD3 progression invariant: [RankedProfile.rp] must be
+ * non-negative and must resolve, via [rankAt], to the same ladder rung named
+ * by [RankedProfile.tier] + [RankedProfile.division]. Returns null when the
+ * profile is consistent, or a descriptive message when it is not. Pure: this
+ * never repairs or writes the profile.
+ *
+ * [ladderRankOf] still fails loudly for a tier/division pair that names no
+ * rung; this validator deliberately does not swallow that error.
+ */
+fun progressionMismatch(profile: RankedProfile): String? {
+  val storedRung = ladderRankOf(profile)
+  if (profile.rp < 0) {
+    return "RankedProfile has negative rp=${profile.rp}; RP must be >= 0"
+  }
+  val resolvedRung = rankAt(profile.rp)
+  if (resolvedRung != storedRung) {
+    return "RankedProfile progression mismatch at rp=${profile.rp}: " +
+      "rankAt(${profile.rp}) is ${resolvedRung.label()} at ${resolvedRung.lowerBound} RP, " +
+      "but the stored tier/division is ${storedRung.label()} at ${storedRung.lowerBound} RP"
+  }
+  return null
+}
+
+/**
+ * Enforce [progressionMismatch]: throw [IllegalArgumentException] when the
+ * profile's rp and stored rung disagree. A consistent profile is a no-op.
+ */
+fun requireProgressionConsistent(profile: RankedProfile) {
+  val mismatch = progressionMismatch(profile)
+  if (mismatch != null) {
+    throw IllegalArgumentException(mismatch)
+  }
+}
+
 /** RD10: the account is mid-placement — its matches count toward nothing. */
 fun isPlacement(profile: RankedProfile): Boolean =
   profile.placementState == PlacementState.IN_PROGRESS

@@ -13,6 +13,7 @@ import com.estemshan.engine.accumulateRankedStat
 import com.estemshan.engine.applyDemotionShield
 import com.estemshan.engine.finalRpDelta
 import com.estemshan.engine.placementOutcome
+import com.estemshan.engine.progressionMismatch
 import com.estemshan.engine.rankAt
 import com.estemshan.engine.rankLadder
 import com.estemshan.engine.resolveRanked
@@ -187,6 +188,22 @@ private fun failClosed(uid: String, matchId: String, because: String): Nothing =
   )
 
 /**
+ * A finite, whole number in [min]..[max], or null. Firestore/JS numbers arrive
+ * as [Double] and [Number.toInt] truncates, so a fraction, NaN, infinity or an
+ * out-of-Int value must be refused BEFORE any conversion; this helper is the
+ * one gate every stored progression number passes through.
+ */
+private fun wholeNumberInRange(value: Number, min: Int, max: Int): Int? {
+  val asDouble = value.toDouble()
+  if (!asDouble.isFinite() || asDouble % 1.0 != 0.0 ||
+    asDouble < min.toDouble() || asDouble > max.toDouble()
+  ) {
+    return null
+  }
+  return asDouble.toInt()
+}
+
+/**
  * One seated player's parsed pre-match Ranked state: the profile fields the
  * pipeline reads ([profile]) and the five STORED statistic counters
  * ([stats]) — both exactly as the profile document held them before this
@@ -252,9 +269,12 @@ private fun legacyRankRung(value: String): LadderRank? =
  *   read. A placed higher rung — named by tier/division, or by a legacy
  *   `players/rank` that resolves to one — with no rp is corrupt: inventing
  *   0 would award a placed account a first match's progression. A present
- *   non-number is the long-standing non-numeric refusal.
+ *   non-number is the long-standing non-numeric refusal; a present number
+ *   must be finite, whole and within 0..Int.MAX_VALUE.
  * - tier/division missing ⇒ [rankAt] of the RP itself; present must name a
- *   rung of the one ladder table ([rankIdentityOf]).
+ *   rung of the one ladder table ([rankIdentityOf]). A present identity that
+ *   disagrees with [rankAt] of the RP is refused by [progressionMismatch],
+ *   never repaired.
  * - seasonId missing ⇒ [DEFAULT_SEASON_ID]; present must be a String. The
  *   settlement NEVER changes an existing seasonId (RD24).
  * - highestRank missing (highestRankTier + highestRankDivision absent) ⇒
@@ -297,7 +317,12 @@ private fun parseRankedProfile(
       }
       0
     }
-    is Number -> value.toInt()
+    is Number -> wholeNumberInRange(value, 0, Int.MAX_VALUE)
+      ?: failClosed(
+        uid, matchId,
+        "a players/rp ($value) that is not a finite whole number from 0 to ${Int.MAX_VALUE} — " +
+          "RP must be a finite whole number inside the Int range",
+      )
     else -> throw HttpsError(
       "failed-precondition",
       "settleMatch: seated player '$uid' of match '$matchId' has a non-numeric players/rp " +
@@ -333,7 +358,7 @@ private fun parseRankedProfile(
     is Boolean -> value
     else -> failClosed(uid, matchId, "a non-boolean players/demotionShield ($value)")
   }
-  return RankedProfile(
+  val profile = RankedProfile(
     tier = rung.tier,
     division = rung.division,
     rp = rp,
@@ -342,15 +367,23 @@ private fun parseRankedProfile(
     placementState = placementState,
     demotionShield = demotionShield,
   )
+  // RD3: the stored tier/division identity and the RP-derived rung must agree.
+  // A mismatch is corrupt data, never repaired here; fail the whole table
+  // closed before any write so the match stays settleable once it is fixed.
+  progressionMismatch(profile)?.let { mismatch ->
+    failClosed(uid, matchId, mismatch)
+  }
+  return profile
 }
 
 /**
  * Parses the five STORED statistic counters off a profile (RD23: the four
  * percentages are derived over gamesPlayed, never stored, and a settlement
- * never writes them). Missing ⇒ 0; present must be a non-negative number.
- * Anything else — a string, a negative counter — is corrupt, and the whole
- * settlement fails closed rather than fold a table whose counters cannot
- * be trusted.
+ * never writes them). Missing ⇒ 0; present must be a finite whole number in
+ * the Int range and non-negative. Anything else — a string, a fraction, NaN,
+ * infinity, an out-of-Int value or a negative counter — is corrupt, and the
+ * whole settlement fails closed rather than fold a table whose counters
+ * cannot be trusted.
  */
 private fun parseRankedStats(
   uid: String,
@@ -359,10 +392,19 @@ private fun parseRankedStats(
 ): RankedStats {
   fun counter(field: String): Int = when (val value = raw[field]) {
     null -> 0
-    is Number -> value.toInt().also { count ->
+    is Number -> {
+      val count = wholeNumberInRange(value, Int.MIN_VALUE, Int.MAX_VALUE)
+        ?: failClosed(
+          uid, matchId,
+          "a players/$field ($value) that is not a finite whole number within the Int range — " +
+            "a counter must be a finite whole number",
+        )
+      // The finite/integral/range gate runs FIRST, so a fraction such as -0.5
+      // is refused as malformed rather than truncated into a negative integer.
       if (count < 0) {
         failClosed(uid, matchId, "a negative players/$field ($value) — a counter cannot be negative")
       }
+      count
     }
     else -> failClosed(
       uid, matchId, "a non-numeric players/$field ($value) — a counter is a number or absent",
@@ -390,21 +432,47 @@ private fun parseRankedSeat(seat: SeatInput, matchId: String): ParsedSeat =
 private fun ladderOrdinal(previousRp: Int): Int = rankLadder.indexOf(rankAt(previousRp))
 
 /**
+ * One recorded movement value. A present non-null value must be a finite,
+ * whole number in [min]..[max]; truncating a corrupt claim would report a
+ * progression the caller never received, so the replay is refused instead.
+ */
+private fun movementNumber(uid: String, field: String, value: Any?, min: Int): Int {
+  val number = value as? Number
+  val whole = number?.let { wholeNumberInRange(it, min, Int.MAX_VALUE) }
+  if (whole == null) {
+    throw HttpsError(
+      "failed-precondition",
+      "settleMatch: replay for '$uid' has a corrupt claim movements/$field ($value) — " +
+        "it must be a finite whole number in the Int range; the replay is refused rather than fabricated.",
+    )
+  }
+  return whole
+}
+
+/**
  * The caller's own movement, sliced out of a claim's `movements` (RD13: a
  * client reads its own progression and nobody else's). Null means "no `you`
  * to report" — a claim written before progression existed, or a caller with
  * no seat in the claim — and is returned as an absent key, never as a
  * fabricated or another seat's number.
+ *
+ * Absent/null movement keys keep that legacy no-`you` history replaying. A
+ * key that IS present with a non-null value is trusted only after the same
+ * finite/whole/range gate as stored progression; a corrupt recorded movement
+ * refuses the replay instead of being truncated or silently dropped.
  */
 private fun youOf(movements: Any?, uid: String): Map<String, Any?>? {
   val mine = (movements as? Map<*, *>)?.get(uid) as? Map<*, *> ?: return null
-  val previous = mine["previousRp"] as? Number ?: return null
-  val rp = mine["rp"] as? Number ?: return null
-  val delta = mine["delta"] as? Number ?: return null
+  val previous = mine["previousRp"]
+  val rp = mine["rp"]
+  val delta = mine["delta"]
+  // Legacy claims can omit any key; absence/null still means "no you", not a
+  // corrupt value. Validate nothing until all three are present.
+  if (previous == null || rp == null || delta == null) return null
   return linkedMapOf(
-    "previousRp" to previous.toInt(),
-    "rp" to rp.toInt(),
-    "delta" to delta.toInt(),
+    "previousRp" to movementNumber(uid, "previousRp", previous, 0),
+    "rp" to movementNumber(uid, "rp", rp, 0),
+    "delta" to movementNumber(uid, "delta", delta, Int.MIN_VALUE),
   )
 }
 

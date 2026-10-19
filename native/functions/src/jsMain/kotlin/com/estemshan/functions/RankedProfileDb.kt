@@ -4,6 +4,7 @@ import com.estemshan.engine.LadderRank
 import com.estemshan.engine.PlacementState
 import com.estemshan.engine.RankedProfile
 import com.estemshan.engine.RankedStats
+import com.estemshan.engine.progressionMismatch
 import com.estemshan.engine.rankAt
 import com.estemshan.engine.rankLadder
 import kotlinx.coroutines.CoroutineScope
@@ -211,6 +212,12 @@ private fun normalizeProfile(stored: Map<String, Any?>): NormalizedProfile {
     placementState = placementState,
     demotionShield = demotionShield,
   )
+  // RD3 — a present tier/division pair and a present rp must name the same
+  // rung. The pair was already resolved by rungOf above, so the helper returns
+  // null for a consistent profile or the mismatch message for a disagreeing
+  // one; either way it is never repaired here — the read fails closed before
+  // any merge can run, exactly like every other corrupt value.
+  progressionMismatch(profile)?.let { corrupt(it) }
   return NormalizedProfile(profile = profile, stats = stats, mergeFields = merge)
 }
 
