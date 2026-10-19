@@ -1,5 +1,6 @@
 package com.estemshan.functions
 
+import com.estemshan.engine.rankLadder
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -25,6 +26,15 @@ import kotlin.test.assertTrue
  * query itself, so the Admin-SDK call shape is pinned there, against a real
  * emulator.
  *
+ * The read hardening lives here too, in the same seam: the season read is
+ * BOUNDED ([requireBoardWithinCap] refuses an oversized season before it is
+ * worked through), the skip log names the season and the reason but NEVER a
+ * player ([skipLine] is the only place a skip is reported), and every row
+ * carries its rung's Arabic title as the ladder table holds it — not as the
+ * profile's own private `rank` field claims it. Those three are `internal` to
+ * the module, and this class calling them is what makes that visibility
+ * sufficient rather than a claim in a comment.
+ *
  * `HttpsError` throw codes are sampled exactly as in [SettlementTest] and
  * [DisconnectVoteFlowTest] — the code rides on the thrown object.
  */
@@ -35,7 +45,8 @@ class SeasonLeaderboardTest {
 
     /** The whole public contract of a row: nothing else may appear. */
     val ROW_KEYS = setOf(
-      "position", "displayName", "avatarInitial", "tier", "division", "rp", "seasonId", "isCurrentPlayer",
+      "position", "displayName", "avatarInitial", "tier", "tierArabic", "division", "rp", "seasonId",
+      "isCurrentPlayer",
     )
     val RESPONSE_KEYS = setOf("ok", "seasonId", "rows", "you", "total", "skipped")
 
@@ -112,6 +123,24 @@ class SeasonLeaderboardTest {
   }
 
   /**
+   * A profile's stored fields that count every read of a value out of them.
+   *
+   * [classify] asks the map for the season, the rung and the RP, so a counter
+   * that stays at zero after a refusal is the mechanical proof that the cap
+   * check ran on the list's `size` alone and never opened a document. Move the
+   * cap below the classification loop and this counter moves with it.
+   */
+  private class ProbeFields(private val source: Map<String, Any?>) : Map<String, Any?> by source {
+    var reads = 0
+      private set
+
+    override fun get(key: String): Any? {
+      reads++
+      return source[key]
+    }
+  }
+
+  /**
    * The payload as the runtime really delivers it: a plain JS object in which a
    * key the caller did not send is genuinely ABSENT, not present-and-null. The
    * default-season rule turns on exactly that difference, so [kotlin.js.json] —
@@ -158,6 +187,24 @@ class SeasonLeaderboardTest {
 
   @Suppress("UNCHECKED_CAST")
   private fun you(response: Map<String, Any?>): Map<String, Any?>? = response["you"] as Map<String, Any?>?
+
+  /**
+   * Everything `console.warn` receives while [block] runs, restored afterwards.
+   *
+   * The shim is self-contained JS on purpose: production calls `console.warn`
+   * directly, so this must replace the same global it reaches, not some Kotlin
+   * wrapper around it. The restore lives in a `finally` so a failing assertion
+   * cannot leave the rest of the suite capturing warnings.
+   */
+  private suspend fun warningsWhile(block: suspend () -> Unit): List<String> {
+    js("globalThis.__s64Warnings = []; globalThis.__s64OriginalWarn = console.warn; console.warn = function (m) { globalThis.__s64Warnings.push(String(m)); }")
+    try {
+      block()
+    } finally {
+      js("console.warn = globalThis.__s64OriginalWarn")
+    }
+    return js("globalThis.__s64Warnings").unsafeCast<Array<String>>().toList()
+  }
 
   private fun names(response: Map<String, Any?>): List<Any?> = rows(response).map { it["displayName"] }
 
@@ -333,6 +380,66 @@ class SeasonLeaderboardTest {
     assertEquals(7, response["skipped"])
   }
 
+  @Test
+  fun aSkipLineCarriesTheSeasonAndTheReasonAndNeverAPlayer() {
+    val line = skipLine("s9", "no-ladder-rung")
+
+    assertEquals("S64_LEADERBOARD_SKIP seasonId=s9 reason=no-ladder-rung", line)
+    // The count above proves the board still reports its skips; this proves the
+    // line reports nothing else. Every id this class puts in front of the board
+    // is swept, because [skipLine] is the only place a skip is written — and
+    // a skipped profile's document id IS its uid, so a line carrying it would
+    // be a record of who was refused, built from the one read that is supposed
+    // to expose nothing.
+    for (uid in listOf(
+      "p1", "p2", "p3", "p4", "p5", "good", "stale", "no-rung", "negative-rp", "missing-tier",
+      "uid-alpha", "uid-beta", "uid-gamma", "watcher",
+    )) {
+      assertTrue(uid !in line, "the skip log leaked '$uid'")
+    }
+  }
+
+  @Test
+  fun aMalformedProfileEmitsExactlyTheSkipLineForTheServedSeason() = runTest {
+    val season = "season-emission-7"
+    val leakedUid = "uid-hidden-42"
+    val lines = warningsWhile {
+      val (_, response) = called(
+        listOf(
+          profile("uid-boarded", tier = "Gold", division = "II", rp = 700, seasonId = season),
+          profile(leakedUid, tier = "Mithril", division = "I", rp = 9_999, seasonId = season),
+        ),
+        uid = "watcher",
+        seasonId = season,
+      )
+      assertEquals(1, response["skipped"])
+      assertEquals(1, response["total"])
+    }
+
+    // The line the CALL actually emits, season and all: this is the output of
+    // `console.warn` while [leaderboardOnce] ran, not a call to [skipLine] in
+    // isolation. `lines.single()` is also the count proof — one skipped profile,
+    // one line, no per-row chatter.
+    val line = lines.single()
+    assertEquals("S64_LEADERBOARD_SKIP seasonId=season-emission-7 reason=no-ladder-rung", line)
+    for (uid in listOf(leakedUid, "uid-boarded", "watcher")) {
+      assertTrue(uid !in line, "the emitted skip log leaked '$uid'")
+    }
+  }
+
+  @Test
+  fun aCleanBoardEmitsNoSkipWarningsAtAll() = runTest {
+    val lines = warningsWhile {
+      val (_, response) = called(ladder(), uid = "p2", limit = 100)
+      assertEquals(0, response["skipped"])
+      assertEquals(5, response["total"])
+    }
+
+    // Zero skips must mean zero log lines: a warn on a healthy board would be
+    // its own false alarm and would drown the one signal the line exists for.
+    assertEquals(emptyList(), lines)
+  }
+
   // ── denials ─────────────────────────────────────────────────────────
 
   @Test
@@ -392,6 +499,53 @@ class SeasonLeaderboardTest {
     assertEquals(1, db.reads)
   }
 
+  // ── the read is bounded ─────────────────────────────────────────────
+
+  @Test
+  fun theCapHoldsAtItsCeilingAndRefusesTheFirstProfilePastIt() = runTest {
+    requireBoardWithinCap(0, SEASON)
+    requireBoardWithinCap(MAX_SEASON_PROFILES, SEASON)
+
+    assertEquals("resource-exhausted", thrownCode { requireBoardWithinCap(MAX_SEASON_PROFILES + 1, SEASON) })
+  }
+
+  @Test
+  fun anOversizedSeasonIsRefusedOnTheCountBeforeAnyProfileIsProcessed() = runTest {
+    val fields = ProbeFields(
+      linkedMapOf<String, Any?>(
+        "seasonId" to SEASON, "tier" to "King", "division" to "", "rp" to 3_200,
+        "displayName" to "Over Cap", "avatarInitial" to "O",
+      ),
+    )
+    val db = FakeLeaderboardDb(List(MAX_SEASON_PROFILES + 1) { StoredProfile("uid-over-cap", fields) })
+
+    // No board, no rows, no partial answer: the call throws instead.
+    assertEquals("resource-exhausted", thrownCode { leaderboardOnce(db, fakeRequest("watcher")) })
+    assertEquals(1, db.reads, "the bound costs one read, never a probe and then a second query")
+    assertEquals(0, fields.reads, "not one profile was opened before the refusal")
+
+    // Positive control on the same fields: let the board classify one document
+    // and the counter has to move. Without this, the zero above would read the
+    // same whether the cap refused early or the probe simply never counted.
+    leaderboardOnce(FakeLeaderboardDb(listOf(StoredProfile("uid-over-cap", fields))), fakeRequest("watcher"))
+    assertTrue(fields.reads > 0, "the probe counted nothing even when classification ran")
+  }
+
+  @Test
+  fun aSeasonExactlyAtTheCapBoardsWholeRatherThanBeingCut() = runTest {
+    // One distinct document per slot: a single shared profile repeated 10,000
+    // times would let a board that collapsed duplicate ids still report 10,000.
+    val (db, response) = called(List(MAX_SEASON_PROFILES) { profile("uid-at-cap-$it") })
+
+    // The cap refuses over its ceiling and never truncates at it: at exactly
+    // MAX the answer is a whole board, still paged by the caller's limit.
+    assertEquals(MAX_SEASON_PROFILES, response["total"])
+    assertEquals(0, response["skipped"])
+    assertEquals(100, rows(response).size)
+    assertEquals(100, rows(response).map { it["displayName"] }.distinct().size, "the at-cap fixture repeats ids")
+    assertEquals(1, db.reads)
+  }
+
   // ── what a row is allowed to say ────────────────────────────────────
 
   /**
@@ -429,6 +583,81 @@ class SeasonLeaderboardTest {
     // 2 delivered rows out of 3, and the caller's row below the cut.
     assertEquals(2, rows(response).size)
     assertEquals(3, youRow["position"])
+  }
+
+  @Test
+  fun everyRowCarriesItsRungArabicTitleAndItIsTheLadderTablesOwn() = runTest {
+    val (_, response) = called(ladder(), limit = 100)
+
+    // Five rungs, five titles, in board order: King, Royal I, Gold I, Silver I,
+    // Bronze III. The title is a display value of the public ladder, so it
+    // travels with the tier it names and never replaces it.
+    assertEquals(listOf("ملك", "سلطان", "معلم", "لاعب", "مبتدئ"), rows(response).map { it["tierArabic"] })
+    for (row in rows(response)) {
+      assertEquals(ROW_KEYS, row.keys)
+      assertTrue((row["tierArabic"] as? String)?.isNotBlank() == true, "a row reached the board with no title")
+      // Cross-checked against the single rankLadder table rather than a literal
+      // repeated here: a second copy of the names would agree with this test and
+      // still drift from the ladder.
+      assertEquals(
+        rankLadder.first { it.tier == row["tier"] && it.division == row["division"] }.arabic,
+        row["tierArabic"],
+        "the title must be the resolved rung's, read from the one ladder table",
+      )
+    }
+  }
+
+  @Test
+  fun allSevenTierTitlesArePinnedAndCrossCheckedAgainstTheOneLadderTable() = runTest {
+    // One distinct rung per tier, taken from the table itself: the fixture
+    // cannot claim a (tier, division) pair the ladder does not hold. The list is
+    // in board order (highest rung first), and all seven titles are stated as
+    // literals, so the two the five-rung fixture above never reaches —
+    // Platinum's وزير and Diamond's أمير — are pinned here.
+    val expected = listOf(
+      "King" to "ملك",
+      "Royal" to "سلطان",
+      "Diamond" to "أمير",
+      "Platinum" to "وزير",
+      "Gold" to "معلم",
+      "Silver" to "لاعب",
+      "Bronze" to "مبتدئ",
+    )
+    val rungs = expected.map { (tier, _) -> rankLadder.first { it.tier == tier } }
+    val (_, response) = called(
+      rungs.mapIndexed { index, rung ->
+        profile("uid-tier-$index", tier = rung.tier, division = rung.division, rp = rung.lowerBound)
+      },
+      limit = 100,
+    )
+
+    // Seven tiers, seven rows: the board's descending rung order and each row's
+    // own public title.
+    assertEquals(expected.map { it.first }, rows(response).map { it["tier"] })
+    assertEquals(expected.map { it.second }, rows(response).map { it["tierArabic"] })
+    for (row in rows(response)) {
+      // Cross-checked against the single rankLadder table rather than a second
+      // copy of the names: a literal above that drifts from the ladder turns
+      // this red even if the literal assertion itself were edited to match.
+      assertEquals(
+        rankLadder.first { it.tier == row["tier"] && it.division == row["division"] }.arabic,
+        row["tierArabic"],
+        "the title must be the resolved rung's, read from the one ladder table",
+      )
+    }
+  }
+
+  @Test
+  fun goldBoardsMulemAndKingMalakAndNeitherComesFromTheStoredRank() = runTest {
+    val (_, response) = called(ladder(), uid = "p3", limit = 1)
+
+    // Every fixture profile stores a private `rank` of King. A title read from
+    // that field would say ملك on the Gold row, so these two literals are also
+    // the proof the row was built from the resolved rung and not the profile.
+    assertEquals("King", rows(response).first()["tier"])
+    assertEquals("ملك", rows(response).first()["tierArabic"])
+    assertEquals("Gold", you(response)?.get("tier"))
+    assertEquals("معلم", you(response)?.get("tierArabic"))
   }
 
   /** Every key and value the response actually carries, flattened to one string. */
