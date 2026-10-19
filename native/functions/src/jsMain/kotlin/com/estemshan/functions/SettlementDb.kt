@@ -1,7 +1,14 @@
 package com.estemshan.functions
 
+import com.estemshan.engine.GameType
+import com.estemshan.engine.RpMatchInput
 import com.estemshan.functions.Settlement.ConvergedMatch
 import com.estemshan.functions.Settlement.SettleDecision
+import com.estemshan.engine.finalRpDelta
+import com.estemshan.engine.placementOutcome
+import com.estemshan.engine.rankAt
+import com.estemshan.engine.rankLadder
+import com.estemshan.engine.resolveRanked
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -20,8 +27,16 @@ import kotlinx.coroutines.promise
  * settlement does not compose S42's two-phase IdempotencyGuard (claim
  * then commit would leave exactly that window); the guard's contract —
  * first invocation executes, replays return the recorded outcome — is
- * what this guarantees instead, and S51 composes the guard itself for RP
- * application per S42's own note.
+ * what this guarantees instead.
+ *
+ * Ranked progression (RD1/RD3/RD12) is applied HERE, in this same
+ * transaction, rather than by a separate guard-composed call as S51's note
+ * first anticipated: the claim's once-only property is what makes an RP
+ * award once-only, and applying it in a second transaction would reopen
+ * exactly the claimed-but-unapplied window this shape exists to close.
+ * Every seated profile is read before any write (Firestore forbids a read
+ * after a write in one transaction), so a redelivery can neither re-award
+ * nor settle against a stale pre-image.
  *
  * Ports keep every Firestore touch behind interfaces so the whole
  * orchestration (gate → recompute → write/replay) is unit-testable with
@@ -55,8 +70,26 @@ interface SettlementDb {
 
   interface SettlementTx {
     suspend fun readClaim(matchId: String): Map<String, Any?>?
+
+    /**
+     * The seated player's own `players/{uid}` document, or null when it does
+     * not exist. Read INSIDE the settlement transaction: the RP fold needs the
+     * previous RP as of the commit, and reading it outside would let two
+     * racers settle against the same pre-image.
+     */
+    suspend fun readProfile(uid: String): Map<String, Any?>?
+
     fun writeCorrection(matchId: String, scores: Map<String, Int>, winners: List<String>, version: Int)
     fun writeClaim(matchId: String, record: Map<String, Any?>)
+
+    /**
+     * Merge-write ONLY the ranked-progression fields of `players/{uid}`
+     * (`rp`, `tier`, `division`). Anything else the document holds — the
+     * nine statistics, highestRank, season fields — is untouched by
+     * construction: the Admin SDK bypasses rules, so the field set is exactly
+     * what the caller passes here.
+     */
+    fun writeProfile(uid: String, fields: Map<String, Any?>)
   }
 }
 
@@ -90,11 +123,175 @@ private fun executedResponse(
 private fun claimRecord(
   uid: String,
   response: Map<String, Any?>,
+  movements: Map<String, Map<String, Any?>>,
 ): Map<String, Any?> = mapOf(
   "settledBy" to uid,
   "settledAt" to FieldValue.serverTimestamp(),
+  // Caller-neutral by construction: `you` is the CALLER's slice of
+  // [movements], added on the way out and never stored here (RD13 — one
+  // claim document is replayed by four different clients, so a stored `you`
+  // would be a stored leak).
   "outcome" to response,
+  // {uid: {previousRp, rp, delta}} for every seated player. Admin-only: this
+  // document lives under matches/{id}/settlement, which no client may read,
+  // and it mirrors players/{uid}, whose documents are owner-`get`-only.
+  "movements" to movements,
 )
+
+/** One seat's progression inputs, all read before any write is issued. */
+private data class SeatInput(val uid: String, val seat: String, val previousRp: Int)
+
+/**
+ * RD30: an account that carries no `rp` — the key absent, or the JSON null a
+ * client can write — is unplaced, and Bronze III starts at 0 RP, so it reads as
+ * 0. A missing DOCUMENT is not a 0 at all — see the fail-closed rule in
+ * [settleOnce].
+ *
+ * Something in the field that is not a number is corrupt, not unplaced: `"700"`
+ * read as 0 would award a Gold player the +30 of a first match, which is the
+ * same fabrication the missing-document rule refuses, one level down. Null here
+ * means "malformed" and the caller fails the settlement closed.
+ */
+private fun previousRpOf(profile: Map<String, Any?>): Int? = when (val rp = profile["rp"]) {
+  null -> 0
+  is Number -> rp.toInt()
+  else -> null
+}
+
+/** The ladder ordinal [previousRp] sits on now (RD4 input 1). */
+private fun ladderOrdinal(previousRp: Int): Int = rankLadder.indexOf(rankAt(previousRp))
+
+/**
+ * The caller's own movement, sliced out of a claim's `movements` (RD13: a
+ * client reads its own progression and nobody else's). Null means "no `you`
+ * to report" — a claim written before progression existed, or a caller with
+ * no seat in the claim — and is returned as an absent key, never as a
+ * fabricated or another seat's number.
+ */
+private fun youOf(movements: Any?, uid: String): Map<String, Any?>? {
+  val mine = (movements as? Map<*, *>)?.get(uid) as? Map<*, *> ?: return null
+  val previous = mine["previousRp"] as? Number ?: return null
+  val rp = mine["rp"] as? Number ?: return null
+  val delta = mine["delta"] as? Number ?: return null
+  return linkedMapOf(
+    "previousRp" to previous.toInt(),
+    "rp" to rp.toInt(),
+    "delta" to delta.toInt(),
+  )
+}
+
+/**
+ * Reads every seated profile in the settlement transaction — the RP fold's
+ * reads, all of them, before any write is issued (Firestore forbids a read
+ * after a write in one transaction).
+ *
+ * Seat → uid comes from the document's own `seats` map, never from
+ * [ConvergedMatch.players] index order: `finalScores` is SEAT-keyed (p1..p4)
+ * while progression is written per uid, so a uid holds a seat's placement only
+ * through that map (the same authority `parseMatch` uses for the dealer
+ * marker). Index-correlating the two lists would hand one seat's award to
+ * another player.
+ *
+ * FAILS CLOSED as a whole settlement when a seated uid has no `players/{uid}`
+ * document, or when that document's `rp` is not a number: the settlement cannot
+ * tell whether that account is Bronze III or King, and a missing RP would have
+ * to be invented. Fabricating one profile while the other three settle is the
+ * same bug one level down — a Ranked table either applies four awards in this
+ * transaction or applies none. Refusing here leaves the claim absent, so the
+ * match stays settleable once the profile is repaired; silently skipping the
+ * seat would strand that player's progression at nothing, permanently, because
+ * the claim then forbids any second execution.
+ */
+private suspend fun readSeatInputs(
+  tx: SettlementDb.SettlementTx,
+  fields: Map<String, Any?>,
+  order: List<String>,
+  matchId: String,
+): List<SeatInput> {
+  val seats = Settlement.parseSeats(fields)
+  return order.map { seat ->
+    val uid = seats?.get(seat) ?: throw HttpsError(
+      "failed-precondition",
+      "settleMatch: seat '$seat' of match '$matchId' is not seated to a uid.",
+    )
+    val profile = tx.readProfile(uid) ?: throw HttpsError(
+      "failed-precondition",
+      "settleMatch: seated player '$uid' of match '$matchId' has no players/ profile — " +
+        "nothing wrote, the match stays settleable once that profile exists.",
+    )
+    val previousRp = previousRpOf(profile) ?: throw HttpsError(
+      "failed-precondition",
+      "settleMatch: seated player '$uid' of match '$matchId' has a non-numeric players/rp " +
+        "(${profile["rp"]}) — nothing wrote; it is not read as 0 RP, which would award " +
+        "the seat a first match's progression.",
+    )
+    SeatInput(uid, seat, previousRp)
+  }
+}
+
+/**
+ * What one [foldRankedProgression] pass produces, named so the two maps can
+ * never be bound to the wrong side at the call site: [movements] is what the
+ * claim records and what `you` is sliced from, [profileWrites] is what lands on
+ * `players/{uid}`.
+ */
+private data class RankedProgression(
+  val movements: Map<String, Map<String, Any?>>,
+  val profileWrites: Map<String, Map<String, Any?>>,
+)
+
+/**
+ * One pass of the ranked progression fold: the engine's own chain, per seat —
+ * placement (RD8/RD17) → dynamic delta (RD4/RD5/RD6, GM6's Mini ×0.5) →
+ * floor-clamped resolution (RD3) → the ladder rung it lands on (RD26).
+ *
+ * `rankDown` is false and stays that way by choice, not by absence: S43 keeps
+ * the flag on `rooms/{roomId}` (`MatchModels`: "Matches never carry rankDown:
+ * that flag lives on rooms"), and settlement reads only the match document —
+ * one callable, one document, no room read. Reading it would mean a second
+ * document inside this transaction. At the current rates the flag only caps a
+ * loss at ×2, and RD29 bounds a Ranked table to one tier apart, so it changes
+ * nothing today either way (RpEngine's own cap note says the same).
+ *
+ * Opponent strength is the mean of the OTHER seats' ordinals; a table of one
+ * seat has no opponents and reads as strength 0.
+ */
+private fun foldRankedProgression(
+  seated: List<SeatInput>,
+  finalScores: Map<String, Int>,
+  gameType: GameType,
+): RankedProgression {
+  val ordinals = seated.map { ladderOrdinal(it.previousRp) }
+  val movements = LinkedHashMap<String, Map<String, Any?>>()
+  val writes = LinkedHashMap<String, Map<String, Any?>>()
+  seated.forEachIndexed { index, seat ->
+    val others = ordinals.filterIndexed { i, _ -> i != index }
+    val opponentStrength = if (others.isEmpty()) 0 else others.sum() / others.size
+    val resolution = resolveRanked(
+      seat.previousRp,
+      finalRpDelta(
+        RpMatchInput(
+          outcome = placementOutcome(finalScores, seat.seat),
+          playerOrdinal = ordinals[index],
+          opponentStrength = opponentStrength,
+          gameType = gameType,
+          rankDown = false,
+        ),
+      ),
+    )
+    movements[seat.uid] = linkedMapOf(
+      "previousRp" to resolution.previousRP,
+      "rp" to resolution.rp,
+      "delta" to resolution.delta,
+    )
+    writes[seat.uid] = linkedMapOf(
+      "rp" to resolution.rp,
+      "tier" to resolution.next.tier,
+      "division" to resolution.next.division,
+    )
+  }
+  return RankedProgression(movements, writes)
+}
 
 /**
  * Runs one settlement: auth → read → gate → recompute → transacted
@@ -180,15 +377,39 @@ suspend fun settleOnce(db: SettlementDb, request: CallableRequest): Map<String, 
         )
       val replayed = recorded.toMutableMap()
       replayed["replayed"] = true
+      // A replay re-awards nothing (no profile read, no profile write) and
+      // slices THIS caller's movement out of the claimed movements: one claim
+      // is replayed by four different clients, and each sees only its own
+      // numbers (RD13). A claim recorded before progression existed has no
+      // `movements` — then the replay answers exactly as it always did, with
+      // no `you` and no crash.
+      youOf(existing["movements"], uid)?.let { replayed["you"] = it }
       return@transact replayed
     }
+
+    // Reads before writes, all four seats, inside this transaction: two racers
+    // that both read absent cannot both write, and the profile a racer reads
+    // is the one its claim commits against.
+    val seated = readSeatInputs(tx, fields, parsed.order, matchId)
+    val progression = foldRankedProgression(
+      seated,
+      recomputed.finalScores,
+      parsed.gameType,
+    )
+
     if (recomputed.corrected) {
       val version = (fields["version"] as? Number)?.toInt() ?: 0
       tx.writeCorrection(matchId, recomputed.finalScores, recomputed.winnerIds, version + 1)
     }
     val response = executedResponse(recomputed, matchId)
-    tx.writeClaim(matchId, claimRecord(uid, response))
-    response
+    // The claim and every seat's progression write commit as ONE transaction —
+    // which is what makes an RP award exactly-once rather than once-per-retry.
+    progression.profileWrites.forEach { (seatUid, profileFields) ->
+      tx.writeProfile(seatUid, profileFields)
+    }
+    tx.writeClaim(matchId, claimRecord(uid, response, progression.movements))
+    val you = youOf(progression.movements, uid)
+    if (you == null) response else response + ("you" to you)
   }
 
   // S62: only the invocation that applied the settlement appends to the
@@ -210,6 +431,9 @@ class AdminSettlementDb : SettlementDb {
 
   private fun matchRef(matchId: String): DocRef =
     db.collection("matches").doc(matchId)
+
+  /** The Ranked progression document — the only one settlement writes to. */
+  private fun playerRef(uid: String): DocRef = db.collection("players").doc(uid)
 
   override suspend fun readMatch(matchId: String): Map<String, Any?>? {
     val snap = matchRef(matchId).get().await()
@@ -290,6 +514,16 @@ class AdminSettlementDb : SettlementDb {
       return dynamicToKotlin(snap.data()) as? Map<String, Any?>
     }
 
+    override suspend fun readProfile(uid: String): Map<String, Any?>? {
+      val snap = tx.get(playerRef(uid)).await()
+      // Absent, not empty: a missing profile document is a fail-closed
+      // condition for the whole settlement, while an existing document with no
+      // `rp` field is a different thing (an unplaced account, RD30).
+      if (!snap.exists) return null
+      @Suppress("UNCHECKED_CAST")
+      return dynamicToKotlin(snap.data()) as? Map<String, Any?>
+    }
+
     override fun writeCorrection(
       matchId: String,
       scores: Map<String, Int>,
@@ -306,6 +540,13 @@ class AdminSettlementDb : SettlementDb {
           ),
         ),
       )
+    }
+
+    override fun writeProfile(uid: String, fields: Map<String, Any?>) {
+      // update(), not set(): it merges these fields into the profile and
+      // leaves everything else the account holds (name, avatar, room/match
+      // pointers, and every field this path does not own) exactly as it is.
+      tx.update(playerRef(uid), toPlain(fields))
     }
 
     override fun writeClaim(matchId: String, record: Map<String, Any?>) {

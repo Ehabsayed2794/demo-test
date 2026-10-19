@@ -1,0 +1,801 @@
+package com.estemshan.functions
+
+import kotlinx.coroutines.test.runTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+/**
+ * S50/RD1-RD13 — ranked progression applied inside the settlement.
+ *
+ * Every expected number below was hand-derived from the closed rule table
+ * (RD4 base + per-strength/per-tier scaling → RD5 asymmetry → GM6's Mini ×0.5
+ * → RD3 floor clamp → the RD26 ladder rung), against
+ * [SettlementFixtures.GOLDEN_SCORES] and the default [RpEngineConfig]:
+ *
+ * ```
+ * outcome   base   KING +30  SECOND +15  THIRD -8  KOZ -20
+ * strength  +2 per ordinal the opponents' mean sits above Bronze III
+ * tier      -3 per ordinal the player sits above that mean (sign-clamped)
+ * RD5       win above table ×(1-0.1n) · win below ×(1+0.1n) · lose above ×(1+0.2n)
+ * MINI      ×0.5 applied LAST, ties away from zero
+ * ```
+ *
+ * What the goldens pin is the WIRING, not the arithmetic (`RpEngineTest` owns
+ * the arithmetic): a seat written to the wrong uid, an opponents' mean that
+ * includes the seat itself, a profile read after a write, or an award applied
+ * twice all change these numbers while leaving the engine's own functions
+ * correct.
+ */
+class RpApplicationTest {
+
+  private val uids = listOf("u1", "u2", "u3", "u4")
+
+  private val archives = mapOf("1" to SettlementFixtures.round1ArchiveFields())
+
+  private fun profilesWith(rps: Map<String, Int?>): Map<String, Map<String, Any?>> =
+    uids.associateWith { uid -> SettlementFixtures.profile(uid, rps[uid]) }
+
+  // ── fake ports ────────────────────────────────────────────────────
+
+  /**
+   * The `SettlementTest` fake, re-declared for this class: its whole job is to
+   * make the transaction's SHAPE observable — event order, per-uid writes, the
+   * recorded claim — so progression can be asserted without an emulator. It
+   * refuses a read issued after any write, which is what the real Admin SDK
+   * does; a fake that allowed the order would hide the one bug class the port
+   * shape exists to prevent.
+   */
+  private class FakeRpDb(
+    val match: Map<String, Any?>,
+    val archives: Map<String, Map<String, Any?>> = emptyMap(),
+    var claim: Map<String, Any?>? = null,
+    val profiles: Map<String, Map<String, Any?>> = emptyMap(),
+    val missingProfiles: Set<String> = emptySet(),
+  ) : SettlementDb {
+    var txRuns = 0
+    var profileReads = 0
+    var corrections = 0
+    var claims = 0
+    val appends = mutableListOf<Map<String, Any?>>()
+    val events = mutableListOf<String>()
+    val profileWrites = mutableListOf<Pair<String, Map<String, Any?>>>()
+
+    /** The fields written to one uid, as one map (order-insensitive). */
+    fun writeFor(uid: String): Map<String, Any?> =
+      profileWrites.single { it.first == uid }.second
+
+    override suspend fun readMatch(matchId: String): Map<String, Any?>? = match
+
+    override suspend fun readArchives(matchId: String): Map<String, Map<String, Any?>> = archives
+
+    override suspend fun <T> transact(block: suspend (SettlementDb.SettlementTx) -> T): T {
+      txRuns++
+      return block(object : SettlementDb.SettlementTx {
+        override suspend fun readClaim(matchId: String): Map<String, Any?>? {
+          events.add("read-claim")
+          return claim
+        }
+
+        override suspend fun readProfile(uid: String): Map<String, Any?>? {
+          events.add("read-profile:$uid")
+          profileReads++
+          if (events.any { it.startsWith("write-") }) {
+            throw IllegalStateException(
+              "Firestore transactions require all reads to be executed before all writes",
+            )
+          }
+          if (uid in missingProfiles) return null
+          return profiles[uid] ?: emptyMap()
+        }
+
+        override fun writeCorrection(
+          matchId: String,
+          scores: Map<String, Int>,
+          winners: List<String>,
+          version: Int,
+        ) {
+          events.add("write-correction")
+          corrections++
+        }
+
+        override fun writeProfile(uid: String, fields: Map<String, Any?>) {
+          events.add("write-profile:$uid")
+          profileWrites.add(uid to fields)
+        }
+
+        override fun writeClaim(matchId: String, record: Map<String, Any?>) {
+          events.add("write-claim")
+          claims++
+          claim = record
+        }
+      })
+    }
+
+    override suspend fun appendLedger(record: Map<String, Any?>) {
+      appends.add(record)
+    }
+
+    override suspend fun readCorrectionWindow(): List<Map<String, Any?>> =
+      appends.filter { it["outcomeKind"] == SettlementLedger.OUTCOME_CORRECTED }.reversed()
+  }
+
+  private suspend fun expectDenied(code: String, messagePart: String, block: suspend () -> Any?) {
+    val thrown = try {
+      block()
+      throw AssertionError("expected an HttpsError")
+    } catch (e: Throwable) {
+      if (e.message == "expected an HttpsError") throw e
+      e
+    }
+    assertEquals(code, thrown.asDynamic().code as String, "denied with: ${thrown.message}")
+    assertTrue(
+      thrown.message?.contains(messagePart) == true,
+      "expected '${thrown.message}' to name '$messagePart'",
+    )
+  }
+
+  // ── the golden fixture is re-derived, not assumed ─────────────────
+
+  /**
+   * Every number this class asserts was hand-derived from
+   * [SettlementFixtures.GOLDEN_SCORES], and that map is itself the claim the
+   * golden archive is settled against. So a misbuilt `cardLog` would not fail
+   * one test — it would make all of them wrong together, quietly, in the same
+   * direction. This is the check that they are not: the archive is re-parsed,
+   * re-replayed and re-recomputed by the production path inside
+   * [SettlementFixtures.round1Archived], and it must still land on the golden
+   * totals.
+   */
+  @Test
+  fun theGoldenArchiveRecomputesToTheGoldenScores() {
+    val archived = SettlementFixtures.round1Archived()
+    assertEquals(1, archived.round)
+    assertEquals(52, archived.plays.size, "a full deck: 13 tricks × 4 seats")
+  }
+
+  // ── the four seats progress together ──────────────────────────────
+
+  /**
+   * A table of four Gold III (690 RP, ladder ordinal 6) settling the golden
+   * result. Strength = 6 for every seat and the tier difference = 0, so each
+   * award is the pure RD4 base + strength term: KING 30+12, SECOND 15+12,
+   * THIRD -8+12 clamped to 0 by sign, KOZ -20+12.
+   */
+  @Test
+  fun fourSeatsProgressTogether() = runTest {
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = profilesWith(mapOf("u1" to 690, "u2" to 690, "u3" to 690, "u4" to 690)),
+    )
+
+    val response = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+
+    assertEquals(true, response["settled"])
+    assertEquals(4, db.profileReads)
+    assertEquals(4, db.profileWrites.size)
+    // p1 KING → 732, p4 SECOND → 717: both cross the Gold II threshold (700).
+    assertEquals(mapOf("rp" to 732, "tier" to "Gold", "division" to "II"), db.writeFor("u1"))
+    assertEquals(mapOf("rp" to 717, "tier" to "Gold", "division" to "II"), db.writeFor("u4"))
+    // p3 THIRD lands on 0 (sign clamp), p4's seat-3 neighbour p2 keeps the KOZ loss.
+    assertEquals(mapOf("rp" to 690, "tier" to "Gold", "division" to "III"), db.writeFor("u3"))
+    assertEquals(mapOf("rp" to 682, "tier" to "Gold", "division" to "III"), db.writeFor("u2"))
+
+    // The caller's own slice, and nothing else, rides on the response (RD13).
+    assertEquals(
+      mapOf("previousRp" to 690, "rp" to 732, "delta" to 42),
+      response["you"],
+    )
+  }
+
+  /**
+   * The seat → uid link is the whole point of [Settlement.parseSeats]: u2 holds
+   * p2's KOZ and u4 holds p4's SECOND. Asserting the two awards are DIFFERENT
+   * numbers per uid is what fails loudly if a future edit index-correlates
+   * `players` (join order) with `finalScores` (seat order) and hands one seat's
+   * award to another player.
+   */
+  @Test
+  fun eachAwardFollowsItsSeatNotThePlayersList() = runTest {
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = profilesWith(mapOf("u1" to 690, "u2" to 690, "u3" to 690, "u4" to 690)),
+    )
+
+    settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+
+    // Same starting RP for all four, so ANY difference here is placement's.
+    assertEquals(732, db.writeFor("u1")["rp"])
+    assertEquals(682, db.writeFor("u2")["rp"])
+    assertEquals(717, db.writeFor("u4")["rp"])
+    assertEquals(
+      listOf("u1", "u2", "u3", "u4"),
+      db.profileWrites.map { it.first },
+      "progression is written in seat order p1..p4, mapped through `seats`",
+    )
+  }
+
+  // ── the field set ────────────────────────────────────────────────
+
+  /**
+   * RD1/RD12 give settlement exactly three owned fields. The Admin SDK
+   * bypasses firestore.rules, so nothing but this call site bounds the write —
+   * a stray `rank`, `stats`, `highestRank`, `seasonId` or `demotionShield` key
+   * here is a silent client-trustable-field escalation, and this assertion is
+   * the only place it would be caught.
+   */
+  @Test
+  fun progressionWritesOwnExactlyThreeFields() = runTest {
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = profilesWith(uids.associateWith { 690 }),
+    )
+
+    settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+
+    assertEquals(4, db.profileWrites.size)
+    db.profileWrites.forEach { (uid, fields) ->
+      assertEquals(
+        setOf("rp", "tier", "division"),
+        fields.keys,
+        "the write for '$uid' owns exactly the progression fields",
+      )
+    }
+  }
+
+  // ── RD30 / RD3 ───────────────────────────────────────────────────
+
+  /**
+   * A profile DOCUMENT that exists but carries no `rp` is an unplaced account
+   * (RD30): it reads as 0, Bronze III. A missing document is a different thing
+   * entirely and is the fail-closed case below.
+   *
+   * At ordinal 0 the strength term is 0, so the losers' raw losses (-8, -20)
+   * stand and RD3 floors them: rp stays 0 and the EFFECTIVE delta reported is 0
+   * — not -8, not -20, and no demotion (there is nothing below Bronze III).
+   */
+  @Test
+  fun anUnplacedTableClampsItsLossesAtTheFloor() = runTest {
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = profilesWith(mapOf("u1" to null, "u2" to null, "u3" to null, "u4" to null)),
+    )
+
+    val response = settleOnce(db, SettlementFixtures.settleRequest("u2", "m1"))
+
+    assertEquals(mapOf("rp" to 30, "tier" to "Bronze", "division" to "III"), db.writeFor("u1"))
+    assertEquals(mapOf("rp" to 15, "tier" to "Bronze", "division" to "III"), db.writeFor("u4"))
+    assertEquals(mapOf("rp" to 0, "tier" to "Bronze", "division" to "III"), db.writeFor("u2"))
+    assertEquals(mapOf("rp" to 0, "tier" to "Bronze", "division" to "III"), db.writeFor("u3"))
+
+    // The KOZ seat's own view: the loss is real (-20) but its effective delta
+    // is 0, because RP never goes below the floor.
+    assertEquals(
+      mapOf("previousRp" to 0, "rp" to 0, "delta" to 0),
+      response["you"],
+    )
+  }
+
+  /** An explicit `rp: 0` and an absent `rp` settle identically (RD30). */
+  @Test
+  fun anExplicitZeroRpMatchesAnAbsentOne() = runTest {
+    val explicit = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = profilesWith(uids.associateWith { 0 }),
+    )
+    val absent = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = profilesWith(uids.associateWith { null }),
+    )
+
+    settleOnce(explicit, SettlementFixtures.settleRequest("u1", "m1"))
+    settleOnce(absent, SettlementFixtures.settleRequest("u1", "m1"))
+
+    assertEquals(
+      explicit.profileWrites.toList(),
+      absent.profileWrites.toList(),
+    )
+  }
+
+  // ── RD4: opponent strength, RD5: the mixed table ─────────────────
+
+  /**
+   * The strength term alone: four seats all at Bronze I (150 RP, ordinal 2)
+   * face a table whose mean is 2, so KING earns 30 + 2×2 = 34 where the same
+   * KING at Bronze III earns 30. Nothing else changes between the two tables,
+   * which is what isolates RD4 input 1.
+   */
+  @Test
+  fun aStrongerTablePaysMore() = runTest {
+    val weak = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = profilesWith(uids.associateWith { 0 }),
+    )
+    val strong = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = profilesWith(uids.associateWith { 150 }),
+    )
+
+    val onWeak = settleOnce(weak, SettlementFixtures.settleRequest("u1", "m1"))
+    val onStrong = settleOnce(strong, SettlementFixtures.settleRequest("u1", "m1"))
+
+    assertEquals(30, (onWeak["you"] as Map<*, *>)["delta"])
+    // 150 → 184: still Bronze I (lower bound 150, next rung 250).
+    assertEquals(
+      mapOf("rp" to 184, "tier" to "Bronze", "division" to "I"),
+      strong.writeFor("u1"),
+    )
+    assertEquals(34, (onStrong["you"] as Map<*, *>)["delta"])
+  }
+
+  /**
+   * A mixed table — one Bronze III (ordinal 0) against three Bronze I
+   * (ordinal 2). The three opponents' mean is 2 for the low seat, but each
+   * high seat sees (0+2+2)/3 = 1 (integer mean), so their tier difference is
+   * exactly +1 and the low seat's is -2. Every number below is that shape:
+   *  - u1 KING: 30 + 4 + 6 = 40, then RD5's lower-tier-win ×1.2 → 48
+   *  - u4 SECOND: 15 + 2 - 3 = 14, then higher-tier-win ×0.9 → 13
+   *  - u3 THIRD: -8 + 2 - 3 = -9, then higher-tier-loss ×1.2 → -11
+   *  - u2 KOZ: -20 + 2 - 3 = -21, then ×1.2 → -25
+   * A win below the table pays MORE than the same win at a uniform table (34),
+   * and a loss above it costs MORE than at a uniform table (-16 → -21): RD5's
+   * asymmetry, through settlement rather than through the engine directly.
+   */
+  @Test
+  fun aMixedTableIsAsymmetricBothWays() = runTest {
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = profilesWith(mapOf("u1" to 0, "u2" to 150, "u3" to 150, "u4" to 150)),
+    )
+
+    val response = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+
+    assertEquals(mapOf("rp" to 48, "tier" to "Bronze", "division" to "III"), db.writeFor("u1"))
+    assertEquals(mapOf("rp" to 163, "tier" to "Bronze", "division" to "I"), db.writeFor("u4"))
+    assertEquals(mapOf("rp" to 139, "tier" to "Bronze", "division" to "II"), db.writeFor("u3"))
+    // 150 → 125 crosses a rung: Bronze II, a demotion (movement -1).
+    assertEquals(mapOf("rp" to 125, "tier" to "Bronze", "division" to "II"), db.writeFor("u2"))
+
+    assertEquals(
+      mapOf("previousRp" to 0, "rp" to 48, "delta" to 48),
+      response["you"],
+    )
+  }
+
+  // ── GM6: MINI halves, once, last ─────────────────────────────────
+
+  /**
+   * The same Gold III table as [fourSeatsProgressTogether], MINI: ×0.5 applied
+   * to the FINAL delta, ties away from zero (OPEN-3). u4's +27 → 13.5 → +14 is
+   * the tie branch, and u1's 711 vs 732 shows the half is taken once over the
+   * whole award, never per component (30/2 + 12/2 = 21 here too, so the
+   * distinction is carried by 27 → 14, not 13).
+   */
+  @Test
+  fun miniHalvesTheFinalDeltaOnce() = runTest {
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids, gameType = "MINI"),
+      archives = archives,
+      profiles = profilesWith(uids.associateWith { 690 }),
+    )
+
+    settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+
+    assertEquals(mapOf("rp" to 711, "tier" to "Gold", "division" to "II"), db.writeFor("u1"))
+    assertEquals(mapOf("rp" to 704, "tier" to "Gold", "division" to "II"), db.writeFor("u4"))
+    assertEquals(mapOf("rp" to 690, "tier" to "Gold", "division" to "III"), db.writeFor("u3"))
+    assertEquals(mapOf("rp" to 686, "tier" to "Gold", "division" to "III"), db.writeFor("u2"))
+  }
+
+  // ── exactly-once ─────────────────────────────────────────────────
+
+  /**
+   * The claim's once-only property is what makes an RP award once-only: a
+   * redelivered call reads the claim, returns the recorded outcome and touches
+   * no profile — no read, no write, no second award.
+   */
+  @Test
+  fun aRedeliveredCallReAwardsNothing() = runTest {
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = profilesWith(uids.associateWith { 690 }),
+    )
+
+    val first = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    val writesAfterFirst = db.profileWrites.toList()
+
+    val replay = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+
+    assertEquals(true, replay["replayed"])
+    assertEquals(2, db.txRuns)
+    assertEquals(1, db.claims)
+    assertEquals(4, db.profileReads, "a replay reads no profile")
+    assertEquals(4, db.profileWrites.size, "a replay writes no profile")
+    assertEquals(writesAfterFirst, db.profileWrites.toList())
+    // Same caller, same numbers: the replay is sliced from the recorded
+    // movements, not recomputed, so it cannot drift from the first answer.
+    assertEquals(first["you"], replay["you"])
+  }
+
+  /**
+   * RD13: one claim is replayed by four different clients, and each sees only
+   * its own progression. u3's replay carries u3's numbers — and no key that
+   * would let a client read a neighbour's.
+   */
+  @Test
+  fun aSecondCallerGetsOnlyItsOwnMovement() = runTest {
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = profilesWith(uids.associateWith { 690 }),
+    )
+
+    val asU1 = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    val asU3 = settleOnce(db, SettlementFixtures.settleRequest("u3", "m1"))
+
+    assertEquals(mapOf("previousRp" to 690, "rp" to 732, "delta" to 42), asU1["you"])
+    assertEquals(mapOf("previousRp" to 690, "rp" to 690, "delta" to 0), asU3["you"])
+    assertNeitherLeaks(asU1)
+    assertNeitherLeaks(asU3)
+
+    // The stored claim is caller-neutral: `you` is a projection on the way out,
+    // never a field of the shared document (a stored `you` is a stored leak).
+    val claim = db.claim!!
+    @Suppress("UNCHECKED_CAST")
+    assertNull((claim["outcome"] as Map<String, Any?>)["you"])
+    assertEquals("u1", claim["settledBy"])
+  }
+
+  private fun assertNeitherLeaks(response: Map<String, Any?>) {
+    assertNull(response["movements"], "the four-seat table is never returned to a client")
+    assertEquals(
+      setOf("previousRp", "rp", "delta"),
+      (response["you"] as Map<*, *>).keys,
+    )
+  }
+
+  /**
+   * A claim recorded before progression existed (S50 as merged, no
+   * `movements`) still replays — as it always did, with no `you`. The absence
+   * is answered by an absent key, never by a crash or a fabricated number.
+   */
+  @Test
+  fun aLegacyClaimReplaysWithoutAYou() = runTest {
+    val recorded = mapOf<String, Any?>(
+      "ok" to true,
+      "settled" to true,
+      "replayed" to false,
+      "matchId" to "m1",
+      "corrected" to false,
+      "finalScores" to SettlementFixtures.GOLDEN_SCORES,
+      "winnerIds" to listOf("p1"),
+      "claimedScores" to SettlementFixtures.GOLDEN_SCORES,
+      "claimedWinners" to listOf("p1"),
+      "rounds" to 1,
+    )
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      claim = mapOf("settledBy" to "u1", "outcome" to recorded),
+      profiles = profilesWith(uids.associateWith { 690 }),
+    )
+
+    val replay = settleOnce(db, SettlementFixtures.settleRequest("u2", "m1"))
+
+    assertEquals(true, replay["replayed"])
+    assertNull(replay["you"])
+    assertEquals(recorded["finalScores"], replay["finalScores"])
+    assertEquals(0, db.profileReads)
+    assertEquals(0, db.profileWrites.size)
+  }
+
+  // ── fail closed ──────────────────────────────────────────────────
+
+  /**
+   * The last seat's profile is missing, so the three that WERE read still get
+   * nothing: the settlement cannot invent a starting rung, and a Ranked table
+   * either applies four awards or applies none. Because every read precedes
+   * every write, the throw lands before the first write is issued — no claim,
+   * no partial progression, and the match stays settleable once the profile
+   * exists (the claim is what would otherwise forbid a second execution).
+   */
+  @Test
+  fun aMissingProfileFailsTheWholeSettlementClosed() = runTest {
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = profilesWith(mapOf("u1" to 690, "u2" to 690, "u3" to 690)),
+      missingProfiles = setOf("u4"),
+    )
+
+    expectDenied("failed-precondition", "u4") {
+      settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    }
+
+    assertEquals(0, db.claims, "a fail-closed settlement writes no claim")
+    assertEquals(0, db.profileWrites.size, "a fail-closed settlement writes no profile")
+    assertEquals(0, db.corrections)
+  }
+
+  /** A seat whose occupant is not a uid is the same refusal, one level earlier. */
+  @Test
+  fun anUnseatedSeatFailsClosed() = runTest {
+    val fields = SettlementFixtures.matchFields(uids).toMutableMap()
+    @Suppress("UNCHECKED_CAST")
+    val seats = (fields["seats"] as Map<String, Any?>).toMutableMap()
+    // p4 is occupied by something that is not a uid, so no seat can be trusted
+    // to map onto a profile the settlement may write.
+    seats["p4"] = 42
+    fields["seats"] = seats
+    val db = FakeRpDb(
+      match = fields,
+      archives = archives,
+      profiles = profilesWith(uids.associateWith { 690 }),
+    )
+
+    expectDenied("failed-precondition", "is not seated to a uid") {
+      settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    }
+    assertEquals(0, db.claims)
+    assertEquals(0, db.profileWrites.size)
+  }
+
+  /**
+   * A non-numeric `players/rp` is corrupt, not unplaced. Reading `"690"` as 0
+   * would hand a Gold player the +30 of a first match — the same fabrication
+   * the missing-document rule refuses, one level down — so the whole table is
+   * denied, and the refusal names the offending uid.
+   */
+  @Test
+  fun aNonNumericRpFailsTheWholeSettlementClosed() = runTest {
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = uids.associateWith { uid ->
+        linkedMapOf<String, Any?>("uid" to uid, "rp" to if (uid == "u3") "690" else 690)
+      },
+    )
+
+    expectDenied(
+      "failed-precondition",
+      "seated player 'u3' of match 'm1' has a non-numeric players/rp",
+    ) {
+      settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    }
+
+    assertEquals(0, db.claims, "a corrupt rp writes no claim")
+    assertEquals(0, db.profileWrites.size, "a corrupt rp writes no profile, for any seat")
+    assertEquals(0, db.corrections)
+  }
+
+  /**
+   * The third shape of "carries no rp": an explicit JSON null, which is what a
+   * client that wrote `rp: null` leaves behind. RD30 reads it as unplaced, like
+   * an absent key — an absence, not a value that cannot be trusted. Pinned
+   * against the absent-key table so the two cannot drift apart.
+   */
+  @Test
+  fun aNullRpSettlesItsSeatAsUnplaced() = runTest {
+    val explicitNull = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = uids.associateWith { uid ->
+        linkedMapOf<String, Any?>("uid" to uid, "rp" to null)
+      },
+    )
+    val absentKey = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = profilesWith(uids.associateWith { null }),
+    )
+
+    settleOnce(explicitNull, SettlementFixtures.settleRequest("u1", "m1"))
+    settleOnce(absentKey, SettlementFixtures.settleRequest("u1", "m1"))
+
+    assertEquals(absentKey.profileWrites.toList(), explicitNull.profileWrites.toList())
+    assertEquals(
+      mapOf("rp" to 30, "tier" to "Bronze", "division" to "III"),
+      explicitNull.writeFor("u1"),
+    )
+  }
+
+  // ── ordering, gates, untouched surfaces ──────────────────────────
+
+  /**
+   * The transaction's event log, read as one sequence: four profile reads and
+   * the claim read all before the first write. The fake already throws on the
+   * reverse order, so this assertion is the readable statement of WHY it
+   * cannot throw — and it pins that the claim check is not re-read per seat.
+   */
+  @Test
+  fun everyReadPrecedesEveryWrite() = runTest {
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = profilesWith(uids.associateWith { 690 }),
+    )
+
+    settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+
+    val lastRead = db.events.indexOfLast { it.startsWith("read-") }
+    val firstWrite = db.events.indexOfFirst { it.startsWith("write-") }
+    assertTrue(lastRead < firstWrite, "reads and writes interleaved: ${db.events}")
+    assertEquals(
+      listOf(
+        "read-claim",
+        "read-profile:u1", "read-profile:u2", "read-profile:u3", "read-profile:u4",
+        "write-profile:u1", "write-profile:u2", "write-profile:u3", "write-profile:u4",
+        "write-claim",
+      ),
+      db.events,
+    )
+  }
+
+  /**
+   * ROOM and UNRANKED still no-op BEFORE the transaction — zero profile reads,
+   * zero writes, and (as before progression) zero transactions. A room match
+   * must never move anyone's rank, and it must not even look.
+   */
+  @Test
+  fun roomAndUnrankedNeverTouchAProfile() = runTest {
+    for (mode in listOf("ROOM", "UNRANKED")) {
+      val db = FakeRpDb(
+        match = SettlementFixtures.matchFields(uids, mode = mode),
+        archives = archives,
+        profiles = profilesWith(uids.associateWith { 690 }),
+      )
+
+      val response = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+
+      assertEquals(true, response["ok"])
+      assertEquals(false, response["settled"])
+      assertEquals("NOT_RANKED", response["reason"])
+      assertEquals(mode, response["mode"])
+      assertNull(response["you"], "a no-op reports no progression")
+      assertEquals(0, db.txRuns, "$mode must not open a transaction")
+      assertEquals(0, db.profileReads, "$mode must not read a profile")
+      assertEquals(0, db.profileWrites.size, "$mode must not write a profile")
+    }
+  }
+
+  /**
+   * The unauthenticated and non-member denials are unchanged by progression:
+   * both die before the transaction, so neither can be used to probe who sits
+   * where, and neither writes.
+   */
+  @Test
+  fun theExistingDenialsAreUntouched() = runTest {
+    val anon = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = profilesWith(uids.associateWith { 690 }),
+    )
+    expectDenied("unauthenticated", "") {
+      settleOnce(anon, SettlementFixtures.settleRequest(null, "m1"))
+    }
+    assertEquals(0, anon.txRuns)
+    assertEquals(0, anon.profileReads)
+
+    val outsider = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = profilesWith(uids.associateWith { 690 }),
+    )
+    settleOnceShouldRefuse(outsider, "u5")
+    assertEquals(0, outsider.txRuns)
+    assertEquals(0, outsider.profileWrites.size)
+    assertEquals(0, outsider.appends.size)
+  }
+
+  private suspend fun settleOnceShouldRefuse(db: FakeRpDb, uid: String) {
+    expectDenied("permission-denied", "") {
+      settleOnce(db, SettlementFixtures.settleRequest(uid, "m1"))
+    }
+  }
+
+  /**
+   * A corrected claim settles the RECOMPUTED totals, not the client's claim —
+   * progression reads from the recomputation, so a false claim costs a cheater
+   * the award they invented rather than paying it. The correction write stays
+   * ordered with the reads, and the ledger row is unchanged.
+   */
+  @Test
+  fun progressionFollowsTheRecomputeNotTheClaim() = runTest {
+    val cheated = mapOf("p1" to 25, "p2" to 99, "p3" to 12, "p4" to 14)
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(
+        uids,
+        finalScores = cheated,
+      ),
+      archives = archives,
+      profiles = profilesWith(uids.associateWith { 690 }),
+    )
+
+    val response = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+
+    assertEquals(true, response["corrected"])
+    assertEquals(mapOf("p1" to 25, "p2" to -11, "p3" to 12, "p4" to 14), response["finalScores"])
+    // Recomputed: u2 is alone at the bottom → KOZ −8, exactly as in the agreed
+    // golden table. Its invented 99 bought nothing.
+    assertEquals(mapOf("rp" to 682, "tier" to "Gold", "division" to "III"), db.writeFor("u2"))
+    assertEquals(1, db.corrections)
+    assertEquals(1, db.appends.size, "the S62 ledger row is still written once")
+    @Suppress("UNCHECKED_CAST")
+    assertEquals(
+      cheated,
+      ((db.claim!!["outcome"] as Map<String, Any?>)["claimedScores"]) as Map<String, Int>,
+      "the record still documents what the client claimed",
+    )
+  }
+
+  /**
+   * Progression never adds a field the ledger row did not carry before: the
+   * movements are the claim's business, and the S62 audit record stays the
+   * settlement's shape (match, mode, totals, who settled).
+   */
+  @Test
+  fun theLedgerRowDoesNotGainMovements() = runTest {
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = profilesWith(uids.associateWith { 690 }),
+    )
+
+    settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+
+    val record = db.appends.single()
+    assertNull(record["movements"])
+    assertNull(record["you"])
+    assertEquals("APPLIED", record["outcomeKind"])
+    assertEquals("m1", record["matchId"])
+  }
+
+  /**
+   * The claim records all four movements — the audit trail RD12 asks for —
+   * keyed by uid, each with previousRp/rp/delta, and NOTHING else. This
+   * document is admin-only (no client rule reads matches/{id}/settlement), so
+   * holding four seats here is not a leak; holding them in the RESPONSE is.
+   */
+  @Test
+  fun theClaimRecordsAllFourMovements() = runTest {
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = profilesWith(mapOf("u1" to 0, "u2" to 150, "u3" to 150, "u4" to 150)),
+    )
+
+    settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+
+    val claim = db.claim!!
+    assertEquals(setOf("settledBy", "settledAt", "outcome", "movements"), claim.keys)
+    @Suppress("UNCHECKED_CAST")
+    val movements = claim["movements"] as Map<String, Map<String, Any?>>
+    assertEquals(uids.toSet(), movements.keys)
+    assertEquals(
+      mapOf("previousRp" to 0, "rp" to 48, "delta" to 48),
+      movements["u1"],
+    )
+    assertEquals(
+      mapOf("previousRp" to 150, "rp" to 125, "delta" to -25),
+      movements["u2"],
+    )
+    movements.forEach { (uid, movement) ->
+      assertEquals(
+        setOf("previousRp", "rp", "delta"),
+        movement.keys,
+        "movement for '$uid' records exactly three numbers",
+      )
+    }
+  }
+}
