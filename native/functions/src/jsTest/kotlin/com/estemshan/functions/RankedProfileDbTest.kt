@@ -263,6 +263,74 @@ class RankedProfileDbTest {
     assertEquals(0, db.writes)
   }
 
+  // ── RD3 progression invariant ────────────────────────────────────────
+
+  @Test
+  fun aStoredPairThatDisagreesWithRpFailsPreconditionWithoutWrite() = runTest {
+    // rp 150 resolves to Bronze I on the ladder, not the stored Gold II.
+    val rpBelowPair = FakeDb(validProfile().apply { put("rp", 150) })
+    assertPreconditionNoWrite(rpBelowPair) { loadOnce(rpBelowPair, fakeRequest("u1")) }
+
+    // rp 732 resolves to Gold II on the ladder, not the stored Bronze III.
+    val rpAbovePair = FakeDb(validProfile().apply {
+      put("tier", "Bronze")
+      put("division", "III")
+    })
+    assertPreconditionNoWrite(rpAbovePair) { loadOnce(rpAbovePair, fakeRequest("u1")) }
+  }
+
+  @Test
+  fun aConsistentKingProfileIsServedAndWritesNothing() = runTest {
+    val db = FakeDb(
+      mutableMapOf(
+        "displayName" to "Nour",
+        "tier" to "King",
+        "division" to "",
+        "rp" to 3000,
+        "seasonId" to "s1",
+        "highestRankTier" to "King",
+        "highestRankDivision" to "",
+        "placementState" to "SKIPPED",
+        "demotionShield" to false,
+        "rankedGamesPlayed" to 5,
+        "rankedKingCount" to 2,
+        "rankedSecondCount" to 2,
+        "rankedThirdCount" to 1,
+        "rankedKozCount" to 0,
+      ),
+    )
+
+    val response = loadOnce(db, fakeRequest("u1"))
+
+    // Every field present and the King/"":3000 invariant holds: served as-is,
+    // nothing migrated — the top rung must not be refused as a mismatch.
+    assertEquals(false, response["migrated"])
+    assertEquals(true, response["ok"])
+    val profile = section(response, "profile")
+    assertEquals("King", profile["tier"])
+    assertEquals("", profile["division"])
+    assertEquals(3000, profile["rp"])
+    assertEquals("King", profile["highestRankTier"])
+    assertEquals("", profile["highestRankDivision"])
+    assertEquals("SKIPPED", profile["placementState"])
+    assertEquals(false, profile["demotionShield"])
+    assertEquals(0, db.writes)
+  }
+
+  @Test
+  fun aKingPairWithRpBelowItsLowerBoundFailsPreconditionWithoutWrite() = runTest {
+    // rp 2999 resolves to Royal I, one rung below the stored King.
+    val db = FakeDb(validProfile().apply {
+      put("tier", "King")
+      put("division", "")
+      put("rp", 2999)
+      put("highestRankTier", "King")
+      put("highestRankDivision", "")
+    })
+
+    assertPreconditionNoWrite(db) { loadOnce(db, fakeRequest("u1")) }
+  }
+
   // ── highest-ever repair ──────────────────────────────────────────────
 
   @Test
