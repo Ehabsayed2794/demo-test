@@ -14,6 +14,7 @@ import com.estemshan.engine.KozCharge
 import com.estemshan.engine.PlayCard
 import com.estemshan.engine.PlayEmit
 import com.estemshan.engine.RANKS
+import com.estemshan.engine.MatchMode
 import com.estemshan.engine.RoundCfg
 import com.estemshan.engine.ScoringMode
 import com.estemshan.engine.Suit
@@ -26,6 +27,7 @@ import com.estemshan.engine.initNormalRound
 import com.estemshan.engine.initTable
 import com.estemshan.engine.nextSeat
 import com.estemshan.engine.resolveTrick
+import com.estemshan.game.ui.standings.buildStandings
 import com.estemshan.services.MatchAdapter
 import com.estemshan.services.FirestoreError
 import com.estemshan.services.Heartbeat
@@ -50,7 +52,10 @@ import com.estemshan.services.model.SubmitBiddingActionResult
 import com.estemshan.services.model.SubmitCardResult
 import com.estemshan.services.session.MatchStore
 import com.estemshan.services.DecisionTimeoutPort
+import com.estemshan.services.RpMovement
 import com.estemshan.services.SeatReclaimPort
+import com.estemshan.services.SettlementPort
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -67,6 +72,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.concurrent.atomic.AtomicInteger
@@ -135,6 +141,7 @@ class OnlineMatchViewModelTest {
     clock: () -> Long = { System.currentTimeMillis() },
     heartbeat: Heartbeat = Heartbeat.None,
     timeouts: DecisionTimeoutPort = DecisionTimeoutPortStub,
+    settlements: SettlementPort = SettlementPortStub,
   ): OnlineMatchViewModel {
     val session = GameSession()
     sessions[uid] = session
@@ -157,6 +164,7 @@ class OnlineMatchViewModelTest {
       // the defaults read OnlineServices, whose lazy getters touch Firebase
       // before any Context exists on a JVM test thread.
       reclaims = SeatReclaimPortStub,
+      settlements = settlements,
     )
   }
 
@@ -1356,6 +1364,253 @@ class OnlineMatchViewModelTest {
   }
 
   // ==========================================================================
+  // The ranked settlement — the once-per-session trigger and the reveal (RD13)
+  // ==========================================================================
+
+  /**
+   * A terminal RANKED document, the way endMatch leaves it: four totals one
+   * of which wins. The standings the screen shows are a pure function of
+   * these; the RP movement is only ever the settlement callable's answer.
+   */
+  private fun completeRankedDoc(): MatchDoc = MatchDoc(
+    roomId = "room-1",
+    players = seatUids.values.toList(),
+    status = MatchDoc.STATUS_COMPLETE,
+    currentRound = 1,
+    maxRounds = 1,
+    extendedRounds = emptyList(),
+    dealer = seatUids.getValue("p1"),
+    turn = null,
+    seats = seatUids,
+    version = 1,
+    biddingOpen = false,
+    bids = emptyMap(),
+    lastBidSeat = null,
+    cardLog = emptyList(),
+    lastCardSeat = null,
+    cardPhase = null,
+    biddingLog = emptyList(),
+    gameState = GameState.NOT_DEALT,
+    mode = MatchMode.RANKED,
+    finalScores = mapOf("p1" to 120, "p2" to 98, "p3" to 134, "p4" to 77),
+    winnerIds = listOf("p3"),
+    completedRound = 1,
+  )
+
+  /**
+   * The reveal the tests drive: the server pair 600 and +30; the display RP
+   * of 630 is what the standings' existing helper derives from them.
+   */
+  private fun theMovement() = RpMovement(previousRp = 600, delta = 30)
+
+  /**
+   * A completed RANKED match settles exactly once per session (even across
+   * terminal re-deliveries), publishes the plain standings BEFORE the word
+   * settlement is spoken, and then — when the callable answers with the
+   * caller's OWN movement — attaches the reveal through the standings'
+   * existing [buildRankedResult]. The movement is never computed here: RD13
+   * makes the server's `you` the only truthful source a client has.
+   */
+  @Test
+  fun rankedComplete_settlesOnceAndRevealsTheServerMovement() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = completeRankedDoc()
+      val settlements = ScriptedSettlements(
+        SettlementPort.SettlementOutcome.Settled(replayed = false, you = theMovement()),
+      )
+      val vm = makeVm("uid-a", Dispatchers.Main, settlements = settlements)
+      vm.start("m-ranked")
+      advanceUntilIdle()
+
+      // The terminal delivery publishes FIRST — deliverNow hands the document
+      // over and runs exactly one dispatch, and the held answer below keeps
+      // the settlement coroutine suspended inside the call it armed: the
+      // standings must be on screen long before the network answers.
+      settlements.holdNextCall()
+      deliverNow("m-ranked")
+      val beforeAnySettle = vm.state.value as MatchUiState.MatchComplete
+      assertEquals(
+        buildStandings(mapOf("p1" to 120, "p2" to 98, "p3" to 134, "p4" to 77)),
+        beforeAnySettle.standings,
+      )
+      assertNull("no reveal before the server has answered", beforeAnySettle.ranked)
+      assertEquals("the call is in flight, not waiting to be made", 1, settlements.calls.get())
+
+      // The answer lands and the reveal rides the state the moment it does.
+      settlements.release()
+      advanceUntilIdle()
+      assertEquals("exactly one settle call", 1, settlements.calls.get())
+      assertEquals("the whole match id went to the callable", "m-ranked", settlements.matchIds.single())
+
+      // The reveal rides the state the moment the outcome lands.
+      val revealed = vm.state.value as MatchUiState.MatchComplete
+      val ranked = revealed.ranked
+      assertEquals("the server's own previous RP", 600, ranked!!.previousRP)
+      assertEquals("the server's own delta", 30, ranked.delta)
+      assertEquals("the current RP derived off the server's pair", 630, ranked.rp)
+      assertEquals("the tier chip marks the calling seat", "p1", ranked.userSeat)
+      assertEquals("the standings are untouched by the reveal", beforeAnySettle.standings, revealed.standings)
+      // currentMatchId handling is unchanged: cleared once, on first sight.
+      assertEquals(1, players.clears.get())
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * A redelivery of the SAME terminal document must not re-trigger — the
+   * trigger is once per session, the claim record is once per match — and
+   * must not clobber the reveal that landed between deliveries: the
+   * standings are a pure function of the document, so republishing them
+   * could only erase what the settlement gave the screen.
+   */
+  @Test
+  fun rankedComplete_redeliveriesReTriggerNothingAndKeepTheReveal() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = completeRankedDoc()
+      val settlements = ScriptedSettlements(
+        SettlementPort.SettlementOutcome.Settled(replayed = false, you = theMovement()),
+      )
+      val vm = makeVm("uid-a", Dispatchers.Main, settlements = settlements)
+      vm.start("m-ranked")
+      advanceUntilIdle()
+      broadcast("m-ranked")
+
+      // A NEW version of the same terminal document — exactly what the
+      // snapshot fan-out, a metadata bump, or the settlement's own
+      // correction write would deliver.
+      store.bumpVersion()
+      broadcast("m-ranked")
+      store.bumpVersion()
+      broadcast("m-ranked")
+
+      assertEquals("one settle call per session, however many deliveries", 1, settlements.calls.get())
+      val revealed = vm.state.value as MatchUiState.MatchComplete
+      assertEquals("the reveal survived the redeliveries", 600, revealed.ranked!!.previousRP)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * A second client's call is absorbed by the SERVER's claim record, and a
+   * replay that returns the recorded movement still shows the reveal —
+   * `replayed` changes nothing about what the screen is told.
+   */
+  @Test
+  fun rankedComplete_aReplayShowsTheRecordedMovement() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = completeRankedDoc()
+      val settlements = ScriptedSettlements(
+        SettlementPort.SettlementOutcome.Settled(replayed = true, you = theMovement()),
+      )
+      val vm = makeVm("uid-a", Dispatchers.Main, settlements = settlements)
+      vm.start("m-ranked")
+      broadcast("m-ranked")
+      advanceUntilIdle()
+
+      assertEquals(1, settlements.calls.get())
+      val ranked = (vm.state.value as MatchUiState.MatchComplete).ranked
+      assertEquals("the recorded movement replays whole", 600, ranked!!.previousRP)
+      assertEquals(30, ranked.delta)
+      assertEquals(630, ranked.rp)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * The no-settlement paths all land on the same thing: plain standings, no
+   * reveal, no crash, no new word on the screen. NOT_RANKED (the mode gate's
+   * answer), a server denial, a `you` the response does not carry, and a
+   * retryable transport failure exhausted to its bound.
+   */
+  @Test
+  fun rankedComplete_notRankedDeniedAbsentYouAndExhaustedRetriesShowPlainStandings() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      val outcomes = listOf(
+        SettlementPort.SettlementOutcome.NotRanked("UNRANKED"),
+        SettlementPort.SettlementOutcome.Denied,
+        SettlementPort.SettlementOutcome.Settled(replayed = true, you = null),
+        SettlementPort.SettlementOutcome.Retryable,
+      )
+      for (outcome in outcomes) {
+        factory = BroadcastFactory()
+        players = FakePlayers()
+        store = FakeMatchStore(Dealer.dealHands(11))
+        store.doc = completeRankedDoc()
+        val settlements = ScriptedSettlements(outcome)
+        val vm = makeVm("uid-a", Dispatchers.Main, settlements = settlements)
+        vm.start("m-not-revealed")
+        broadcast("m-not-revealed")
+        advanceUntilIdle()
+
+        val complete = vm.state.value as MatchUiState.MatchComplete
+        assertNull("$outcome reveals nothing", complete.ranked)
+        assertEquals(
+          buildStandings(mapOf("p1" to 120, "p2" to 98, "p3" to 134, "p4" to 77)),
+          complete.standings,
+        )
+        assertTrue("no crash, just plain standings", players.clears.get() == 1)
+
+        // The exhausted-retry loop ran its bounded budget and stopped.
+        val expectedCalls = if (outcome is SettlementPort.SettlementOutcome.Retryable) {
+          // failures 1..6 each back off and re-ask; the 7th collapses the
+          // budget exactly like the S61 alarm's.
+          7
+        } else {
+          1
+        }
+        assertEquals(expectedCalls, settlements.calls.get())
+
+        vm.stop()
+      }
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * ROOM mode never settles: the trigger is RANKED-only (RD28), so a
+   * completed ROOM match costs the settler nothing at all.
+   */
+  @Test
+  fun roomComplete_speaksNoSettlementWord() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = completeRankedDoc().copy(mode = MatchMode.ROOM)
+      val settlements = ScriptedSettlements(
+        SettlementPort.SettlementOutcome.Settled(replayed = false, you = theMovement()),
+      )
+      val vm = makeVm("uid-a", Dispatchers.Main, settlements = settlements)
+      vm.start("m-room")
+      broadcast("m-room")
+      advanceUntilIdle()
+
+      assertEquals("a ROOM match never asks the settler", 0, settlements.calls.get())
+      assertTrue(vm.state.value is MatchUiState.MatchComplete)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  // ==========================================================================
   //  The hermetic stand-ins
   // ==========================================================================
 
@@ -1456,6 +1711,54 @@ class OnlineMatchViewModelTest {
    */
   private object SeatReclaimPortStub : SeatReclaimPort {
     override suspend fun reclaim(matchId: String) = SeatReclaimPort.Reclaim.Denied
+  }
+
+  /**
+   * [makeVm]'s default settlement port: no section but the ranked-settlement
+   * one should ever reach the callable, so an unexpected call is a loud
+   * failure rather than a silently-swallowed outcome.
+   */
+  private object SettlementPortStub : SettlementPort {
+    override suspend fun settle(matchId: String): SettlementPort.SettlementOutcome =
+      error("no test outside the ranked-settlement section expects a settle call")
+  }
+
+  /**
+   * A [SettlementPort] that answers from a script and records every call —
+   * [ScriptedTimeouts]' idiom, for the same reason: the retry and
+   * once-per-session semantics are client logic, so a call is the observable
+   * and the script is the answer the server would have given. Nothing drives
+   * the real callable yet, and no settlement emulator/device suite exists;
+   * the mapping test pins the response shape until one does.
+   *
+   * [holdNextCall] makes the NEXT settle() suspend until [release] — a
+   * round-trip whose answer has not come back yet — so a test can observe
+   * the screen while the network is still pending.
+   */
+  private class ScriptedSettlements(
+    vararg scripted: SettlementPort.SettlementOutcome,
+  ) : SettlementPort {
+    private val script = scripted.toList()
+    val calls = AtomicInteger(0)
+    val matchIds = mutableListOf<String>()
+    private var gate: CompletableDeferred<Unit>? = null
+
+    fun holdNextCall() {
+      gate = CompletableDeferred()
+    }
+
+    fun release() {
+      gate?.complete(Unit)
+      gate = null
+    }
+
+    override suspend fun settle(matchId: String): SettlementPort.SettlementOutcome {
+      matchIds.add(matchId)
+      calls.incrementAndGet()
+      gate?.let { it.await(); gate = null }
+      val index = calls.get() - 1
+      return script.getOrElse(index) { script.last() }
+    }
   }
 
   /**

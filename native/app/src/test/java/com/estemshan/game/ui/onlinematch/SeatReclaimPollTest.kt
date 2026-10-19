@@ -12,6 +12,7 @@ import com.estemshan.services.MatchListenerFactory
 import com.estemshan.services.MatchListenerRegistration
 import com.estemshan.services.PlayerPort
 import com.estemshan.services.SeatReclaimPort
+import com.estemshan.services.SettlementPort
 import com.estemshan.services.model.AdvanceResult
 import com.estemshan.services.model.BiddingActionInput
 import com.estemshan.services.model.DealResult
@@ -113,6 +114,7 @@ class SeatReclaimPollTest {
       heartbeat = Heartbeat.None,
       timeouts = NotActiveTimeouts,
       reclaims = reclaims,
+      settlements = NotRankedSettlements,
     )
   }
 
@@ -669,6 +671,19 @@ class SeatReclaimPollTest {
    *  they assert on, and NOT_ACTIVE ends one that does. */
   private object NotActiveTimeouts : DecisionTimeoutPort {
     override suspend fun resolve(matchId: String) = DecisionTimeoutPort.Resolution.NotActive
+  }
+
+  /**
+   * [makeVm]'s settlement seam: these tests never deliver a completed RANKED
+   * match, so no settle call is expected — and if a fixture ever grows one,
+   * NOT_RANKED is a terminal no-op (RD28): nothing to reveal, no retry to
+   * arm. The port exists for the same reason as the other seams here: the
+   * constructor must never
+   * default into OnlineServices, whose lazy getters touch Firebase before any
+   * Context exists on a JVM test thread.
+   */
+  private object NotRankedSettlements : SettlementPort {
+    override suspend fun settle(matchId: String) = SettlementPort.SettlementOutcome.NotRanked("ROOM")
   }
 
   /**
