@@ -160,7 +160,11 @@ class RpApplicationTest {
       appends.filter { it["outcomeKind"] == SettlementLedger.OUTCOME_CORRECTED }.reversed()
   }
 
-  private suspend fun expectDenied(code: String, messagePart: String, block: suspend () -> Any?) {
+  private suspend fun expectDenied(
+    code: String,
+    vararg messageParts: String,
+    block: suspend () -> Any?,
+  ): Throwable {
     val thrown = try {
       block()
       throw AssertionError("expected an HttpsError")
@@ -169,10 +173,13 @@ class RpApplicationTest {
       e
     }
     assertEquals(code, thrown.asDynamic().code as String, "denied with: ${thrown.message}")
-    assertTrue(
-      thrown.message?.contains(messagePart) == true,
-      "expected '${thrown.message}' to name '$messagePart'",
-    )
+    messageParts.forEach { messagePart ->
+      assertTrue(
+        thrown.message?.contains(messagePart) == true,
+        "expected '${thrown.message}' to name '$messagePart'",
+      )
+    }
+    return thrown
   }
 
   // ── the golden fixture is re-derived, not assumed ─────────────────
@@ -1171,14 +1178,14 @@ class RpApplicationTest {
    */
   private suspend fun expectWholeSettlementDenied(
     profiles: Map<String, Map<String, Any?>>,
-    messagePart: String,
+    vararg messageParts: String,
   ) {
     val db = FakeRpDb(
       match = SettlementFixtures.matchFields(uids),
       archives = archives,
       profiles = profiles,
     )
-    expectDenied("failed-precondition", messagePart) {
+    expectDenied("failed-precondition", *messageParts) {
       settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
     }
     assertEquals(0, db.claims, "a fail-closed settlement writes no claim")
@@ -1376,5 +1383,292 @@ class RpApplicationTest {
         "movement for '$uid' records exactly three numbers",
       )
     }
+  }
+
+  // ── corrupt numbers fail the whole settlement, never truncate ─────
+
+  /**
+   * A fractional RP is not read as 690 by truncation: the whole table refuses
+   * before any profile read can be written, so no seat is paid from a number
+   * that was never a valid RP.
+   */
+  @Test
+  fun aFractionalRpFailsTheWholeSettlementClosed() = runTest {
+    expectWholeSettlementDenied(
+      corruptingU3(mapOf("rp" to 690.5)),
+      "seated player 'u3' of match 'm1' has a players/rp",
+      "(690.5)",
+      "not a finite whole number from 0 to ${Int.MAX_VALUE}",
+    )
+  }
+
+  /** Negative RP is corrupt, not a value to floor to Bronze III's 0. */
+  @Test
+  fun aNegativeRpFailsTheWholeSettlementClosed() = runTest {
+    expectWholeSettlementDenied(
+      corruptingU3(mapOf("rp" to -1)),
+      "seated player 'u3' of match 'm1' has a players/rp",
+      "(-1)",
+      "not a finite whole number from 0 to ${Int.MAX_VALUE}",
+    )
+  }
+
+  /** A whole number past Int.MAX_VALUE must not be narrowed into an Int. */
+  @Test
+  fun anOutOfIntRpFailsTheWholeSettlementClosed() = runTest {
+    expectWholeSettlementDenied(
+      corruptingU3(mapOf("rp" to 3.0E9)),
+      "seated player 'u3' of match 'm1' has a players/rp",
+      "not a finite whole number from 0 to ${Int.MAX_VALUE}",
+    )
+  }
+
+  /** NaN and either infinity are not numbers a settlement may truncate. */
+  @Test
+  fun aNonFiniteRpFailsTheWholeSettlementClosed() = runTest {
+    for (value in listOf(Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY)) {
+      expectWholeSettlementDenied(
+        corruptingU3(mapOf("rp" to value)),
+        "seated player 'u3' of match 'm1' has a players/rp",
+        "not a finite whole number from 0 to ${Int.MAX_VALUE}",
+      )
+    }
+  }
+
+  /** Every counter shares the same finite/integral gate; a fraction never folds. */
+  @Test
+  fun everyStatCounterRejectsAFraction() = runTest {
+    for (field in listOf(
+      "rankedGamesPlayed",
+      "rankedKingCount",
+      "rankedSecondCount",
+      "rankedThirdCount",
+      "rankedKozCount",
+    )) {
+      expectWholeSettlementDenied(
+        corruptingU3(mapOf(field to 1.5)),
+        "seated player 'u3' of match 'm1' has a players/$field",
+        "not a finite whole number within the Int range",
+      )
+    }
+  }
+
+  /**
+   * The pre-existing negative-integer and non-numeric refusals keep their
+   * messages, while the malformed shapes around them (a negative fraction,
+   * NaN, infinity, out-of-Int) are refused by the finite/whole gate first.
+   */
+  @Test
+  fun malformedStatCounterNumbersFailTheWholeSettlementClosed() = runTest {
+    for (value in listOf(-0.5, 3.0E9, Double.NaN, Double.POSITIVE_INFINITY)) {
+      expectWholeSettlementDenied(
+        corruptingU3(mapOf("rankedKingCount" to value)),
+        "seated player 'u3' of match 'm1' has a players/rankedKingCount",
+        "not a finite whole number within the Int range",
+      )
+    }
+  }
+
+  /**
+   * A stored tier/division below the rung its RP resolves to is corrupt data.
+   * The helper names the RP and both rungs; the settlement does not repair the
+   * identity or write any seat.
+   */
+  @Test
+  fun aStoredRankBelowTheRungRpImpliesFailsTheWholeSettlementClosed() = runTest {
+    expectWholeSettlementDenied(
+      corruptingU3(mapOf("tier" to "Gold", "division" to "III", "rp" to 150)),
+      "seated player 'u3' of match 'm1'",
+      "progression mismatch at rp=150",
+      "rankAt(150) is Bronze I",
+      "stored tier/division is Gold III",
+    )
+  }
+
+  /** The mirror case: a stored rung above the RP-derived rung. */
+  @Test
+  fun aStoredRankAboveTheRungRpImpliesFailsTheWholeSettlementClosed() = runTest {
+    expectWholeSettlementDenied(
+      corruptingU3(mapOf("tier" to "Bronze", "division" to "III", "rp" to 690)),
+      "seated player 'u3' of match 'm1'",
+      "progression mismatch at rp=690",
+      "rankAt(690) is Gold III",
+      "stored tier/division is Bronze III",
+    )
+  }
+
+  /**
+   * Four Kings settle at the 3,000 floor. Every seat's ladder ordinal is 18,
+   * so strength = (18 - 0) × 2 = 36 and the tier term is 0:
+   *
+   * ```
+   * KING   30 + 36 = 66  → 3066
+   * SECOND 15 + 36 = 51  → 3051
+   * THIRD  -8 + 36 = 28  → RD4 sign clamp holds it at 0 → 3000
+   * KOZ   -20 + 36 = 16  → RD4 sign clamp holds it at 0 → 3000
+   * ```
+   *
+   * The last two are negative-base outcomes; `computeBaseDelta` clamps them
+   * to <= 0, so they cannot climb above the ceiling. The requested raw sums
+   * (3028/3016) would invert RD4's sign rule and are not reachable without an
+   * engine change, which this task forbids.
+   */
+  @Test
+  fun aKingTableSettlesAtTheCeiling() = runTest {
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = uids.associateWith { uid ->
+        SettlementFixtures.profile(uid, 3000, tier = "King", division = "")
+      },
+    )
+
+    val response = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+
+    assertEquals(4, db.profileWrites.size, "every seat settles together")
+    assertEquals(
+      expectedWrite(rp = 3066, tier = "King", division = "", king = 1),
+      db.writeFor("u1"),
+    )
+    assertEquals(
+      expectedWrite(rp = 3051, tier = "King", division = "", second = 1),
+      db.writeFor("u4"),
+    )
+    assertEquals(
+      expectedWrite(rp = 3000, tier = "King", division = "", third = 1),
+      db.writeFor("u3"),
+    )
+    assertEquals(
+      expectedWrite(rp = 3000, tier = "King", division = "", koz = 1),
+      db.writeFor("u2"),
+    )
+    assertEquals(mapOf("previousRp" to 3000, "rp" to 3066, "delta" to 66), response["you"])
+  }
+
+  // ── replay refuses corrupt recorded movements ─────────────────────
+
+  private fun replayClaim(movements: Any?): Map<String, Any?> = linkedMapOf(
+    "settledBy" to "u1",
+    "outcome" to linkedMapOf<String, Any?>(
+      "ok" to true,
+      "settled" to true,
+      "replayed" to false,
+      "matchId" to "m1",
+      "corrected" to false,
+      "finalScores" to SettlementFixtures.GOLDEN_SCORES,
+      "winnerIds" to listOf("p1"),
+      "claimedScores" to SettlementFixtures.GOLDEN_SCORES,
+      "claimedWinners" to listOf("p1"),
+      "rounds" to 1,
+    ),
+    "movements" to movements,
+  )
+
+  private suspend fun expectReplayDenied(
+    movement: Map<String, Any?>,
+    vararg messageParts: String,
+  ) {
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      claim = replayClaim(mapOf("u1" to movement)),
+    )
+    expectDenied("failed-precondition", *messageParts) {
+      settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    }
+    assertEquals(0, db.profileReads, "a refused replay reads no profile")
+    assertEquals(0, db.profileWrites.size, "a refused replay writes no profile")
+    assertEquals(0, db.claims, "a refused replay writes no claim")
+    assertEquals(0, db.corrections, "a refused replay writes no correction")
+  }
+
+  /**
+   * A recorded movement is a claim about numbers that were already awarded.
+   * Truncating a fractional/out-of-range/non-numeric one would report an
+   * award the caller never received; the replay refuses instead.
+   */
+  @Test
+  fun aCorruptRecordedMovementRefusesTheReplay() = runTest {
+    expectReplayDenied(
+      mapOf("previousRp" to 690.5, "rp" to 732, "delta" to 42),
+      "replay for 'u1'",
+      "movements/previousRp",
+      "690.5",
+    )
+    expectReplayDenied(
+      mapOf("previousRp" to 690, "rp" to 3.0E9, "delta" to 42),
+      "replay for 'u1'",
+      "movements/rp",
+    )
+    expectReplayDenied(
+      mapOf("previousRp" to 690, "rp" to 732, "delta" to "42"),
+      "replay for 'u1'",
+      "movements/delta",
+      "42",
+    )
+  }
+
+  /** delta may be negative; only its finiteness/wholeness/range are constrained. */
+  @Test
+  fun aNegativeRecordedDeltaStillReplays() = runTest {
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      claim = replayClaim(
+        mapOf("u1" to mapOf("previousRp" to 150, "rp" to 125, "delta" to -25)),
+      ),
+    )
+
+    val replay = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+
+    assertEquals(true, replay["replayed"])
+    assertEquals(mapOf("previousRp" to 150, "rp" to 125, "delta" to -25), replay["you"])
+    assertEquals(0, db.profileReads)
+    assertEquals(0, db.profileWrites.size)
+  }
+
+  /**
+   * Absent/null movement keys remain the legacy no-`you` path: a claim that
+   * does not carry all three numbers still replays, but reports no movement.
+   */
+  @Test
+  fun aMovementWithAnAbsentOrNullKeyReplaysWithoutYou() = runTest {
+    for (movement in listOf(
+      mapOf<String, Any?>("previousRp" to 690, "rp" to 732),
+      mapOf<String, Any?>("previousRp" to 690, "rp" to 732, "delta" to null),
+    )) {
+      val db = FakeRpDb(
+        match = SettlementFixtures.matchFields(uids),
+        archives = archives,
+        claim = replayClaim(mapOf("u1" to movement)),
+      )
+
+      val replay = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+
+      assertEquals(true, replay["replayed"])
+      assertNull(replay["you"])
+      assertEquals(0, db.profileWrites.size)
+    }
+  }
+
+  /**
+   * A movements map that names another caller is not the caller's business:
+   * the slice is absent, so the replay has no `you` and reads no profile.
+   */
+  @Test
+  fun aMovementForAnotherCallerReplaysWithoutYou() = runTest {
+    val db = FakeRpDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      claim = replayClaim(
+        mapOf("u2" to mapOf("previousRp" to 690, "rp" to 682, "delta" to -8)),
+      ),
+    )
+
+    val replay = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+
+    assertEquals(true, replay["replayed"])
+    assertNull(replay["you"])
+    assertEquals(0, db.profileWrites.size)
   }
 }
