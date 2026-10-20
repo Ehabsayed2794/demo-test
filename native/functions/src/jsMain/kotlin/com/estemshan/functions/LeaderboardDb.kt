@@ -64,6 +64,21 @@ interface LeaderboardDb {
    * each implementation has to remember.
    */
   suspend fun readSeasonProfiles(seasonId: String): List<StoredProfile>
+
+  /**
+   * The season a caller that names none is asking about — the server's
+   * current season, read from `seasons/current`. ONLY the absent/null case
+   * crosses this port: a caller who names an explicit season must be served
+   * it without this read ever running, because a named season is a request
+   * for that historical board, not a question to re-decide.
+   *
+   * The default is the bootstrap season ([DEFAULT_SEASON_ID]) — which keeps
+   * every existing fake compiling — and real implementations override it:
+   * [AdminLeaderboardDb] reads the S59 singleton and answers whatever an
+   * existing document authoritatively names ([currentSeasonIdOf]), failing
+   * closed on a malformed one.
+   */
+  suspend fun currentSeasonId(): String = DEFAULT_SEASON_ID
 }
 
 /** Requested rows default to a full page; the response always reports the whole board size. */
@@ -94,22 +109,71 @@ private const val PLAYERS_COLLECTION = "players"
 private const val SEASON_FIELD = "seasonId"
 
 /**
- * The season a caller that names none is asking about.
+ * The bootstrap season — the answer when `seasons/current` does not exist.
  *
  * Absent is a normal request shape, not a mistake — and which season is
  * "current" stays the server's answer, never a client claim. A value that IS
  * present but unusable fails closed instead of silently resolving here: a
  * client that meant `s2` must not be handed `s1`'s board and never know.
  *
- * TODO(S64/S59): this literal is a placeholder for the server's current-season
- * read, not the answer. Once S59's season document exists this must resolve
- * from it, and only then is "which board does an unnamed request mean?" really
- * the server's decision. Out of scope here: S64 reads a season, it does not
- * own which season is live. The response echo of the season actually served
- * stays whatever this resolves to, so a caller is never shown one board while
- * believing another.
+ * This literal is now exactly one thing, the bootstrap: S59's season
+ * document (`seasons/current`) owns which season is live, and an existing
+ * document is authoritative — a blank or non-string `seasonId` in it fails
+ * closed ([currentSeasonIdOf]) rather than falling back here, so a reset
+ * that left an unreadable document behind can never silently hand an unnamed
+ * request back to `s1`. The response echo of the season actually served
+ * stays whatever this resolves to, so a caller is never shown one board
+ * while believing another.
  */
 private const val DEFAULT_SEASON_ID = "s1"
+
+/**
+ * Where the live season lives: one singleton document, `seasons/current`
+ * (S59). Two per-file private constants would be two chances to misspell the
+ * same path, so the pair is module-shared — the profile's Tx resolves the
+ * same singleton inside its own transaction.
+ */
+internal const val SEASONS_COLLECTION = "seasons"
+internal const val CURRENT_SEASON_DOC = "current"
+
+/**
+ * The current season, as S59's singleton carries it — the one parser every
+ * current-season read resolves through, so the board's answer and the
+ * profile's answer can never disagree about the same document.
+ *
+ * - No document (`exists = false`) is THE bootstrap: [DEFAULT_SEASON_ID].
+ *   That is the only thing a missing document can produce (a fresh
+ *   deployment serves season one until the season job writes the document)
+ *   and it is not an error.
+ * - An existing document is authoritative. Its usable answer is a non-blank
+ *   `String` `seasonId` on a Kotlin map — exactly what the Admin
+ *   implementations hand over after [dynamicToKotlin] converts the raw JS
+ *   object — and that value is served VERBATIM: the id is case-sensitive and
+ *   never normalized, because "S1" and "s1" are two different names for two
+ *   different boards (RD24), and a silently normalized name would silently
+ *   blend them.
+ * - Everything else — a non-map (data that is not a document's fields at
+ *   all), an absent or blank `seasonId`, a non-string one — FAILS CLOSED
+ *   with `failed-precondition`. No recovery, no fallback, and the message is
+ *   a fixed literal that never echoes the malformed value: a read-time error
+ *   message is not a place to broadcast a client-controllable datum into
+ *   every log collector.
+ *
+ * `status`, `targetSeasonId`, `nextSeasonId`, `startsAt` and `endsAt` are
+ * deliberately NOT consulted: the served season is `seasonId`, full stop.
+ * During a reset (status `RUNNING`) the outgoing season stays the served one
+ * until the season job commits the new one as `seasonId` — serving
+ * `targetSeasonId` would flip the live board mid-reset, onto a season the
+ * profiles have not been moved into yet.
+ */
+internal fun currentSeasonIdOf(exists: Boolean, data: Any?): String {
+  if (!exists) return DEFAULT_SEASON_ID
+  // The season document's usable field carries the same top-level name as a
+  // player profile's ([SEASON_FIELD]) — one name, two documents.
+  val raw = (data as? Map<*, *>)?.get(SEASON_FIELD)
+  if (raw is String && raw.isNotBlank()) return raw
+  throw HttpsError("failed-precondition", "seasons/current has no usable seasonId.")
+}
 
 /**
  * A row's identity is the (tier, division) pair exactly as stored, resolved
@@ -198,8 +262,10 @@ internal fun requireBoardWithinCap(size: Int, seasonId: String) {
 }
 
 /**
- * Runs one leaderboard read: auth → arguments → season read → cap → validate →
- * order → project. Throws [HttpsError] on every denial (the client switches on
+ * Runs one leaderboard read: auth → argument checks (the limit parsed BEFORE
+ * the season is resolved, so a rejected limit costs zero current-season reads
+ * and zero profile reads) → the season's profiles → cap → validate → order →
+ * project. Throws [HttpsError] on every denial (the client switches on
  * `code`, as in [settleOnce]).
  *
  * Returns Kotlin maps and the callable handler applies [toPlain] once, at the
@@ -212,8 +278,16 @@ suspend fun leaderboardOnce(db: LeaderboardDb, request: CallableRequest): Map<St
 
   // The runtime delivers request.data as a PLAIN JS OBJECT, not a Kotlin map.
   val data = dynamicToKotlin(request.data) as? Map<*, *>
-  val seasonId = resolveSeason(data?.get(SEASON_FIELD))
+
+  // The limit is parsed before the season is resolved — both are argument
+  // denials, and a rejected limit must cost zero current-season reads and
+  // zero profile reads even when the season would still need resolving.
   val limit = parseLimit(data?.get("limit"))
+
+  // An absent or explicitly null seasonId is the ONLY path that resolves
+  // through the current-season document; a named season is validated locally
+  // and costs no season read at all.
+  val seasonId = resolveSeason(db, data?.get(SEASON_FIELD))
 
   // Bound the read before working through it. Classifying a document past the
   // cap to discover the board is oversized would spend the very cost the cap
@@ -270,21 +344,27 @@ internal fun skipLine(seasonId: String, reason: String): String =
   "S64_LEADERBOARD_SKIP seasonId=$seasonId reason=$reason"
 
 /**
- * Absent names [DEFAULT_SEASON_ID]; a value that IS present must be a non-blank
- * string, and anything else is refused rather than guessed.
+ * Absent or explicitly `null` names the SERVER's current season, resolved
+ * through the port's `seasons/current` read; a value that IS present must be
+ * a non-blank string, and anything else is refused rather than guessed.
  *
  * `null` and `undefined` are not separable here — the callable's JSON payload
  * drops an undefined field on the way in, and Kotlin/JS reads both as null — so
  * an explicit null means "no season given", the same answer as no key at all.
- * The distinction that matters is the one this draws: silence resolves to the
- * server's current season, a malformed name gets an error, because a caller
- * that meant `s2` and silently received `s1` is the one failure mode a
- * season-scoped board cannot afford (RD24).
+ * The distinction that matters is the one this draws: silence is resolved by
+ * ONE current-season read (the server's answer, never a client claim), while a
+ * named season is validated locally and never opens the current-season
+ * document — a caller asking for a historical board by name (RD27's season
+ * isolation) must get exactly that board, whether or not the server now calls
+ * another season current, so no named season is checked against the current
+ * one. A malformed name gets an error, because a caller that meant `s2` and
+ * silently received `s1` is the one failure mode a season-scoped board cannot
+ * afford (RD24).
  */
-private fun resolveSeason(value: Any?): String {
+private suspend fun resolveSeason(db: LeaderboardDb, value: Any?): String {
   val message = "getRankedLeaderboard: seasonId must be a non-blank string."
   return when (value) {
-    null -> DEFAULT_SEASON_ID
+    null -> db.currentSeasonId()
     is String -> value.takeIf { it.isNotBlank() } ?: throw HttpsError("invalid-argument", message)
     else -> throw HttpsError("invalid-argument", message)
   }
@@ -356,5 +436,19 @@ class AdminLeaderboardDb : LeaderboardDb {
         fields = dynamicToKotlin(doc.data()) as? Map<String, Any?> ?: emptyMap(),
       )
     }
+  }
+
+  /**
+   * The one current-season read, resolved per request — no caching: the
+   * season job may commit `seasons/current` between two calls, and a stale
+   * cache would serve the reset's target as if it had already landed (RD24:
+   * the outgoing season stays served until the document itself names the new
+   * one). The raw JS snapshot is converted through [dynamicToKotlin] exactly
+   * as [readSeasonProfiles] converts its documents; parsing is
+   * [currentSeasonIdOf]'s, shared with the profile path.
+   */
+  override suspend fun currentSeasonId(): String {
+    val snap = db.collection(SEASONS_COLLECTION).doc(CURRENT_SEASON_DOC).get().await()
+    return currentSeasonIdOf(snap.exists, dynamicToKotlin(snap.data()))
   }
 }
