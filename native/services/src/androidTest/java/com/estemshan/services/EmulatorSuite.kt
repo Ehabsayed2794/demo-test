@@ -6,7 +6,6 @@ import com.google.firebase.FirebaseOptions
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.functions.FirebaseFunctions
-import com.google.firebase.installations.FirebaseInstallations
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.tasks.await
@@ -123,37 +122,29 @@ object EmulatorSuite {
   }
 
   /**
-   * S74/S72 — release the named apps a test minted, after their Firebase
-   * work has stopped.
+   * S74/S72 — terminate the Firestore clients a test minted.
    *
-   * `FirebaseApp.delete()` does not join the FirebaseInstallations executor.
-   * A Functions call starts a FID registration/refresh on that executor; if
-   * the app is deleted first, its worker reaches
+   * We deliberately do NOT call `FirebaseApp.delete()` here. Deletion is not
+   * synchronized with Firebase's shared background executor: a Functions
+   * call starts FirebaseInstallations work, and if the app is deleted while
+   * that work is still queued or running, the worker reaches
    * `FirebaseInstallations.getPrefsWithGeneratedIdMultiProcessSafe` on the
-   * already-deleted app and throws `IllegalStateException: FirebaseApp was
-   * deleted` off the test thread. That is a process crash, so the victim is
-   * the next test, not the one that leaked (CI run 39305235939, S70 attempt
-   * 1). Awaiting `id` drains that work, and terminating Firestore first
-   * stops its connectivity callbacks; only then is `delete()` safe.
+   * deleted app and throws `IllegalStateException: FirebaseApp was deleted`
+   * off the test thread. That is an uncaught process crash, so it fails
+   * whichever test runs next. There is no public join for that executor:
+   * `getId()` returns immediately when the FID is cached, and `getToken()`
+   * is not a barrier because the background pool has four threads. The only
+   * reliable fix is to keep the app alive.
    *
-   * The installations drain is opt-in because only a suite that invokes a
-   * callable starts that work: a suite that never uses Functions would
-   * otherwise make an unnecessary FID registration on the way out.
+   * `terminate()` is what the quota needs: it shuts down the Firestore
+   * client and unregisters its ConnectivityManager callback. The app
+   * objects themselves are cheap and die with the instrumentation process.
    *
-   * Cleanup is best-effort: a failed drain must not turn a green test red,
-   * but `delete()` itself stays unguarded so a real leak is visible.
+   * Cleanup is best-effort: a failure here must not turn a green test red.
    */
-  fun releaseClients(
-    context: Context,
-    tagPrefix: String,
-    awaitInstallations: Boolean,
-  ) = runBlocking {
+  fun releaseFirestoreClients(context: Context, tagPrefix: String) = runBlocking {
     for (app in FirebaseApp.getApps(context).filter { it.name.contains(tagPrefix) }) {
-      if (awaitInstallations) {
-        runCatching { FirebaseInstallations.getInstance(app).id.await() }
-      }
       runCatching { FirebaseFirestore.getInstance(app).terminate().await() }
-      app.delete()
     }
   }
 
