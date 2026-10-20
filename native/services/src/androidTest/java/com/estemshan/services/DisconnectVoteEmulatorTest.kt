@@ -83,21 +83,21 @@ class DisconnectVoteEmulatorTest {
    * during VoteKickEmulatorTest.failFlow_cooldownBlocksSameTarget, leaving
    * the job red with two tests unrun. The class has since grown to seven
    * tests — 28 clients per run — so this cleanup is load-bearing today, not
-   * a precaution. Deleting our named apps
+   * a precaution. Terminating our named apps' Firestore clients
    * (`emu-<n>-s74_*`) after each test gives the suite back its pre-S74
-   * footprint, so no other suite pays for this one.
+   * connection footprint, so no other suite pays for this one.
    *
-   * Deleting an app is only safe after its FirebaseInstallations work has
-   * drained: the callables above start a FID registration/refresh, and its
-   * worker thread would otherwise call back into the deleted app and crash
-   * the process (CI 39305235939: `IllegalStateException: FirebaseApp was
-   * deleted` in this class's third test). [EmulatorSuite.releaseClients]
-   * awaits the FID and terminates Firestore before `delete()`.
+   * We terminate rather than delete: `FirebaseApp.delete()` races with the
+   * shared FirebaseInstallations executor that the callables above start,
+   * and its worker's `FirebaseApp was deleted` is a process crash (CI
+   * 39393052671, first test). [EmulatorSuite.releaseFirestoreClients] keeps
+   * the app alive for any in-flight FID work while still releasing the
+   * Firestore callbacks the quota counts.
    */
   @After
   fun releaseOurFirebaseClients() {
     val context = InstrumentationRegistry.getInstrumentation().targetContext
-    EmulatorSuite.releaseClients(context, "-s74_", awaitInstallations = true)
+    EmulatorSuite.releaseFirestoreClients(context, "-s74_")
   }
 
   private companion object {

@@ -59,6 +59,13 @@ class SeasonLeaderboardTest {
 
     /** A request argument the caller did not send at all — distinct from sending `null`. */
     val ABSENT = Any()
+
+    /**
+     * The port's `seasons/current` is absent: no document exists, so
+     * [LeaderboardDb.currentSeasonId]'s own default — the bootstrap season —
+     * is what the fake serves, exactly as the Admin port would.
+     */
+    val NO_SEASON_DOC = Any()
   }
 
   /**
@@ -111,9 +118,26 @@ class SeasonLeaderboardTest {
     profile("p5", tier = "Bronze", division = "III", rp = 10),
   )
 
-  private class FakeLeaderboardDb(private val profiles: List<StoredProfile>) : LeaderboardDb {
+  private class FakeLeaderboardDb(
+    private val profiles: List<StoredProfile>,
+    private val currentSeasonDoc: Any? = NO_SEASON_DOC,
+  ) : LeaderboardDb {
     var reads = 0
     var readSeasonId: String? = null
+    var seasonReads = 0
+
+    /**
+     * The current-season read, as this scenario's S59 singleton answers:
+     * no document at all → the interface's own default (the bootstrap), a
+     * handed-over document → parsed by the SAME production helper the Admin
+     * port calls — so a malformed singleton fails exactly as it does live,
+     * and the count of this read is testable on every path.
+     */
+    override suspend fun currentSeasonId(): String {
+      seasonReads++
+      if (currentSeasonDoc == NO_SEASON_DOC) return super<LeaderboardDb>.currentSeasonId()
+      return currentSeasonIdOf(exists = true, data = dynamicToKotlin(currentSeasonDoc))
+    }
 
     override suspend fun readSeasonProfiles(seasonId: String): List<StoredProfile> {
       reads++
@@ -176,8 +200,9 @@ class SeasonLeaderboardTest {
     uid: String? = "watcher",
     seasonId: Any? = SEASON,
     limit: Any? = null,
+    currentSeasonDoc: Any? = NO_SEASON_DOC,
   ): Pair<FakeLeaderboardDb, Map<String, Any?>> {
-    val db = FakeLeaderboardDb(profiles)
+    val db = FakeLeaderboardDb(profiles, currentSeasonDoc)
     return db to leaderboardOnce(db, fakeRequest(uid, seasonId, limit))
   }
 
@@ -282,6 +307,138 @@ class SeasonLeaderboardTest {
     assertEquals(1, response["total"])
     assertEquals(1, response["skipped"])
     assertNull(you(response))
+  }
+
+  // ── which season is live: the server's current-season read ─────────
+
+  @Test
+  fun anAbsentOrExplicitlyNullSeasonReadsTheCurrentSeasonOnceAndServesIt() = runTest {
+    // The server's own document says s7 — an unnamed request must mean s7's
+    // board, decided by exactly ONE current-season read, and the response
+    // echoes what was served so a caller is never shown one board while
+    // believing another.
+    val (absentDb, absentResponse) = called(
+      listOf(profile("p1", seasonId = "s7")),
+      seasonId = ABSENT,
+      currentSeasonDoc = linkedMapOf<String, Any?>("seasonId" to "s7"),
+    )
+    assertEquals(1, absentDb.seasonReads)
+    assertEquals(1, absentDb.reads, "the season read happened once, then the named season's profiles were read")
+    assertEquals("s7", absentDb.readSeasonId)
+    assertEquals("s7", absentResponse["seasonId"])
+    assertEquals(listOf("Name-p1"), names(absentResponse))
+
+    // Explicit null arrives as the same request shape over JSON (undefined is
+    // dropped on the way in), so it takes the same path — one season read, and
+    // no board outside the resolved season.
+    val (nullDb, nullResponse) = called(
+      listOf(profile("p1", seasonId = "s7"), profile("stale", seasonId = "s1")),
+      seasonId = null,
+      currentSeasonDoc = linkedMapOf<String, Any?>("seasonId" to "s7"),
+    )
+    assertEquals(1, nullDb.seasonReads)
+    assertEquals(1, nullDb.reads)
+    assertEquals("s7", nullDb.readSeasonId)
+    assertEquals("s7", nullResponse["seasonId"])
+    assertEquals(listOf("Name-p1"), names(nullResponse))
+    assertEquals(1, nullResponse["skipped"], "the s1 document is not s7's board, even as a leftover")
+  }
+
+  @Test
+  fun anExplicitSeasonServesTheNamedBoardAndNeverOpensTheCurrentSeasonDocument() = runTest {
+    // The server's current season is s7, and the caller asked for s2 BY NAME.
+    // A named season is a request for that historical board, not a question
+    // to re-decide: zero current-season reads, and the s2 board itself.
+    val (db, response) = called(
+      listOf(
+        profile("s2-king", tier = "King", division = "", rp = 3_200, seasonId = "s2"),
+        profile("s2-gold", tier = "Gold", division = "I", rp = 900, seasonId = "s2"),
+      ),
+      uid = "s2-king",
+      seasonId = "s2",
+      currentSeasonDoc = linkedMapOf<String, Any?>("seasonId" to "s7"),
+    )
+
+    assertEquals(0, db.seasonReads, "an explicit season is a local validation, never a singleton read")
+    assertEquals(1, db.reads)
+    assertEquals("s2", db.readSeasonId)
+    assertEquals("s2", response["seasonId"])
+    assertEquals(listOf("Name-s2-king", "Name-s2-gold"), names(response))
+    assertEquals(listOf(1, 2), positions(response))
+    // The highlight rides the served board's own rows, not the current season.
+    assertEquals(true, rows(response).first()["isCurrentPlayer"])
+
+    // Defense-in-depth pin: the same guarantee holds for a CORRUPT singleton —
+    // an eager current-season read would throw failed-precondition here instead
+    // of serving the named board, on top of the zero counter above.
+    val (brokenDb, brokenResponse) = called(
+      listOf(profile("s2-gold", seasonId = "s2", tier = "Gold", division = "I", rp = 900)),
+      uid = "s2-gold",
+      seasonId = "s2",
+      currentSeasonDoc = linkedMapOf<String, Any?>(),
+    )
+    assertEquals("s2", brokenResponse["seasonId"])
+    assertEquals(0, brokenDb.seasonReads)
+  }
+
+  @Test
+  fun aPresentButUnusableSeasonCostsZeroCurrentSeasonReadsAndZeroProfileReads() = runTest {
+    // A document exists and COULD have been opened; proving it was not is the
+    // point: a named-but-unusable season is an argument denial, decided
+    // locally before either read runs.
+    val db = FakeLeaderboardDb(ladder(), currentSeasonDoc = linkedMapOf<String, Any?>("seasonId" to "s7"))
+    for (season in listOf<Any?>("", "   ", 5, true)) {
+      assertEquals(
+        "invalid-argument",
+        thrownCode { leaderboardOnce(db, fakeRequest("caller", seasonId = season)) },
+      )
+    }
+    assertEquals(0, db.seasonReads)
+    assertEquals(0, db.reads)
+  }
+
+  @Test
+  fun aRejectedLimitCostsZeroCurrentSeasonReadsAndZeroProfileReads() = runTest {
+    // Absent season: the limit is refused BEFORE the current-season document
+    // would be opened to resolve it.
+    val absentSeason = FakeLeaderboardDb(ladder(), currentSeasonDoc = linkedMapOf<String, Any?>("seasonId" to "s7"))
+    assertEquals(
+      "invalid-argument",
+      thrownCode { leaderboardOnce(absentSeason, fakeRequest("caller", seasonId = ABSENT, limit = 0)) },
+    )
+    assertEquals(0, absentSeason.seasonReads)
+    assertEquals(0, absentSeason.reads)
+
+    // Explicit valid season: no singleton read is owed anyway, and the board
+    // must not be opened for an argument that never reaches it.
+    val namedSeason = FakeLeaderboardDb(ladder())
+    assertEquals(
+      "invalid-argument",
+      thrownCode { leaderboardOnce(namedSeason, fakeRequest("caller", limit = 101)) },
+    )
+    assertEquals(0, namedSeason.seasonReads)
+    assertEquals(0, namedSeason.reads)
+  }
+
+  @Test
+  fun aCurrentSeasonDocumentWithoutAUsableSeasonIdFailsBeforeAnyProfileRead() = runTest {
+    // An existing document is authoritative — including authoritatively
+    // unreadable. A blank, non-string or missing `seasonId` fails closed, and
+    // no profile of any season is read past it.
+    for (brokenDoc in listOf(
+      linkedMapOf<String, Any?>(),
+      linkedMapOf<String, Any?>("seasonId" to ""),
+      linkedMapOf<String, Any?>("seasonId" to "   "),
+      linkedMapOf<String, Any?>("seasonId" to 7),
+    )) {
+      val db = FakeLeaderboardDb(ladder(), currentSeasonDoc = brokenDoc)
+      assertEquals(
+        "failed-precondition",
+        thrownCode { leaderboardOnce(db, fakeRequest("watcher", seasonId = ABSENT)) },
+      )
+      assertEquals(1, db.seasonReads, "the singleton WAS opened; failing closed is its read's job")
+      assertEquals(0, db.reads, "no profile is read for a season the server cannot identify")
+    }
   }
 
   // ── the top limit, and the caller's row ─────────────────────────────
@@ -446,8 +603,16 @@ class SeasonLeaderboardTest {
   fun anUnauthenticatedRequestIsDeniedBeforeTheRead() = runTest {
     val db = FakeLeaderboardDb(ladder())
 
-    assertEquals("unauthenticated", thrownCode { leaderboardOnce(db, fakeRequest(uid = null)) })
+    // The season is OMITTED, not named: a named season costs no season read
+    // under any implementation, so only the absent shape can witness
+    // auth-before-resolve. With auth checked first, no singleton read happens;
+    // with resolve-before-auth, exactly one does.
+    assertEquals(
+      "unauthenticated",
+      thrownCode { leaderboardOnce(db, fakeRequest(uid = null, seasonId = ABSENT)) },
+    )
     assertEquals(0, db.reads)
+    assertEquals(0, db.seasonReads, "auth is checked before the season is resolved")
   }
 
   @Test
