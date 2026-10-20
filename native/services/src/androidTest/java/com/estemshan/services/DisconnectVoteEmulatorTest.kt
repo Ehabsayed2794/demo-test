@@ -9,7 +9,6 @@ import com.estemshan.engine.bot.BotPersonality
 import com.estemshan.engine.bot.BotTier
 import com.estemshan.services.model.MatchDoc
 import com.estemshan.services.model.SEAT_IDS
-import com.google.firebase.FirebaseApp
 import com.google.firebase.Timestamp
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.tasks.await
@@ -87,13 +86,18 @@ class DisconnectVoteEmulatorTest {
    * a precaution. Deleting our named apps
    * (`emu-<n>-s74_*`) after each test gives the suite back its pre-S74
    * footprint, so no other suite pays for this one.
+   *
+   * Deleting an app is only safe after its FirebaseInstallations work has
+   * drained: the callables above start a FID registration/refresh, and its
+   * worker thread would otherwise call back into the deleted app and crash
+   * the process (CI 39305235939: `IllegalStateException: FirebaseApp was
+   * deleted` in this class's third test). [EmulatorSuite.releaseClients]
+   * awaits the FID and terminates Firestore before `delete()`.
    */
   @After
   fun releaseOurFirebaseClients() {
     val context = InstrumentationRegistry.getInstrumentation().targetContext
-    for (app in FirebaseApp.getApps(context).filter { it.name.contains("-s74_") }) {
-      app.delete()
-    }
+    EmulatorSuite.releaseClients(context, "-s74_", awaitInstallations = true)
   }
 
   private companion object {
