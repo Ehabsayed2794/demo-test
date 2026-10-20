@@ -12,7 +12,6 @@ import com.estemshan.services.model.MatchDoc
 import com.estemshan.services.model.Reasons
 import com.estemshan.services.session.AuthPort
 import com.estemshan.services.session.GameSessionBridge
-import com.google.firebase.FirebaseApp
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.tasks.await
 import org.junit.After
@@ -64,13 +63,15 @@ class LeaveMatchEmulatorTest {
    * 39046825374 died that way in `VoteKickEmulatorTest.gates_denyWithoutPlayingARound`
    * with this class's two clients left unreleased. Deleting our own named
    * apps (`emu-<n>-s72_*`) keeps the suite at its pre-S72 footprint.
+   *
+   * [EmulatorSuite.releaseClients] terminates Firestore before deleting;
+   * this class never invokes a callable, so it has no FirebaseInstallations
+   * work to drain.
    */
   @After
   fun releaseOurFirebaseClients() {
     val context = InstrumentationRegistry.getInstrumentation().targetContext
-    for (app in FirebaseApp.getApps(context).filter { it.name.contains("-s72_") }) {
-      app.delete()
-    }
+    EmulatorSuite.releaseClients(context, "-s72_", awaitInstallations = false)
   }
 
   private suspend fun twoClients(): Map<String, EmulatorSuite.ClientFirebase> {
