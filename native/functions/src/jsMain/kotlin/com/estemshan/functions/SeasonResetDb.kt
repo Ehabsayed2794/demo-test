@@ -65,8 +65,6 @@ data class SeasonProfile(val playerId: String, val fields: Map<String, Any?>)
  */
 internal const val MAX_RESET_PROFILES = 10_000
 
-private const val SEASONS_COLLECTION = "seasons"
-private const val CURRENT_SEASON_DOC = "current"
 private const val PLAYERS_COLLECTION = "players"
 
 /**
