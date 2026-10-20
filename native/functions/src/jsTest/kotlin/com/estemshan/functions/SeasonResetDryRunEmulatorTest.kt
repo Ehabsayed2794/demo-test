@@ -9,6 +9,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.await
 import kotlinx.coroutines.promise
 import kotlinx.coroutines.test.runTest
+import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -45,12 +46,14 @@ import kotlin.test.assertTrue
  *   FIRESTORE_EMULATOR_HOST=127.0.0.1:8991 GCLOUD_PROJECT=s59-verify \
  *     ./native/gradlew.bat -p native :functions:jsNodeTest
  *
- * Every season and player id carries an "s59e-<nonce>" tag. Emulator suites
- * share ONE database, so a fixed id would silently turn a create into an
- * update — and a leftover profile from another suite would be a foreign-season
- * failure and make the exact plans below impossible. [clearPlayers] therefore
- * wipes only this run's own "s59e-<nonce>-" documents before every test; every
- * other suite's profiles are left untouched.
+ * Every season and player id carries an "s59e-<nonce>" tag, so a failed cleanup
+ * can never silently turn a create into an update. Emulator suites share ONE
+ * database, and the reset reads the WHOLE `players` collection and fails closed
+ * on any profile whose season is not the one being reset. This suite therefore
+ * OWNS that collection: [clearPlayers] deletes every player before each test,
+ * and [cleanSharedPlayers] deletes them again after each test — including a
+ * failed one — so neither a previous test nor a later suite can contaminate a
+ * reset.
  */
 class SeasonResetDryRunEmulatorTest {
 
@@ -67,8 +70,12 @@ class SeasonResetDryRunEmulatorTest {
 
   private fun player(tag: String): String = "s59e-$nonce-$tag"
 
+  /** The emulator host, without logging; [emulatorReady] owns the skip marker. */
+  private fun emulatorHost(): String? =
+    (js("process.env.FIRESTORE_EMULATOR_HOST") as? String)?.takeIf { it.isNotEmpty() }
+
   private fun emulatorReady(): Boolean {
-    val host = (js("process.env.FIRESTORE_EMULATOR_HOST") as? String)?.takeIf { it.isNotEmpty() }
+    val host = emulatorHost()
     if (host == null) console.log("S59_EMULATOR_SKIPPED host=FIRESTORE_EMULATOR_HOST-unset")
     return host != null
   }
@@ -107,10 +114,14 @@ class SeasonResetDryRunEmulatorTest {
     }
   }
 
-  /** Removes only this run's own profiles — other suites share the emulator. */
+  /**
+   * Deletes EVERY player, not just this run's own: the reset reads the whole
+   * collection and fails closed on a foreign season, so a leftover profile
+   * would block the plan. Runs before each test and again in
+   * [cleanSharedPlayers] after it.
+   */
   private suspend fun clearPlayers() {
     val docs = db.collection("players").get().await().docs.toList()
-      .filter { it.id.startsWith("s59e-$nonce-") }
     for (chunk in docs.chunked(400)) {
       db.runTransaction { tx ->
         seedScope.promise {
@@ -118,6 +129,17 @@ class SeasonResetDryRunEmulatorTest {
         }
       }.await()
     }
+  }
+
+  /**
+   * Leaves the shared emulator clean even when an assertion fails, so the next
+   * S59 test (or a later suite) starts from an empty players collection. The
+   * quiet host check keeps a hermetic run marker-free here.
+   */
+  @AfterTest
+  fun cleanSharedPlayers() = runTest {
+    if (emulatorHost() == null) return@runTest
+    clearPlayers()
   }
 
   private suspend fun readSeasonDoc(): Map<String, Any?>? {
