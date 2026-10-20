@@ -48,8 +48,12 @@ class SettlementRpEmulatorTest {
 
   private fun emulatorReady(): Boolean {
     val host = (js("process.env.FIRESTORE_EMULATOR_HOST") as? String)?.takeIf { it.isNotEmpty() }
-    if (host == null) console.log("S51_EMULATOR_SKIPPED host=FIRESTORE_EMULATOR_HOST-unset")
-    return host != null
+    if (host == null) {
+      console.log("S51_EMULATOR_SKIPPED host=FIRESTORE_EMULATOR_HOST-unset")
+      return false
+    }
+    ensureDefaultAdminApp()
+    return true
   }
 
   private fun id(tag: String): String = "s50rp-$tag-$nonce"
