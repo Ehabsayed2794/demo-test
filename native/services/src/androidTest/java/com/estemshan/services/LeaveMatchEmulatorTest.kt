@@ -61,17 +61,18 @@ class LeaveMatchEmulatorTest {
    * `ConnectivityManager$TooManyRequestsException`, and the victim is
    * whichever test happens to run last, not the one that leaked. CI run
    * 39046825374 died that way in `VoteKickEmulatorTest.gates_denyWithoutPlayingARound`
-   * with this class's two clients left unreleased. Deleting our own named
-   * apps (`emu-<n>-s72_*`) keeps the suite at its pre-S72 footprint.
+   * with this class's two clients left unreleased. Terminating our own named
+   * apps' Firestore clients (`emu-<n>-s72_*`) keeps the suite at its
+   * pre-S72 connection footprint.
    *
-   * [EmulatorSuite.releaseClients] terminates Firestore before deleting;
-   * this class never invokes a callable, so it has no FirebaseInstallations
-   * work to drain.
+   * We terminate rather than delete for the same reason as S74: delete
+   * races with Firebase's shared background executor; see
+   * [EmulatorSuite.releaseFirestoreClients].
    */
   @After
   fun releaseOurFirebaseClients() {
     val context = InstrumentationRegistry.getInstrumentation().targetContext
-    EmulatorSuite.releaseClients(context, "-s72_", awaitInstallations = false)
+    EmulatorSuite.releaseFirestoreClients(context, "-s72_")
   }
 
   private suspend fun twoClients(): Map<String, EmulatorSuite.ClientFirebase> {

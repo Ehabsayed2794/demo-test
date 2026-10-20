@@ -37,6 +37,21 @@ interface RankedProfileDb {
     suspend fun read(uid: String): Map<String, Any?>?
 
     /**
+     * The current season, as S64 normalizes the profile against it — read
+     * from the S59 singleton (`seasons/current`) INSIDE the same transaction
+     * as [read] and [merge], so the profile is judged against exactly the
+     * season a merge would commit into. [loadOnce] performs this read second,
+     * after the profile: every read precedes every write, as Firestore's
+     * transaction rule requires.
+     *
+     * The default is the bootstrap season — which keeps every existing fake
+     * compiling — and the Admin implementation overrides it by reading the
+     * singleton and answering what an existing document authoritatively
+     * names ([currentSeasonIdOf]), failing closed on a malformed one.
+     */
+    suspend fun currentSeasonId(): String = DEFAULT_SEASON_ID
+
+    /**
      * Field-level merge of [fields] onto `players/{uid}`. The caller passes
      * only missing/repair Ranked fields; the implementation must not replace
      * the document or touch any other key.
@@ -63,7 +78,13 @@ private const val FIELD_RANKED_SECOND_COUNT = "rankedSecondCount"
 private const val FIELD_RANKED_THIRD_COUNT = "rankedThirdCount"
 private const val FIELD_RANKED_KOZ_COUNT = "rankedKozCount"
 
-/** The first season's ID; the model's stable default until S59 creates seasons. */
+/**
+ * The bootstrap season (`s1`): the default [RankedProfileDb.Tx] answers —
+ * i.e. what a current-season read resolves to when S59's `seasons/current`
+ * document does not exist yet. An existing document is authoritative and its
+ * parsing lives in [currentSeasonIdOf]; no normalization here falls back to
+ * this literal on its own.
+ */
 private const val DEFAULT_SEASON_ID = "s1"
 
 /**
@@ -73,7 +94,10 @@ private const val DEFAULT_SEASON_ID = "s1"
  * nothing. A missing `players/{uid}` fails with `failed-precondition` — a read
  * callable must not create a profile as a side effect. Every corrupt value also
  * fails closed before the merge, so a failed call can never leave a partial
- * migration behind.
+ * migration behind — including a profile whose season is not the current one
+ * (S64: a stale profile is a missed reset, and it is never silently
+ * re-stamped). The current season is read inside the transaction, after the
+ * profile and before any write, because all reads must precede all writes.
  */
 suspend fun loadOnce(db: RankedProfileDb, request: CallableRequest): Map<String, Any?> {
   val uid = CallableAuth.requireUid(request)
@@ -85,7 +109,12 @@ suspend fun loadOnce(db: RankedProfileDb, request: CallableRequest): Map<String,
         "getMyRankedProfile: no profile document exists for this account.",
       )
 
-    val normalized = normalizeProfile(stored)
+    // S64: profile → season → merge. Both reads happen before the merge, as
+    // the transaction requires; the season read is second so a profile that
+    // does not exist is still reported without opening the season singleton.
+    val currentSeasonId = tx.currentSeasonId()
+
+    val normalized = normalizeProfile(stored, currentSeasonId)
     if (normalized.mergeFields.isNotEmpty()) {
       tx.merge(uid, normalized.mergeFields)
     }
@@ -104,8 +133,15 @@ private data class NormalizedProfile(
  * field is absent. Present-but-invalid data throws instead of being repaired:
  * a corrupt RP or a foreign rung is not something a read callable may silently
  * reinterpret.
+ *
+ * The season is judged against the current one (S64): an absent `seasonId`
+ * adopts [currentSeasonId] under the lazy merge; a present one equal to the
+ * current season is served untouched; a present-but-blank one is corrupt; and
+ * a present one naming a DIFFERENT season is a missed reset — it fails closed
+ * rather than being re-stamped, because a read callable must never rewrite a
+ * player's season out of a transaction the season job was supposed to own.
  */
-private fun normalizeProfile(stored: Map<String, Any?>): NormalizedProfile {
+private fun normalizeProfile(stored: Map<String, Any?>, currentSeasonId: String): NormalizedProfile {
   val hasRp = stored.containsKey(FIELD_RP)
   val rp = if (hasRp) nonNegativeInt(stored.getValue(FIELD_RP), FIELD_RP) else 0
 
@@ -129,11 +165,23 @@ private fun normalizeProfile(stored: Map<String, Any?>): NormalizedProfile {
 
   val hasSeason = stored.containsKey(FIELD_SEASON_ID)
   val seasonId = if (hasSeason) {
-    presentString(stored, FIELD_SEASON_ID).also {
-      if (it.isBlank()) corrupt("seasonId must be non-blank.")
+    val recorded = presentString(stored, FIELD_SEASON_ID)
+    when {
+      recorded.isBlank() -> corrupt("seasonId must be non-blank.")
+      // The profile's own season IS the current one: served as-is, no season
+      // merge — a profile the reset has already stamped must not be rewritten.
+      recorded == currentSeasonId -> recorded
+      // A season the reset has moved past is a missed reset, never a sentence
+      // to be silently repaired: re-stamping it here would forge a season the
+      // player did not play in (RD24 — positions are recomputed per season),
+      // so the read fails loud, naming BOTH seasons for the operator.
+      else -> corrupt("profile season '$recorded' is not the current season '$currentSeasonId'.")
     }
   } else {
-    DEFAULT_SEASON_ID
+    // Lazy initialization: a profile written before seasons existed becomes
+    // the CURRENT season, merged below — whatever the singleton says, not a
+    // hardcoded first season.
+    currentSeasonId
   }
 
   val hasHighestTier = stored.containsKey(FIELD_HIGHEST_RANK_TIER)
@@ -324,6 +372,19 @@ class AdminRankedProfileDb : RankedProfileDb {
       if (!snap.exists) return null
       @Suppress("UNCHECKED_CAST")
       return dynamicToKotlin(snap.data()) as? Map<String, Any?>
+    }
+
+    /**
+     * S59's singleton, read INSIDE the transaction: the season check and any
+     * merge commit against one consistent view, so a season that flips
+     * mid-call cannot stamp a profile with a season the write did not land
+     * in. The raw JS snapshot is converted through [dynamicToKotlin] exactly
+     * as [read]'s is; parsing is [currentSeasonIdOf]'s, shared with the
+     * leaderboard path.
+     */
+    override suspend fun currentSeasonId(): String {
+      val snap = tx.get(db.collection(SEASONS_COLLECTION).doc(CURRENT_SEASON_DOC)).await()
+      return currentSeasonIdOf(snap.exists, dynamicToKotlin(snap.data()))
     }
 
     override fun merge(uid: String, fields: Map<String, Any?>) {

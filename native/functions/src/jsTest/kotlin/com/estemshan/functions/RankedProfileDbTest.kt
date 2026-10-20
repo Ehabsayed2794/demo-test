@@ -14,6 +14,10 @@ import kotlin.test.assertTrue
  * rewritten, and a migration writes exactly the missing (or highest-repair)
  * fields. Error cases assert both the HttpsError code and that no write ran.
  */
+
+/** Marks a Tx whose `seasons/current` does not exist: the port's default answers. */
+private val NO_SEASON_DOC = Any()
+
 class RankedProfileDbTest {
 
   // ── fixtures ─────────────────────────────────────────────────────────
@@ -59,6 +63,16 @@ class RankedProfileDbTest {
       block()
     } catch (e: Throwable) {
       return e.asDynamic().code as String
+    }
+    throw AssertionError("expected HttpsError")
+  }
+
+  /** The HttpsError message a call throws, for the denials whose words are contract. */
+  private suspend fun thrownMessage(block: suspend () -> Any?): String {
+    try {
+      block()
+    } catch (e: Throwable) {
+      return e.asDynamic().message as String
     }
     throw AssertionError("expected HttpsError")
   }
@@ -202,6 +216,92 @@ class RankedProfileDbTest {
     assertFalse("rp" in db.merges.single(), "the present rp is not a missing field")
   }
 
+  // ── S64: the profile's season against the current one ───────────────
+
+  @Test
+  fun aLegacyProfileWithoutASeasonAdoptsTheCurrentSeasonUnderALazyMerge() = runTest {
+    val db = FakeDb(
+      validProfile().apply { remove("seasonId") },
+      currentSeasonDoc = linkedMapOf<String, Any?>("seasonId" to "s2"),
+    )
+
+    val response = loadOnce(db, fakeRequest("u1"))
+
+    // A profile written before seasons existed becomes the CURRENT season —
+    // merged, reported, migrated=true, and nothing else touched.
+    assertEquals(true, response["migrated"])
+    val profile = section(response, "profile")
+    assertEquals("s2", profile["seasonId"])
+    assertEquals(1, db.writes)
+    assertEquals(mapOf("seasonId" to "s2"), db.merges.single())
+    assertEquals("Nour", db.doc?.get("displayName"), "identity fields are nobody's business but the owner's")
+    assertEquals(732, db.doc?.get("rp"))
+    // The read order is the contract: profile → season → merge.
+    assertEquals(listOf("read", "season", "merge"), db.events)
+  }
+
+  @Test
+  fun aProfileOnTheCurrentSeasonIsServedWithoutAnySeasonWrite() = runTest {
+    val db = FakeDb(
+      validProfile().apply { put("seasonId", "s2") },
+      currentSeasonDoc = linkedMapOf<String, Any?>("seasonId" to "s2"),
+    )
+
+    val response = loadOnce(db, fakeRequest("u1"))
+
+    // Already stamped with the current season: served as-is, no merge at all.
+    assertEquals(false, response["migrated"])
+    assertEquals("s2", section(response, "profile")["seasonId"])
+    assertEquals(0, db.writes)
+    assertEquals(listOf("read", "season"), db.events)
+  }
+
+  @Test
+  fun aStaleProfileSeasonFailsPreconditionAndIsNeverSilentlyRestamped() = runTest {
+    val db = FakeDb(
+      validProfile(), // carries seasonId = "s1"
+      currentSeasonDoc = linkedMapOf<String, Any?>("seasonId" to "s2"),
+    )
+
+    assertEquals("failed-precondition", thrownCode { loadOnce(db, fakeRequest("u1")) })
+
+    // A missed reset is loud, not a sentence to a silent re-stamp: zero
+    // merges, zero writes, and the message names BOTH seasons so the operator
+    // can see exactly which transition was missed.
+    assertEquals(0, db.writes)
+    assertEquals(0, db.merges.size)
+    assertEquals(listOf("read", "season"), db.events, "the profile and the season were read; the merge never ran")
+    assertTrue(
+      "profile season 's1' is not the current season 's2'" in
+        thrownMessage { loadOnce(db, fakeRequest("u1")) },
+    )
+  }
+
+  @Test
+  fun aBlankProfileSeasonFailsClosedAndMergesNothing() = runTest {
+    val db = FakeDb(
+      validProfile().apply { put("seasonId", "   ") },
+      currentSeasonDoc = linkedMapOf<String, Any?>("seasonId" to "s2"),
+    )
+
+    assertEquals("failed-precondition", thrownCode { loadOnce(db, fakeRequest("u1")) })
+    assertEquals(0, db.writes)
+    assertEquals(0, db.merges.size)
+    assertFalse("merge" in db.events)
+
+    // A season field that carries the WRONG KIND of value must fail the same
+    // way as a blank one: treating a non-string season as absent would run the
+    // lazy re-stamp on it and silently rewrite a corrupt field.
+    val nonString = FakeDb(
+      validProfile().apply { put("seasonId", 7) },
+      currentSeasonDoc = linkedMapOf<String, Any?>("seasonId" to "s2"),
+    )
+    assertEquals("failed-precondition", thrownCode { loadOnce(nonString, fakeRequest("u1")) })
+    assertEquals(0, nonString.writes)
+    assertEquals(0, nonString.merges.size)
+    assertFalse("merge" in nonString.events)
+  }
+
   // ── failing closed ───────────────────────────────────────────────────
 
   @Test
@@ -211,6 +311,7 @@ class RankedProfileDbTest {
     assertPreconditionNoWrite(db) { loadOnce(db, fakeRequest("u1")) }
     assertEquals(1, db.txRuns)
     assertEquals(1, db.reads)
+    assertEquals(listOf("read"), db.events, "a missing profile is reported without opening the season singleton")
   }
 
   @Test
@@ -422,8 +523,17 @@ class RankedProfileDbTest {
    * One document behind one transaction. The doc is updated by [merge] so a
    * second transaction in the same test would see the committed result; each
    * test uses one call, and the write log is what assertions inspect.
+   *
+   * [currentSeasonDoc] models S59's `seasons/current` the way the Admin Tx
+   * would hand it over — the [NO_SEASON_DOC] marker means no document, which
+   * is Tx's own defaulted (bootstrap) answer and every pre-S64 fake's path.
+   * The [events] log records each Tx touch in the order loadOnce performed
+   * it, which is the mechanical pin for the profile → season → merge order.
    */
-  private class FakeDb(var doc: Map<String, Any?>?) : RankedProfileDb {
+  private class FakeDb(
+    var doc: Map<String, Any?>?,
+    private val currentSeasonDoc: Any? = NO_SEASON_DOC,
+  ) : RankedProfileDb {
     var txRuns = 0
       private set
     var reads = 0
@@ -431,16 +541,25 @@ class RankedProfileDbTest {
     var writes = 0
       private set
     val merges = mutableListOf<Map<String, Any?>>()
+    val events = mutableListOf<String>()
 
     override suspend fun <T> transact(block: suspend (RankedProfileDb.Tx) -> T): T {
       txRuns++
       return block(object : RankedProfileDb.Tx {
         override suspend fun read(uid: String): Map<String, Any?>? {
+          events += "read"
           reads++
           return doc
         }
 
+        override suspend fun currentSeasonId(): String {
+          events += "season"
+          if (currentSeasonDoc == NO_SEASON_DOC) return super<RankedProfileDb.Tx>.currentSeasonId()
+          return currentSeasonIdOf(exists = true, data = dynamicToKotlin(currentSeasonDoc))
+        }
+
         override fun merge(uid: String, fields: Map<String, Any?>) {
+          events += "merge"
           writes++
           merges += fields
           doc = (doc ?: emptyMap()) + fields
