@@ -111,6 +111,7 @@ suspend fun runSeasonReset(
   db: SeasonResetDb,
   nowMillis: Long,
   mode: SeasonResetMode,
+  expectedTargetSeasonId: String? = null,
 ): SeasonResetReport {
   // Phase 1 — the gating read. The transaction is read-only, and every
   // decision it feeds is re-derived inside the claim transaction below.
@@ -143,6 +144,14 @@ suspend fun runSeasonReset(
       mode, "NOT_CONFIGURED", from, null,
       message = "season '$from' is $status but has no nextSeasonId; there is nothing to reset toward.",
     )
+
+  if (expectedTargetSeasonId != null && to != expectedTargetSeasonId) {
+    return seasonReport(
+      mode, "REJECTED", from, to,
+      message = "season '$from' is configured to reset toward '$to', not the approved target " +
+        "'$expectedTargetSeasonId'; nothing was written.",
+    )
+  }
 
   if (!isDue(season, nowMillis)) {
     return seasonReport(

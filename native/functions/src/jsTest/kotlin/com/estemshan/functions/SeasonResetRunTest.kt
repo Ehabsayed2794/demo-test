@@ -98,9 +98,12 @@ class SeasonResetRunTest {
     var beforeTransaction: ((Int) -> Unit)? = null
     var failProfileWriteNumber: Int = -1
     var failProfileRead: Boolean = false
+    var gateConfig: SeasonResetGateConfig? = null
 
     val seasonWrites = mutableListOf<Map<String, Any?>>()
     val profileWrites = mutableListOf<List<Pair<String, Map<String, Any?>>>>()
+
+    override suspend fun readGateConfig(): SeasonResetGateConfig? = gateConfig
 
     override suspend fun <T> transact(block: suspend (SeasonResetDb.Tx) -> T): T {
       transactions++
@@ -215,6 +218,41 @@ class SeasonResetRunTest {
 
     val malformed = FakeDb(seasonFields(endsAt = "2026-01-01"))
     assertEquals("NOT_DUE", runSeasonReset(malformed, NOW, SeasonResetMode.APPLY).decision)
+  }
+
+  @Test
+  fun anApprovedTargetThatDoesNotMatchTheSeasonIsRejectedBeforePlanning() = runTest {
+    val db = FakeDb(seasonFields(), listOf(SeasonProfile("p1", validFields())))
+
+    val report = runSeasonReset(
+      db,
+      NOW,
+      SeasonResetMode.APPLY,
+      expectedTargetSeasonId = "s3",
+    )
+
+    assertEquals("REJECTED", report.decision)
+    assertEquals(1, db.transactions)
+    assertEquals(0, db.readAllProfilesCalls)
+    assertEquals(0, db.seasonWrites.size)
+    assertEquals(0, db.profileWrites.size)
+    assertTrue(report.message.contains("not the approved target"))
+  }
+
+  @Test
+  fun aMatchingApprovedTargetProceeds() = runTest {
+    val db = FakeDb(seasonFields(), listOf(SeasonProfile("p1", validFields())))
+
+    val report = runSeasonReset(
+      db,
+      NOW,
+      SeasonResetMode.DRY_RUN,
+      expectedTargetSeasonId = TO,
+    )
+
+    assertEquals("WOULD_CLAIM", report.decision)
+    assertEquals(0, db.seasonWrites.size)
+    assertEquals(0, db.profileWrites.size)
   }
 
   @Test

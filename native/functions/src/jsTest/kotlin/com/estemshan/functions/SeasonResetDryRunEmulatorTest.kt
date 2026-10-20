@@ -432,4 +432,27 @@ class SeasonResetDryRunEmulatorTest {
     assertNull(doc["targetSeasonId"])
     console.log("S59_EMULATOR_RESUME applied=${second.applied} skipped=${second.skippedAlreadyTarget}")
   }
+
+  @Test
+  fun theKillSwitchConfigReadsThroughTheAdminPort() = runTest {
+    if (!emulatorReady()) return@runTest
+    val gateRef = db.collection("config").doc("seasonReset")
+    seedDoc(
+      gateRef,
+      mapOf(
+        "enabled" to true,
+        "targetSeasonId" to "s2",
+        "environment" to "staging",
+      ),
+    )
+    try {
+      val config = assertNotNull(AdminSeasonResetDb().readGateConfig())
+      assertEquals(true, config.enabled)
+      assertEquals("s2", config.targetSeasonId)
+      assertEquals("staging", config.environment)
+      console.log("S59_EMULATOR_GATE enabled=${config.enabled} target=${config.targetSeasonId}")
+    } finally {
+      db.runTransaction { tx -> seedScope.promise { tx.delete(gateRef) } }.await()
+    }
+  }
 }

@@ -49,6 +49,12 @@ interface SeasonResetDb {
 
   /** One field-level batch write, one `update` per entry, one commit. */
   suspend fun writeProfiles(updates: List<Pair<String, Map<String, Any?>>>)
+
+  /**
+   * `config/seasonReset` — the deploy-time kill switch. Null when the document
+   * does not exist; the scheduler treats that as DRY_RUN.
+   */
+  suspend fun readGateConfig(): SeasonResetGateConfig?
 }
 
 /** One persisted profile: the document id (the player's uid) and its raw fields. */
@@ -67,6 +73,9 @@ internal const val MAX_RESET_PROFILES = 10_000
 
 private const val PLAYERS_COLLECTION = "players"
 
+private const val CONFIG_COLLECTION = "config"
+private const val SEASON_RESET_GATE_DOC = "seasonReset"
+
 /**
  * Admin-SDK implementation. Bypasses firestore.rules like every other Admin
  * path; the rules file stays byte-identical.
@@ -80,6 +89,8 @@ class AdminSeasonResetDb : SeasonResetDb {
   private val db = getFirestore()
   private val seasonRef: DocRef =
     db.collection(SEASONS_COLLECTION).doc(CURRENT_SEASON_DOC)
+  private val gateRef: DocRef =
+    db.collection(CONFIG_COLLECTION).doc(SEASON_RESET_GATE_DOC)
 
   override suspend fun <T> transact(block: suspend (SeasonResetDb.Tx) -> T): T {
     // The callback may be re-invoked after a contested read. Each invocation
@@ -132,6 +143,20 @@ class AdminSeasonResetDb : SeasonResetDb {
         fields = dynamicToKotlin(doc.data()) as? Map<String, Any?> ?: emptyMap(),
       )
     }
+  }
+
+  override suspend fun readGateConfig(): SeasonResetGateConfig? {
+    val snapshot = gateRef.get().await()
+    if (!snapshot.exists) return null
+    @Suppress("UNCHECKED_CAST")
+    val data = dynamicToKotlin(snapshot.data()) as? Map<String, Any?> ?: return null
+    // Every field is read fail-closed: a wrong type is treated as absent, and
+    // an absent enabled flag is false, never an implicit "yes".
+    return SeasonResetGateConfig(
+      enabled = data["enabled"] as? Boolean ?: false,
+      targetSeasonId = (data["targetSeasonId"] as? String)?.takeIf { it.isNotBlank() },
+      environment = (data["environment"] as? String)?.takeIf { it.isNotBlank() },
+    )
   }
 
   override suspend fun writeProfiles(updates: List<Pair<String, Map<String, Any?>>>) {

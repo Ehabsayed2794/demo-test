@@ -8,8 +8,14 @@
 // ([runSeasonReset]) remains packaged and unit-testable.
 
 import com.estemshan.functions.AdminSeasonResetDb
+import com.estemshan.functions.CallableAuth
+import com.estemshan.functions.HttpsError
+import com.estemshan.functions.SeasonResetGate
+import com.estemshan.functions.SeasonResetGateDecision
 import com.estemshan.functions.SeasonResetMode
+import com.estemshan.functions.SeasonResetOperator
 import com.estemshan.functions.SeasonResetReport
+import com.estemshan.functions.onCall
 import com.estemshan.functions.onSchedule
 import com.estemshan.functions.runSeasonReset
 import com.estemshan.functions.toPlain
@@ -27,9 +33,15 @@ private val SeasonResetScope = CoroutineScope(SupervisorJob() + Dispatchers.Defa
  * The schedule is only a TRIGGER, never the authority: every run re-reads
  * `seasons/current`, gates on its own `endsAt`, and claims the transition in a
  * transaction, so a missed or duplicated tick cannot double-reset a season.
- * The handler runs the APPLY reading; the R27 dry run is the same function with
- * [SeasonResetMode.DRY_RUN], which is what makes it a rehearsal of the real
- * path rather than a second implementation.
+ * The R27 dry run is the same function with [SeasonResetMode.DRY_RUN], which is
+ * what makes it a rehearsal of the real path rather than a second
+ * implementation.
+ *
+ * The handler is DRY_RUN by default. It APPLYs only when [SeasonResetGate]
+ * finds all three deploy-time conditions at once: `config/seasonReset` is
+ * enabled, it names the approved target season, and its environment matches the
+ * `SEASON_RESET_ENV` set on the deployed service. A normal Functions deploy
+ * sets none of them, so a full deploy cannot arm the reset by itself.
  *
  * Domain outcomes resolve with a structured summary (a no-op season is a
  * legitimately quiet result and must never throw). A transport failure that
@@ -43,14 +55,85 @@ val scheduledSeasonReset = onSchedule(
   js("({ schedule: '0 3 * * *', timeZone: 'UTC' })"),
 ) { _ ->
   SeasonResetScope.promise {
+    val db = AdminSeasonResetDb()
+    val gate = try {
+      SeasonResetGate.decide(
+        db.readGateConfig(),
+        js("process.env.SEASON_RESET_ENV") as? String,
+      )
+    } catch (failure: Throwable) {
+      // A config read that cannot be trusted must never arm an APPLY.
+      console.warn(
+        "S59_SEASON_RESET gate read failed; staying in dry-run: " +
+          (failure.message ?: failure.toString()),
+      )
+      SeasonResetGateDecision(
+        SeasonResetMode.DRY_RUN,
+        null,
+        "config/seasonReset read failed",
+      )
+    }
     val report = runSeasonReset(
-      AdminSeasonResetDb(),
+      db,
       (js("Date.now()") as Double).toLong(),
-      SeasonResetMode.APPLY,
+      gate.mode,
+      gate.targetSeasonId,
     )
-    console.log(summaryLine(report))
+    console.log(summaryLine(report, gate))
     // toPlain at the serialization boundary: runSeasonReset stays in Kotlin
     // types, the scheduled result is plain data.
+    toPlain(reportForJs(report))
+  }
+}
+
+/**
+ * The operator rehearsal: the same DRY_RUN reading as the scheduler, callable on
+ * demand by an allowlisted operator. It never applies, even when the scheduler's
+ * gate is enabled, and it returns the same structured report the scheduler logs.
+ *
+ * Authorization has two layers: [CallableAuth] requires a verified Firebase
+ * identity, and [SeasonResetOperator] requires that uid to be named in the
+ * deploy-time `SEASON_RESET_OPERATOR_UIDS` allowlist. A missing or empty
+ * allowlist denies everyone.
+ */
+@JsExport
+@JsName("operatorSeasonResetDryRun")
+val operatorSeasonResetDryRun = onCall { request ->
+  val uid = CallableAuth.requireUid(request)
+  val allowlist = js("process.env.SEASON_RESET_OPERATOR_UIDS") as? String
+  if (!SeasonResetOperator.isAllowed(uid, allowlist)) {
+    throw HttpsError(
+      "permission-denied",
+      "operatorSeasonResetDryRun is restricted to the configured season-reset operator.",
+    )
+  }
+  SeasonResetScope.promise {
+    val db = AdminSeasonResetDb()
+    val config = try {
+      db.readGateConfig()
+    } catch (failure: Throwable) {
+      console.warn(
+        "S59_SEASON_RESET operator dry-run config read failed; continuing without an approved target: " +
+          (failure.message ?: failure.toString()),
+      )
+      null
+    }
+    val report = runSeasonReset(
+      db,
+      (js("Date.now()") as Double).toLong(),
+      SeasonResetMode.DRY_RUN,
+      config?.targetSeasonId,
+    )
+    console.log(
+      summaryLine(
+        report,
+        SeasonResetGateDecision(
+          SeasonResetMode.DRY_RUN,
+          config?.targetSeasonId,
+          "operator dry-run requested by an authorized operator",
+        ),
+      ),
+    )
     toPlain(reportForJs(report))
   }
 }
@@ -60,11 +143,15 @@ val scheduledSeasonReset = onSchedule(
  * log: a reset failure's player is a uid, and the report (not the console) is
  * where an operator gets the list.
  */
-private fun summaryLine(report: SeasonResetReport): String =
-  "S59_SEASON_RESET decision=${report.decision} " +
+private fun summaryLine(report: SeasonResetReport, gate: SeasonResetGateDecision): String =
+  "S59_SEASON_RESET mode=${report.mode} gate=${oneLine(gate.reason)} " +
+    "decision=${report.decision} " +
     "from=${report.fromSeasonId ?: "-"} to=${report.toSeasonId ?: "-"} " +
     "planned=${report.planned} applied=${report.applied} " +
     "skipped=${report.skippedAlreadyTarget} failures=${report.failures.size}"
+
+private fun oneLine(value: String): String =
+  value.replace('\n', ' ').replace('\r', ' ')
 
 /** The report as schedulers and logs can read it — plain maps, failures included. */
 private fun reportForJs(report: SeasonResetReport): Map<String, Any?> = mapOf(
