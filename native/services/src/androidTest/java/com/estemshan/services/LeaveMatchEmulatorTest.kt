@@ -109,6 +109,7 @@ class LeaveMatchEmulatorTest {
       { roomId ->
         leaveServiceFor(seating, "p1").startMatch(roomId)
       },
+      NoRankDownJoin,
     )
     val roomCode = roomService1.createRoom(
       p1.uid,
@@ -127,6 +128,7 @@ class LeaveMatchEmulatorTest {
       p2.db,
       object : AuthPort { override fun currentUid() = p2.uid },
       { _ -> "" },
+      NoRankDownJoin,
     )
     roomService2.joinRoom(roomCode, p2.uid)
 
@@ -191,4 +193,21 @@ class LeaveMatchEmulatorTest {
     assertEquals("version unchanged after replay",
       after2.version, after3.version)
   }
+}
+
+/**
+ * S70 — the Rank-down join seam this suite never reaches.
+ *
+ * The room below is created with `rankDown = false`, so [RoomService.joinRoom]
+ * keeps its direct transaction and this is never asked. It exists because the
+ * seam is a required constructor argument, and it answers with a DENIAL rather
+ * than throwing on purpose: if a future edit did route a join here, the result
+ * should be the product's own refusal — which these tests already know how to
+ * handle — not a crash in a suite that was never written to exercise it.
+ */
+private object NoRankDownJoin : RankDownJoinPort {
+  override suspend fun join(roomId: String): RankDownJoin = RankDownJoin.Denied(
+    Reasons.RANK_DOWN_UNAVAILABLE,
+    "Rank-down joins are unavailable in this test.",
+  )
 }

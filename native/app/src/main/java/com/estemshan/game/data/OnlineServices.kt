@@ -3,6 +3,7 @@ package com.estemshan.game.data
 import com.estemshan.engine.GameSession
 import com.estemshan.services.CoroutineMatchScheduler
 import com.estemshan.services.CallableDecisionTimeout
+import com.estemshan.services.CallableRankDownJoin
 import com.estemshan.services.CallableSeatReclaim
 import com.estemshan.services.CallableSettlement
 import com.estemshan.services.DecisionTimeoutPort
@@ -13,6 +14,7 @@ import com.estemshan.services.MatchScheduler
 import com.estemshan.services.MatchService
 import com.estemshan.services.PlayerHeartbeat
 import com.estemshan.services.PlayerPort
+import com.estemshan.services.RankDownJoinPort
 import com.estemshan.services.PlayerService
 import com.estemshan.services.RoomPort
 import com.estemshan.services.RoomService
@@ -115,6 +117,16 @@ object OnlineServices {
   }
 
   /**
+   * S70 (RD29/RD30) — the Rank-down join gate, the `joinRankDownRoom` callable.
+   * A Rank-down join cannot be a client transaction because the check compares
+   * the caller's rank against the host's, and RD29 forbids a client from reading
+   * another player's rank. Lazy for the same reason as [timeouts].
+   */
+  val rankDownJoins: RankDownJoinPort by lazy {
+    CallableRankDownJoin(FirebaseModule.functions)
+  }
+
+  /**
    * The settlement seam — the `settleMatch` callable (RD12/RD13), the once-
    * only authority a completed RANKED match's RP movement comes from. Lazy
    * for the same reason as [timeouts]: it reads [FirebaseModule.functions],
@@ -184,6 +196,7 @@ object OnlineServices {
       db = FirebaseModule.db,
       auth = auth,
       matchStarter = matches::startMatch,
+      rankDownJoiner = rankDownJoins,
     )
   }
 }
