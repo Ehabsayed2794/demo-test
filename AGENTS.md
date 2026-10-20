@@ -7,6 +7,10 @@ hour-level breakdown of remaining work to release, the critical path, owner deci
 toolchain/API-36 blockers. It is the project's only plan document — the older migration/master/architecture
 plans were superseded and removed (recoverable from git history if needed).
 
+### Owner rulings of record (2026-10-20)
+
+Read `docs/decisions/2026-10-20-profile-story-s75-and-firebase-free-plan.md`: Profile editing is its own open story **S75**, and the project stays on the **free Firebase plan** (plan decision D5 — with an unresolved Cloud Functions/Blaze conflict to verify before S42 deploys).
+
 ### Issue tracker
 
 Issues live in GitHub Issues via the `gh` CLI. See `docs/agents/issue-tracker.md`.

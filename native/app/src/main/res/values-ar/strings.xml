@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Arabic (Modern Standard Arabic) translation of values/strings.xml — S41.
+  Key set mirrors the English file one-to-one (app_name stays untranslated:
+  it is translatable="false" there). Placeholders (%1$s, %1$d) are preserved
+  exactly. Identifier-like arguments (seat ids, room codes, uids, dates,
+  version names) are wrapped in Unicode isolates (FSI U+2068 … PDI U+2069)
+  so the Latin text cannot reorder the Arabic around it. Draft for native-
+  speaker review; terminology choices are listed in the S41 review inventory.
+-->
+<resources>
+  <string name="choose_level_title">مستوى البولة</string>
+  <string name="choose_level_subtitle">اختار مستوى وستايل اللعيبة اللي هتلعب ضدهم 🎴</string>
+  <string name="choose_level_presets">بولة جاهزة</string>
+  <string name="choose_level_opponents">مستوى اللعيبة</string>
+  <string name="choose_level_skill">حرفنة اللاعب</string>
+  <string name="choose_level_style">ستايل اللاعب</string>
+  <string name="choose_level_custom">بولة على كيف كيفك!</string>
+  <string name="choose_level_start">يلا بينا! 🔥</string>
+  <string name="choose_level_seat">كرسي %1$d</string>
+
+  <string name="lobby_play_vs_ai">العب ضد AI 🤖</string>
+
+  <string name="lobby_section_resume">كمّل البولة 🎴</string>
+  <string name="lobby_resume_match">لسه فى بولة مخلّصتهاش! 🃏</string>
+  <string name="lobby_resume_match_hint">سيبت بولة مخلّصتهاش</string>
+
+  <string name="lobby_title">اللوبي</string>
+  <string name="lobby_signed_in_as">إنت داخل بحساب ⁨%1$s⁩</string>
+  <string name="lobby_section_play">اللعب أوفلاين 🎮</string>
+  <string name="lobby_quick_match">بولة على السريع ⚡</string>
+  <string name="lobby_section_rooms">العب مع صحابك</string>
+  <string name="lobby_create_room">لمّ أربعة</string>
+  <string name="lobby_create_room_hint">لمّ تلاتة وابعتلهم الكود</string>
+  <string name="lobby_join_room">ادخل بولة 🎴</string>
+  <string name="lobby_join_room_hint">اكتب الكود اللي صاحبك بعتهولك والحق البولة! 🎴</string>
+  <string name="lobby_in_room">إنت دلوقتي في بولة ⁨%1$s⁩ 🃏</string>
+  <string name="lobby_leave_room">تسيب القعدة</string>
+
+  <string name="lobby_join_dialog_title">معاك كود البولة؟ 🃏</string>
+  <string name="lobby_join_dialog_hint">حط الكود هنا 🎴</string>
+  <string name="lobby_join_dialog_join">يلا بينا! 🔥</string>
+  <string name="lobby_cancel">إلغاء</string>
+  <string name="lobby_join_error_empty">طب فين الكود؟ 😅</string>
+  <string name="lobby_join_error_not_found">الكود ده مش موجود يا نجم! 😅</string>
+  <string name="lobby_join_error_full">مفيش كرسي فاضي يا معلم! 😅</string>
+  <string name="lobby_join_error_closed">القعدة اتقفلت يا معلم! 🔒</string>
+  <string name="lobby_join_error_generic">مقدرناش ندخّلك البولة يا نجم، جرّب تاني! 😅</string>
+
+  <string name="lobby_created_title">القعدة اترست وجاهزة</string>
+  <string name="lobby_created_body">ابعت الكود للتلاتة وخليهم يلحقوا القعدة! 🃏</string>
+  <string name="lobby_created_done">تمام يا معلم! ✅</string>
+
+  <string name="lobby_profile">بروفايلك</string>
+  <string name="lobby_settings">ظبط اللعبة ⚙️</string>
+  <string name="lobby_sign_out">اخرج من حسابك 🚪</string>
+
+  <string name="room_title">القاعدة 🎴</string>
+  <string name="room_code">كود القعدة: ⁨%1$s⁩ 🎴</string>
+  <string name="room_section_players">اللعيبة</string>
+  <string name="room_ready">جاهز</string>
+  <string name="room_not_ready">مش جاهز</string>
+  <string name="room_you">إنت</string>
+  <string name="room_host">صاحب القعدة 🎴</string>
+  <string name="room_toggle_ready">جاهز 🎴</string>
+  <string name="room_toggle_not_ready">مش جاهز</string>
+  <string name="room_waiting_hint">مستنيين باقي اللعيبة يجهزوا... 🃏</string>
+  <string name="room_starting">استعدوا ... البولة هتبدأ! 🔥</string>
+  <string name="room_leave">تسيب القعدة 🎴</string>
+  <string name="room_gone">القعدة دي مش متاحة دلوقتي، جرّب بولة تانية! 🎴</string>
+
+  <string name="online_reconnecting">استنّى، بنتصل تاني</string>
+  <string name="online_reconnecting_body">متقلقش، إنت لسه في البولة! 🃏</string>
+  <string name="online_not_in_match">إنت خرجت من البولة دي 🃏</string>
+  <string name="online_failed_title">حصلت مشكلة في الاتصال بالبولة</string>
+  <string name="online_leave_match">ارجع للّوبي</string>
+  <string name="online_round_opening">خد نفس، قبل الراووند الجاية</string>
+  <string name="online_opponent_away">فصل</string>
+  <string name="online_seat_borrowed">إنت غايب؟ البوت هيلعب مكانك لحد ما ترجع! 🤖</string>
+
+  <string name="create_game_title">ظبّط البولة 🎴</string>
+  <string name="create_game_subtitle">ظبط البولة زي ما تحب</string>
+  <string name="create_game_section_game_type">طول البولة 🎴</string>
+  <string name="create_game_section_calculation">طريقة الحساب</string>
+  <string name="create_game_section_bot_difficulty">مستوى الـ AI 🤖</string>
+  <string name="create_game_section_bot_personality">ستايل الـ AI</string>
+  <string name="create_game_section_decision_timer">وقت الرمية ⏱️</string>
+  <string name="create_game_option_full">بولة كاملة</string>
+  <string name="create_game_option_mini">ميني</string>
+  <string name="create_game_full_detail">بولة كاملة، ١٨ راوند إلا لو في صعايدة</string>
+  <string name="create_game_mini_detail">تفاصيل البولة الميني</string>
+  <string name="create_game_option_normal">حسبة عادية</string>
+  <string name="create_game_option_classic">كلاسيك</string>
+  <string name="create_game_normal_detail">حد الضرب×8</string>
+  <string name="create_game_classic_detail">حد الضرب×2</string>
+  <string name="create_game_timer_seconds">الثانية %1$d</string>
+  <string name="create_game_timer_summary">ملخص وقت الرامية</string>
+  <string name="create_game_timer_summary_hint">وقت الرمية، تزيد ٥ ثواني في الداش، المزاد والتخمين</string>
+  <string name="create_game_phase_dash">داش كول</string>
+  <string name="create_game_phase_bidding">مرحلة المزاد</string>
+  <string name="create_game_phase_estimates">مرحلة التقدير</string>
+  <string name="create_game_phase_card_play">مرحلة رمي الورق</string>
+  <string name="create_game_confirm">تأكيد وبدء القعدة</string>
+  <string name="create_game_cancel">إلغاء</string>
+  <string name="create_game_error">معرفناش نظبط القعدة، اتأكد من النت وجرّب تاني! 😅</string>
+
+  <!-- S41 — migrated screens -->
+  <string name="suit_clubs">تريفل</string>
+  <string name="suit_diamonds">كاروه</string>
+  <string name="suit_hearts">هارت</string>
+  <string name="suit_spades">اسبيد</string>
+  <string name="suit_sans">سانز</string>
+
+  <string name="splash_tagline">الاستمشان ليه أصول 🎴</string>
+  <string name="login_email">الإيميل</string>
+  <string name="login_password">الباسورد</string>
+  <string name="login_sign_in">الدخول</string>
+  <string name="login_play_anonymously">اللعب كضيف</string>
+  <string name="login_signing_in">جاري الدخول...</string>
+  <string name="login_signed_in">تم الدخول بنجاح ✅</string>
+  <string name="login_enter">دخل بياناتك</string>
+  <string name="login_error">حصلت مشكلة في الدخول، جرّب تاني 😅</string>
+
+  <string name="profile_title">بروفايلك 🎮</string>
+  <string name="profile_signed_in">إنت داخل بحسابك ✅</string>
+
+  <string name="settings_title">إعدادات اللعبة ⚙️</string>
+  <string name="settings_account">الحساب</string>
+  <string name="settings_sound">الصوت 🔊</string>
+  <string name="settings_sound_on">شغّال 🔊</string>
+  <string name="settings_sound_off">مقفول 🔇</string>
+  <string name="settings_version">إصدار اللعبة</string>
+  <string name="settings_logout">الخروج من الحساب 🚪</string>
+
+  <string name="bidding_title">الجولة %1$d · المزاد</string>
+  <string name="bidding_step_dash">الخطوة ١ من ٤ · الداش كول</string>
+  <string name="bidding_step_auction">الخطوة ٢ من ٤ · المزاد</string>
+  <string name="bidding_step_confirm">تأكيد الطلب</string>
+  <string name="bidding_step_estimates">تأكيد الطلب</string>
+  <string name="bidding_step_done">يلا</string>
+  <string name="bidding_complete">المزاد خلص</string>
+  <string name="bidding_bot_for_you">الـAI بيطلبلك</string>
+  <string name="bidding_your_turn">دورك (⁨%1$s⁩)</string>
+  <string name="bidding_waiting_for">مستنيين ⁨%1$s⁩</string>
+  <string name="bidding_caller_trump">صاحب الكول: ⁨%1$s⁩ · القطوع: %2$s</string>
+  <string name="bidding_dash_prompt">صفر لمّات</string>
+  <string name="bidding_dash_call">داش كول</string>
+  <string name="bidding_decline">عديها</string>
+  <string name="bidding_hint_with">ويذ</string>
+  <string name="bidding_hint_opens">بيفتح المزاد</string>
+  <string name="bidding_hint_new_top">علي عليك</string>
+  <string name="bidding_top">الأعلى: %1$d</string>
+  <string name="bidding_tricks">اللمّات: %1$d</string>
+  <string name="bidding_bid">طلب %1$d %2$s</string>
+  <string name="bidding_pass">باص</string>
+  <string name="bidding_lock_title">ثبّت الكول</string>
+  <string name="bidding_lock">ثبّت %1$d %2$s</string>
+  <string name="bidding_estimate_title">الكول النهائي (الحد الأقصى %1$d)</string>
+  <string name="bidding_forbidden">مينفعش تختار %1$d</string>
+  <string name="bidding_with_floor">أقل رقم لـ«ويذ»: %1$d</string>
+  <string name="bidding_estimate_zero">داش عادي</string>
+  <string name="bidding_estimate">الكول %1$d</string>
+  <string name="bidding_suit">نوع الورق</string>
+
+  <string name="table_header">الجولة %1$d · اللمّة %2$d/13 · القطوع %3$s</string>
+  <string name="table_round_complete">الجولة خلصت ✅</string>
+  <string name="table_takes_trick">⁨%1$s⁩ كسب اللمّة</string>
+  <string name="table_bot_for_you">الـAI بيلعب مكانك 🤖</string>
+  <string name="table_your_turn">دورك (⁨%1$s⁩)</string>
+  <string name="table_waiting_for">مستنيين ⁨%1$s⁩</string>
+  <string name="table_waiting_for_hint">مستنيين ⁨%1$s⁩...</string>
+  <string name="table_bot_playing">الـAI بيلعب 🤖</string>
+  <string name="table_tally">كسب %1$d · فاضل %2$d</string>
+  <string name="table_lead">ارمي كارت</string>
+
+  <string name="quickmatch_next_round">الجولة اللي بعدها</string>
+
+  <string name="standings_title">مكانك في القعدة</string>
+  <string name="standings_return_to_ranked">ارجع</string>
+  <string name="standings_koz">كوز</string>
+  <string name="standings_name_winner">١ · %1$s</string>
+  <string name="ranked_label_rp">نقاط التصنيف</string>
+  <string name="ranked_rp_value">%1$d نقطة</string>
+  <string name="ranked_ceiling">فوق ٣٬٠٠٠ نقطة · للوحة المتصدرين بس</string>
+  <string name="ranked_label_transition">تغيّر الرتبة</string>
+  <string name="ranked_transition_arrow">←</string>
+  <string name="ranked_label_season">الموسم</string>
+  <string name="ranked_season_range">⁨%1$s⁩ ← ⁨%2$s⁩</string>
+
+  <string name="choose_level_preset_gentle_name">بولة على الهادي 😎</string>
+  <string name="choose_level_preset_gentle_blurb">لسه بتتعلّم؟ 3 لعيبة على الهادي، اتعلّم وجرب براحتك! 😎</string>
+  <string name="choose_level_preset_even_name">بولة على الميزان ⚖️</string>
+  <string name="choose_level_preset_even_blurb">٣ لعيبة مستواهم قريب من بعض، والبولة على الميزان ⚖️</string>
+  <string name="choose_level_preset_rivals_name">بولة العربجية</string>
+  <string name="choose_level_preset_rivals_blurb">تعلب بيتباكس، وقرش بيضغط عليك، والجوكر ملوش أمان! 😈</string>
+  <string name="choose_level_preset_shark_name">بولة المعلمين 🦈🔥</string>
+  <string name="choose_level_preset_shark_blurb">3 معلمين تقال، خد بالك تطلع معاهم سطح الواد حمادة</string>
+</resources>

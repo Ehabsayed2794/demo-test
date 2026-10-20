@@ -1,7 +1,9 @@
 package com.estemshan.game.ui.bot
 
+import androidx.annotation.StringRes
 import com.estemshan.engine.bot.BotPersonality
 import com.estemshan.engine.bot.BotTier
+import com.estemshan.game.R
 
 /**
  * A ready-made table the Choose Level screen (S12) offers as a quick pick, so
@@ -20,6 +22,10 @@ import com.estemshan.engine.bot.BotTier
  * repeated here: the screen reads [BotSeat.personality]'s and [BotSeat.tier]'s
  * own [displayName] / [blurb], so a preset can never describe a bot the
  * enums no longer back. [name] and [blurb] describe the *table*, not its seats.
+ *
+ * S41: [nameRes] / [blurbRes] are what the screen renders (so values-ar/ can
+ * translate the table); [name] / [blurb] stay as the English source and the
+ * fallback for a preset built without resources.
  */
 data class BotTablePreset(
   /** The lineup's title, shown as the preset card's headline. */
@@ -29,6 +35,8 @@ data class BotTablePreset(
   /** The opponents, in seat order — one [BotSeat] per chair that isn't the
    *  human's. Cycled if a table seats more opponents than the preset lists. */
   val bots: List<BotSeat>,
+  @StringRes val nameRes: Int = 0,
+  @StringRes val blurbRes: Int = 0,
 ) {
 
   /**
@@ -59,6 +67,8 @@ data class BotTablePreset(
         BotSeat(BotTier.HARD, BotPersonality.AGGRESSIVE),
         BotSeat(BotTier.EXPERT, BotPersonality.TRICKSTER),
       ),
+      nameRes = R.string.choose_level_preset_rivals_name,
+      blurbRes = R.string.choose_level_preset_rivals_blurb,
     )
 
     /** Three steady Regulars on their best behaviour — the table to learn on. */
@@ -66,6 +76,8 @@ data class BotTablePreset(
       name = "A Gentle Table",
       blurb = "Three patient opponents. Learn the rules, lose nothing.",
       bots = List(3) { BotSeat(BotTier.EASY, BotPersonality.BALANCED) },
+      nameRes = R.string.choose_level_preset_gentle_name,
+      blurbRes = R.string.choose_level_preset_gentle_blurb,
     )
 
     /** Three solid Regulars. No mercy, no fireworks — a fair, even fight. */
@@ -73,6 +85,8 @@ data class BotTablePreset(
       name = "An Even Table",
       blurb = "Three steady opponents who play it straight.",
       bots = List(3) { BotSeat(BotTier.MEDIUM, BotPersonality.BALANCED) },
+      nameRes = R.string.choose_level_preset_even_name,
+      blurbRes = R.string.choose_level_preset_even_blurb,
     )
 
     /** Three Veterans out for blood — for a player who is very sure of themself. */
@@ -80,6 +94,8 @@ data class BotTablePreset(
       name = "The Shark Tank",
       blurb = "Three Veterans who bid high and come hunting.",
       bots = List(3) { BotSeat(BotTier.HARD, BotPersonality.AGGRESSIVE) },
+      nameRes = R.string.choose_level_preset_shark_name,
+      blurbRes = R.string.choose_level_preset_shark_blurb,
     )
 
     /** The preset a fresh lobby lands on. */
