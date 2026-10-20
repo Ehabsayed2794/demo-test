@@ -31,9 +31,14 @@ import kotlinx.coroutines.await
  *   client-side (roadmap §4b.11, tier 1).
  * - The response is a display-safe projection. Identity (uid), contact
  *   (email), currency (coins/gems) and every other profile field stay behind
- *   this file: a leaderboard row carries position, name, initial, tier,
- *   division, RP and season — nothing else, because the board is public and a
- *   profile is not.
+ *   this file: a leaderboard row carries position, name, initial, tier, the
+ *   tier's Arabic title, division, RP and season — nothing else, because the
+ *   board is public and a profile is not. The Arabic title is read off the
+ *   already-resolved [rankLadder] rung, so this file holds no second copy of
+ *   the ladder's names to drift from the first.
+ * - ONE BOUNDED READ. The query carries [MAX_SEASON_PROFILES] plus one, and
+ *   [requireBoardWithinCap] refuses the board before classifying anything past
+ *   it: an oversized season is a refusal, never a silently truncated board.
  */
 
 /**
@@ -53,6 +58,10 @@ interface LeaderboardDb {
    * top-level `seasonId`; [leaderboardOnce] re-checks every row anyway, so a
    * port that returned another season's document is caught rather than blended
    * (RD24: rank position is recomputed per season, never carried over).
+   *
+   * A result over [MAX_SEASON_PROFILES] is refused by [requireBoardWithinCap]
+   * before any of it is read, so the bound is the caller's rule, not something
+   * each implementation has to remember.
    */
   suspend fun readSeasonProfiles(seasonId: String): List<StoredProfile>
 }
@@ -66,6 +75,20 @@ private const val MAX_LIMIT = 100
 private const val FALLBACK_DISPLAY_NAME = "Player"
 private const val FALLBACK_AVATAR_INITIAL = "?"
 
+/**
+ * How many season documents one board read may consume.
+ *
+ * The board is one unpaginated read: [orderLeaderboard] needs every entry to
+ * assign a position, so a request cannot be answered from a page and the read
+ * has no natural bound of its own. This supplies one. The query asks for ONE
+ * MORE ([MAX_SEASON_PROFILES] + 1) so [requireBoardWithinCap] can tell "at the
+ * cap" from "over it" from the count it already has, without a second read.
+ *
+ * 10,000 is far above any season's real Ranked population, so this is a ceiling
+ * on what one call may cost, not a limit on the board a player can see.
+ */
+internal const val MAX_SEASON_PROFILES = 10_000
+
 /** The one collection this story reads, and the field it filters on. */
 private const val PLAYERS_COLLECTION = "players"
 private const val SEASON_FIELD = "seasonId"
@@ -77,6 +100,14 @@ private const val SEASON_FIELD = "seasonId"
  * "current" stays the server's answer, never a client claim. A value that IS
  * present but unusable fails closed instead of silently resolving here: a
  * client that meant `s2` must not be handed `s1`'s board and never know.
+ *
+ * TODO(S64/S59): this literal is a placeholder for the server's current-season
+ * read, not the answer. Once S59's season document exists this must resolve
+ * from it, and only then is "which board does an unnamed request mean?" really
+ * the server's decision. Out of scope here: S64 reads a season, it does not
+ * own which season is live. The response echo of the season actually served
+ * stays whatever this resolves to, so a caller is never shown one board while
+ * believing another.
  */
 private const val DEFAULT_SEASON_ID = "s1"
 
@@ -118,7 +149,7 @@ private fun displayField(value: Any?, fallback: String): String =
  */
 private sealed class Candidate {
   class Boardable(val entry: LeaderboardEntry, val displayName: String, val avatarInitial: String) : Candidate()
-  class Unusable(val playerId: String, val reason: String) : Candidate()
+  class Unusable(val reason: String) : Candidate()
 }
 
 /**
@@ -129,11 +160,11 @@ private sealed class Candidate {
  */
 private fun classify(profile: StoredProfile, seasonId: String): Candidate {
   val fields = profile.fields
-  if (fields[SEASON_FIELD] != seasonId) return Candidate.Unusable(profile.playerId, "season-mismatch")
+  if (fields[SEASON_FIELD] != seasonId) return Candidate.Unusable("season-mismatch")
   val rung = rungNames(fields["tier"], fields["division"])
-    ?: return Candidate.Unusable(profile.playerId, "no-ladder-rung")
+    ?: return Candidate.Unusable("no-ladder-rung")
   val rp = boardableRp(fields["rp"])
-    ?: return Candidate.Unusable(profile.playerId, "rp-not-a-whole-number")
+    ?: return Candidate.Unusable("rp-not-a-whole-number")
   return Candidate.Boardable(
     entry = LeaderboardEntry(
       playerId = profile.playerId,
@@ -148,7 +179,26 @@ private fun classify(profile: StoredProfile, seasonId: String): Candidate {
 }
 
 /**
- * Runs one leaderboard read: auth → arguments → season read → validate →
+ * The read bound, decided on the count alone and before a single profile is
+ * classified. Over the cap there is no board at all — never a partial one:
+ * [orderLeaderboard] positions depend on every entry, so the top of an
+ * arbitrarily cut list is a different season's answer than this one, and RD27
+ * gives a client no way to tell it was cut. `resource-exhausted` is the honest
+ * code — the season is too large for one read, and no argument the client
+ * could send would change that.
+ */
+internal fun requireBoardWithinCap(size: Int, seasonId: String) {
+  if (size > MAX_SEASON_PROFILES) {
+    throw HttpsError(
+      "resource-exhausted",
+      "getRankedLeaderboard: season '$seasonId' has more than $MAX_SEASON_PROFILES profiles; " +
+        "the board is refused rather than served partly.",
+    )
+  }
+}
+
+/**
+ * Runs one leaderboard read: auth → arguments → season read → cap → validate →
  * order → project. Throws [HttpsError] on every denial (the client switches on
  * `code`, as in [settleOnce]).
  *
@@ -165,21 +215,30 @@ suspend fun leaderboardOnce(db: LeaderboardDb, request: CallableRequest): Map<St
   val seasonId = resolveSeason(data?.get(SEASON_FIELD))
   val limit = parseLimit(data?.get("limit"))
 
+  // Bound the read before working through it. Classifying a document past the
+  // cap to discover the board is oversized would spend the very cost the cap
+  // exists to refuse.
+  val profiles = db.readSeasonProfiles(seasonId)
+  requireBoardWithinCap(profiles.size, seasonId)
+
   val entries = mutableListOf<LeaderboardEntry>()
   val display = LinkedHashMap<String, Pair<String, String>>()
   var skipped = 0
-  for (candidate in db.readSeasonProfiles(seasonId).map { classify(it, seasonId) }) {
+  for (candidate in profiles.map { classify(it, seasonId) }) {
     when (candidate) {
       is Candidate.Boardable -> {
         entries.add(candidate.entry)
         display[candidate.entry.playerId] = Pair(candidate.displayName, candidate.avatarInitial)
       }
       is Candidate.Unusable -> {
-        // Structured and greppable, carrying only the id and the reason: a
-        // skipped profile's other fields are private data. The warn level is
-        // deliberate — the S62 ledger uses log for traffic, while a skipped
-        // profile is a signal someone should eventually want to alert on.
-        console.warn(skipLine(seasonId, candidate.playerId, candidate.reason))
+        // Structured and greppable, carrying the season and the reason and no
+        // identifier: a skipped profile's fields are private data, and its
+        // document id is the player's uid, so logging it would build a record
+        // of who was refused out of a read meant to expose nothing. The warn
+        // level is deliberate — the S62 ledger uses log for traffic, while a
+        // skipped profile is a signal someone should eventually want to alert
+        // on.
+        console.warn(skipLine(seasonId, candidate.reason))
         skipped++
       }
     }
@@ -198,8 +257,17 @@ suspend fun leaderboardOnce(db: LeaderboardDb, request: CallableRequest): Map<St
   )
 }
 
-private fun skipLine(seasonId: String, playerId: String, reason: String): String =
-  "S64_LEADERBOARD_SKIP seasonId=$seasonId playerId=$playerId reason=$reason"
+/**
+ * One skipped profile, as the log sees it: the season and the reason, and no
+ * identifier of any kind. This is the only place a skip is reported, so keeping
+ * the uid out of here keeps it out of the log entirely.
+ *
+ * The reason is a fixed literal chosen by [classify], never a value read from
+ * the profile, so a line says what the board could not use without saying
+ * anything about the player it belonged to.
+ */
+internal fun skipLine(seasonId: String, reason: String): String =
+  "S64_LEADERBOARD_SKIP seasonId=$seasonId reason=$reason"
 
 /**
  * Absent names [DEFAULT_SEASON_ID]; a value that IS present must be a non-blank
@@ -242,9 +310,11 @@ private fun parseLimit(value: Any?): Int = when (value) {
 
 /**
  * The row as the client sees it — a whitelist by construction: [position] is
- * already the server's answer, `tier`/`division` are the rung's names (division
- * is "" for King, which is what makes the board render King as one ordered
- * group instead of inventing "King I"), and nothing else rides along. The
+ * already the server's answer, `tier`/`tierArabic`/`division` are the three
+ * names of ONE resolved rung taken straight off [rankLadder] (division is ""
+ * for King, which is what makes the board render King as one ordered group
+ * instead of inventing "King I", and its Arabic title is the ladder's own,
+ * never a second table kept here), and nothing else rides along. The
  * playerId that ordered the board is deliberately NOT in here.
  */
 private fun displayRow(row: LeaderboardRow, nameAndInitial: Pair<String, String>?): Map<String, Any?> = mapOf(
@@ -252,6 +322,7 @@ private fun displayRow(row: LeaderboardRow, nameAndInitial: Pair<String, String>
   "displayName" to (nameAndInitial?.first ?: FALLBACK_DISPLAY_NAME),
   "avatarInitial" to (nameAndInitial?.second ?: FALLBACK_AVATAR_INITIAL),
   "tier" to row.rank.tier,
+  "tierArabic" to row.rank.arabic,
   "division" to row.rank.division,
   "rp" to row.rp,
   "seasonId" to row.seasonId,
@@ -271,6 +342,12 @@ class AdminLeaderboardDb : LeaderboardDb {
   override suspend fun readSeasonProfiles(seasonId: String): List<StoredProfile> {
     val snapshot = db.collection(PLAYERS_COLLECTION)
       .where(SEASON_FIELD, "==", seasonId)
+      // One past the cap, so [requireBoardWithinCap] can tell "at it" from
+      // "over it" from the count it already has and without a second query.
+      // Without a limit this read has no bound at all — the SDK pulls every
+      // matching document, so one oversized season would cost the whole
+      // collection on every call.
+      .limit(MAX_SEASON_PROFILES + 1)
       .get().await()
     return snapshot.docs.map { doc ->
       @Suppress("UNCHECKED_CAST")
