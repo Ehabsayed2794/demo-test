@@ -9,17 +9,9 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 
 | ID | Pri | السؤال | ليه مهم | الاختيارات / توصية | المصدر |
 |---|---|---|---|---|---|
-| Q27b | P1 | "آخر لاعب خرج" = خروج صريح بس ولا يشمل انقطاع النت؟ لو الانقطاع يلغي الماتش فورًا يبقى مفيش رجوع | يتعارض مع الـ٧ رجعات والـ١٠ ثواني | توصية: الإلغاء الفوري للخروج الصريح بس؛ الانقطاع يمشي على قاعدة الـ١٠ ثواني ثم البوت، وبعد ما كل البشر يتفصلوا مدة ثابتة قصيرة يتلغي | decision record §Q |
-| Q4 | P2 | Normal Dash + Risk في Classic (جدوله ثابت) يتصرف إزاي؟ | قرارك اتحدد لـNormal بس | توصية: نفس مبدأ Classic المكتوب (Risk=…) نراجعه معاك بمثال | `CANONICAL_RULES.md:192` |
-| Q16 | P2 | في ROOM (٢–٣ لاعبين): King/Second/Third/Koz يتحسبوا إزاي؟ | التعريف مفترض ٤ لاعبين | توصية: المركز الأول فقط King وآخر مركز Koz لو في ٣+؛ ماتش لاعبين = بدون Koz | RD17 |
-| Q17 | P2 | عدد الماتشات (Games Played) والنسب هتتجمع برضه بين ROOM وRANKED؟ | القرار ذكر الأربع عدادات بس | توصية: أيوه، الكل مجمّع | RD23 |
-| Q18 | P2 | نحتفظ بسجل النتيجة بس ولا بأي سجل تفصيلي للنزاعات/الأمان لفترة؟ | الحذف بيكلف writes ومفيش استرجاع | توصية: النتيجة + RP ledger + مفتاح التكرار فقط؛ سجل الحركات يتمسح بعد تأكيد الحفظ | decision record §1.L |
-| Q6 | P2 | حذف الحساب مؤجل: ممكن Google Play يرفض الإطلاق بدونه. تقبل المخاطرة أو نعمل صفحة ويب + حذف بسيط؟ | سياسة المتجر | توصية: نتحقق من السياسة الحالية قبل الإطلاق (TECH T9) ونجهز رابط ويب بسيط | `docs/release/play-listing.md:99` |
+| Q27c | P1 | مدة انفصال كل البشر (انقطاع نت) قبل ما الماتش يتلغي: كام ثانية/دقيقة؟ وهل الشرط "ولا لاعب في القعدة" معناه إن لاعب لسه متسجل في الطاولة (حتى منقطع) يمنع الإلغاء لحد ما المدة تخلص؟ | بيحدد متى الماتش يتلغي | توصية: دقيقتين، ونعم الشرط ده معناه | decision record §R |
+| Q21b | P2 | App Check / Play Integrity (حماية ضد تطبيقات مزوّرة): نحطه V1 ولا بعدين؟ | مجاني لكن بحصة ١٠ آلاف طلب/يوم افتراضياً | توصية: بعد V1 | Play Integrity docs |
 | Q19 | P2 | قواعد غير مثبتة: حد أدنى لـWith، قايمة With بعد Super في الأدوار السريعة، نص A1 (bid²). تثبت الكود ولا النص؟ | عدم تطابق وثايق/كود | توصية: نثبت الكود ونعدل الوثايق | audit §5 |
-| Q20 | P2 | الإنترنت المقطوع/السيرفر واقف: المؤقتات تتجمد وتتعاد بعد الرجوع؟ | بيأثر على العدالة | توصية: أيوه، من غير أي كتابة إضافية | decision record |
-| Q21 | P2 | الـRanked يتطلب إيميل متحقق منه؟ و App Check / Play Integrity نشغله؟ | منع الحسابات المتعددة | توصية: إيميل متحقق مطلوب؛ App Check مرحلة لاحقة (مجاني، 10k/يوم افتراضي) | AuthRepository, Play Integrity docs |
-| Q22 | P2 | الليدربورد مؤجل، فهل الـseasons وإعادة الضبط (خطوتين) تفضل في V1؟ ومدة الموسم "٣ شهور" ولا ٩٠ يوم؟ | RP مرتبط بالموسم | توصية: نبقي الـreset الكسول بدون سجلات للاعبين غير النشطين، ومدة ثابتة تتحدد | `SeasonResetRun.kt`, RD24 |
-| Q24 | P2 | UNRANKED وROOM يتنقلوا بعدين لنفس سيرفر الـauthority؟ | ROOM محتاجه من V1 للإحصائيات | توصية: UNRANKED بعد Stage 7، ROOM مع Q15 | A3.5 |
 
 ## B. Resolved / decided / deferred (no question needed)
 
@@ -81,3 +73,13 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 | Q2f | Shared-Koz players take the same last placement for RP |
 | Q15c | UNRANKED result recorded under the ROOM condition (four matching app reports) |
 | Q27 | Everyone-left match: cancelled as soon as the last human leaves; all Koz, RP deducted = engine's last-place loss; server/quota failure exempt; ROOM/UNRANKED record Koz without RP (follow-up Q27b) |
+| Q27b | Explicit Leave cancels immediately only if no player remains at the table; disconnection follows the 10 s rule, then bot; all humans disconnected a fixed short period → cancel (period: Q27c) |
+| Q4 | Classic Normal Dash + Risk: add both tables |
+| Q16 | No ROOM without a full table of four |
+| Q17 | Counts and percentages over Games Played, aggregated across ROOM/RANKED/UNRANKED |
+| Q18 | Keep final result, RP ledger and idempotency keys; delete action history |
+| Q6 | Account deletion deferred; store-policy risk accepted (not verified) |
+| Q20 | Outage: timers freeze and resume, no timeout charged |
+| Q21 | Ranked needs a registered account only (App Check: Q21b) |
+| Q22 | Seasons and reset in V1: lazy, no inactive-player records, 90 days |
+| Q24 | ROOM/UNRANKED stay app-managed; any server move is a later release, no committed project |

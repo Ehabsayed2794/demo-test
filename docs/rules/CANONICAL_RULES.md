@@ -511,4 +511,5 @@ the disconnect table may pause for a bounded 90 seconds.**
 - **A6.5 Super Call extension (owner):** only if the Caller succeeds; supersedes the "any Super Call" wording of §3.
 - **A6.6 Departure charges (owner; supersedes A5.1 where it differs):** ROOM leave for any reason = 1 Koz; RANKED/UNRANKED leave for any reason = 2 Koz; charged only when the match finishes and the player did not return. Open: Q14c, Q14d. No Vote Kick against a shared Koz (unique Koz required).
 - **A6.7 (owner, later; supersedes A6.6 and A3.5 where they differ):** UNRANKED computes no RP but enters all profile statistics. A passed Vote Kick = 2 Koz (RANKED, UNRANKED). A match abandoned by everyone: all players Koz and RP deducted (details Q27). No cap on General Passes or Sa'aydas; the multiplier caps at ×8; a Classic General Pass consumes the round with no multiplier. Players tied at the bottom share the last placement for RP.
+- **A6.8 (owner, 2026-10-21 later):** a ROOM needs a full table of four (supersedes A3.1's "may start with 2–3 players"); Classic Normal Dash + Risk adds both components (numbers to be confirmed); profile shows counts and percentages over Games Played.
 

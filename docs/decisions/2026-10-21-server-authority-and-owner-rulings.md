@@ -212,6 +212,18 @@ is deferred to a later, explicitly approved environment.
 - **Q27(3) [D].** A match stopped by a **server or free-quota failure is never charged to players** (full exemption).
 - **Q27(4) [D].** ROOM and UNRANKED record the Koz (1 and 2 respectively) with no RP.
 
+### R. Eighth-batch owner rulings (2026-10-21, later) [D unless marked]
+- **Q27b [D, with a condition].** An **explicit Leave (button)** cancels the match immediately **only if no player remains at the table**. A network disconnection follows the 10-second rule, then the bot; if **all humans have been disconnected for a fixed short period**, the match is cancelled. **Open [Q27c]:** that period's length, and confirmation that the owner's condition ("not while any player is still seated") means a seated-but-disconnected player still blocks cancellation until that period ends.
+- **Q4 [D].** Normal Dash + Risk in **Classic: add both tables** (Classic Normal Dash fixed table plus the Classic Risk component), the same principle as Normal. Exact Classic numbers to be worked out at implementation with the owner's table (`CANONICAL_RULES.md:171-192`).
+- **Q16 [D; supersedes A3.1 "ROOM may start with 2–3 players"].** **No ROOM without a full table of four players.** (Rules `isValidNewMatch` still accept 1–4 players, `firestore.rules:521-528`; not changed here.) This makes the ROOM statistics definitions (King/Second/Third/Koz) the same four-player ones.
+- **Q17 [D].** Profile shows **counts and percentages** over Games Played, aggregated across ROOM, RANKED and UNRANKED. Percentage = outcome count ÷ games. Example: 100 King, 100 Second, 100 Third, 100 Koz → 25% each. (The owner's example used "وزير" for Second and "كوز صغير" for Third; Arabic names to be confirmed against the UI strings.)
+- **Q18 [D].** After the result is confirmed, keep the **final result, the RP ledger and the idempotency keys only**; delete the action history. Deletion cost is measured in Stage 0 (T2).
+- **Q6 [D — risk accepted].** The owner chose to **accept the store-policy risk** of deferring account deletion and wait for the store's response. This is **not** a compliance claim; the Play policy remains unverified.
+- **Q20 [D].** If the internet or server stops during a match (not a player leaving), **timers freeze and resume after recovery with no timeout charged to anyone.**
+- **Q21 [D, partly].** Ranked requires **a registered account only** (no verified-email requirement). App Check / Play Integrity **not answered [Q21b]**.
+- **Q22 [D].** **Seasons and the two-step reset stay in V1**: lazy reset, no records for inactive players, fixed **90-day** seasons (recorded as the owner's acceptance of the offered option; the Arabic reply restated option أ).
+- **Q24 [D — supersedes my earlier recommendation].** **ROOM and UNRANKED stay app-managed.** No further migration project is committed now. After the game has succeeded, a **later release** may move everything to the server. This also settles that no server authority is planned for ROOM/UNRANKED in V1.
+
 ## 2. Earlier rulings in the replanning brief (unchanged, restated for completeness) [D]
 Ranked-only first scope; ROOM/UNRANKED not silently migrated; no legacy data to migrate; Ranked needs
 a registered account; $0 budget; no timeout grace window needing extra reads/writes; season
