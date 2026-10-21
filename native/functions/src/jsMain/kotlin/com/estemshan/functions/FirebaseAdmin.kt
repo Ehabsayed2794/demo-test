@@ -96,6 +96,13 @@ external interface QuerySnapshot {
 external interface QueryDocSnapshot {
   val id: String
   fun data(): Any?
+  /**
+   * S59: the commit version of this document at read time. The reset carries it
+   * into a `lastUpdateTime` precondition on the profile batch, so a settlement
+   * that commits between the read and the write makes the batch fail instead of
+   * being overwritten by a stale reset.
+   */
+  val updateTime: Any?
 }
 
 external interface Transaction {
@@ -116,6 +123,14 @@ external interface WriteBatch {
    * SDK caps one batch at 500 writes; callers chunk well below that.
    */
   fun update(ref: DocRef, data: Any?)
+
+  /**
+   * S59: the same field-level update with an Admin-SDK precondition. The reset
+   * passes `{ lastUpdateTime: <the profile's updateTime at read> }`; if a
+   * settlement or any other writer commits in between, the whole batch fails
+   * with FAILED_PRECONDITION and no profile in it is written.
+   */
+  fun update(ref: DocRef, data: Any?, precondition: Any?)
   fun commit(): Promise<Any?>
 }
 
