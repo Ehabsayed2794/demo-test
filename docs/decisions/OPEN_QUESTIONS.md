@@ -9,10 +9,8 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 
 | ID | Pri | السؤال | ليه مهم | الاختيارات / توصية | المصدر |
 |---|---|---|---|---|---|
-| Q14c | P1 | الـUNRANKED مستبعد من إحصائيات البروفايل، لكن قلت الخروج منه = ٢ Koz. الـ٢ Koz دي تروح لعدّاد Koz في البروفايل ولا بس بتتسجل في نتيجة الماتش؟ | تعارض بين قرارين | توصية: تتسجل في نتيجة الماتش بس ومتدخلش البروفايل (UNRANKED خارج الإحصائيات) | decision record §O |
-| Q14d | P1 | (١) الـVote Kick كان ١ Koz، وقلت "أي سبب" = ٢ Koz في Ranked/Unranked: الـVote Kick بقى ٢؟ (٢) لو الماتش ما خلصش أبداً (الكل سابه): الـKoz بيتحسب؟ | بيحدد النتيجة النهائية | توصية: (١) ٢ Koz للتوحيد (٢) الماتش اللي مخلصش مفيش كوز ولا RP | A5.1 |
-| Q2f | P2 | المتعادلين في الآخر (Koz مشترك): الـRP يحسبهم نفس المركز الأخير؟ | الـRP بيعتمد على المركز | توصية: أيوه نفس المركز الأخير | `Placement.kt:212` |
-| Q1b | P1 | General Pass: (١) بعد ×4 يبقى ×6 (سلّم الـSa'ayda) ولا ×8 (ضعف)؟ (٢) في Classic (بدون مضاعف) هل الجولة بتتحسب برضه وتروح للي بعدها؟ | قولت "الجولة ٦ باص → ٧ ×٢ → صاعيدة → ٨ ×٤" | توصية: (١) سلّم الـSa'ayda ×2→×4→×6→×8 (٢) أيوه الجولة بتتحسب من غير مضاعف | `Bidding.kt:493`, `RoundScore.kt:191` |
+| Q15c | P1 | الـUNRANKED دخل الإحصائيات: نتيجته تتسجل بنفس شرط الـROOM (تطابق تقارير تطبيقات اللاعبين الأربعة)؟ | الـUNRANKED شغال على نظام التطبيق زي الـROOM | توصية: أيوه نفس الشرط | decision record §P |
+| Q27 | P1 | الماتش اللي الكل سابه: (١) "الكل سابه" يعني إيه ومدة قد إيه (مثلاً الكل خارج المقاعد X دقيقة)؟ (٢) الـRP اللي يتخصم قد إيه (نفس خسارة آخر مركز؟ مبلغ ثابت؟) (٣) لو الماتش وقف بسبب السيرفر/الحصة المجانية، ما يتحسبش على اللاعبين؟ (٤) ROOM/UNRANKED بيتسجل فيهم كوز (١ و٢) بدون RP؟ | بيستثني قاعدة "RP بعد ماتش كامل" | توصية: (١) بعد انتهاء مهلة قصيرة ثابتة من خروج آخر لاعب (٢) نفس خسارة آخر مركز بحسب محرك الـRP (٣) أيوه إعفاء كامل (٤) أيوه | decision record §P |
 | Q4 | P2 | Normal Dash + Risk في Classic (جدوله ثابت) يتصرف إزاي؟ | قرارك اتحدد لـNormal بس | توصية: نفس مبدأ Classic المكتوب (Risk=…) نراجعه معاك بمثال | `CANONICAL_RULES.md:192` |
 | Q16 | P2 | في ROOM (٢–٣ لاعبين): King/Second/Third/Koz يتحسبوا إزاي؟ | التعريف مفترض ٤ لاعبين | توصية: المركز الأول فقط King وآخر مركز Koz لو في ٣+؛ ماتش لاعبين = بدون Koz | RD17 |
 | Q17 | P2 | عدد الماتشات (Games Played) والنسب هتتجمع برضه بين ROOM وRANKED؟ | القرار ذكر الأربع عدادات بس | توصية: أيوه، الكل مجمّع | RD23 |
@@ -70,7 +68,7 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 | Q2d | Koz = every player tied at the lowest score unless all four tie (all King); shared Koz players are Koz, not Second/Third (follow-up Q2e) |
 | Q7c | Auto-Match joins a player-created table; bots are the creator's choice (follow-up Q26) |
 | Q10c | After timer: MEDIUM plays, timeout counter +1; after 10 more disconnected seconds the creator's bot takes over, takeover counter +1; 10 s fixed |
-| Q14 | 2-Koz departures count in RANKED and ROOM; UNRANKED excluded (follow-up Q14b) |
+| Q14 | (superseded by Q14b/Q14c) 2-Koz departures; UNRANKED exclusion reversed by Q14c |
 | Q5 | Build Google sign-in and email sign-up in Android V1 via Firebase Auth, no Play Games |
 | Q12 | Approved to write the ADR after Stage 0 succeeds (ADR text not yet approved) |
 | Q2e | No Vote Kick when the Koz is shared (unique Koz required); RP of shared Koz: Q2f |
@@ -78,3 +76,7 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 | Q14b | ROOM leave (any reason) = 1 Koz; RANKED/UNRANKED leave (any reason) = 2 Koz; charged only when the match finishes and the player did not return (follow-ups Q14c, Q14d) |
 | Q1 | General Pass consumes the round: round 6 all pass → round 7 ×2; Sa'ayda in 7 → round 8 ×4 (follow-up Q1b) |
 | Q3 | Super Call extends only if the Caller succeeds |
+| Q14c | UNRANKED enters ALL profile statistics (no RP); reverses decision J's exclusion (follow-up Q15c) |
+| Q14d | Passed Vote Kick = 2 Koz; abandoned match (everyone left): all players Koz and all lose RP (details Q27) |
+| Q1b | No cap on General Pass/Sa'ayda counts, only the multiplier ×8; Classic General Pass still consumes the round, no multiplier |
+| Q2f | Shared-Koz players take the same last placement for RP |

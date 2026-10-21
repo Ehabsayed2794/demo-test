@@ -138,8 +138,8 @@ Two separate rules (the owner's wording):
   prove recovery, replication lag, quota accounting and consistency (§3). **The backup provider is
   unspecified** (engineering to propose; not an owner question).
 
-### J. Result statistics from V1 [D scope; ROOM result recording D 2026-10-21 (later)]
-- **Scope (unchanged):** ROOM and RANKED results aggregate in the same King/Second/Third/Koz counters;
+### J. Result statistics from V1 [D scope — UNRANKED exclusion REVERSED by §P; ROOM result recording D 2026-10-21 (later)]
+- **Scope (original; the UNRANKED exclusion below is superseded by §P):** ROOM and RANKED results aggregate in the same King/Second/Third/Koz counters;
   UNRANKED excluded; Ranked RP is separate and Ranked-only; each result must be processed exactly once.
 - **ROOM result recording [D, Q15]:** the **app manages all ROOM operations**; the **server records the
   final result only**. Gameplay and result calculation stay on the client. This is **not** a move of ROOM
@@ -198,6 +198,13 @@ is deferred to a later, explicitly approved environment.
 - **Q1 — General Pass multiplier [D, with an interpretation].** Owner example: all four pass in **round 6** → **round 7 is played ×2**; if round 7 is a **Sa'ayda** (everyone fails) → **round 8 is ×4**. So a General Pass **consumes the round number** (it is not a same-round redeal) and its ×2 is the first step of the same ladder the Sa'ayda uses. **Engine differs:** it redeals the **same** round (`Bidding.kt:493-509`; `QuickMatchViewModel.applyGeneralPass`), and caps at a literal 8 in both modes. **[A]** the ladder generalises as ×2→×4→×6→×8 (canonical Sa'ayda ladder, not doubling) — to confirm **[Q1b]**, together with what Classic does (redeal without Double: does it also consume the round?). General Pass can occur only in normal rounds (fast rounds have no auction).
 - **Q3 — Super Call extension [D].** A Super Call extends the match **only if the Caller succeeds** (as the engine does, `RoundScore.kt:234`). The canonical "any Super Call" wording (`CANONICAL_RULES.md:108`) is superseded.
 
+### P. Sixth-batch owner rulings (2026-10-21, later) [D unless marked]
+- **Q14c — UNRANKED enters the profile statistics [D; REVERSES decision J and the Q14 line].** UNRANKED does **not** compute RP, but it **does enter all the statistics** (King/Second/Third/Koz, Games Played, and the 2-Koz departure charge). So the profile statistics now aggregate **ROOM, RANKED and UNRANKED**; RP stays Ranked-only. Supersedes RD23/RD28/A3.5 "no statistics for UNRANKED" and this record's earlier J scope. **Consequence for design:** UNRANKED, like ROOM, runs on the old client-managed runtime, so its final result also needs exactly-once recording — the ROOM rule (record only when the four apps' reports match) is the obvious candidate but was not stated for UNRANKED **[Q15c]**.
+- **Q14d(1) — Vote Kick charge [D].** A passed Vote Kick records **2 Koz** in RANKED and UNRANKED (was 1 Koz in A5.1, which this supersedes; ROOM has no Vote Kick).
+- **Q14d(2) — abandoned match [D, with gaps].** If a match never finishes because everyone left, **every player is counted Koz and every player has RP deducted.** Tensions: it is an exception to "RP only after a fully completed match", and to "charged only when the match finishes". **Open [Q27]:** the definition of "everyone left" and how long; the RP amount; and a safeguard so a **server/quota outage that ends a match is never charged to players**; and what ROOM/UNRANKED (no RP) record.
+- **Q1b — General Pass / Sa'ayda repeats [D].** **No cap on the number of General Passes or Sa'aydas**; only the multiplier is capped at **×8**. **Classic:** a General Pass round is still consumed, without a multiplier **[D, approved]**. The step size after ×4 follows the canonical Sa'ayda ladder ×2→×4→×6→×8 (resolved from `CANONICAL_RULES.md:141`; the owner's example is consistent with it).
+- **Q2f — RP for a shared Koz [D].** Players tied at the bottom all take the **same last placement** for RP.
+
 ## 2. Earlier rulings in the replanning brief (unchanged, restated for completeness) [D]
 Ranked-only first scope; ROOM/UNRANKED not silently migrated; no legacy data to migrate; Ranked needs
 a registered account; $0 budget; no timeout grace window needing extra reads/writes; season
@@ -215,7 +222,7 @@ backup cannot award RP twice (single idempotency key authority); delete-cost and
 |---|---|
 | RD11, RD12, RD14, R25, plan appendix "lightweight authority compromise" | Superseded **for Ranked** in direction (H); pointer notes added in the plan |
 | RD13 (idempotent, authenticated settlement) | Carried forward and strengthened (I, J) |
-| RD23 / RD28 / A3.5 statistics scope | Superseded by J (ROOM+RANKED combined; UNRANKED excluded) |
+| RD23 / RD28 / A3.5 statistics scope | Superseded by J, then by §P: ROOM, RANKED and UNRANKED all enter the statistics; RP Ranked-only |
 | RD27 / S64 leaderboard | Deferred by K |
 | PD-001 (web is production) | Superseded by H (pointer added) |
 | A5.1 charge table | Interacts with J [Q14] |
