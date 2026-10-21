@@ -17,7 +17,7 @@
 const BUNDLE = "./build/compileSync/js/main/productionExecutable/kotlin/functions.js";
 const kotlin = require(BUNDLE);
 
-const callables = {
+const exported = {
   engineSmoke: kotlin.engineSmoke,
   settleMatch: kotlin.settleMatch,
   resolveDecisionTimeout: kotlin.resolveDecisionTimeout,
@@ -27,23 +27,28 @@ const callables = {
   restoreDisconnectedSeat: kotlin.restoreDisconnectedSeat,
   getMyRankedProfile: kotlin.getMyRankedProfile,
   getRankedLeaderboard: kotlin.getRankedLeaderboard,
+  scheduledSeasonReset: kotlin.scheduledSeasonReset,
   joinRankDownRoom: kotlin.joinRankDownRoom,
 };
 
-for (const [name, fn] of Object.entries(callables)) {
+for (const [name, fn] of Object.entries(exported)) {
   if (typeof fn !== "function") {
     throw new Error(
       `functions manifest: "${name}" is not exported by the Kotlin bundle — ` +
       `build it first (gradlew :functions:jsProductionExecutableCompileSync) ` +
-      `or add the callable to native/functions/src/jsMain/kotlin/Functions.kt.`,
+      `or add it to native/functions/src/jsMain/kotlin/Functions.kt.`,
     );
   }
-  if (!fn.__trigger) {
+  // Callables carry __trigger; scheduled functions carry __endpoint. Either
+  // marker means the CLI will register it; neither means the member is not a
+  // Firebase function at all.
+  if (!fn.__trigger && !fn.__endpoint) {
     throw new Error(
-      `functions manifest: "${name}" has no __trigger — it is not a Firebase ` +
-      `callable. Declare it with onCall(...) in Functions.kt.`,
+      `functions manifest: "${name}" has neither __trigger nor __endpoint — ` +
+      `it is not a Firebase function. Declare it with onCall(...) or ` +
+      `onSchedule(...).`,
     );
   }
 }
 
-module.exports = callables;
+module.exports = exported;
