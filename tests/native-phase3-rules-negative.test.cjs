@@ -507,6 +507,10 @@ async function main() {
 
   console.log("\n=== RESULTS ===\n" + pass + " passed, " + fail + " failed");
   if (fail > 0) process.exitCode = 1;
+  // S10 adds a second (unauthenticated) Firestore client. Terminate every
+  // context the environment created, otherwise that client's gRPC channel
+  // keeps Node alive after the assertions finish.
+  await testEnv.cleanup();
 }
 
 main().catch(function (e) {
