@@ -9,11 +9,10 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 
 | ID | Pri | السؤال | ليه مهم | الاختيارات / توصية | المصدر |
 |---|---|---|---|---|---|
-| Q2e | P1 | بعد قاعدة الـKoz المشترك: الـVote Kick (كان محتاج Koz واحد بس) يشتغل على كذا Koz؟ وأي ترتيب يدخل حساب الـRP للمتعادلين في الآخر؟ | RD18 بيشترط Koz وحيد | توصية: Vote Kick يفضل مقفول لو الـKoz مشترك؛ والـRP يعتبرهم نفس المركز الأخير | RD18, `VoteKick.kt:154` |
-| Q26 | P1 | الـAuto-Match بيدخل طاولة عملها لاعب. (١) قاعدة الـtier بين الداخل وصاحب الطاولة (RD29: فرق تير واحد؟) (٢) الداخل يشوف إعدادات الطاولة قبل ما يدخل؟ (٣) لو مفيش طاولة منتظرة: رسالة ولا ينتظر ولا ينشئ طاولة؟ | الكود بيبحث بنوع الماتش بس | توصية: (١) نفس RD29 بين الداخل وصاحب الطاولة (٢) أيوه يشوف المدة والبوت قبل الدخول (٣) رسالة "مفيش طاولات دلوقتي" مع زرار إنشاء | `MatchmakingRequest.kt`, RD9/RD29 |
-| Q14b | P1 | ROOM بقى يحسب 2 Koz: في أي حالات؟ (خروج / إزالة ١٥ تايم آوت / استبدال بعد قطع اتصال)؟ وعدّاد الـ٧ استلامات موجود في الـROOM ولا في الـRanked بس؟ | A5.1 كانت بتعفي ROOM | توصية: الخروج والإزالة بالتايم آوت فقط؛ الاستبدال بعد قطع الاتصال مفيهوش عقوبة؛ عدّاد الـ٧ Ranked بس | A5.1 |
-| Q1 | P2 | General Pass في Normal بيضرب ×2: لو في Sa'ayda متراكم (×4)، النتيجة ×8 ولا ×2 ولا ×4؟ | القواعد ما حددتش | توصية: يضاف على المضاعف الحالي بحد أقصى ×8 | `Bidding.kt:493`, QuickMatch:164 |
-| Q3 | P2 | تمديد الـSuper Call في الأدوار السريعة: بيحصل بس لو المتصل نجح (الكود) ولا دايماً (النص)؟ | مثال: متصل فشل بـSuper في الدور 15 → الكود مفيش دور زيادة، النص دور زيادة | توصية: نثبت الكود (لازم ينجح) ونعدل النص | `RoundScore.kt:234` |
+| Q14c | P1 | الـUNRANKED مستبعد من إحصائيات البروفايل، لكن قلت الخروج منه = ٢ Koz. الـ٢ Koz دي تروح لعدّاد Koz في البروفايل ولا بس بتتسجل في نتيجة الماتش؟ | تعارض بين قرارين | توصية: تتسجل في نتيجة الماتش بس ومتدخلش البروفايل (UNRANKED خارج الإحصائيات) | decision record §O |
+| Q14d | P1 | (١) الـVote Kick كان ١ Koz، وقلت "أي سبب" = ٢ Koz في Ranked/Unranked: الـVote Kick بقى ٢؟ (٢) لو الماتش ما خلصش أبداً (الكل سابه): الـKoz بيتحسب؟ | بيحدد النتيجة النهائية | توصية: (١) ٢ Koz للتوحيد (٢) الماتش اللي مخلصش مفيش كوز ولا RP | A5.1 |
+| Q2f | P2 | المتعادلين في الآخر (Koz مشترك): الـRP يحسبهم نفس المركز الأخير؟ | الـRP بيعتمد على المركز | توصية: أيوه نفس المركز الأخير | `Placement.kt:212` |
+| Q1b | P1 | General Pass: (١) بعد ×4 يبقى ×6 (سلّم الـSa'ayda) ولا ×8 (ضعف)؟ (٢) في Classic (بدون مضاعف) هل الجولة بتتحسب برضه وتروح للي بعدها؟ | قولت "الجولة ٦ باص → ٧ ×٢ → صاعيدة → ٨ ×٤" | توصية: (١) سلّم الـSa'ayda ×2→×4→×6→×8 (٢) أيوه الجولة بتتحسب من غير مضاعف | `Bidding.kt:493`, `RoundScore.kt:191` |
 | Q4 | P2 | Normal Dash + Risk في Classic (جدوله ثابت) يتصرف إزاي؟ | قرارك اتحدد لـNormal بس | توصية: نفس مبدأ Classic المكتوب (Risk=…) نراجعه معاك بمثال | `CANONICAL_RULES.md:192` |
 | Q16 | P2 | في ROOM (٢–٣ لاعبين): King/Second/Third/Koz يتحسبوا إزاي؟ | التعريف مفترض ٤ لاعبين | توصية: المركز الأول فقط King وآخر مركز Koz لو في ٣+؛ ماتش لاعبين = بدون Koz | RD17 |
 | Q17 | P2 | عدد الماتشات (Games Played) والنسب هتتجمع برضه بين ROOM وRANKED؟ | القرار ذكر الأربع عدادات بس | توصية: أيوه، الكل مجمّع | RD23 |
@@ -74,3 +73,8 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 | Q14 | 2-Koz departures count in RANKED and ROOM; UNRANKED excluded (follow-up Q14b) |
 | Q5 | Build Google sign-in and email sign-up in Android V1 via Firebase Auth, no Play Games |
 | Q12 | Approved to write the ADR after Stage 0 succeeds (ADR text not yet approved) |
+| Q2e | No Vote Kick when the Koz is shared (unique Koz required); RP of shared Koz: Q2f |
+| Q26 | RD29 tier band joiner↔creator; joiner sees table settings first; no tables → message + Create button |
+| Q14b | ROOM leave (any reason) = 1 Koz; RANKED/UNRANKED leave (any reason) = 2 Koz; charged only when the match finishes and the player did not return (follow-ups Q14c, Q14d) |
+| Q1 | General Pass consumes the round: round 6 all pass → round 7 ×2; Sa'ayda in 7 → round 8 ×4 (follow-up Q1b) |
+| Q3 | Super Call extends only if the Caller succeeds |

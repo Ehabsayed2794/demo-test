@@ -20,7 +20,7 @@ dated pointer notes (the repository's pointer convention).
   Amendment A6 there.
 - **Example (Caller bids 5 and makes 5):** Normal = (10+5)+10 = 25 → ×2 = **50**. Classic = 5+13+10 = **28**.
   The engine today would score Classic **56** (doubled). The owner rule gives 28.
-- **Still open:** [Q1] the Normal doubling's composition with a carried Sa'ayda multiplier.
+- **Clarified later (§O, Q1):** a General Pass consumes the round number and feeds the multiplier ladder; see §O.
 
 ### B. Sa'ayda extension [D — corrected 2026-10-21 (later); supersedes the earlier B text and Q2]
 Two separate rules (the owner's wording):
@@ -183,9 +183,20 @@ is deferred to a later, explicitly approved environment.
   - **Open [Q2e]:** whether Vote Kick (needs a *unique* Koz, RD18) becomes available against a shared Koz, and how RP placement treats shared-Koz seats.
 - **Q7c — Auto-Match model [D].** Auto-Match does not use a creator-less pool. Every Ranked table is **created by a player** (who chooses timer, bots and their personality); Auto-Match **joins a player-created table that is waiting for players**. Bots that later fill a seat are the **creator's chosen bots**. Example: Ehab wants his own settings → creates a table; Mohamed just wants a game → Auto-Match into an existing table. **Conflict:** the implemented search request carries only `gameType` and the plan/RD9 describes a server-derived pool (`MatchmakingRequest.kt`, RD9). **Open [Q26]:** tier rules between a joiner and a creator's table, whether joiners see the creator's settings first, and what Auto-Match does when no created table exists.
 - **Q10c — takeover sequence [D].** After the decision timer (e.g. 15 s) expires, the **MEDIUM bot plays that decision and the timeout counter (15-removal) increments**. If the player is still disconnected after **10 more seconds**, the **creator-selected bot takes the seat and the takeover counter (7th = removal, 2 Koz) increments**. The 10 s is **fixed for all timers (5/10/15/20)**.
-- **Q14 — departure charges and statistics [D].** A leave/removal worth 2 Koz counts in **RANKED and ROOM**; **UNRANKED is outside the statistics entirely**. **Supersedes** A5.1's "ROOM: no Koz" and its UNRANKED 2-Koz charge, and the 2026-10-17 "career Koz counter is a plain departure counter" reading for UNRANKED. **Open [Q14b]:** which ROOM paths charge (leave, 15-timeout removal, disconnect replacement) and whether the takeover counter exists in ROOM.
+- **Q14 — departure charges and statistics [D — PARTLY SUPERSEDED by §O below].** A leave/removal worth 2 Koz counts in **RANKED and ROOM**; **UNRANKED is outside the statistics entirely**. **Supersedes** A5.1's "ROOM: no Koz" and its UNRANKED 2-Koz charge, and the 2026-10-17 "career Koz counter is a plain departure counter" reading for UNRANKED. **Open [Q14b]:** which ROOM paths charge (leave, 15-timeout removal, disconnect replacement) and whether the takeover counter exists in ROOM.
 - **Q5 — sign-in [D].** Build Google sign-in and email sign-up in the Android app in V1 through Firebase Auth, no Google Play Games. (Cost/consent-screen/fingerprint setup is engineering.)
 - **Q12 — ADR [D, conditional].** The owner approved writing the formal ADR superseding RD11/RD14 **after Stage 0 succeeds**. The ADR text itself is not yet written or approved.
+
+### O. Fifth-batch owner rulings (2026-10-21, later) [D unless marked]
+- **Q2e — Vote Kick with a shared Koz [D].** **No Vote Kick if the Koz is shared.** Vote Kick exists to stop one player spoiling the game, so the target must be a **unique** Koz (RD18 unchanged). **Open [Q2f]:** how RP placement treats players in a shared Koz (not answered).
+- **Q26 — Auto-Match [D].** (1) The tier rule between a joiner and the creator's table is the **RD29 band (at most one tier apart)**. (2) The joiner **sees the table settings (timer, bots) before joining**. (3) If no waiting table exists, show **"no tables right now" plus a Create Table button** (no waiting, no auto-created table).
+- **Q14b — departure charges, rewritten [D].** **Supersedes** the earlier Q14 line, A5.1's charge table (ROOM none; Vote Kick 1 Koz) and the 2026-10-17 UNRANKED reading, **where they differ**:
+  - **ROOM:** a player who leaves **for any reason** is charged **1 Koz** (not 2).
+  - **RANKED and UNRANKED:** leaving **for any reason** is charged **2 Koz**.
+  - **Timing:** the charge is applied **only when the match finishes**, and only if the player **did not return**. A player who was allowed to return and did is not charged.
+  - **Contradictions flagged, not resolved:** (a) UNRANKED is excluded from profile result statistics (J) yet is charged 2 Koz — does it reach the profile Koz counter? **[Q14c]** (b) "any reason" includes a passed Vote Kick, which A5.1 fixed at 1 Koz — now 2? **[Q14d]** (c) What if the match never finishes? **[Q14d]** Engine/records are unchanged: `LeaveMatch.kt`, `RankedStats.kt:151` still follow A5.1.
+- **Q1 — General Pass multiplier [D, with an interpretation].** Owner example: all four pass in **round 6** → **round 7 is played ×2**; if round 7 is a **Sa'ayda** (everyone fails) → **round 8 is ×4**. So a General Pass **consumes the round number** (it is not a same-round redeal) and its ×2 is the first step of the same ladder the Sa'ayda uses. **Engine differs:** it redeals the **same** round (`Bidding.kt:493-509`; `QuickMatchViewModel.applyGeneralPass`), and caps at a literal 8 in both modes. **[A]** the ladder generalises as ×2→×4→×6→×8 (canonical Sa'ayda ladder, not doubling) — to confirm **[Q1b]**, together with what Classic does (redeal without Double: does it also consume the round?). General Pass can occur only in normal rounds (fast rounds have no auction).
+- **Q3 — Super Call extension [D].** A Super Call extends the match **only if the Caller succeeds** (as the engine does, `RoundScore.kt:234`). The canonical "any Super Call" wording (`CANONICAL_RULES.md:108`) is superseded.
 
 ## 2. Earlier rulings in the replanning brief (unchanged, restated for completeness) [D]
 Ranked-only first scope; ROOM/UNRANKED not silently migrated; no legacy data to migrate; Ranked needs

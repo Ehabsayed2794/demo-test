@@ -507,4 +507,7 @@ the disconnect table may pause for a bounded 90 seconds.**
 - **A6.3 Normal Dash + Risk (Normal Calculation):** the Risk player who is a Normal Dash gets the Risk
   value **plus** the Normal Dash points. Example, total bids 15 (Risk 10): 0 tricks → +20 (engine +10);
   2 tricks → −22 (engine −12). Classic is open (Q4).
+- **A6.4 (owner, 2026-10-21 later; supersedes A6.1's "redeal" wording where it differs):** a General Pass consumes the round number — round 6 all pass → round 7 is played ×2; a Sa'ayda in round 7 → round 8 ×4. Classic carries no Double (consumption in Classic: Q1b). The engine redeals the same round and differs.
+- **A6.5 Super Call extension (owner):** only if the Caller succeeds; supersedes the "any Super Call" wording of §3.
+- **A6.6 Departure charges (owner; supersedes A5.1 where it differs):** ROOM leave for any reason = 1 Koz; RANKED/UNRANKED leave for any reason = 2 Koz; charged only when the match finishes and the player did not return. Open: Q14c, Q14d. No Vote Kick against a shared Koz (unique Koz required).
 
