@@ -205,6 +205,13 @@ is deferred to a later, explicitly approved environment.
 - **Q1b — General Pass / Sa'ayda repeats [D].** **No cap on the number of General Passes or Sa'aydas**; only the multiplier is capped at **×8**. **Classic:** a General Pass round is still consumed, without a multiplier **[D, approved]**. The step size after ×4 follows the canonical Sa'ayda ladder ×2→×4→×6→×8 (resolved from `CANONICAL_RULES.md:141`; the owner's example is consistent with it).
 - **Q2f — RP for a shared Koz [D].** Players tied at the bottom all take the **same last placement** for RP.
 
+### Q. Seventh-batch owner rulings (2026-10-21, later) [D]
+- **Q15c [D].** An UNRANKED result is recorded under the **same condition as ROOM**: only when the four players' apps report matching results.
+- **Q27(1) [D].** "Everyone left" = **as soon as the last human leaves, immediately**; the match is **cancelled and its result is computed** (all players Koz, RP deducted per Q14d). **Tension flagged [Q27b]:** an immediate rule conflicts with the reconnect right (up to seven cycles) and the 10-second takeover delay if "leaves" includes a network disconnection.
+- **Q27(2) [D].** The RP deduction equals **the last-place loss computed by the RP engine**.
+- **Q27(3) [D].** A match stopped by a **server or free-quota failure is never charged to players** (full exemption).
+- **Q27(4) [D].** ROOM and UNRANKED record the Koz (1 and 2 respectively) with no RP.
+
 ## 2. Earlier rulings in the replanning brief (unchanged, restated for completeness) [D]
 Ranked-only first scope; ROOM/UNRANKED not silently migrated; no legacy data to migrate; Ranked needs
 a registered account; $0 budget; no timeout grace window needing extra reads/writes; season

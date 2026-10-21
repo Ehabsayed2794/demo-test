@@ -9,8 +9,7 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 
 | ID | Pri | السؤال | ليه مهم | الاختيارات / توصية | المصدر |
 |---|---|---|---|---|---|
-| Q15c | P1 | الـUNRANKED دخل الإحصائيات: نتيجته تتسجل بنفس شرط الـROOM (تطابق تقارير تطبيقات اللاعبين الأربعة)؟ | الـUNRANKED شغال على نظام التطبيق زي الـROOM | توصية: أيوه نفس الشرط | decision record §P |
-| Q27 | P1 | الماتش اللي الكل سابه: (١) "الكل سابه" يعني إيه ومدة قد إيه (مثلاً الكل خارج المقاعد X دقيقة)؟ (٢) الـRP اللي يتخصم قد إيه (نفس خسارة آخر مركز؟ مبلغ ثابت؟) (٣) لو الماتش وقف بسبب السيرفر/الحصة المجانية، ما يتحسبش على اللاعبين؟ (٤) ROOM/UNRANKED بيتسجل فيهم كوز (١ و٢) بدون RP؟ | بيستثني قاعدة "RP بعد ماتش كامل" | توصية: (١) بعد انتهاء مهلة قصيرة ثابتة من خروج آخر لاعب (٢) نفس خسارة آخر مركز بحسب محرك الـRP (٣) أيوه إعفاء كامل (٤) أيوه | decision record §P |
+| Q27b | P1 | "آخر لاعب خرج" = خروج صريح بس ولا يشمل انقطاع النت؟ لو الانقطاع يلغي الماتش فورًا يبقى مفيش رجوع | يتعارض مع الـ٧ رجعات والـ١٠ ثواني | توصية: الإلغاء الفوري للخروج الصريح بس؛ الانقطاع يمشي على قاعدة الـ١٠ ثواني ثم البوت، وبعد ما كل البشر يتفصلوا مدة ثابتة قصيرة يتلغي | decision record §Q |
 | Q4 | P2 | Normal Dash + Risk في Classic (جدوله ثابت) يتصرف إزاي؟ | قرارك اتحدد لـNormal بس | توصية: نفس مبدأ Classic المكتوب (Risk=…) نراجعه معاك بمثال | `CANONICAL_RULES.md:192` |
 | Q16 | P2 | في ROOM (٢–٣ لاعبين): King/Second/Third/Koz يتحسبوا إزاي؟ | التعريف مفترض ٤ لاعبين | توصية: المركز الأول فقط King وآخر مركز Koz لو في ٣+؛ ماتش لاعبين = بدون Koz | RD17 |
 | Q17 | P2 | عدد الماتشات (Games Played) والنسب هتتجمع برضه بين ROOM وRANKED؟ | القرار ذكر الأربع عدادات بس | توصية: أيوه، الكل مجمّع | RD23 |
@@ -80,3 +79,5 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 | Q14d | Passed Vote Kick = 2 Koz; abandoned match (everyone left): all players Koz and all lose RP (details Q27) |
 | Q1b | No cap on General Pass/Sa'ayda counts, only the multiplier ×8; Classic General Pass still consumes the round, no multiplier |
 | Q2f | Shared-Koz players take the same last placement for RP |
+| Q15c | UNRANKED result recorded under the ROOM condition (four matching app reports) |
+| Q27 | Everyone-left match: cancelled as soon as the last human leaves; all Koz, RP deducted = engine's last-place loss; server/quota failure exempt; ROOM/UNRANKED record Koz without RP (follow-up Q27b) |
