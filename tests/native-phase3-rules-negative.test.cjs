@@ -466,6 +466,45 @@ async function main() {
       .set({ matchId: s9b.id, seats: Object.assign({}, SEATS), votes: Object.assign({}, NULL_BIDS),
         status: "ALL_YES", newMatchId: null, version: 1, createdAt: new Date() }));
 
+  // ════════════════════════════════════════════════════════════════
+  // S10. config/seasonReset — server-only reset control
+  // ════════════════════════════════════════════════════════════════
+  // The season reset function reads this document through the Admin SDK,
+  // which bypasses rules. No client (signed in or anonymous) may create,
+  // read, update, or delete it; the only protection is the deny-by-default
+  // catch-all at the bottom of firestore.rules. This test is the explicit
+  // negative that pins that protection.
+  await okFails("S10.1 NEGATIVE: a signed-in client cannot create config/seasonReset",
+    A.firestore().collection("config").doc("seasonReset").set({
+      enabled: true,
+      targetSeasonId: "season-test",
+      updatedAt: 2
+    }));
+
+  await okFails("S10.2 NEGATIVE: an unauthenticated client cannot create config/seasonReset",
+    testEnv.unauthenticatedContext().firestore().collection("config").doc("seasonReset").set({
+      enabled: true,
+      targetSeasonId: "season-test",
+      updatedAt: 3
+    }));
+
+  await testEnv.withSecurityRulesDisabled(async function (ctx) {
+    await seed(ctx.firestore(), "config/seasonReset", {
+      enabled: false,
+      targetSeasonId: "season-test",
+      updatedAt: 1
+    });
+  });
+
+  await okFails("S10.3 NEGATIVE: a signed-in client cannot read config/seasonReset",
+    A.firestore().collection("config").doc("seasonReset").get());
+
+  await okFails("S10.4 NEGATIVE: a signed-in client cannot update config/seasonReset",
+    A.firestore().collection("config").doc("seasonReset").update({ enabled: true }));
+
+  await okFails("S10.5 NEGATIVE: a signed-in client cannot delete config/seasonReset",
+    A.firestore().collection("config").doc("seasonReset").delete());
+
   console.log("\n=== RESULTS ===\n" + pass + " passed, " + fail + " failed");
   if (fail > 0) process.exitCode = 1;
 }
