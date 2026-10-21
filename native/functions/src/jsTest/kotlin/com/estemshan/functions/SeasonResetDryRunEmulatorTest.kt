@@ -433,6 +433,76 @@ class SeasonResetDryRunEmulatorTest {
     console.log("S59_EMULATOR_RESUME applied=${second.applied} skipped=${second.skippedAlreadyTarget}")
   }
 
+  /**
+   * A wrapper that lets this test interleave one real write between the reset's
+   * population read and its profile batch. It is deterministic, unlike racing
+   * two schedulers, and it exercises the exact window the `lastUpdateTime`
+   * precondition exists to close.
+   */
+  private class InterleavedSeasonResetDb(
+    private val delegate: SeasonResetDb,
+    private val afterRead: suspend () -> Unit,
+  ) : SeasonResetDb {
+    override suspend fun <T> transact(block: suspend (SeasonResetDb.Tx) -> T): T =
+      delegate.transact(block)
+
+    override suspend fun readAllProfiles(): List<SeasonProfile> {
+      val profiles = delegate.readAllProfiles()
+      afterRead()
+      return profiles
+    }
+
+    override suspend fun writeProfiles(updates: List<ProfileWrite>) =
+      delegate.writeProfiles(updates)
+
+    override suspend fun readGateConfig(): SeasonResetGateConfig? = delegate.readGateConfig()
+  }
+
+  @Test
+  fun aConcurrentProfileWriteBetweenReadAndBatchIsNeverOverwritten() = runTest {
+    if (!emulatorReady()) return@runTest
+    val from = season("guard-from")
+    val to = season("guard-to")
+    val now = kotlin.js.Date.now().toLong()
+    val racer = player("guard-race")
+
+    clearPlayers()
+    seedSeason(activeSeason(from, to, now - 1_000))
+    seedProfiles(listOf(racer to rungFields(from, rung("Gold", "I"), 0)))
+
+    // A settlement commits after the reset has read the population but before
+    // its batch. The reset's plan still says Gold I / 575 RP; the settlement
+    // writes 999 RP. Without the precondition the batch would overwrite 999.
+    var injected = false
+    val racingDb = InterleavedSeasonResetDb(AdminSeasonResetDb()) {
+      if (!injected) {
+        injected = true
+        seedDoc(
+          playerRef(racer),
+          LinkedHashMap(rungFields(from, rung("Gold", "I"), 0)).apply { put("rp", 999) },
+        )
+      }
+    }
+
+    val report = runSeasonReset(racingDb, now, SeasonResetMode.APPLY)
+
+    assertEquals("PARTIAL", report.decision)
+    assertEquals(1, report.planned)
+    assertEquals(0, report.applied, "the contested batch must commit zero profiles")
+    assertTrue(report.failures.isNotEmpty(), "the operator must see the failed batch")
+
+    val after = readProfiles().getValue(racer)
+    assertEquals(999, (after["rp"] as Number).toInt(), "the concurrent write must survive")
+    assertEquals(from, after["seasonId"], "the reset must not half-apply the contested profile")
+
+    val seasonDoc = readSeasonDoc() ?: throw AssertionError("seasons/current must exist")
+    assertEquals(from, seasonDoc["seasonId"], "the source season must remain current")
+    assertEquals("RUNNING", seasonDoc["status"], "the claim must remain for a safe resume")
+    assertEquals(to, seasonDoc["targetSeasonId"])
+
+    console.log("S59_EMULATOR_LOST_UPDATE_GUARD decision=${report.decision} applied=${report.applied}")
+  }
+
   @Test
   fun theKillSwitchConfigReadsThroughTheAdminPort() = runTest {
     if (!emulatorReady()) return@runTest

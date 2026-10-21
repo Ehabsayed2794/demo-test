@@ -127,11 +127,11 @@ class SeasonResetRunTest {
       return profiles
     }
 
-    override suspend fun writeProfiles(updates: List<Pair<String, Map<String, Any?>>>) {
+    override suspend fun writeProfiles(updates: List<ProfileWrite>) {
       if (profileWrites.size + 1 == failProfileWriteNumber) {
         throw IllegalStateException("simulated transport failure on batch ${profileWrites.size + 1}")
       }
-      profileWrites += updates.map { (playerId, fields) -> playerId to LinkedHashMap(fields) }
+      profileWrites += updates.map { it.playerId to LinkedHashMap(it.fields) }
     }
   }
 

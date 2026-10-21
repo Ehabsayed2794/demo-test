@@ -20,7 +20,9 @@ import kotlinx.coroutines.promise
  *   `players` read, then field-level writes in caller-sized batches. Both use
  *   `update`, never `set` — the reset MERGES six progression fields and a full
  *   document replace would erase career statistics, which R27's irreversible
- *   migration could never restore.
+ *   migration could never restore. Every write is also conditioned on the
+ *   profile's read `updateTime`, so a settlement that commits inside that
+ *   window fails the batch instead of losing its result to a stale reset plan.
  *
  * Reads and writes for the season document are separated on [Tx] on purpose:
  * the document is read, decided on, and written in that order inside one
@@ -47,8 +49,13 @@ interface SeasonResetDb {
    */
   suspend fun readAllProfiles(): List<SeasonProfile>
 
-  /** One field-level batch write, one `update` per entry, one commit. */
-  suspend fun writeProfiles(updates: List<Pair<String, Map<String, Any?>>>)
+  /**
+   * One field-level batch write, one preconditioned `update` per entry, one
+   * commit. Every write carries the `updateTime` read with its profile, so a
+   * settlement that commits between the read and this batch fails the batch
+   * instead of being overwritten by the reset's stale plan.
+   */
+  suspend fun writeProfiles(updates: List<ProfileWrite>)
 
   /**
    * `config/seasonReset` — the deploy-time kill switch. Null when the document
@@ -57,8 +64,32 @@ interface SeasonResetDb {
   suspend fun readGateConfig(): SeasonResetGateConfig?
 }
 
-/** One persisted profile: the document id (the player's uid) and its raw fields. */
-data class SeasonProfile(val playerId: String, val fields: Map<String, Any?>)
+/**
+ * One persisted profile: the document id (the player's uid), its raw fields,
+ * and the Firestore `updateTime` observed when the reset read it.
+ *
+ * `updateTime` is nullable only for the pure unit-test fixtures; the real
+ * [AdminSeasonResetDb] refuses to return a profile without one, and
+ * [AdminSeasonResetDb.writeProfiles] refuses to write a batch without it.
+ */
+data class SeasonProfile(
+  val playerId: String,
+  val fields: Map<String, Any?>,
+  val updateTime: Any? = null,
+)
+
+/**
+ * One planned profile write plus the exact document version the plan read.
+ *
+ * The version is what makes the reset lost-update-safe. A null version is a
+ * programming error in the real path: [AdminSeasonResetDb.writeProfiles] fails
+ * the whole batch rather than issuing an unguarded write.
+ */
+data class ProfileWrite(
+  val playerId: String,
+  val fields: Map<String, Any?>,
+  val expectedUpdateTime: Any?,
+)
 
 /**
  * How many profiles one reset may read.
@@ -137,10 +168,19 @@ class AdminSeasonResetDb : SeasonResetDb {
       )
     }
     return docs.map { doc ->
+      // A missing version cannot be distinguished from "never read" and would
+      // make the write unguarded. Refuse the whole population before planning.
+      val updateTime = doc.updateTime
+        ?: throw HttpsError(
+          "internal",
+          "season reset: profile '${doc.id}' has no Firestore updateTime; " +
+            "refusing to plan an unguarded migration (R27).",
+        )
       @Suppress("UNCHECKED_CAST")
       SeasonProfile(
         playerId = doc.id,
         fields = dynamicToKotlin(doc.data()) as? Map<String, Any?> ?: emptyMap(),
+        updateTime = updateTime,
       )
     }
   }
@@ -159,14 +199,27 @@ class AdminSeasonResetDb : SeasonResetDb {
     )
   }
 
-  override suspend fun writeProfiles(updates: List<Pair<String, Map<String, Any?>>>) {
+  override suspend fun writeProfiles(updates: List<ProfileWrite>) {
     if (updates.isEmpty()) return
     // ONE batch per call, and the caller keeps calls <= 400 writes: chunking is
     // the caller's rule because only it knows how much progress a failed chunk
     // should cost on a resume.
     val batch = db.batch()
-    for ((playerId, fields) in updates) {
-      batch.update(db.collection(PLAYERS_COLLECTION).doc(playerId), toPlain(fields))
+    for (update in updates) {
+      // Build every write before committing. A missing version aborts the
+      // batch with zero profiles written, never a fallback to an unguarded
+      // update that could erase a concurrent settlement.
+      val updateTime = update.expectedUpdateTime
+        ?: throw HttpsError(
+          "internal",
+          "season reset: profile '${update.playerId}' has no read updateTime; " +
+            "refusing an unguarded write (R27).",
+        )
+      batch.update(
+        db.collection(PLAYERS_COLLECTION).doc(update.playerId),
+        toPlain(update.fields),
+        lastUpdateTimePrecondition(updateTime),
+      )
     }
     batch.commit().await()
   }

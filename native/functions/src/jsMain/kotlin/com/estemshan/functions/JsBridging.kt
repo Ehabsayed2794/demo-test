@@ -67,6 +67,22 @@ fun toPlain(value: Any?): Any? = when {
 }
 
 /**
+ * S59: build the Admin-SDK `Precondition` object for one profile batch write.
+ *
+ * `lastUpdateTime` is the document's committed `updateTime` from the read that
+ * planned the reset. Firestore compares it atomically at commit: a settlement
+ * that lands in between changes the version, the whole batch fails with
+ * FAILED_PRECONDITION, and the reset cannot overwrite the newer progression
+ * with its stale plan. This is a plain object literal because that is the only
+ * shape the Admin SDK accepts.
+ */
+fun lastUpdateTimePrecondition(updateTime: Any): Any? {
+  val precondition: dynamic = js("{}")
+  precondition.lastUpdateTime = updateTime
+  return precondition
+}
+
+/**
  * S61 Stage 1 — a server timestamp as epoch millis, the anchor the decision
  * timer's deadline is derived from (the doc's `updatedAt`).
  *

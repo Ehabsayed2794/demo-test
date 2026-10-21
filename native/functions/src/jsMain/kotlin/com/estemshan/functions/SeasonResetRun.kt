@@ -336,7 +336,15 @@ private suspend fun applyReset(
   var applied = 0
   try {
     for (chunk in input.plan.resets.chunked(MAX_PROFILE_WRITES_PER_BATCH)) {
-      db.writeProfiles(chunk.map { it.playerId to progressionFields(it.profile) })
+      db.writeProfiles(
+        chunk.map { reset ->
+          ProfileWrite(
+            playerId = reset.playerId,
+            fields = progressionFields(reset.profile),
+            expectedUpdateTime = input.revisions[reset.playerId],
+          )
+        },
+      )
       applied += chunk.size
     }
   } catch (failure: Throwable) {
@@ -441,7 +449,12 @@ private fun finalFields(to: String, nowMillis: Long): Map<String, Any?> = linked
 
 // ── planning ────────────────────────────────────────────────────────────
 
-private class PlanInput(val plan: SeasonResetPlan, val skipped: Int)
+private class PlanInput(
+  val plan: SeasonResetPlan,
+  val skipped: Int,
+  /** The exact `updateTime` each planned profile had when this plan read it. */
+  val revisions: Map<String, Any?>,
+)
 
 /**
  * Reads the population once and classifies every profile before planning:
@@ -465,6 +478,7 @@ private suspend fun collectPlan(
 ): PlanInput {
   val profiles = db.readAllProfiles()
   val parsed = mutableListOf<Pair<String, RankedProfile>>()
+  val revisions = mutableMapOf<String, Any?>()
   val failures = mutableListOf<SeasonResetFailure>()
   var skipped = 0
 
@@ -501,7 +515,10 @@ private suspend fun collectPlan(
       continue
     }
     when (val parsedProfile = parseStoredProfile(stored.fields, from)) {
-      is ProfileParse.Parsed -> parsed += stored.playerId to parsedProfile.profile
+      is ProfileParse.Parsed -> {
+        parsed += stored.playerId to parsedProfile.profile
+        revisions[stored.playerId] = stored.updateTime
+      }
       is ProfileParse.Failed -> failures += SeasonResetFailure(stored.playerId, parsedProfile.reason)
     }
   }
@@ -511,6 +528,7 @@ private suspend fun collectPlan(
   return PlanInput(
     plan = if (allFailures.isEmpty()) plan else SeasonResetPlan(from, to, emptyList(), allFailures),
     skipped = skipped,
+    revisions = revisions,
   )
 }
 
