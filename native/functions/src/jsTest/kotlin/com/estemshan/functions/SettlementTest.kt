@@ -728,6 +728,66 @@ class SettlementTest {
   }
 
   @Test
+  fun crossTierRankedSettlementAwardsNoRp() = runTest {
+    val golden = round1Golden()
+    val parts = round1Parts()
+    val db = FakeDb(
+      match = matchFields(),
+      archives = mapOf("1" to rawRound(golden, parts.plays, parts.actions)),
+      profiles = mapOf(
+        "u1" to mapOf("rp" to 30), // Bronze III
+        "u2" to mapOf("rp" to 600), // Gold III
+        "u3" to mapOf("rp" to 640), // Gold III
+        "u4" to mapOf("rp" to 700), // Gold II
+      ),
+    )
+    val response = settleOnce(db, settleRequest("u1", "m1"))
+    assertTrue(response["settled"] == true, "expected a settlement but was $response")
+    assertEquals(1, db.claims)
+
+    val movements = db.claim!!["movements"] as Map<*, *>
+    val deltas = movements.values.map { (it as Map<*, *>)["delta"] as Int }
+    assertTrue(
+      deltas.all { it == 0 },
+      "a Bronze-to-Gold table is two tiers apart and must award no RP, was $movements",
+    )
+
+    val writes = db.profileWrites.toMap()
+    assertEquals(30, writes.getValue("u1")["rp"], "Bronze RP must not move")
+    assertEquals(600, writes.getValue("u2")["rp"], "Gold RP must not move")
+    assertEquals(640, writes.getValue("u3")["rp"], "Gold RP must not move")
+    assertEquals(700, writes.getValue("u4")["rp"], "Gold RP must not move")
+    assertEquals("Bronze", writes.getValue("u1")["tier"])
+    assertEquals("Gold", writes.getValue("u2")["tier"])
+    // The match still settles and folds statistics; only progression is held.
+    assertEquals(1, writes.getValue("u1")["rankedGamesPlayed"])
+  }
+
+  @Test
+  fun oneTierGapStillAwardsRp() = runTest {
+    val golden = round1Golden()
+    val parts = round1Parts()
+    val db = FakeDb(
+      match = matchFields(),
+      archives = mapOf("1" to rawRound(golden, parts.plays, parts.actions)),
+      profiles = mapOf(
+        "u1" to mapOf("rp" to 30), // Bronze III
+        "u2" to mapOf("rp" to 300), // Silver III
+        "u3" to mapOf("rp" to 350), // Silver II
+        "u4" to mapOf("rp" to 400), // Silver II
+      ),
+    )
+    val response = settleOnce(db, settleRequest("u1", "m1"))
+    assertTrue(response["settled"] == true, "expected a settlement but was $response")
+    val movements = db.claim!!["movements"] as Map<*, *>
+    val deltas = movements.values.map { (it as Map<*, *>)["delta"] as Int }
+    assertTrue(
+      deltas.any { it != 0 },
+      "one tier apart is RD29-eligible and must still award RP, was $movements",
+    )
+  }
+
+  @Test
   fun unauthenticatedSettleThrows() = runTest {
     val db = FakeDb(match = matchFields())
     try {

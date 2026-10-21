@@ -12,6 +12,8 @@ import com.estemshan.functions.Settlement.SettleDecision
 import com.estemshan.engine.accumulateRankedStat
 import com.estemshan.engine.applyDemotionShield
 import com.estemshan.engine.finalRpDelta
+import com.estemshan.engine.ladderRankOf
+import com.estemshan.engine.partyTierOrder
 import com.estemshan.engine.placementOutcome
 import com.estemshan.engine.progressionMismatch
 import com.estemshan.engine.rankAt
@@ -533,7 +535,29 @@ private suspend fun readSeatInputs(
 private data class RankedProgression(
   val movements: Map<String, Map<String, Any?>>,
   val profileWrites: Map<String, Map<String, Any?>>,
+  /**
+   * The tier gap when it exceeded RD29's one-tier band, so the caller can log
+   * why this settled match awarded no RP. Null when progression ran normally.
+   */
+  val noAwardTierGap: Int? = null,
 )
+
+/**
+ * The widest tier gap on a Ranked table, measured along [partyTierOrder]'s
+ * derived tier order — never the 19-rung index, which would make a division
+ * gap look like a tier gap. RD29 allows at most one tier; a forged or legacy
+ * match that got past the join gate is re-checked here, from the trusted
+ * profiles read inside the settlement transaction.
+ */
+private fun rankedTierGap(seated: List<ParsedSeat>): Int {
+  if (seated.isEmpty()) return 0
+  val order = partyTierOrder
+  val indexes = seated.map { order.indexOf(ladderRankOf(it.profile).tier) }
+  // ladderRankOf/parseRankedProfile already reject an unknown rung; treating
+  // an impossible order miss as an over-band gap keeps the write path closed.
+  if (indexes.any { it < 0 }) return Int.MAX_VALUE
+  return indexes.max() - indexes.min()
+}
 
 /**
  * One pass of the ranked progression fold: the engine's own chain, per seat —
@@ -550,8 +574,15 @@ private data class RankedProgression(
  * that flag lives on rooms"), and settlement reads only the match document —
  * one callable, one document, no room read. Reading it would mean a second
  * document inside this transaction. At the current rates the flag only caps a
- * loss at ×2, and RD29 bounds a Ranked table to one tier apart, so it changes
- * nothing today either way (RpEngine's own cap note says the same).
+ * loss at ×2; the RD29 tier re-check below is what keeps a cross-tier forged
+ * table from being scored at all.
+ *
+ * RD29 is re-checked here, not merely trusted from the join gate. The tiers
+ * come from the profiles read inside this transaction (never from the match
+ * request or client payload). A table wider than one tier settles with every
+ * seat's RP, rank, shield, and Highest Rank unchanged — the match still
+ * records its result and statistics, but awards no progression — and
+ * [RankedProgression.noAwardTierGap] lets the caller log the reason.
  *
  * Opponent strength is the mean of the OTHER seats' ordinals; a table of one
  * seat has no opponents and reads as strength 0.
@@ -579,6 +610,8 @@ private fun foldRankedProgression(
   finalScores: Map<String, Int>,
   gameType: GameType,
 ): RankedProgression {
+  val tierGap = rankedTierGap(seated)
+  val noAward = tierGap > 1
   val ordinals = seated.map { ladderOrdinal(it.profile.rp) }
   val movements = LinkedHashMap<String, Map<String, Any?>>()
   val writes = LinkedHashMap<String, Map<String, Any?>>()
@@ -586,37 +619,50 @@ private fun foldRankedProgression(
     val others = ordinals.filterIndexed { i, _ -> i != index }
     val opponentStrength = if (others.isEmpty()) 0 else others.sum() / others.size
     val outcome = placementOutcome(finalScores, seat.seat)
-    val resolution = resolveRanked(
-      seat.profile.rp,
-      finalRpDelta(
-        RpMatchInput(
-          outcome = outcome,
-          playerOrdinal = ordinals[index],
-          opponentStrength = opponentStrength,
-          gameType = gameType,
-          rankDown = false,
+    // No-award tables still resolve at zero: same rung, same RP, no movement,
+    // and (below) no shield consumption. The match result and statistics
+    // still fold; only progression is withheld.
+    val resolution = if (noAward) {
+      resolveRanked(seat.profile.rp, 0)
+    } else {
+      resolveRanked(
+        seat.profile.rp,
+        finalRpDelta(
+          RpMatchInput(
+            outcome = outcome,
+            playerOrdinal = ordinals[index],
+            opponentStrength = opponentStrength,
+            gameType = gameType,
+            rankDown = false,
+          ),
         ),
-      ),
-    )
-    val shielded = applyDemotionShield(seat.profile, resolution)
-    val held = updateHighestRank(shielded.profile, shielded.resolution.next)
+      )
+    }
+    val shielded = if (noAward) null else applyDemotionShield(seat.profile, resolution)
+    val finalResolution = shielded?.resolution ?: resolution
+    val shieldedProfile = shielded?.profile ?: seat.profile
+    val held =
+      if (noAward) seat.profile
+      else updateHighestRank(shieldedProfile, finalResolution.next)
     val stats = accumulateRankedStat(seat.stats, outcome, seat.profile, MatchMode.RANKED)
     movements[seat.uid] = linkedMapOf(
-      "previousRp" to shielded.resolution.previousRP,
-      "rp" to shielded.resolution.rp,
-      "delta" to shielded.resolution.delta,
+      "previousRp" to finalResolution.previousRP,
+      "rp" to finalResolution.rp,
+      "delta" to finalResolution.delta,
     )
     writes[seat.uid] = linkedMapOf(
       // RP/rank/delta are the SHIELDED resolution's — the held rung when a
-      // demotion was blocked, the plain one otherwise.
-      "rp" to shielded.resolution.rp,
-      "tier" to shielded.resolution.next.tier,
-      "division" to shielded.resolution.next.division,
+      // demotion was blocked, the plain (or zero-award) one otherwise.
+      "rp" to finalResolution.rp,
+      "tier" to finalResolution.next.tier,
+      "division" to finalResolution.next.division,
       // The shield state applyDemotionShield left the profile in: consumed
       // (any armed match), re-armed (armed promotion), or untouched (unarmed).
-      "demotionShield" to shielded.profile.demotionShield,
+      // A no-award table never consumes a shield: no match outcome was scored.
+      "demotionShield" to shieldedProfile.demotionShield,
       // Highest Rank only ever raises (RD23): the parsed peak, or the rung
-      // this match climbed to — never a step down.
+      // this match climbed to — never a step down. A no-award table leaves it
+      // exactly as parsed.
       "highestRankTier" to held.highestRank.tier,
       "highestRankDivision" to held.highestRank.division,
       // Preserved when present, defaulted when missing; never moved (RD24).
@@ -632,7 +678,7 @@ private fun foldRankedProgression(
       "rankedKozCount" to stats.kozCount,
     )
   }
-  return RankedProgression(movements, writes)
+  return RankedProgression(movements, writes, if (noAward) tierGap else null)
 }
 
 /**
@@ -741,6 +787,12 @@ suspend fun settleOnce(db: SettlementDb, request: CallableRequest): Map<String, 
       recomputed.finalScores,
       parsed.gameType,
     )
+    progression.noAwardTierGap?.let { gap ->
+      console.warn(
+        "S50_TIER_GAP_NO_RP matchId=$matchId tierGap=$gap; " +
+          "the match settled with no RP progression",
+      )
+    }
 
     if (recomputed.corrected) {
       val version = (fields["version"] as? Number)?.toInt() ?: 0
