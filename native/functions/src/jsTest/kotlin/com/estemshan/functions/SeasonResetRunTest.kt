@@ -102,6 +102,7 @@ class SeasonResetRunTest {
 
     val seasonWrites = mutableListOf<Map<String, Any?>>()
     val profileWrites = mutableListOf<List<Pair<String, Map<String, Any?>>>>()
+    val profileWriteVersions = mutableListOf<List<Pair<String, Any?>>>()
 
     override suspend fun readGateConfig(): SeasonResetGateConfig? = gateConfig
 
@@ -132,6 +133,7 @@ class SeasonResetRunTest {
         throw IllegalStateException("simulated transport failure on batch ${profileWrites.size + 1}")
       }
       profileWrites += updates.map { it.playerId to LinkedHashMap(it.fields) }
+      profileWriteVersions += updates.map { it.playerId to it.expectedUpdateTime }
     }
   }
 
@@ -815,6 +817,30 @@ class SeasonResetRunTest {
     assertEquals(TO, write["seasonId"])
     assertEquals("Gold", write["highestRankTier"])
     assertEquals("I", write["highestRankDivision"])
+  }
+
+  @Test
+  fun everyProfileWriteCarriesTheVersionItRead() = runTest {
+    val db = FakeDb(
+      seasonFields(),
+      listOf(
+        SeasonProfile("p1", validFields("Gold", "I", 825), updateTime = "p1-version"),
+        SeasonProfile("p2", validFields("Silver", "I", 450), updateTime = "p2-version"),
+      ),
+    )
+
+    val report = runSeasonReset(db, NOW, SeasonResetMode.APPLY)
+
+    assertEquals("CLAIMED", report.decision)
+    val versions = db.profileWriteVersions.single()
+    assertEquals(listOf("p1", "p2"), versions.map { it.first })
+    assertEquals("p1-version", versions[0].second)
+    assertEquals("p2-version", versions[1].second)
+    assertEquals(
+      2,
+      versions.count { it.second != null },
+      "a profile must never be written without the exact version it was read at",
+    )
   }
 
   @Test
