@@ -13,6 +13,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.estemshan.engine.BiddingIntent
@@ -22,6 +23,7 @@ import com.estemshan.engine.EmitResult
 import com.estemshan.engine.emit
 import com.estemshan.engine.initFastRound
 import com.estemshan.engine.initNormalRound
+import com.estemshan.game.R
 import com.estemshan.game.ui.theme.EstemshanTheme
 
 /**
@@ -53,14 +55,14 @@ fun BiddingScreen(
     verticalArrangement = Arrangement.spacedBy(12.dp),
     horizontalAlignment = Alignment.CenterHorizontally,
   ) {
-    Text("Round ${state.round} · Bidding", style = MaterialTheme.typography.headlineMedium)
-    Text(phaseStep(state.subPhase), style = MaterialTheme.typography.labelLarge)
+    Text(stringResource(R.string.bidding_title, state.round), style = MaterialTheme.typography.headlineMedium)
+    Text(stringResource(phaseStepRes(state.subPhase)), style = MaterialTheme.typography.labelLarge)
     Text(
       when {
-        state.subPhase == BiddingPhase.DONE -> "Bidding complete"
-        turn == userSeat && userSeat in borrowedSeats -> "Bot bidding for your seat"
-        turn == userSeat -> "Your turn ($userSeat)"
-        turn != null -> "Waiting for $turn"
+        state.subPhase == BiddingPhase.DONE -> stringResource(R.string.bidding_complete)
+        turn == userSeat && userSeat in borrowedSeats -> stringResource(R.string.bidding_bot_for_you)
+        turn == userSeat -> stringResource(R.string.bidding_your_turn, userSeat)
+        turn != null -> stringResource(R.string.bidding_waiting_for, turn)
         else -> ""
       },
       style = MaterialTheme.typography.titleMedium,
@@ -76,8 +78,14 @@ fun BiddingScreen(
         EstimatesControls(state, userSeat, forbidden, floor, onIntent)
       }
       BiddingPhase.DONE -> {
+        // The em dash is "none yet" punctuation; the suit name is localized and
+        // upper-cased to keep the engine-name look the English screen always had.
         Text(
-          "Caller: ${state.callerId ?: "—"} · Trump: ${state.declaredTrump?.name ?: "—"}",
+          stringResource(
+            R.string.bidding_caller_trump,
+            state.callerId ?: "—",
+            state.declaredTrump?.let { stringResource(suitNameRes(it)).uppercase() } ?: "—",
+          ),
           style = MaterialTheme.typography.bodyLarge,
         )
       }

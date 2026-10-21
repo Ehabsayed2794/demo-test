@@ -18,12 +18,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.estemshan.engine.rankLabel
 import com.estemshan.engine.resolveRanked
+import com.estemshan.game.R
 import com.estemshan.game.ui.theme.BodyFamily
 import com.estemshan.game.ui.theme.EstemshanColors
 import com.estemshan.game.ui.theme.MonoFamily
@@ -199,18 +201,18 @@ fun RankedRewardsStrip(
         Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
         verticalArrangement = Arrangement.spacedBy(5.dp),
       ) {
-        Text("RANKED RP", style = RewardLabelStyle)
+        Text(stringResource(R.string.ranked_label_rp), style = RewardLabelStyle)
         Text(
           formatRpDelta(displayedDelta),
           modifier = Modifier.testTag("rpDelta"),
           style = rpValueStyle(displayedDelta < 0),
         )
-        Text("${ranked.rp} RP", style = RankDetailStyle)
+        Text(stringResource(R.string.ranked_rp_value, ranked.rp), style = RankDetailStyle)
         if (ranked.reason != null) {
           Text(ranked.reason, style = RankDetailStyle)
         }
         if (ranked.ceiling) {
-          Text("Above 3,000 RP · leaderboard-only", style = RankDetailStyle)
+          Text(stringResource(R.string.ranked_ceiling), style = RankDetailStyle)
         }
       }
     }
@@ -226,14 +228,14 @@ fun RankedRewardsStrip(
         Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
         verticalArrangement = Arrangement.spacedBy(5.dp),
       ) {
-        Text("RANK TRANSITION", style = RewardLabelStyle)
+        Text(stringResource(R.string.ranked_label_transition), style = RewardLabelStyle)
         Row(
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
           TierChip(ranked.previousRankLabel)
           Text(
-            "→",
+            stringResource(R.string.ranked_transition_arrow),
             style = RankDetailStyle,
           )
           val nextModifier = if (rankResolved) {
@@ -295,9 +297,9 @@ fun RankedRewardsStrip(
         Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
         verticalArrangement = Arrangement.spacedBy(5.dp),
       ) {
-        Text("SEASON", style = RewardLabelStyle)
+        Text(stringResource(R.string.ranked_label_season), style = RewardLabelStyle)
         Text(ranked.season.id, style = RankDetailStyle)
-        Text("${ranked.season.start} → ${ranked.season.end}", style = RankDetailStyle)
+        Text(stringResource(R.string.ranked_season_range, ranked.season.start, ranked.season.end), style = RankDetailStyle)
       }
     }
   }

@@ -19,6 +19,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -31,6 +32,7 @@ import androidx.navigation.navArgument
 import com.estemshan.engine.GameType
 import com.estemshan.engine.MatchMode
 import com.estemshan.engine.ScoringMode
+import com.estemshan.game.R
 import com.estemshan.game.data.AuthUiState
 import com.estemshan.game.ui.chooselevel.ChooseLevelScreen
 import com.estemshan.game.ui.chooselevel.ChooseLevelViewModel
@@ -339,35 +341,35 @@ private fun LoginScreen(  state: AuthUiState,
     verticalArrangement = Arrangement.Center,
     horizontalAlignment = Alignment.CenterHorizontally,
   ) {
-    Text("Estemshan", style = MaterialTheme.typography.headlineLarge)
+    Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineLarge)
     Spacer(Modifier.height(16.dp))
     OutlinedTextField(
       value = email,
       onValueChange = { email = it },
-      label = { Text("Email") },
+      label = { Text(stringResource(R.string.login_email)) },
       singleLine = true,
     )
     Spacer(Modifier.height(8.dp))
     OutlinedTextField(
       value = password,
       onValueChange = { password = it },
-      label = { Text("Password") },
+      label = { Text(stringResource(R.string.login_password)) },
       singleLine = true,
       visualTransformation = PasswordVisualTransformation(),
     )
     Spacer(Modifier.height(16.dp))
-    Button(onClick = { onEmail(email, password) }) { Text("Sign in") }
+    Button(onClick = { onEmail(email, password) }) { Text(stringResource(R.string.login_sign_in)) }
     Spacer(Modifier.height(8.dp))
-    Button(onClick = onAnonymous) { Text("Play anonymously") }
+    Button(onClick = onAnonymous) { Text(stringResource(R.string.login_play_anonymously)) }
     Spacer(Modifier.height(16.dp))
     when (state) {
-      is AuthUiState.SigningIn -> Text("Signing in…")
+      is AuthUiState.SigningIn -> Text(stringResource(R.string.login_signing_in))
       is AuthUiState.SignedIn -> {
-        Text("Signed in")
+        Text(stringResource(R.string.login_signed_in))
         Spacer(Modifier.height(8.dp))
-        Button(onClick = onEnter) { Text("Enter") }
+        Button(onClick = onEnter) { Text(stringResource(R.string.login_enter)) }
       }
-      is AuthUiState.Error -> Text("Error: ${state.message}")
+      is AuthUiState.Error -> Text(stringResource(R.string.login_error, state.message))
       is AuthUiState.SignedOut -> Unit
     }
   }

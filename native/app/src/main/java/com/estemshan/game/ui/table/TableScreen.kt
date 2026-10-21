@@ -36,6 +36,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.estemshan.engine.Card as EngineCard
@@ -52,6 +53,8 @@ import com.estemshan.engine.emitPlay
 import com.estemshan.engine.initTable
 import com.estemshan.engine.isLegal
 import com.estemshan.engine.resolveTrick
+import com.estemshan.game.R
+import com.estemshan.game.ui.bidding.suitNameRes
 import com.estemshan.game.ui.sound.LocalSfx
 import com.estemshan.game.ui.theme.EstemshanMotion
 import com.estemshan.game.ui.theme.EstemshanTheme
@@ -116,20 +119,26 @@ fun TableScreen(
     horizontalAlignment = Alignment.CenterHorizontally,
   ) {
     Text(
-      "Round ${state.cfg.round} · Trick ${state.trickNo}/13 · Trump ${state.cfg.trump.name}",
+      stringResource(
+        R.string.table_header,
+        state.cfg.round,
+        state.trickNo,
+        stringResource(suitNameRes(state.cfg.trump)).uppercase(),
+      ),
       style = MaterialTheme.typography.titleMedium,
     )
     Text(
       when (state.phase) {
-        TablePhase.DONE -> "Round complete"
-        TablePhase.RESOLVING -> "${currentWinnerId(state) ?: ""} takes the trick"
+        TablePhase.DONE -> stringResource(R.string.table_round_complete)
+        TablePhase.RESOLVING -> stringResource(R.string.table_takes_trick, currentWinnerId(state) ?: "")
         TablePhase.PLAY ->
           when {
             // A borrowed seat is not an invitation, even when the engines are
             // waiting on it — the bot is the one due to move.
-            state.turn == userSeat && userSeat in borrowedSeats -> "Bot playing your seat"
-            state.turn == userSeat -> "Your turn ($userSeat)"
-            else -> "Waiting for ${state.turn}"
+            state.turn == userSeat && userSeat in borrowedSeats ->
+              stringResource(R.string.table_bot_for_you)
+            state.turn == userSeat -> stringResource(R.string.table_your_turn, userSeat)
+            else -> stringResource(R.string.table_waiting_for, state.turn.toString())
           }
       },
       style = MaterialTheme.typography.labelLarge,
@@ -145,7 +154,7 @@ fun TableScreen(
       if (turn == userSeat) {
         HandRow(state, userSeat, onPlay)
       } else if (turn != null) {
-        Text("Waiting for $turn…", style = MaterialTheme.typography.bodyMedium)
+        Text(stringResource(R.string.table_waiting_for_hint, turn), style = MaterialTheme.typography.bodyMedium)
         HandRow(state, turn, onPlay = null)
       }
     }
@@ -177,13 +186,17 @@ private fun TallyRow(state: TableState, borrowedSeats: Set<String>) {
         // is the placeholder it replaces, not a competing design.
         if (seat in borrowedSeats) {
           Text(
-            "Bot playing",
+            stringResource(R.string.table_bot_playing),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.primary,
           )
         }
         Text(
-          "${state.tricksWon[seat] ?: 0} won · ${state.cfg.hands[seat]?.size ?: 0} left",
+          stringResource(
+            R.string.table_tally,
+            state.tricksWon[seat] ?: 0,
+            state.cfg.hands[seat]?.size ?: 0,
+          ),
           style = MaterialTheme.typography.bodyMedium,
         )
       }
@@ -194,7 +207,7 @@ private fun TallyRow(state: TableState, borrowedSeats: Set<String>) {
 @Composable
 private fun TrickArea(state: TableState) {
   if (state.plays.isEmpty()) {
-    Text("Lead a card", style = MaterialTheme.typography.bodyMedium)
+    Text(stringResource(R.string.table_lead), style = MaterialTheme.typography.bodyMedium)
     return
   }
   val isResolving = state.phase == TablePhase.RESOLVING

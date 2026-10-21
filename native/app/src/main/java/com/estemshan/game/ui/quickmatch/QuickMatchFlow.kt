@@ -13,6 +13,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -21,6 +22,7 @@ import androidx.navigation.NavGraphBuilder
 import androidx.navigation.compose.composable
 import androidx.navigation.navigation
 import com.estemshan.engine.TablePhase
+import com.estemshan.game.R
 import com.estemshan.game.ui.Routes
 import com.estemshan.game.ui.bidding.BiddingScreen
 import com.estemshan.game.ui.bidding.BiddingViewModel
@@ -164,7 +166,7 @@ fun NavGraphBuilder.quickMatchGraph(nav: NavController, qvm: QuickMatchViewModel
             enabled = round < gameType.baseRounds,
             modifier = Modifier.fillMaxWidth().padding(16.dp),
           ) {
-            Text("Next round")
+            Text(stringResource(R.string.quickmatch_next_round))
           }
         }
       }

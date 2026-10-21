@@ -42,6 +42,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
@@ -78,7 +79,7 @@ fun FinalStandingsScreen(
       modifier = Modifier.fillMaxSize().padding(24.dp),
       horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-      Text(state.title, style = MaterialTheme.typography.headlineMedium)
+      Text(stringResource(R.string.standings_title), style = MaterialTheme.typography.headlineMedium)
       Spacer(Modifier.height(16.dp))
       LazyColumn(
         modifier = Modifier.fillMaxWidth().testTag("standingsList"),
@@ -168,7 +169,7 @@ private fun RankedFinalStandings(
       }
       // .res-title — Marcellus 26sp, letter-spacing .06em.
       Text(
-        state.title,
+        stringResource(R.string.standings_title),
         style = TextStyle(
           fontFamily = DisplayFamily,
           fontSize = 26.sp,
@@ -243,7 +244,7 @@ private fun ReturnToRankedButton(onClick: () -> Unit) {
     contentAlignment = Alignment.Center,
   ) {
     Text(
-      "Return to Ranked",
+      stringResource(R.string.standings_return_to_ranked),
       style = TextStyle(
         fontFamily = BodyFamily,
         fontWeight = FontWeight.SemiBold,
@@ -342,7 +343,7 @@ private fun RankedStandingRowCard(
           ) {
             Icon(
               painterResource(R.drawable.koz_mug),
-              contentDescription = "Koz",
+              contentDescription = stringResource(R.string.standings_koz),
               modifier = Modifier.size(30.dp),
               tint = Color.Unspecified,
             )
@@ -350,7 +351,7 @@ private fun RankedStandingRowCard(
         }
         // .rn-name — Marcellus 18sp at .02em.
         Text(
-          row.seat + (if (row.saaydaBadge) " · Sa'ayda" else ""),
+          standingName(row, withWinnerPrefix = false),
           style = TextStyle(
             fontFamily = DisplayFamily,
             fontSize = 18.sp,
@@ -374,6 +375,15 @@ private fun RankedStandingRowCard(
   }
 }
 
+/** The row's seat label with, optionally, the 1st-place prefix. */
+@Composable
+private fun standingName(row: StandingRow, withWinnerPrefix: Boolean): String =
+  if (withWinnerPrefix && row.isWinner) {
+    stringResource(R.string.standings_name_winner, row.seat)
+  } else {
+    row.seat
+  }
+
 @Composable
 private fun StandingRowCard(row: StandingRow) {
   val nameColor = if (row.isWinner) {
@@ -387,8 +397,7 @@ private fun StandingRowCard(row: StandingRow) {
     verticalAlignment = Alignment.CenterVertically,
   ) {
     Text(
-      (if (row.isWinner) "1 · " else "") + row.seat +
-        (if (row.saaydaBadge) " · Sa'ayda" else ""),
+      standingName(row, withWinnerPrefix = true),
       style = MaterialTheme.typography.titleMedium,
       color = nameColor,
     )

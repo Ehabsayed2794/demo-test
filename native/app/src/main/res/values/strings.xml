@@ -1,17 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Native v1's structural string resources (S12 lobby entries + S15 Real
-  Lobby + S16 Room). Every other screen still holds literals inline; this
-  file is where a screen's structural text lives so a values-ar/ sibling
-  can later be dropped in to translate the whole app without touching
-  Kotlin (S41). Tier and personality labels are deliberately absent here —
+  Native v1's string resources (S12 lobby entries + S15 Real Lobby + S16
+  Room, and — since S41 — every older screen's text). This file is where a
+  screen's text lives so the values-ar/ sibling translates the whole app
+  without touching Kotlin. Tier and personality labels are deliberately absent here —
   they come from the engine enums' own displayName / blurb, so a
   translation of the characters lands with the engine, not duplicated in
   resources.
 -->
 <resources>
   <!-- S24: the manifest label reads this (was hardcoded). Proper noun, never translated. -->
-  <string name="app_name" translatable="false">Estemshan</string>
+  <string name="app_name" translatable="false">Made</string>
 
   <string name="choose_level_title">Choose Level</string>
   <string name="choose_level_subtitle">Seat your opponents, then sit down.</string>
@@ -178,4 +177,127 @@
   <string name="create_game_cancel">Cancel</string>
   <!-- A create that failed at the transport; the selections are kept. -->
   <string name="create_game_error">Couldn\'t create the room. Check your connection and try again.</string>
+  <!--
+    S41 — the strings migrated off the older screens' inline literals. EN is
+    moved verbatim (no rewording); values-ar/ carries the translation. Seat
+    ids (p1..p4) and engine-composed text (tier / personality / rank labels,
+    engine rejection reasons) are NOT here — they are passed in as %s args or
+    come from :engine, and are tracked as remaining Arabic gaps.
+  -->
+
+  <!-- Suit names, shared by the bidding picker/buttons and the table header. -->
+  <string name="suit_clubs">Clubs</string>
+  <string name="suit_diamonds">Diamonds</string>
+  <string name="suit_hearts">Hearts</string>
+  <string name="suit_spades">Spades</string>
+  <!-- No-trump: the fifth bid "suit". -->
+  <string name="suit_sans">Sans</string>
+
+  <!-- Splash + Login -->
+  <string name="splash_tagline">Estimation card game</string>
+  <string name="login_email">Email</string>
+  <string name="login_password">Password</string>
+  <string name="login_sign_in">Sign in</string>
+  <string name="login_play_anonymously">Play anonymously</string>
+  <string name="login_signing_in">Signing in…</string>
+  <string name="login_signed_in">Signed in</string>
+  <string name="login_enter">Enter</string>
+  <!-- %1$s is the auth failure message, passed through from the auth layer. -->
+  <string name="login_error">Error: %1$s</string>
+
+  <!-- Profile -->
+  <string name="profile_title">Profile</string>
+  <string name="profile_signed_in">Signed in</string>
+
+  <!-- Settings -->
+  <string name="settings_title">Settings</string>
+  <string name="settings_account">Account</string>
+  <string name="settings_sound">Sound</string>
+  <string name="settings_sound_on">On</string>
+  <string name="settings_sound_off">Off</string>
+  <!-- %1$s is the app's version name, e.g. 0.1.0. -->
+  <string name="settings_version">Version %1$s</string>
+  <string name="settings_logout">Log out</string>
+
+  <!-- Bidding -->
+  <!-- %1$d is the round number. -->
+  <string name="bidding_title">Round %1$d · Bidding</string>
+  <string name="bidding_step_dash">Step 1 of 4 · Dash Call</string>
+  <string name="bidding_step_auction">Step 2 of 4 · Auction</string>
+  <string name="bidding_step_confirm">Step 3 of 4 · Confirm</string>
+  <string name="bidding_step_estimates">Step 4 of 4 · Estimates</string>
+  <string name="bidding_step_done">Complete</string>
+  <string name="bidding_complete">Bidding complete</string>
+  <string name="bidding_bot_for_you">Bot bidding for your seat</string>
+  <!-- %1$s is the seat id (p1..p4). -->
+  <string name="bidding_your_turn">Your turn (%1$s)</string>
+  <string name="bidding_waiting_for">Waiting for %1$s</string>
+  <!-- %1$s the caller's seat id, %2$s the trump suit name; "—" when none yet. -->
+  <string name="bidding_caller_trump">Caller: %1$s · Trump: %2$s</string>
+  <string name="bidding_dash_prompt">Declare a Dash Call (0 tricks, pre-trump)?</string>
+  <string name="bidding_dash_call">Dash Call</string>
+  <string name="bidding_decline">Decline</string>
+  <string name="bidding_hint_with">Matches the top — goes With</string>
+  <string name="bidding_hint_opens">Opens the auction</string>
+  <string name="bidding_hint_new_top">New top bid</string>
+  <string name="bidding_top">Top: %1$d</string>
+  <string name="bidding_tricks">Tricks: %1$d</string>
+  <!-- %1$d tricks, %2$s suit label (symbol + name). -->
+  <string name="bidding_bid">Bid %1$d %2$s</string>
+  <string name="bidding_pass">Pass</string>
+  <string name="bidding_lock_title">Lock the call (min %1$d)</string>
+  <string name="bidding_lock">Lock %1$d %2$s</string>
+  <string name="bidding_estimate_title">Final estimate (max %1$d)</string>
+  <string name="bidding_forbidden">Can\'t pick %1$d — bids would total 13</string>
+  <string name="bidding_with_floor">With floor: %1$d (your own auction bid)</string>
+  <string name="bidding_estimate_zero">Estimate 0 (Normal Dash)</string>
+  <string name="bidding_estimate">Estimate %1$d</string>
+  <string name="bidding_suit">Suit</string>
+
+  <!-- Table -->
+  <!-- %1$d round, %2$d trick (of 13), %3$s trump suit name (upper-cased in EN). -->
+  <string name="table_header">Round %1$d · Trick %2$d/13 · Trump %3$s</string>
+  <string name="table_round_complete">Round complete</string>
+  <!-- %1$s is the winning seat id. -->
+  <string name="table_takes_trick">%1$s takes the trick</string>
+  <string name="table_bot_for_you">Bot playing your seat</string>
+  <string name="table_your_turn">Your turn (%1$s)</string>
+  <string name="table_waiting_for">Waiting for %1$s</string>
+  <string name="table_waiting_for_hint">Waiting for %1$s…</string>
+  <!-- The chip under a seat the configured bot is borrowing. -->
+  <string name="table_bot_playing">Bot playing</string>
+  <!-- %1$d tricks won, %2$d cards left in that seat's hand. -->
+  <string name="table_tally">%1$d won · %2$d left</string>
+  <string name="table_lead">Lead a card</string>
+
+  <!-- Quick match: the standings screen's continue button. -->
+  <string name="quickmatch_next_round">Next round</string>
+
+  <!-- Standings -->
+  <string name="standings_title">Final Standings</string>
+  <string name="standings_return_to_ranked">Return to Ranked</string>
+  <!-- Accessibility label on the Koz mug (last place). -->
+  <string name="standings_koz">Koz</string>
+  <!-- The 1st-place row's prefix; %1$s is the seat name. -->
+  <string name="standings_name_winner">1 · %1$s</string>
+  <string name="ranked_label_rp">RANKED RP</string>
+  <string name="ranked_rp_value">%1$d RP</string>
+  <string name="ranked_ceiling">Above 3,000 RP · leaderboard-only</string>
+  <string name="ranked_label_transition">RANK TRANSITION</string>
+  <!-- Points from the previous rank toward the next. A string, not a glyph, so
+       an RTL translation can point the other way. -->
+  <string name="ranked_transition_arrow">→</string>
+  <string name="ranked_label_season">SEASON</string>
+  <!-- %1$s season start date, %2$s end date (ISO yyyy-MM-dd). -->
+  <string name="ranked_season_range">%1$s → %2$s</string>
+
+  <!-- Choose Level preset tables (BotTablePreset.nameRes / blurbRes). -->
+  <string name="choose_level_preset_gentle_name">A Gentle Table</string>
+  <string name="choose_level_preset_gentle_blurb">Three patient opponents. Learn the rules, lose nothing.</string>
+  <string name="choose_level_preset_even_name">An Even Table</string>
+  <string name="choose_level_preset_even_blurb">Three steady opponents who play it straight.</string>
+  <string name="choose_level_preset_rivals_name">The Rivals</string>
+  <string name="choose_level_preset_rivals_blurb">A cautious Fox, a pressing Shark, and a wildcard Joker.</string>
+  <string name="choose_level_preset_shark_name">The Shark Tank</string>
+  <string name="choose_level_preset_shark_blurb">Three Veterans who bid high and come hunting.</string>
 </resources>

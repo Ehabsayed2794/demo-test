@@ -329,8 +329,8 @@ private fun OnlineMatchGapOverlayPreview() {
   // treatment, the same two strings the warm overlay over a live table uses.
   EstemshanTheme {
     OnlineMatchOverlay(
-      "Reconnecting…",
-      "You're still in the match.",
+      stringResource(R.string.online_reconnecting),
+      stringResource(R.string.online_reconnecting_body),
     )
   }
 }
@@ -338,7 +338,12 @@ private fun OnlineMatchGapOverlayPreview() {
 @Preview(showBackground = true, backgroundColor = 0xFF0D0A07)
 @Composable
 private fun OnlineMatchReconnectingPreview() {
-  EstemshanTheme { OnlineMatchOverlay("Reconnecting…", "You're still in the match.") }
+  EstemshanTheme {
+    OnlineMatchOverlay(
+      stringResource(R.string.online_reconnecting),
+      stringResource(R.string.online_reconnecting_body),
+    )
+  }
 }
 
 @Preview(showBackground = true, backgroundColor = 0xFF0D0A07)
@@ -462,10 +467,7 @@ private fun OnlineMatchRoundStandingsPreview() {
 @Composable
 private fun OnlineMatchCompletePreview() {
   val state = MatchUiState.MatchComplete(
-    buildStandings(
-      mapOf("p1" to 120, "p2" to 98, "p3" to 134, "p4" to 77),
-      title = "Final Standings",
-    ),
+    buildStandings(mapOf("p1" to 120, "p2" to 98, "p3" to 134, "p4" to 77)),
   )
   EstemshanTheme { OnlineMatchComplete(state) {} }
 }

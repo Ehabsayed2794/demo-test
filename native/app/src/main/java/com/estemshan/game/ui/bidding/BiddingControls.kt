@@ -1,5 +1,6 @@
 package com.estemshan.game.ui.bidding
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -23,6 +24,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.estemshan.engine.BiddingIntent
@@ -36,6 +38,7 @@ import com.estemshan.engine.canSubmit
 import com.estemshan.engine.initFastRound
 import com.estemshan.engine.initNormalRound
 import com.estemshan.engine.emit
+import com.estemshan.game.R
 import com.estemshan.game.ui.theme.EstemshanTheme
 import kotlin.math.roundToInt
 
@@ -47,18 +50,28 @@ fun suitColor(suit: Suit): Color = when (suit) {
   else -> Color(0xFFF0EADA)
 }
 
-fun suitLabel(suit: Suit): String {
-  val name = suit.name.lowercase().replaceFirstChar { it.uppercase() }
-  return "${suit.symbol} $name"
+/** The localized suit name, without its symbol — "Spades", "Sans". */
+@StringRes
+fun suitNameRes(suit: Suit): Int = when (suit) {
+  Suit.CLUBS -> R.string.suit_clubs
+  Suit.DIAMONDS -> R.string.suit_diamonds
+  Suit.HEARTS -> R.string.suit_hearts
+  Suit.SPADES -> R.string.suit_spades
+  Suit.SANS -> R.string.suit_sans
 }
 
+/** Symbol + localized name, e.g. "♠ Spades". */
+@Composable
+fun suitLabel(suit: Suit): String = "${suit.symbol} ${stringResource(suitNameRes(suit))}"
+
 /** Phase step for the progress header (DASH → AUCTION → CONFIRM → ESTIMATES). */
-fun phaseStep(phase: BiddingPhase): String = when (phase) {
-  BiddingPhase.DASH -> "Step 1 of 4 · Dash Call"
-  BiddingPhase.AUCTION -> "Step 2 of 4 · Auction"
-  BiddingPhase.CONFIRM -> "Step 3 of 4 · Confirm"
-  BiddingPhase.ESTIMATES -> "Step 4 of 4 · Estimates"
-  BiddingPhase.DONE -> "Complete"
+@StringRes
+fun phaseStepRes(phase: BiddingPhase): Int = when (phase) {
+  BiddingPhase.DASH -> R.string.bidding_step_dash
+  BiddingPhase.AUCTION -> R.string.bidding_step_auction
+  BiddingPhase.CONFIRM -> R.string.bidding_step_confirm
+  BiddingPhase.ESTIMATES -> R.string.bidding_step_estimates
+  BiddingPhase.DONE -> R.string.bidding_step_done
 }
 
 /** Illegal options render dimmed with the engine's own reason inline. */
@@ -83,16 +96,16 @@ private fun SubmitButton(label: String, legal: Boolean, reason: String?, onClick
 @Composable
 fun DashControls(seat: String, onIntent: (BiddingIntent) -> Unit) {
   Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-    Text("Declare a Dash Call (0 tricks, pre-trump)?", style = MaterialTheme.typography.titleMedium)
+    Text(stringResource(R.string.bidding_dash_prompt), style = MaterialTheme.typography.titleMedium)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
       Button(
         onClick = { onIntent(BiddingIntent.DashCallDecision(seat, true)) },
         modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-      ) { Text("Dash Call") }
+      ) { Text(stringResource(R.string.bidding_dash_call)) }
       OutlinedButton(
         onClick = { onIntent(BiddingIntent.DashCallDecision(seat, false)) },
         modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-      ) { Text("Decline") }
+      ) { Text(stringResource(R.string.bidding_decline)) }
     }
   }
 }
@@ -106,15 +119,19 @@ fun AuctionControls(state: BiddingState, seat: String, onIntent: (BiddingIntent)
   val verdict = canSubmit(state, intent)
   val hint = when {
     auctionBidIsWith(seat, picked, suit, state.auctionTop, state.auctionSuit, state.auctionBidder) ->
-      "Matches the top — goes With"
+      stringResource(R.string.bidding_hint_with)
     auctionBidBeatsTop(picked, suit, state.auctionTop, state.auctionSuit) ->
-      if (state.auctionTop == 0) "Opens the auction" else "New top bid"
+      if (state.auctionTop == 0) {
+        stringResource(R.string.bidding_hint_opens)
+      } else {
+        stringResource(R.string.bidding_hint_new_top)
+      }
     else -> null
   }
 
   Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-    Text("Top: ${state.auctionTop}", style = MaterialTheme.typography.labelLarge)
-    Text("Tricks: $picked", style = MaterialTheme.typography.titleMedium)
+    Text(stringResource(R.string.bidding_top, state.auctionTop), style = MaterialTheme.typography.labelLarge)
+    Text(stringResource(R.string.bidding_tricks, picked), style = MaterialTheme.typography.titleMedium)
     Slider(
       value = tricks,
       onValueChange = { tricks = it },
@@ -126,13 +143,13 @@ fun AuctionControls(state: BiddingState, seat: String, onIntent: (BiddingIntent)
     if (hint != null) {
       Text(hint, style = MaterialTheme.typography.bodyMedium)
     }
-    SubmitButton("Bid $picked ${suitLabel(suit)}", verdict.legal, verdict.reason) {
+    SubmitButton(stringResource(R.string.bidding_bid, picked, suitLabel(suit)), verdict.legal, verdict.reason) {
       onIntent(intent)
     }
     OutlinedButton(
       onClick = { onIntent(BiddingIntent.AuctionBid(seat, true)) },
       modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-    ) { Text("Pass") }
+    ) { Text(stringResource(R.string.bidding_pass)) }
   }
 }
 
@@ -146,8 +163,8 @@ fun ConfirmControls(state: BiddingState, seat: String, onIntent: (BiddingIntent)
   val verdict = canSubmit(state, intent)
 
   Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-    Text("Lock the call (min $floor)", style = MaterialTheme.typography.titleMedium)
-    Text("Tricks: $picked", style = MaterialTheme.typography.titleMedium)
+    Text(stringResource(R.string.bidding_lock_title, floor), style = MaterialTheme.typography.titleMedium)
+    Text(stringResource(R.string.bidding_tricks, picked), style = MaterialTheme.typography.titleMedium)
     Slider(
       value = tricks,
       onValueChange = { tricks = it },
@@ -156,7 +173,7 @@ fun ConfirmControls(state: BiddingState, seat: String, onIntent: (BiddingIntent)
       modifier = Modifier.fillMaxWidth(),
     )
     SuitPicker(selected = suit, onPick = { suit = it })
-    SubmitButton("Lock $picked ${suitLabel(suit)}", verdict.legal, verdict.reason) {
+    SubmitButton(stringResource(R.string.bidding_lock, picked, suitLabel(suit)), verdict.legal, verdict.reason) {
       onIntent(intent)
     }
   }
@@ -177,8 +194,8 @@ fun EstimatesControls(
   val verdict = canSubmit(state, intent)
 
   Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-    Text("Final estimate (max $cap)", style = MaterialTheme.typography.titleMedium)
-    Text("Tricks: $picked", style = MaterialTheme.typography.titleMedium)
+    Text(stringResource(R.string.bidding_estimate_title, cap), style = MaterialTheme.typography.titleMedium)
+    Text(stringResource(R.string.bidding_tricks, picked), style = MaterialTheme.typography.titleMedium)
     Slider(
       value = tricks,
       onValueChange = { tricks = it },
@@ -187,13 +204,23 @@ fun EstimatesControls(
       modifier = Modifier.fillMaxWidth(),
     )
     if (forbidden != null) {
-      Text("Can't pick $forbidden — bids would total 13", style = MaterialTheme.typography.bodyMedium)
+      Text(
+        stringResource(R.string.bidding_forbidden, forbidden),
+        style = MaterialTheme.typography.bodyMedium,
+      )
     }
     if (floor != null) {
-      Text("With floor: $floor (your own auction bid)", style = MaterialTheme.typography.bodyMedium)
+      Text(
+        stringResource(R.string.bidding_with_floor, floor),
+        style = MaterialTheme.typography.bodyMedium,
+      )
     }
     SubmitButton(
-      if (picked == 0) "Estimate 0 (Normal Dash)" else "Estimate $picked",
+      if (picked == 0) {
+        stringResource(R.string.bidding_estimate_zero)
+      } else {
+        stringResource(R.string.bidding_estimate, picked)
+      },
       verdict.legal,
       verdict.reason,
     ) {
@@ -206,7 +233,7 @@ fun EstimatesControls(
 fun SuitPicker(selected: Suit, onPick: (Suit) -> Unit) {
   val suits = listOf(Suit.CLUBS, Suit.DIAMONDS, Suit.HEARTS, Suit.SPADES, Suit.SANS)
   Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-    Text("Suit", style = MaterialTheme.typography.labelLarge)
+    Text(stringResource(R.string.bidding_suit), style = MaterialTheme.typography.labelLarge)
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
       for (s in suits) {
         val label = suitLabel(s)
