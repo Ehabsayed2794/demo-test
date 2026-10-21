@@ -22,19 +22,29 @@ dated pointer notes (the repository's pointer convention).
   The engine today would score Classic **56** (doubled). The owner rule gives 28.
 - **Still open:** [Q1] the Normal doubling's composition with a carried Sa'ayda multiplier.
 
-### B. Sa'ayda extension [D, with a flagged ambiguity]
-- Preserve the current approved behaviour: a Sa'ayda in **any fast round** extends the match.
-- **Conflict (not silently changed):** canonical text says Sa'ayda forces an extra round only in the
-  **final** round (`CANONICAL_RULES.md:21,144,191,228`; `03-transactions.md:145-147`). The engine
-  extends in any fast round (`RoundScore.kt:230-231`, pinned by `RoundScoreTest.kt:233-237`).
-- **Wording ambiguity:** the owner wrote "extend the match from 14 to 18 rounds". The engine adds
-  **one** round per extension (FULL: up to five, so 18→19…23). [Q2] asks which is meant.
-- **Illustrative example (hypothetical totals):** FULL, all four fail round 16. *Engine:* the match
-  becomes 19 rounds. If after round 18 A=120, B=112 and B wins round 19 (+25, A −11), the result flips
-  to B 137, A 109. *Canonical-final-round-only:* the match ends after round 18, A wins 120–112.
-  A single extra round can change the winner, so the choice matters.
-- The Super Call extension also requires a **successful** caller in the engine (`RoundScore.kt:234`);
-  canonical text says no such condition. Not covered by this decision. [Q3]
+### B. Sa'ayda extension [D — corrected 2026-10-21 (later); supersedes the earlier B text and Q2]
+Two separate rules (the owner's wording):
+1. **Count rule (window = rounds 14–18, inclusive).** Each *round* in 14–18 in which Sa'ayda occurs adds
+   one extension round to the baseline ending at 18. The count is per qualifying **round**, not per
+   player who announces. None → last round 18; round 14 only → 19; rounds 14 and 16 → 20; three
+   qualifying rounds → 21.
+2. **Final-round winner rule (no window).** After the planned last round is computed, if Sa'ayda
+   occurs in the **actual current final round**, add one more round, and repeat for each new final round
+   until the final round ends with a winner. A Sa'ayda in a round that is *not* the current final round
+   and is *after* 18 adds nothing. Example: Sa'ayda in 14 and 16 → planned final 20; Sa'ayda in 19 adds
+   nothing; Sa'ayda in 20 → 21; Sa'ayda in 21 → 22; and so on.
+- **Superseded interpretations:** "final round only for the whole calculation" (`CANONICAL_RULES.md:21,144,191,228`,
+  `03-transactions.md:145-147`); "fixed extension"; "one round per Sa'ayda after 18"; "automatic round 21 for
+  14, 16, 19". The earlier Q2 wording question is **answered**.
+- **Engine check (read, not run):** `computeRoundExtension` (`RoundScore.kt:222-238`) adds one round for a
+  Sa'ayda in 14–18 (matches rule 1, per-round) and **never extends from round 19 onward**
+  (`round !in firstFastRound..baseRounds`). So **rule 2 is not implemented**: with Sa'ayda in 14, 16 and 20
+  the engine ends at 20; the rule requires 21. `GameType.FULL.maxExtensions = 5` and `MINI = 1`
+  (`Bidding.kt:111-113`) also cap the count, which the unbounded rule 2 contradicts.
+  `GameTypeTest`/`RoundScoreTest` pin "round 19 never extends" (`RoundScoreTest.kt:229-232`) — these tests
+  encode the superseded interpretation and need changing at implementation time (not done here).
+- **Not decided here [Q2b]:** MINI analogue (window 6–10?), the 5/1 caps versus unbounded rule 2, how
+  Super Call extensions combine with the Sa'ayda count, and what "ends with a winner" means for a tie.
 
 ### C. Normal Dash combined with Risk [D]
 - A Normal Dash player who is also the Risk player gets the **Risk value PLUS the Normal Dash points**;
@@ -62,22 +72,31 @@ dated pointer notes (the repository's pointer convention).
   understood to require an in-app deletion path and a web link; this was **not verified in this
   session** and must be validated against current Play policy before release. [T/Q6]
 
-### F. Ranked bot-fill vote [D]
-- No automatic bot fill at match creation. Wait **two minutes**; if enough ready humans are still
-  missing, start a **30-second** vote. At least **two waiting players** are needed to start it.
-  Approval = majority; **non-votes count as rejection**. If it passes, use the bots the **room
-  creator** selected.
-- **Majority resolved from existing rules:** the repo's precedent is strictly more than half of the
-  eligible voters (`E/VoteKick.kt` threshold `eligible/2+1`; disconnect vote 2 of 3). With non-votes as
-  rejection, "majority" = more than half of the **waiting human players**. 2 waiting → 2 yes; 3 → 2.
-- **Gaps (not invented):** public auto-match has no "room creator" [Q7]; "match start" and "ready
-  players" are undefined [Q8]; RP with bot seats [Q9].
+### F. Ranked bot-fill vote [D]; creator, timer, readiness and RP [D 2026-10-21 later]
+- No automatic bot fill at match creation. Wait **two minutes, starting when the first player enters the
+  table [D]**. A human is **ready only when connected and seated [D]**; launching the app or entering the
+  matchmaking queue does not count. If enough ready humans are still missing, start a **30-second vote**;
+  at least **two waiting players** are required; approval = majority; **non-votes count as rejection**.
+- **Bots [D]:** the player who **creates the Ranked game selects bot difficulty and personality** at game
+  creation. **Inspection:** Create Game already carries `botTier`/`botPersonality`
+  (`CreateGameViewModel.kt:40-44`), so this applies directly to private/Rank-down tables. The public
+  search request carries **only `gameType`** and any other key is refused (`MatchmakingRequest.kt:11-16,42`),
+  so a public table has **no creator-chosen bot settings today** [Q7b].
+- **Ranked RP with bots [D]:** humans get normal Ranked RP; opponent strength uses **humans only**; bots are
+  never rated opponents. (Today settlement averages all other seats' profiles, `SettlementDb.kt:620`.)
+- **Majority** resolved from precedent: more than half of the waiting humans (2 waiting → 2; 3 → 2).
 
-### G. Reconnect after disconnection [D, partial]
-- A player may reconnect to the same match after a bot temporarily takes over, up to **seven**
-  leave-and-return cycles per match.
-- **Inspection:** no per-match return counter exists in code. The only "seven" hits are unrelated
-  poll caps (`SeatReclaimPollTest.kt`). Today RD19 reclaim is unlimited. [Q10, Q11]
+### G. Reconnect and bot takeover [D, completed 2026-10-21 (later)]
+- A player may return to the same match after a bot temporarily takes over, up to **seven** cycles.
+- **Counter [D]:** increments **only when a bot actually takes control after a disconnection**. The ordinary
+  50-second inactivity timeout (RD19) does **not** increment it; the two events are distinct triggers
+  (disconnection takeover vs. inactivity takeover) and the existing inactivity/timeout counters are untouched.
+- **Seventh qualifying takeover [D]:** remove the player from the **current match** with the **2-Koz** result.
+  This is a match-level removal, **not an account ban**, and adds no account penalty. It is a separate
+  mechanism from the **15-timeout removal** (RD20): different trigger and counter, same recorded result
+  (2 Koz); they share no state and are not interchangeable.
+- **Inspection:** no per-match takeover counter exists in code today; RD19 reclaim is unlimited. [Q10b] asks
+  how "disconnection" is detected and whether the counter survives a server restart.
 
 ### H. Server authority and hosting [D direction; P architecture]
 - **[D]** Android is the production client; web is not. Server is authoritative for dealing, hidden
@@ -91,7 +110,11 @@ dated pointer notes (the repository's pointer convention).
   `docs/NATIVE_V1_PLAN_AND_ESTIMATE.md` now carries pointer notes. The owner has **not** yet
   approved a specific ADR text naming Cloudflare as final. [Q12]
 
-### I. Free-tier exhaustion and backup server [D intent; many [Q]/[T]]
+### I. Free-tier exhaustion and backup server [D; operating policy confirmed 2026-10-21 (later)]
+- **Operating policy [D, Q13]:** at 90% usage the backup hosts **new matches only**; running matches stay on
+  the primary; results may wait until deliverable to **one central database**; there is **one RP source of
+  truth** (no independent RP authorities). The backup **provider, synchronization, recovery and duplicate-RP
+  safeguards remain technical design/experiments (T3, T4), not decisions**.
 - Measure primary usage continuously. At **90%** of the applicable daily quota, begin limited
   pre-synchronization to the backup. The backup does **not** read or write gameplay state before
   the threshold (except approved setup/health checks). Running matches stay on the primary while it
@@ -104,21 +127,23 @@ dated pointer notes (the repository's pointer convention).
   claim saved without reliable confirmation.
 - **Not assumed:** cross-provider failover is **not** assumed safe or automatic. Stage 0/Stage 7 must
   prove recovery, replication lag, quota accounting and consistency (§3). **The backup provider is
-  unspecified.** [Q13]
+  unspecified** (engineering to propose; not an owner question).
 
-### J. Result statistics from V1 [D]
-- Store final results and update profile statistics for **ROOM and RANKED** matches. King, Second,
-  Third, Koz are **one combined counter** across ROOM and RANKED (5 ROOM + 3 RANKED Kings = 8).
-  **UNRANKED is excluded.** Ranked RP is separate and Ranked-only. Each result is processed **exactly
-  once** across retries, disconnects, restarts and backup recovery.
-- **Supersedes (history kept):** RD23 ("9 stats… Public+Private Ranked, exclude Placement"; no
-  statistics for ROOM/UNRANKED) and the "no Ranked statistics for UNRANKED" lines of RD28/A3.5.
-- **Contradictions handled:** (1) A5.1 charges UNRANKED departures to the career Koz counter, but
-  UNRANKED is now excluded from stats [Q14]. (2) A5.1 charges ROOM no Koz [Q14]. (3) ROOM is client-
-  converged on Firestore and was deferred from the new backend, yet it now needs exactly-once result
-  processing, which Spark cannot do with Cloud Functions [Q15 — highest impact]. (4) ROOM may start
-  with 2–3 players; placements/ties for fewer than four are undefined [Q16]. (5) Whether Games Played
-  and the percentages also combine is unstated [Q17].
+### J. Result statistics from V1 [D scope; ROOM result recording D 2026-10-21 (later)]
+- **Scope (unchanged):** ROOM and RANKED results aggregate in the same King/Second/Third/Koz counters;
+  UNRANKED excluded; Ranked RP is separate and Ranked-only; each result must be processed exactly once.
+- **ROOM result recording [D, Q15]:** the **app manages all ROOM operations**; the **server records the
+  final result only**. Gameplay and result calculation stay on the client. This is **not** a move of ROOM
+  authority to the server.
+- **Technical trade-off (engineering finding, not a decision):** a server that stores a client-reported
+  result cannot prove it is correct, cannot stop a modified client fabricating one, and does not by itself
+  give exactly-once recording. Mitigations are design work (idempotency key per match, rules on who may
+  report, cross-checking reports from the four seats) and still cannot make the number trustworthy.
+  Because ROOM statistics merge with RANKED counters, a forged ROOM result changes the same profile
+  numbers. The owner's requirement is kept as stated. [Q15b] asks the integrity policy.
+- **Supersedes (history kept):** RD23's "no statistics for ROOM/UNRANKED" and the RD28/A3.5 lines on UNRANKED.
+- **Still open:** [Q14] departure charges vs. UNRANKED exclusion; [Q16] ROOM with <4 players; [Q17] whether
+  Games Played/percentages also combine.
 
 ### K. Leaderboard [D: deferred from V1]
 - Not implemented and no dedicated resource use in V1; possibility preserved. This **defers** RD27/S64

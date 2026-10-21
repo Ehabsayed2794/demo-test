@@ -9,14 +9,10 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 
 | ID | Pri | السؤال | ليه مهم | الاختيارات / توصية | المصدر |
 |---|---|---|---|---|---|
-| Q15 | P1 | نتايج الـROOM (King/Second/Third/Koz) تتسجل في البروفايل من V1 — مين اللي يحسبها ويضمن إنها اتسجلت مرة واحدة؟ الـROOM شغال حالياً على Firebase والعميل هو اللي بيحسم النتيجة | من غير سيرفر موثوق أي لاعب يقدر يزوّر نتيجة ROOM وتتجمع مع الـRanked. وCloud Functions مش هتتنشر (من غير Blaze) | (أ) ننقل ROOM على نفس سيرفر Cloudflare (توصيتي، ونحسّها توسعة موافق عليها) · (ب) نقبل نتيجة من العميل للإحصائيات بس ونعترف إنها قابلة للتزوير · (ج) نأجل إحصائيات ROOM لحد ما ROOM يتنقل | `MatchService.kt:749-800`, `firestore.rules:1353-1390`, plan RD11/RD23 |
-| Q13 | P1 | الـbackup server هو إيه بالظبط (حساب Cloudflare تاني؟ مزوّد تاني؟)، وبيشيل إيه لما الأساسي يوصل 90%؟ | القرار ده بيحدد هل ممكن يبقى فيه سجلين RP. والشروط الحرة ممكن تمنع حسابين | توصيتي: الـbackup يستضيف ماتشات جديدة بس، والنتايج تستنى في outbox لحد ما يتبعتوا لقاعدة بيانات واحدة (مصدر RP واحد)؛ مفيش failover تلقائي للماتشات الشغالة | decision record §1.I |
-| Q2 | P1 | في Sa'ayda: قصدك "الماتش يزيد دور واحد" (زي الكود) ولا "يتمدد من 14 لـ18"؟ | الكتابة بتقول حاجتين مختلفتين. مثال: Sa'ayda في الدور 16 → الكود 19 دور؛ القواعد المكتوبة بتقول الدور الأخير بس؛ دور زيادة ممكن يقلب الفايز | توصية: نثبّت "دور واحد زيادة لأي Sa'ayda في الأدوار السريعة" ونعدل النص المكتوب | `RoundScore.kt:230`, `CANONICAL_RULES.md:21,144,191` |
-| Q7 | P1 | الـbot-fill بيقول "البوتات اللي صاحب الغرفة اختارها" — في الـRanked العام (Auto-Match) مفيش صاحب غرفة. مين يحدد البوتات؟ | من غير إجابة التصويت مش مكتمل | (أ) الـRanked العام يستخدم مستوى/شخصية افتراضية (Medium + الافتراضية) · (ب) الـbot-fill للطاولات الخاصة بس. توصية (أ) | plan RD21 |
-| Q8 | P1 | "ماتش ستارت" و"اللاعبين الجاهزين" معناهم إيه؟ الدقيقتين بتبدأ من إنشاء الطاولة ولا من أول لاعب ولا من أول نداء؟ وإيه العدد المطلوب بعدين (٤)؟ | بيحدد الـlifecycle كله | توصية: ٤ بشر مطلوبين، العداد من تكوين الطاولة، "جاهز" = متصل وقاعد على الطاولة | decision record §1.F |
-| Q9 | P1 | لو التصويت نجح والماتش فيه بوتات: اللاعبين البشر ياخدوا RP؟ والـRP بيتحسب إزاي (قوة الخصم)؟ | الإعدادات الحالية بتفترض ٤ بروفايلات حقيقية | توصية: RP بالقواعد العادية لكن قوة الخصم تتحسب من البشر بس، ومفيش RP للـbot؛ أو مفيش RP لو في بوت (يحتاج قرارك) | `SettlementDb.kt:508,620` |
-| Q10 | P1 | عداد الـ٧ رجعات: يزيد مع كل قطع اتصال ولا بس لما البوت يستلم؟ وهل استلام عدم النشاط (٥٠ ثانية) بيتحسب؟ | بيحدد متى اللاعب يتحرم من العودة | توصية: يزيد فقط لما البوت يستلم فعلاً (أي سبب)، والتايم آوت العادي ما يزيدوش | لا عداد في الكود (§1.G) |
-| Q11 | P1 | بعد الرجعة السابعة: اللاعب يتشال نهائياً؟ بنتيجة 2 Koz؟ ولا يفضل البوت يلعب مكانه بدون عقوبة؟ | القواعد الحالية بتقول الإزالة الدائمة = 2 Koz في Ranked | توصية: إزالة دائمة + 2 Koz زي إزالة الـ١٥ تايم آوت | `CANONICAL_RULES.md` A5.1 |
+| Q15b | P1 | نتيجة الـROOM بتتبعت من التطبيق: مين ليه حق يبعتها (أي لاعب؟ الهوست؟) ولو اللاعبين بعتوا نتايج مختلفة نعمل إيه؟ | السيرفر مش هيعرف يتأكد إنها صح؛ ونفس الأرقام بتتجمع مع الـRanked | (أ) نسجل بس لما التطبيقات الأربعة يتطابقوا (توصيتي) · (ب) أول تقرير يتسجل · (ج) الهوست بس | decision record §1.J |
+| Q7b | P1 | في الـRanked العام (Auto-Match) مفيش صاحب غرفة يختار البوتات (طلب البحث فيه نوع الماتش بس). مين يحدد مستوى وشخصية البوتات هناك؟ | قرارك اتحدد للي بيعمل اللعبة، والعام مفيهوش حد | (أ) أول لاعب دخل الطاولة (توصيتي، لأن العدّاد بيبدأ منه) · (ب) افتراضي Medium · (ج) الـbot-fill للطاولات الخاصة بس | `MatchmakingRequest.kt:11-42` |
+| Q2b | P1 | Sa'ayda: القاعدة الجديدة (عدّ ١٤–١٨ + شرط الدور الأخير) مكتوبة للـFULL. في MINI (الأدوار ٦–١٠) نفس الفكرة؟ والحدود الحالية (٥ تمديدات في FULL، واحد في MINI) تفضل ولا القاعدة مفتوحة؟ وتمديد Super Call بيتجمع مع العدّ؟ ولو الدور الأخير تعادل فهل ده "فايز"؟ | الكود بيوقف التمديد من الدور ١٩ وبيحط حد أقصى | توصية: MINI بنفس المنطق على ٦–١٠؛ نشيل الحد الأقصى عشان القاعدة تشتغل؛ Super Call يتجمع؛ التعادل = فايز (King مشترك زي RD17) | `Bidding.kt:111`, `RoundScore.kt:230` |
+| Q10b | P1 | "قطع الاتصال" نكتشفه إزاي: قفل الاتصال بالسيرفر فوراً ولا بعد انقطاع مدة؟ والعدّاد يفضل لو السيرفر اتعمله restart؟ | بيحدد إمتى البوت يستلم والعدّاد يتحسب | توصية: انقطاع الاتصال لمدة قصيرة ثابتة (مش بتكلف قراءات)، والعدّاد يتخزن مع الحدث عشان يعيش بعد restart | `OPEN_QUESTIONS.md` T6 |
 | Q14 | P1 | الـUNRANKED مستبعد من الإحصائيات، لكن A5.1 بتحمّل الـ2 Koz على عداد Koz في الـUNRANKED، وبتعفي الـROOM. هل الخروج (leave/إزالة) يتسجل في الإحصائيات المجمّعة للـROOM والـRANKED؟ | تعارض بين قرارين | توصية: يتحسب الخروج (2 Koz) في RANKED وROOM فقط؛ UNRANKED خارج الإحصائيات بالكامل | A5.1, RD23 |
 | Q5 | P1 | تسجيل الدخول بجوجل والـsign-up بالإيميل مش موجودين في تطبيق الأندرويد (موجودين في نسخة الويب بس). تبنيهم في V1؟ | الـRanked محتاج حساب مسجّل ومفيش طريقة تسجيل | توصية: نبنيهم عبر Firebase Auth (مجاني) بدون Play Games | `AuthRepository.kt`, `design-ui/login` |
 | Q12 | P1 | موافق رسمياً على إلغاء RD11/RD14 بالنص الجديد (ADR) لما Stage 0 ينجح؟ | القرار الحالي "اتجاه" مش نص موافق عليه | توصية: نكتب ADR بعد نجاح Stage 0 | plan RD11/RD14 |
@@ -59,3 +55,15 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 | T7 | Anonymous→registered link keeps uid; `sign_in_provider` claim value | Firebase Auth emulator |
 | T8 | Hibernation/duration billing for a shared host | GB-s per match |
 | T9 | Current Play account-deletion policy | policy citation |
+
+## D. Answered (recorded in the 2026-10-21 decision record; do not ask again)
+| ID | Answer |
+|---|---|
+| Q2 | Sa'ayda: count rounds 14–18 (+1 each), then final-round winner check (detail and engine gap in record §1.B; follow-ups in Q2b) |
+| Q7 | Ranked game creator chooses bot difficulty and personality (public-table gap: Q7b) |
+| Q8 | 2 min from first player entering; ready = connected and seated |
+| Q9 | Humans get normal RP; opponent strength from humans only |
+| Q10 | Counter increments only when a bot takes over after a disconnection; not for the 50 s inactivity timeout (detection detail: Q10b) |
+| Q11 | 7th qualifying takeover: removed from the current match, 2 Koz, not an account ban |
+| Q13 | At 90% the backup hosts new matches only; running matches stay; results wait for one central RP database (provider/sync = engineering) |
+| Q15 | ROOM stays app-managed; server records the final result only (integrity policy: Q15b) |

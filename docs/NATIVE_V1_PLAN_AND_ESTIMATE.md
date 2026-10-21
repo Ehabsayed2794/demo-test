@@ -73,8 +73,8 @@ extends (wording open, Q2); Normal Dash + Risk adds both components (Normal only
 guests may play bots, ROOM and UNRANKED but not Ranked; account deletion deferred (store policy to be
 validated); Ranked bot-fill by a 2-minute wait then a 30-second majority vote; up to seven
 reconnect cycles; ROOM+RANKED combined result statistics from V1 (UNRANKED excluded); leaderboard
-deferred; 90% backup pre-sync rule and post-match failure handling; post-match retention. **Not yet
-approved:** the final ADR naming Cloudflare (Q12), and every question in the register.
+deferred; 90% backup pre-sync rule and post-match failure handling; post-match retention. **Later the same day (owner):** Sa'ayda = per-round count over 14–18 plus a final-round winner check; ROOM stays app-managed with the server recording only the final result; backup hosts new matches only at 90% with one central RP database; Ranked creator chooses bots, 2-minute timer from the first player seated, humans-only opponent strength, bot takeover counter (7th = match removal, 2 Koz). **Not yet
+approved:** the final ADR naming Cloudflare (Q12), and every open question in the register.
 
 ---
 

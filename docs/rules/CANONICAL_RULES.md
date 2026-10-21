@@ -497,9 +497,13 @@ the disconnect table may pause for a bounded 90 seconds.**
   multiplier; **Classic** redeals with **no** Double. Example, Caller bids 5 and makes 5: Normal
   (10+5)+10 = 25 → ×2 = 50; Classic 5+13+10 = 28 (the engine today would give 56). Open: composition with a
   carried Sa'ayda multiplier (Q1).
-- **A6.2 Sa'ayda extension:** the approved behaviour is the engine's: a Sa'ayda in any fast round
-  extends the match. This **conflicts** with §1/§3/§4 above ("final round") and is **not** silently
-  amended; wording ("14 to 18") is open (Q2).
+- **A6.2 Sa'ayda extension (owner, corrected 2026-10-21 later; supersedes the earlier A6.2 text and the
+  "final round only" wording of §1/§3/§4 and A2.2 where they conflict):** (1) each *round* in 14–18 with a
+  Sa'ayda adds one round to the baseline 18 (per round, not per player; 14 and 16 → planned last round 20);
+  (2) if Sa'ayda occurs in the actual current final round, add one round and repeat until the final
+  round ends with a winner. Sa'ayda in a non-final round after 18 adds nothing. **Engine differs:**
+  it never extends from round 19 on and caps extensions (FULL 5, MINI 1); rule (2) is not implemented.
+  MINI and tie handling open (Q2b).
 - **A6.3 Normal Dash + Risk (Normal Calculation):** the Risk player who is a Normal Dash gets the Risk
   value **plus** the Normal Dash points. Example, total bids 15 (Risk 10): 0 tricks → +20 (engine +10);
   2 tricks → −22 (engine −12). Classic is open (Q4).
