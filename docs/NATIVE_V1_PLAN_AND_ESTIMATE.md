@@ -18,7 +18,48 @@ This plan replaces vibes with hours, and corrects four things the existing plan 
 3. **Monetization has nothing to sell yet.** Shop/missions are deferred, so "monetization in v1" can only honestly mean **ads + one "Remove Ads" IAP** — not an economy. (**Seasons are NO LONGER deferred — RD24 makes them MVP; see the 2026-10-05 amendment below.**)
 4. **The AI bots the owner just dropped in (`AI Bots/`) have a hidden coupling.** `botPersonality.ts` imports from `botSimulation.ts` (the "deferred" Monte-Carlo file) and uses it for **HARD, not just EXPERT**. It can't be cleanly deferred without a documented regression.
 
-**Intended outcome:** management can see the true remaining scope, the critical path, and the one decision that actually controls the calendar (the AdMob 14-day closed-testing clock).
+**Intended outcome:** management can see the true remaining scope, the critical path, and the external gate at the end of the calendar (the 14-day closed-testing clock). **2026-10-21:** the owner has fixed the delivery order and moved all real-people testing to the pre-publish phase; see the amendment immediately below.
+
+---
+
+## Owner amendment of record (FINAL — 2026-10-21): delivery order, no Blaze, and the real-people testing gate
+
+**Status:** documentation-only. No Kotlin, Firestore rules, UI, or Cloud Functions are changed by this amendment. It fixes the remaining execution order and supersedes earlier scheduling language that started real-people testing before publishing.
+
+The owner has fixed the order of the remaining work:
+
+1. **Write the complete game code — code only.**
+   - Game rules, engine, data, session, services, and Functions code.
+   - Automated tests (unit, emulator, instrumented) and internal owner/agent review are allowed.
+   - **No external human testers in this phase.**
+   - No UI design or UI implementation in this phase.
+2. **UI design.**
+   - Screen design, visual identity, RTL/Arabic layout, and all screen states.
+   - Review is internal (owner + agent) only.
+   - **No external human testers.**
+3. **Convert the HTML UI to Android.**
+   - Implement the designed screens in the Android app and wire them to the code from phase 1.
+   - Automated tests plus owner/agent device checks only.
+   - **No external human testers.**
+4. **Test with real people — deferred until immediately before publishing.**
+   - This is the **only** phase with external human testers.
+   - It includes the Google Play closed test (the plan's 14-day closed-testing clock) where applicable.
+   - Current tester capacity is **4 people**. A Google Play personal-account closed test requires **12 testers for 14 continuous days**; recruiting 8 more testers (or using an organization-account route) is a **Phase 4 entry gate**.
+   - The 14-day clock cannot complete until 12 testers have been opted in for 14 continuous days. It cannot be satisfied by the 4 testers available today.
+
+**Constraints of record:**
+
+- **No Blaze / no Firebase billing.** The 2026-10-20 D5 question is resolved: do **not** upgrade Spark, do **not** add a card, and do **not** deploy Cloud Functions. Functions code may be written and tested locally/with the emulator, but not deployed. This makes the Ranked authority layer, season reset, and join gate **code-complete/local-only, not production-active**.
+- **Real-people testing is not a phase-1–3 activity.** "Test" in phases 1–3 means automated tests, emulator tests, and internal review only. No external testers, no 12-tester recruitment, and no Play closed test before Phase 4.
+- **The 14-day clock is a pre-publish gate, not an early task.** The plan's earlier "start the clock early" scheduling is read through this amendment: account/store preparation may run earlier, but no real-people test starts before Phase 4.
+
+**Calendar consequence:** the 14-day clock can no longer overlap phases 1–3. It starts after Phase 3, so the path to production is at least 14 days longer than the old overlapping plan, plus tester recruitment. The week labels in §9 are unchanged; this is a sequencing delay, not a re-estimate.
+
+**Known scope conflict, recorded not hidden:** RD25 makes Ranked and the season reset launch-blocking, but without Blaze their Cloud Functions cannot deploy. Under "no Blaze now", those features are code-complete/local-only and cannot be production-active. Either they are explicitly deferred from the first release, or Blaze is approved later. This amendment does not change RD25; it records that the gate cannot be cleared on Spark.
+
+**Estimate impact:** none yet. Story hours in §9 and the story table are unchanged. This amendment changes order and gates, not scope. If the HTML-to-Android phase changes implementation scope, it is re-estimated separately.
+
+**What this does not change:** the product decisions RD1–RD31, GM1–GM8, D1–D4, and the story definitions. It changes when work happens and when real people see it.
 
 ---
 
@@ -30,7 +71,7 @@ Preserved verbatim from `ANDROID_MIGRATION_PLAN.md` §7, which this document sup
 - **D2 — Risk table: graduated (native only).** Native Risk uses the canonical ladder — diff-from-13 of 1→0, 2–3→10, 4–5→20, 6+→30 — applied ONLY to the Risk player, stacking with Caller/With/sole exactly as §4 of `docs/specs/04-scoring.md`. `src/` keeps its flat ±10 (no change requested).
 - **D3 — Billing verification: free tier.** RevenueCat (free tier, no server of our own). No paid plan required. Revisit only if volume outgrows the free tier. **Amended 2026-10-05 (RD11):** "no server of our own" still means **no dedicated always-on game server** — but Ranked progression now requires a **lightweight Cloud Functions + Firestore authority layer**. That is a per-match-invoked function, not a server; see §F and the appendix essay.
 - **D4 — Web fate: small page.** After Play launch, hosting shrinks to a minimal site (store link + privacy policy). Full decommission explicitly rejected.
-- **D5 — Firebase stays on the free plan (Spark) (owner, 2026-10-20).** The project stays on Firebase's free plan; no paid plan or card on file for Firebase. Cost-control posture is unchanged (RD16, R29, V4). **Known conflict, NOT resolved by this note:** RD11 puts a Cloud Functions authority layer in v1, and — to the best of our knowledge — Firebase requires the pay-as-you-go (Blaze) plan to *deploy* Cloud Functions, even though its free quota may keep the bill at $0. R29's line "Spark plan covers the whole v1 forecast" therefore needs verification against Firebase's current pricing/terms before S42 deploys anything. Owner decision needed if verification confirms it: accept Blaze with budget alerts/caps, or move settlement off Cloud Functions. Record: `docs/decisions/2026-10-20-profile-story-s75-and-firebase-free-plan.md`.
+- **D5 — Firebase stays on the free plan (Spark) (owner, 2026-10-20).** The project stays on Firebase's free plan; no paid plan or card on file for Firebase. Cost-control posture is unchanged (RD16, R29, V4). **Known conflict, NOT resolved by the 2026-10-20 note:** RD11 puts a Cloud Functions authority layer in v1, and — to the best of our knowledge — Firebase requires the pay-as-you-go (Blaze) plan to *deploy* Cloud Functions, even though its free quota may keep the bill at $0. R29's line "Spark plan covers the whole v1 forecast" therefore needs verification against Firebase's current pricing/terms before S42 deploys anything. The open decision was: accept Blaze with budget alerts/caps, or move settlement off Cloud Functions. Record: `docs/decisions/2026-10-20-profile-story-s75-and-firebase-free-plan.md`. **Resolved 2026-10-21 (FINAL):** the owner's decision is **no Blaze now** — no paid plan, no card, and no Cloud Functions deployment. The conflict is resolved by keeping Functions code and emulator tests but **deferring production activation of the Functions-backed features**; see the 2026-10-21 amendment above. This is a scope decision as well as a billing decision, and it must not be read as "Spark can deploy Functions".
 
 **Additional decisions made 2026-09-21 for this plan:** AI opponents are in v1 scope (4 tiers + personalities + "Play vs AI" + Choose Level screen), with EXPERT Monte-Carlo deferred post-launch over mobile perf risk. Monetization is in v1. The dealer seam is seat-keyed (`p1..p4`) — a uid→seat translation layer in the session layer is explicitly forbidden (see `GameSessionBridge.kt`'s seam note).
 
