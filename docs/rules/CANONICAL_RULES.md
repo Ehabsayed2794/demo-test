@@ -203,6 +203,8 @@ All scoring bonuses/penalties stack unless explicitly forbidden.
 - Loss: **half of that, rounded half-up, flat by bid** — −32/−41/−50/−61/−72/−85 — independent of tricks taken. Sole loser takes 10 extra (−42/−51/−60/−71/−82/−95) instead of any doubling rule.
 - Everything else in Normal mode (other roles, Dash, Risk, sole-loser handling) is unchanged.
 
+> **Pointer, 2026-10-21 (owner, Q19c; text above left unchanged).** The "legacy tracker only / `design-ui/` unaffected" scope is outdated: the native engine applies bid² in Normal mode (decision D1). Documentation correction only; no scoring change.
+
 ---
 
 ## Amendment A2 — Game Type and Calculation Mode as match options (owner decision 2026-10-06)
@@ -513,4 +515,4 @@ the disconnect table may pause for a bounded 90 seconds.**
 - **A6.7 (owner, later; supersedes A6.6 and A3.5 where they differ):** UNRANKED computes no RP but enters all profile statistics. A passed Vote Kick = 2 Koz (RANKED, UNRANKED). A match abandoned by everyone: all players Koz and RP deducted (details Q27). No cap on General Passes or Sa'aydas; the multiplier caps at ×8; a Classic General Pass consumes the round with no multiplier. Players tied at the bottom share the last placement for RP.
 - **A6.8 (owner, 2026-10-21 later):** a ROOM needs a full table of four (supersedes A3.1's "may start with 2–3 players"); Classic Normal Dash + Risk adds both components (numbers to be confirmed); profile shows counts and percentages over Games Played.
 - **A6.9 With (owner, 2026-10-21 later):** Normal rounds — With = any other player who bid the final Caller's winning suit at any time; their With number is their last bid in that suit. Fast rounds — With only if the suit matches the final suit and the number equals the highest winning number exactly (≥8 alone is not enough). Supersedes the engine's Super Call With set. Fast-round "suit" meaning: Q28.
-
+- **A6.10 (owner, later; supersedes A6.9's fast-round part):** any fast-round player declaring 8+ may choose any trump; a Super Caller's suit replaces the forced suit and others re-declare (who: Q29); a higher Super Call repeats this. Fast-round With: highest winning number exactly, plus the estimate made under the final trump if the trump changed. Not every 8+ is With.

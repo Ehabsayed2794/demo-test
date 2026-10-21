@@ -9,8 +9,7 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 
 | ID | Pri | السؤال | ليه مهم | الاختيارات / توصية | المصدر |
 |---|---|---|---|---|---|
-| Q28b | P1 | في حالة Super Call اللي غيّر القطوع: اللاعبين بيقولوا رقم بس، يعني محدش هيقدر يطابق القطوع الجديد. هل ده المقصود (محدش With في الحالة دي)، ولا اللاعب لازم يختار قطوع كمان؟ | الـWith في الأدوار السريعة | توصية: محدش With لما الـSuper Call يغيّر القطوع | decision record §T |
-| Q19c | P2 | نص A1 (bid²) بيقول للتتبع القديم بس والكود بيطبقه (قرار D1). أصلح الوثيقة بس؟ | الوثيقة غلط والكود صح | توصية: أيوه | `CANONICAL_RULES.md:200` |
+| Q29 | P1 | بعد Super Call: مين بيعيد التقدير؟ (أ) اللي قالوا قبل الـSuper Caller بس، واللي بعده بيحتفظوا بتقديرهم (النص الحالي والكود) · (ب) كل اللاعبين التانيين | قولت "باقي اللاعبين" | توصية: (أ) لأن اللي بعده قال تقديره بالفعل بعد ما القطوع اتحدد | `CANONICAL_RULES.md:104`, `Bidding.kt:577-625` |
 
 ## B. Resolved / decided / deferred (no question needed)
 
@@ -86,3 +85,5 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 | Q21b | App Check / Play Integrity deferred past V1 |
 | Q19 | With rules per the owner's suit-based explanation (Normal: suit alignment, floor = last number in the winning suit; Fast: suit and exact highest number); follow-ups Q28, Q19c |
 | Q28 | Fast-round With: Super Call + trump changed → exact number and new trump; no Super Call, trump unchanged → exact highest number; Super Call, trump unchanged → exact number (follow-up Q28b) |
+| Q19c | A1 "legacy only" sentence fixed in documents only; no code change |
+| Q28b | Superseded: players re-declare under the new trump; no suit chosen by non-Super-Callers (rule in record §U); follow-up Q29 |

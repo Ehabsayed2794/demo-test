@@ -237,6 +237,17 @@ is deferred to a later, explicitly approved environment.
 - **Q28 — With in fast rounds, simplified by the owner.** (1) **Super Call and the trump changed:** With requires an exact match of **both the number and the new trump**. (2) **No Super Call and the trump unchanged:** With requires an exact match of the **highest number**. (3) **Super Call but the trump stayed the same:** With requires an exact match of the **number**.
 - **Gap flagged [Q28b]:** fast-round bids are numbers only (no suit), so in case (1) no other player can currently "match the new trump"; as built, nobody would be With after a trump-changing Super Call. This is an engineering reading of the rule, not an owner statement.
 
+### U. Eleventh-batch owner rulings (2026-10-21, later) [D unless marked]
+- **Q19c [D].** The A1 sentence ("legacy tracker only") is corrected in the documents only; **no code or scoring change** (bid² stays, per D1). A pointer is added under A1.
+- **Fast-round Super Call and With/Wazz [D] — supersedes Q28 (§T) and answers Q28b.**
+  1. In fast rounds every player declaring **8 or more** may choose **any trump** (Sans, Spades, Hearts, Clubs, Diamonds), regardless of the forced suit.
+  2. The Super Caller's suit **replaces the forced suit**; the other players get **another opportunity to declare under the new trump**.
+  3. A **higher Super Call** makes that player the new Super Caller, who may choose any trump; others re-declare under it; repeat until the highest call and final trump are settled.
+  4. **With/Wazz in fast rounds:** no Super Call, forced trump unchanged → With only if the **final declared number equals the highest winning number**; Super Call but trump unchanged → same; Super Call **changes** the trump → With only if the final number equals the highest winning number **and the estimate was made under the final trump** (an estimate under a previous trump cannot qualify without being reconsidered).
+  5. **Not** every player declaring 8+ is With; **only a Super Caller** chooses the suit; existing tie-breaking rules unchanged.
+  - Distinct from ordinary-round With (alignment with the winning Caller's suit, using the player's latest bid in that suit).
+  - **Engine differs:** `Bidding.kt:700-760` makes everyone with a bid ≥8 With (superseded). Canonical `:104` says only players who bid **before** the Super Caller must re-estimate (those after keep theirs); the owner's rule 2 says "the other players" — **[Q29]** which is meant.
+
 ## 2. Earlier rulings in the replanning brief (unchanged, restated for completeness) [D]
 Ranked-only first scope; ROOM/UNRANKED not silently migrated; no legacy data to migrate; Ranked needs
 a registered account; $0 budget; no timeout grace window needing extra reads/writes; season
