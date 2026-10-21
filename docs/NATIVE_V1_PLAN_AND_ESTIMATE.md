@@ -74,7 +74,7 @@ guests may play bots, ROOM and UNRANKED but not Ranked; account deletion deferre
 validated); Ranked bot-fill by a 2-minute wait then a 30-second majority vote; up to seven
 reconnect cycles; ROOM+RANKED combined result statistics from V1 (UNRANKED excluded); leaderboard
 deferred; 90% backup pre-sync rule and post-match failure handling; post-match retention. **Later the same day (owner):** Sa'ayda = per-round count over 14–18 plus a final-round winner check; ROOM stays app-managed with the server recording only the final result; backup hosts new matches only at 90% with one central RP database; Ranked creator chooses bots, 2-minute timer from the first player seated, humans-only opponent strength, bot takeover counter (7th = match removal, 2 Koz). **Not yet
-approved:** the final ADR naming Cloudflare (Q12), and every open question in the register.
+approved:** the final ADR text naming Cloudflare (approved to be written after Stage 0 passes), and every open question in the register.
 
 ---
 
@@ -149,6 +149,8 @@ The full design narrative, the contradiction register, and the per-screen UI imp
 **Ties / King-Koz / Vote Kick / inactivity**
 
 - **RD17** Ties: tie 1st → all are Match King; tie 2nd → all 2nd; tie 3rd → all 3rd; **stats count the placement actually achieved, even when shared**. Tie for last → **no unique Koz → no Vote Kick**; never fabricate a Koz.
+
+  > **RD17 — pointer, 2026-10-21 (text above left unchanged).** The last sentence (tie for last → no unique Koz) is superseded: players tied at the lowest score are all Koz unless all four tie. See `docs/decisions/2026-10-21-server-authority-and-owner-rulings.md` §N.
 - **RD18** **Vote Kick is `RANKED` + `UNRANKED` — not in Rooms** (amended 2026-10-17 — see the RD18 2026-10-17 pointer below; this corrects frozen Batch 1 text in `docs/UI_UX_ROADMAP.md`; see its contradiction register). Only **after Round 7 has FULLY completed** (first vote is Round 8). Target = the **unique** Koz; the target cannot initiate; any other player may. **2 YES of 3 non-target players** (2Y/1N = kick; 1Y/2N = no; no majority by timeout = no). Failure → **5-round cooldown on that same target only**. Success → **permanent** removal, **no rejoin**, recorded as **Koz**. Purpose: griefing/abuse, **not** normal mistakes.
   > **RD18 — amended 2026-10-14 (pointer; the text above is left unchanged).** The recorded
   > result on success is now **2 Koz**, not 1 — per **RD31**, the 2-Koz departure result

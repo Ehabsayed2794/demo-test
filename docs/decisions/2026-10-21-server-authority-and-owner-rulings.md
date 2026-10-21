@@ -47,10 +47,7 @@ Two separate rules (the owner's wording):
   **Super Call extensions combine with the Sa'ayda count.** A **tied** final round counts as having a winner
   (shared King, RD17). The owner agreed the extension is conditional on the final round ending with a winner;
   the reply to the 5/1 extension-cap question was "yes, on the condition that the last round must end with a
-  winner" — recorded as **[A] cap removed so the final-round rule can repeat**; confirmation is Q2c.
-- **Open:** [Q2c] cap confirmation; [Q2d] the owner added "or a shared Koz too" for tied last place, which
-  conflicts with RD17 ("tie for last → no unique Koz, never fabricate one"; `Placement.kt` returns no Koz on a
-  tie) — not applied until the owner decides.
+  winner" — **the owner then confirmed (Q2c): the extension caps (FULL 5, MINI 1) are removed** so the final-round rule can repeat.
 
 ### C. Normal Dash combined with Risk [D]
 - A Normal Dash player who is also the Risk player gets the **Risk value PLUS the Normal Dash points**;
@@ -178,6 +175,17 @@ workerd; ≥200 seeded JVM-vs-server-engine matches identical; rule/scoring pari
 under the agreed limit; measured resources vs the capacity model; D1 batch atomicity and trigger
 behaviour; durable recovery and idempotent result/RP handling. Anything only checkable on Cloudflare
 is deferred to a later, explicitly approved environment.
+
+### N. Fourth-batch owner rulings (2026-10-21, later) [D unless marked]
+- **Q2c — extension caps removed [D].** The FULL 5 / MINI 1 caps no longer apply, so the final-round winner rule repeats until a winner exists. (Engine today still caps: `Bidding.kt:111-113`.)
+- **Q2d — Koz on ties [D].** The owner's examples define the rule: **Koz = every player tied at the lowest score, unless all four are tied (then all four are King).** (a) 100/100/100/100 → four Kings, no Koz. (b) 100 / 99 / 99 / 99 → one King, three Koz. (c) 100 / 99 / 10 / 10 → King, Second, two Koz. (d) 100 / 100 / 50 / 20 → two Kings, Third, one Koz. A tie at the top shares King; a tie at the bottom shares Koz and those players are **Koz, not Second/Third** (examples b and c).
+  - **Supersedes** RD17's last sentence ("tie for last → no unique Koz; never fabricate a Koz") and `Placement.kt`'s `uniqueKozSeat` returning no Koz on a tie. Engine not changed.
+  - **Open [Q2e]:** whether Vote Kick (needs a *unique* Koz, RD18) becomes available against a shared Koz, and how RP placement treats shared-Koz seats.
+- **Q7c — Auto-Match model [D].** Auto-Match does not use a creator-less pool. Every Ranked table is **created by a player** (who chooses timer, bots and their personality); Auto-Match **joins a player-created table that is waiting for players**. Bots that later fill a seat are the **creator's chosen bots**. Example: Ehab wants his own settings → creates a table; Mohamed just wants a game → Auto-Match into an existing table. **Conflict:** the implemented search request carries only `gameType` and the plan/RD9 describes a server-derived pool (`MatchmakingRequest.kt`, RD9). **Open [Q26]:** tier rules between a joiner and a creator's table, whether joiners see the creator's settings first, and what Auto-Match does when no created table exists.
+- **Q10c — takeover sequence [D].** After the decision timer (e.g. 15 s) expires, the **MEDIUM bot plays that decision and the timeout counter (15-removal) increments**. If the player is still disconnected after **10 more seconds**, the **creator-selected bot takes the seat and the takeover counter (7th = removal, 2 Koz) increments**. The 10 s is **fixed for all timers (5/10/15/20)**.
+- **Q14 — departure charges and statistics [D].** A leave/removal worth 2 Koz counts in **RANKED and ROOM**; **UNRANKED is outside the statistics entirely**. **Supersedes** A5.1's "ROOM: no Koz" and its UNRANKED 2-Koz charge, and the 2026-10-17 "career Koz counter is a plain departure counter" reading for UNRANKED. **Open [Q14b]:** which ROOM paths charge (leave, 15-timeout removal, disconnect replacement) and whether the takeover counter exists in ROOM.
+- **Q5 — sign-in [D].** Build Google sign-in and email sign-up in the Android app in V1 through Firebase Auth, no Google Play Games. (Cost/consent-screen/fingerprint setup is engineering.)
+- **Q12 — ADR [D, conditional].** The owner approved writing the formal ADR superseding RD11/RD14 **after Stage 0 succeeds**. The ADR text itself is not yet written or approved.
 
 ## 2. Earlier rulings in the replanning brief (unchanged, restated for completeness) [D]
 Ranked-only first scope; ROOM/UNRANKED not silently migrated; no legacy data to migrate; Ranked needs

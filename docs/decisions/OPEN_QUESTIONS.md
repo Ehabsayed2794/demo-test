@@ -9,13 +9,9 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 
 | ID | Pri | السؤال | ليه مهم | الاختيارات / توصية | المصدر |
 |---|---|---|---|---|---|
-| Q2c | P1 | تأكيد: نشيل حد التمديدات (٥ في FULL و١ في MINI) عشان قاعدة "الدور الأخير لازم ينتهي بفايز" تتكرر لحد ما يظهر فايز؟ | ردك كان "أه بس بشرط الجولة الأخيرة تنتهي بفايز" وفهمته إلغاء الحد | توصية: نعم نشيله | `Bidding.kt:111-113` |
-| Q2d | P1 | لو التعادل في آخر مكان: قلت "أو Koz مشترك". يعني كل اللي اتعادلوا في الأخير ياخدوا Koz؟ ده بيعارض RD17 (تعادل الأخير = مفيش Koz) | بيغير عداد Koz والـVote Kick | (أ) نبقي RD17 (مفيش Koz) · (ب) كل المتعادلين Koz. التوصية (أ) إلا لو قصدك (ب) صراحة | `Placement.kt`, RD17 |
-| Q7c | P1 | في Auto-Match مفيش حد بيختار البوتات: الـbot-fill (بعد الدقيقتين والتصويت) بيشتغل هناك؟ ولو أيوه بأي مستوى وشخصية؟ | الاختيار بتاعك للي بيعمل اللعبة بس | (أ) أول لاعب دخل الطاولة يختار (توصيتي) · (ب) Medium والشخصية الافتراضية · (ج) الـbot-fill للي بيعمل ماتش بنفسه بس | `MatchmakingRequest.kt:11-42` |
-| Q10c | P1 | مثال: تايمر الكارت ١٥ ث. بعد ١٥ ث البوت MEDIUM يلعب الدور ده ويتحسب تايم آوت؟ وبعدين ١٠ ث كمان بدون اتصال → البوت المختار يستلم المقعد (ويتحسب كأول "استلام" من الـ٧)؟ ولا الـ١٠ ث دي بتتحسب جزء من التايمر نفسه؟ والـ١٠ ثابتة مع كل التايمرات (٥/١٠/١٥/٢٠)؟ | بيحدد أنهي عدّاد بيزيد (التايم آوت ×١٥ ولا الاستلام ×٧) | توصية: الـ١٥ ث تنتهي → MEDIUM يلعب الدور ويزيد تايم آوت؛ ثم ١٠ ث ثابتة من غير اتصال → يستلم المقعد ويزيد عدّاد الاستلام؛ المقعد يفضل للبوت المختار لحد الرجوع | RD19/RD20, A4.2 |
-| Q14 | P1 | الـUNRANKED مستبعد من الإحصائيات، لكن A5.1 بتحمّل الـ2 Koz على عداد Koz في الـUNRANKED، وبتعفي الـROOM. هل الخروج (leave/إزالة) يتسجل في الإحصائيات المجمّعة للـROOM والـRANKED؟ | تعارض بين قرارين | توصية: يتحسب الخروج (2 Koz) في RANKED وROOM فقط؛ UNRANKED خارج الإحصائيات بالكامل | A5.1, RD23 |
-| Q5 | P1 | تسجيل الدخول بجوجل والـsign-up بالإيميل مش موجودين في تطبيق الأندرويد (موجودين في نسخة الويب بس). تبنيهم في V1؟ | الـRanked محتاج حساب مسجّل ومفيش طريقة تسجيل | توصية: نبنيهم عبر Firebase Auth (مجاني) بدون Play Games | `AuthRepository.kt`, `design-ui/login` |
-| Q12 | P1 | موافق رسمياً على إلغاء RD11/RD14 بالنص الجديد (ADR) لما Stage 0 ينجح؟ | القرار الحالي "اتجاه" مش نص موافق عليه | توصية: نكتب ADR بعد نجاح Stage 0 | plan RD11/RD14 |
+| Q2e | P1 | بعد قاعدة الـKoz المشترك: الـVote Kick (كان محتاج Koz واحد بس) يشتغل على كذا Koz؟ وأي ترتيب يدخل حساب الـRP للمتعادلين في الآخر؟ | RD18 بيشترط Koz وحيد | توصية: Vote Kick يفضل مقفول لو الـKoz مشترك؛ والـRP يعتبرهم نفس المركز الأخير | RD18, `VoteKick.kt:154` |
+| Q26 | P1 | الـAuto-Match بيدخل طاولة عملها لاعب. (١) قاعدة الـtier بين الداخل وصاحب الطاولة (RD29: فرق تير واحد؟) (٢) الداخل يشوف إعدادات الطاولة قبل ما يدخل؟ (٣) لو مفيش طاولة منتظرة: رسالة ولا ينتظر ولا ينشئ طاولة؟ | الكود بيبحث بنوع الماتش بس | توصية: (١) نفس RD29 بين الداخل وصاحب الطاولة (٢) أيوه يشوف المدة والبوت قبل الدخول (٣) رسالة "مفيش طاولات دلوقتي" مع زرار إنشاء | `MatchmakingRequest.kt`, RD9/RD29 |
+| Q14b | P1 | ROOM بقى يحسب 2 Koz: في أي حالات؟ (خروج / إزالة ١٥ تايم آوت / استبدال بعد قطع اتصال)؟ وعدّاد الـ٧ استلامات موجود في الـROOM ولا في الـRanked بس؟ | A5.1 كانت بتعفي ROOM | توصية: الخروج والإزالة بالتايم آوت فقط؛ الاستبدال بعد قطع الاتصال مفيهوش عقوبة؛ عدّاد الـ٧ Ranked بس | A5.1 |
 | Q1 | P2 | General Pass في Normal بيضرب ×2: لو في Sa'ayda متراكم (×4)، النتيجة ×8 ولا ×2 ولا ×4؟ | القواعد ما حددتش | توصية: يضاف على المضاعف الحالي بحد أقصى ×8 | `Bidding.kt:493`, QuickMatch:164 |
 | Q3 | P2 | تمديد الـSuper Call في الأدوار السريعة: بيحصل بس لو المتصل نجح (الكود) ولا دايماً (النص)؟ | مثال: متصل فشل بـSuper في الدور 15 → الكود مفيش دور زيادة، النص دور زيادة | توصية: نثبت الكود (لازم ينجح) ونعدل النص | `RoundScore.kt:234` |
 | Q4 | P2 | Normal Dash + Risk في Classic (جدوله ثابت) يتصرف إزاي؟ | قرارك اتحدد لـNormal بس | توصية: نفس مبدأ Classic المكتوب (Risk=…) نراجعه معاك بمثال | `CANONICAL_RULES.md:192` |
@@ -71,3 +67,10 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 | Q7b | Ranked entry has two paths: create the match yourself, or Auto-Match (Auto-Match bot settings: Q7c) |
 | Q2b | MINI uses the same logic on 6–10; Super Call extensions combine; tied final round = has a winner (follow-ups Q2c, Q2d) |
 | Q10b | Server detects disconnection; waits the decision timer, then 10 more seconds; then the bot takes over (details: Q10c) |
+| Q2c | Extension caps removed; the final-round winner rule repeats until a winner |
+| Q2d | Koz = every player tied at the lowest score unless all four tie (all King); shared Koz players are Koz, not Second/Third (follow-up Q2e) |
+| Q7c | Auto-Match joins a player-created table; bots are the creator's choice (follow-up Q26) |
+| Q10c | After timer: MEDIUM plays, timeout counter +1; after 10 more disconnected seconds the creator's bot takes over, takeover counter +1; 10 s fixed |
+| Q14 | 2-Koz departures count in RANKED and ROOM; UNRANKED excluded (follow-up Q14b) |
+| Q5 | Build Google sign-in and email sign-up in Android V1 via Firebase Auth, no Play Games |
+| Q12 | Approved to write the ADR after Stage 0 succeeds (ADR text not yet approved) |
