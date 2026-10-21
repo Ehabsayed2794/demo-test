@@ -9,7 +9,6 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 
 | ID | Pri | السؤال | ليه مهم | الاختيارات / توصية | المصدر |
 |---|---|---|---|---|---|
-| Q29 | P1 | بعد Super Call: مين بيعيد التقدير؟ (أ) اللي قالوا قبل الـSuper Caller بس، واللي بعده بيحتفظوا بتقديرهم (النص الحالي والكود) · (ب) كل اللاعبين التانيين | قولت "باقي اللاعبين" | توصية: (أ) لأن اللي بعده قال تقديره بالفعل بعد ما القطوع اتحدد | `CANONICAL_RULES.md:104`, `Bidding.kt:577-625` |
 
 ## B. Resolved / decided / deferred (no question needed)
 
@@ -87,3 +86,4 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 | Q28 | Fast-round With: Super Call + trump changed → exact number and new trump; no Super Call, trump unchanged → exact highest number; Super Call, trump unchanged → exact number (follow-up Q28b) |
 | Q19c | A1 "legacy only" sentence fixed in documents only; no code change |
 | Q28b | Superseded: players re-declare under the new trump; no suit chosen by non-Super-Callers (rule in record §U); follow-up Q29 |
+| Q29 | After a Super Call every player except the Super Caller re-declares, counter-clockwise (supersedes the earlier-bidders-only rule) |

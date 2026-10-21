@@ -248,6 +248,9 @@ is deferred to a later, explicitly approved environment.
   - Distinct from ordinary-round With (alignment with the winning Caller's suit, using the player's latest bid in that suit).
   - **Engine differs:** `Bidding.kt:700-760` makes everyone with a bid ≥8 With (superseded). Canonical `:104` says only players who bid **before** the Super Caller must re-estimate (those after keep theirs); the owner's rule 2 says "the other players" — **[Q29]** which is meant.
 
+### V. Twelfth-batch owner ruling (2026-10-21, later) [D]
+- **Q29 [D] — supersedes the "only players who bid before" re-estimate rule of `CANONICAL_RULES.md:104` and the engine's matching behaviour (`Bidding.kt:577-625`).** After a Super Call (and after each higher Super Call), **every player re-declares under the new trump, except the Super Caller**, in **counter-clockwise** order. Players who had bid after the Super Caller therefore **no longer keep** their earlier estimate. Note: the 13 Rule / Call Cap handling for the re-declaration is not restated by the owner and stays as existing.
+
 ## 2. Earlier rulings in the replanning brief (unchanged, restated for completeness) [D]
 Ranked-only first scope; ROOM/UNRANKED not silently migrated; no legacy data to migrate; Ranked needs
 a registered account; $0 budget; no timeout grace window needing extra reads/writes; season
