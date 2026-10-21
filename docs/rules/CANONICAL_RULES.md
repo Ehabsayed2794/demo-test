@@ -503,7 +503,7 @@ the disconnect table may pause for a bounded 90 seconds.**
   (2) if Sa'ayda occurs in the actual current final round, add one round and repeat until the final
   round ends with a winner. Sa'ayda in a non-final round after 18 adds nothing. **Engine differs:**
   it never extends from round 19 on and caps extensions (FULL 5, MINI 1); rule (2) is not implemented.
-  MINI and tie handling open (Q2b).
+  Follow-up (owner): MINI uses the same logic on rounds 6–10; Super Call extensions combine with the count; a tied final round counts as having a winner (shared King, RD17). Cap removal (Q2c) and a shared Koz on a last-place tie (Q2d, conflicts with RD17) are open.
 - **A6.3 Normal Dash + Risk (Normal Calculation):** the Risk player who is a Normal Dash gets the Risk
   value **plus** the Normal Dash points. Example, total bids 15 (Risk 10): 0 tricks → +20 (engine +10);
   2 tricks → −22 (engine −12). Classic is open (Q4).

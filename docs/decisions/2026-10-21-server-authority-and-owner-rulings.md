@@ -43,8 +43,14 @@ Two separate rules (the owner's wording):
   (`Bidding.kt:111-113`) also cap the count, which the unbounded rule 2 contradicts.
   `GameTypeTest`/`RoundScoreTest` pin "round 19 never extends" (`RoundScoreTest.kt:229-232`) — these tests
   encode the superseded interpretation and need changing at implementation time (not done here).
-- **Not decided here [Q2b]:** MINI analogue (window 6–10?), the 5/1 caps versus unbounded rule 2, how
-  Super Call extensions combine with the Sa'ayda count, and what "ends with a winner" means for a tie.
+- **Follow-up answers [D, 2026-10-21 (third batch)]:** **MINI** uses the same logic on its window **6–10**.
+  **Super Call extensions combine with the Sa'ayda count.** A **tied** final round counts as having a winner
+  (shared King, RD17). The owner agreed the extension is conditional on the final round ending with a winner;
+  the reply to the 5/1 extension-cap question was "yes, on the condition that the last round must end with a
+  winner" — recorded as **[A] cap removed so the final-round rule can repeat**; confirmation is Q2c.
+- **Open:** [Q2c] cap confirmation; [Q2d] the owner added "or a shared Koz too" for tied last place, which
+  conflicts with RD17 ("tie for last → no unique Koz, never fabricate one"; `Placement.kt` returns no Koz on a
+  tie) — not applied until the owner decides.
 
 ### C. Normal Dash combined with Risk [D]
 - A Normal Dash player who is also the Risk player gets the **Risk value PLUS the Normal Dash points**;
@@ -77,11 +83,12 @@ Two separate rules (the owner's wording):
   table [D]**. A human is **ready only when connected and seated [D]**; launching the app or entering the
   matchmaking queue does not count. If enough ready humans are still missing, start a **30-second vote**;
   at least **two waiting players** are required; approval = majority; **non-votes count as rejection**.
+- **Entry [D, Q7b]:** from the lobby a player choosing Ranked has **two paths: create the match themselves, or Auto-Match**.
 - **Bots [D]:** the player who **creates the Ranked game selects bot difficulty and personality** at game
   creation. **Inspection:** Create Game already carries `botTier`/`botPersonality`
   (`CreateGameViewModel.kt:40-44`), so this applies directly to private/Rank-down tables. The public
   search request carries **only `gameType`** and any other key is refused (`MatchmakingRequest.kt:11-16,42`),
-  so a public table has **no creator-chosen bot settings today** [Q7b].
+  so an Auto-Match table has **no creator-chosen bot settings today**. The owner's two-path answer does not say what bots an Auto-Match table uses or whether bot-fill applies there [Q7c].
 - **Ranked RP with bots [D]:** humans get normal Ranked RP; opponent strength uses **humans only**; bots are
   never rated opponents. (Today settlement averages all other seats' profiles, `SettlementDb.kt:620`.)
 - **Majority** resolved from precedent: more than half of the waiting humans (2 waiting → 2; 3 → 2).
@@ -95,8 +102,13 @@ Two separate rules (the owner's wording):
   This is a match-level removal, **not an account ban**, and adds no account penalty. It is a separate
   mechanism from the **15-timeout removal** (RD20): different trigger and counter, same recorded result
   (2 Koz); they share no state and are not interchangeable.
-- **Inspection:** no per-match takeover counter exists in code today; RD19 reclaim is unlimited. [Q10b] asks
-  how "disconnection" is detected and whether the counter survives a server restart.
+- **Detection [D, Q10b]:** the **server** detects the disconnection. Owner's example: card timer 15 s → the server
+  waits the 15 s; if the player is still unresponsive it waits **10 more full seconds**; if there is still no
+  response the bot takes the seat. This 10 s takeover delay is separate from the earlier "no grace window for
+  action-versus-timeout" ruling. How it interacts with the 15 s timeout bot decision and the timeout counter is
+  open [Q10c]. Persisting the counter across a server restart is an engineering default (store with the event),
+  not an owner question.
+- **Inspection:** no per-match takeover counter exists in code today; RD19 reclaim is unlimited.
 
 ### H. Server authority and hosting [D direction; P architecture]
 - **[D]** Android is the production client; web is not. Server is authoritative for dealing, hidden
@@ -140,7 +152,8 @@ Two separate rules (the owner's wording):
   give exactly-once recording. Mitigations are design work (idempotency key per match, rules on who may
   report, cross-checking reports from the four seats) and still cannot make the number trustworthy.
   Because ROOM statistics merge with RANKED counters, a forged ROOM result changes the same profile
-  numbers. The owner's requirement is kept as stated. [Q15b] asks the integrity policy.
+  numbers. The owner's requirement is kept as stated.
+- **Integrity policy [D, Q15b]:** a ROOM result is recorded **only when the four players' apps report matching results**. Consequences to design (engineering): a mismatch or a missing report leaves the result **pending**, never auto-resolved; four matching reports still cannot prove correctness if all four collude; ROOM matches with fewer than four players need a rule [Q16].
 - **Supersedes (history kept):** RD23's "no statistics for ROOM/UNRANKED" and the RD28/A3.5 lines on UNRANKED.
 - **Still open:** [Q14] departure charges vs. UNRANKED exclusion; [Q16] ROOM with <4 players; [Q17] whether
   Games Played/percentages also combine.
