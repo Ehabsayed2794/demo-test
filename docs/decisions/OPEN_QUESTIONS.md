@@ -9,9 +9,8 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 
 | ID | Pri | السؤال | ليه مهم | الاختيارات / توصية | المصدر |
 |---|---|---|---|---|---|
-| Q27c | P1 | مدة انفصال كل البشر (انقطاع نت) قبل ما الماتش يتلغي: كام ثانية/دقيقة؟ وهل الشرط "ولا لاعب في القعدة" معناه إن لاعب لسه متسجل في الطاولة (حتى منقطع) يمنع الإلغاء لحد ما المدة تخلص؟ | بيحدد متى الماتش يتلغي | توصية: دقيقتين، ونعم الشرط ده معناه | decision record §R |
-| Q21b | P2 | App Check / Play Integrity (حماية ضد تطبيقات مزوّرة): نحطه V1 ولا بعدين؟ | مجاني لكن بحصة ١٠ آلاف طلب/يوم افتراضياً | توصية: بعد V1 | Play Integrity docs |
-| Q19 | P2 | قواعد غير مثبتة: حد أدنى لـWith، قايمة With بعد Super في الأدوار السريعة، نص A1 (bid²). تثبت الكود ولا النص؟ | عدم تطابق وثايق/كود | توصية: نثبت الكود ونعدل الوثايق | audit §5 |
+| Q28 | P1 | في الأدوار السريعة اللاعب بيقول رقم بس (من غير نوع قطوع). "تطابق نوع القطوع + الرقم" معناها إيه هناك؟ هل النوع = الـtrump النهائي (المفروض أو اللي اختاره الـSuper Caller)؟ وإزاي لاعب يطابقه؟ | الـWith في الأدوار السريعة | توصية: With بس لو قال نفس أعلى رقم؛ نوع القطوع في الأدوار السريعة ثابت للكل فمش بيفرق، إلا بعد Super Call: اللي قالوا قبله ويعيدوا التقدير | `Bidding.kt:700-760`, `CANONICAL_RULES.md:70,103` |
+| Q19c | P2 | نص A1 (bid²) بيقول للتتبع القديم بس والكود بيطبقه (قرار D1). أصلح الوثيقة بس؟ | الوثيقة غلط والكود صح | توصية: أيوه | `CANONICAL_RULES.md:200` |
 
 ## B. Resolved / decided / deferred (no question needed)
 
@@ -83,3 +82,6 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 | Q21 | Ranked needs a registered account only (App Check: Q21b) |
 | Q22 | Seasons and reset in V1: lazy, no inactive-player records, 90 days |
 | Q24 | ROOM/UNRANKED stay app-managed; any server move is a later release, no committed project |
+| Q27c | All humans disconnected: wait one minute, then cancel even if still registered at the table |
+| Q21b | App Check / Play Integrity deferred past V1 |
+| Q19 | With rules per the owner's suit-based explanation (Normal: suit alignment, floor = last number in the winning suit; Fast: suit and exact highest number); follow-ups Q28, Q19c |

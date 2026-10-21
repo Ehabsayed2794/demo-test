@@ -224,6 +224,15 @@ is deferred to a later, explicitly approved environment.
 - **Q22 [D].** **Seasons and the two-step reset stay in V1**: lazy reset, no records for inactive players, fixed **90-day** seasons (recorded as the owner's acceptance of the offered option; the Arabic reply restated option أ).
 - **Q24 [D — supersedes my earlier recommendation].** **ROOM and UNRANKED stay app-managed.** No further migration project is committed now. After the game has succeeded, a **later release** may move everything to the server. This also settles that no server authority is planned for ROOM/UNRANKED in V1.
 
+### S. Ninth-batch owner rulings (2026-10-21, later) [D unless marked]
+- **Q27c [D].** If **all human players disconnect**, wait **one minute**; if nobody returns, **cancel the match, even if players are still registered at the table** (this answers the condition raised in Q27b: a disconnected-but-seated player does **not** block cancellation).
+- **Q21b [D].** App Check / Play Integrity are **deferred to after V1**.
+- **Q19 (With rules) [D — explanation supplied by the owner].**
+  - **Normal rounds:** With is decided by the **winning suit (Suit) of the auction**, not by number: after the auction, find the final Caller, then every other player with an earlier bid **in that same suit** is With, and their With bid is **their last number bid in that suit** (even if they later bid another suit). Examples: Ahmed 5 Hearts and Osama 5 Hearts → Ahmed Caller, Osama With; Osama raises to 6 Hearts → Osama Caller, Ahmed With; Ahmed wins 6 Spades and Osama never bid Spades → Osama is **not** With (a matching number is not enough); Osama wins 7 Hearts, Ahmed's last Hearts bid was 6 → Ahmed With at 6.
+  - **Fast rounds (14–18 and extensions):** With only if **both** the suit matches the final suit **and** the number equals the highest winning number exactly. Asking for 8 or more is **not** enough, and number alone is **not** enough.
+  - **Supersedes** the engine's fast-round Super Call With set (`Bidding.kt:716`, everyone ≥8) and its use of the player's last bid in **any** suit as the With floor (`Bidding.kt:272-274`); the floor becomes the last number bid **in the winning suit**. The engine and tests are not changed here.
+  - **Open [Q28]:** in a fast round bids are numbers only (single pass), so what "suit match" means there is unstated. **Open [Q19c]:** confirm the A1 (bid²) sentence is fixed in the documents only.
+
 ## 2. Earlier rulings in the replanning brief (unchanged, restated for completeness) [D]
 Ranked-only first scope; ROOM/UNRANKED not silently migrated; no legacy data to migrate; Ranked needs
 a registered account; $0 budget; no timeout grace window needing extra reads/writes; season
