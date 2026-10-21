@@ -233,6 +233,10 @@ is deferred to a later, explicitly approved environment.
   - **Supersedes** the engine's fast-round Super Call With set (`Bidding.kt:716`, everyone ≥8) and its use of the player's last bid in **any** suit as the With floor (`Bidding.kt:272-274`); the floor becomes the last number bid **in the winning suit**. The engine and tests are not changed here.
   - **Open [Q28]:** in a fast round bids are numbers only (single pass), so what "suit match" means there is unstated. **Open [Q19c]:** confirm the A1 (bid²) sentence is fixed in the documents only.
 
+### T. Tenth-batch owner ruling (2026-10-21, later) [D]
+- **Q28 — With in fast rounds, simplified by the owner.** (1) **Super Call and the trump changed:** With requires an exact match of **both the number and the new trump**. (2) **No Super Call and the trump unchanged:** With requires an exact match of the **highest number**. (3) **Super Call but the trump stayed the same:** With requires an exact match of the **number**.
+- **Gap flagged [Q28b]:** fast-round bids are numbers only (no suit), so in case (1) no other player can currently "match the new trump"; as built, nobody would be With after a trump-changing Super Call. This is an engineering reading of the rule, not an owner statement.
+
 ## 2. Earlier rulings in the replanning brief (unchanged, restated for completeness) [D]
 Ranked-only first scope; ROOM/UNRANKED not silently migrated; no legacy data to migrate; Ranked needs
 a registered account; $0 budget; no timeout grace window needing extra reads/writes; season

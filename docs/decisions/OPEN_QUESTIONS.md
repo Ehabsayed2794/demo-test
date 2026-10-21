@@ -9,7 +9,7 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 
 | ID | Pri | السؤال | ليه مهم | الاختيارات / توصية | المصدر |
 |---|---|---|---|---|---|
-| Q28 | P1 | في الأدوار السريعة اللاعب بيقول رقم بس (من غير نوع قطوع). "تطابق نوع القطوع + الرقم" معناها إيه هناك؟ هل النوع = الـtrump النهائي (المفروض أو اللي اختاره الـSuper Caller)؟ وإزاي لاعب يطابقه؟ | الـWith في الأدوار السريعة | توصية: With بس لو قال نفس أعلى رقم؛ نوع القطوع في الأدوار السريعة ثابت للكل فمش بيفرق، إلا بعد Super Call: اللي قالوا قبله ويعيدوا التقدير | `Bidding.kt:700-760`, `CANONICAL_RULES.md:70,103` |
+| Q28b | P1 | في حالة Super Call اللي غيّر القطوع: اللاعبين بيقولوا رقم بس، يعني محدش هيقدر يطابق القطوع الجديد. هل ده المقصود (محدش With في الحالة دي)، ولا اللاعب لازم يختار قطوع كمان؟ | الـWith في الأدوار السريعة | توصية: محدش With لما الـSuper Call يغيّر القطوع | decision record §T |
 | Q19c | P2 | نص A1 (bid²) بيقول للتتبع القديم بس والكود بيطبقه (قرار D1). أصلح الوثيقة بس؟ | الوثيقة غلط والكود صح | توصية: أيوه | `CANONICAL_RULES.md:200` |
 
 ## B. Resolved / decided / deferred (no question needed)
@@ -85,3 +85,4 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 | Q27c | All humans disconnected: wait one minute, then cancel even if still registered at the table |
 | Q21b | App Check / Play Integrity deferred past V1 |
 | Q19 | With rules per the owner's suit-based explanation (Normal: suit alignment, floor = last number in the winning suit; Fast: suit and exact highest number); follow-ups Q28, Q19c |
+| Q28 | Fast-round With: Super Call + trump changed → exact number and new trump; no Super Call, trump unchanged → exact highest number; Super Call, trump unchanged → exact number (follow-up Q28b) |
