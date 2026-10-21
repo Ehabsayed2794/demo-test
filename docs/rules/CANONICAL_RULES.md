@@ -18,7 +18,7 @@ This document supersedes all earlier rule sheets. Where the original specificati
 Number of Players: 4 (individual play, no partnerships).
 Deck: One complete standard deck (52 cards); 13 cards dealt to each player.
 Play Direction: Counter-clockwise.
-Number of Rounds: 18 standard rounds, plus any extension rounds created by a fast-round Super Call (see §3) or by a Sa'ayda on the final round (see §4). *(This is the FULL Game Type — the default. A MINI match plays 10 base rounds with Forced Fast Rounds from 6 and exactly one extension; see **Amendment A2**.)*
+Number of Rounds: 18 standard rounds, plus any extension rounds created by a fast-round Super Call (see §3) or by a Sa'ayda on the final round (see §4). *(This is the FULL Game Type — the default. A MINI match plays 10 base rounds with Forced Fast Rounds from 6 and exactly one extension; see **Amendment A2**.)* **[Superseded 2026-10-21 — Sa'ayda/extension: see Current Rules §2–3]]**
 Card Rank (weakest → strongest)
 2 → 3 → 4 → 5 → 6 → 7 → 8 → 9 → 10 → J → Q → K → A
 Official Suit Hierarchy (strongest → weakest)
@@ -67,7 +67,7 @@ Auction Alignment: during the auction, a player bid the SAME SUIT as the eventua
 Estimation Jump-In: during the Estimation Stage, a player matches BOTH the Caller's number AND suit exactly. This is open to anyone, including players who passed the auction.
 Defeated Suit Rule:
 If a group aligned “With” on a suit that then lost to a stronger winning suit, their alignment is void — they lose “With” and re-enter Estimation as independent players.
-✔ CLARIFIED: In fast rounds, if several players bid the same highest number, the FIRST to bid it is the Caller and EVERY other player who bid that same number becomes “With” (up to three) — not only the last one.
+✔ CLARIFIED: In fast rounds, if several players bid the same highest number, the FIRST to bid it is the Caller and EVERY other player who bid that same number becomes “With” (up to three) — not only the last one. **[Superseded 2026-10-21 — With in fast rounds: Current Rules §5]**
 2.3 Estimation Stage
 After the Caller is finalized (and Confirmation complete in normal rounds), the remaining players estimate their tricks, subject to:
 The Call Cap: no other player may estimate MORE than the Caller's bid (normal rounds). Example: if the Caller won with 5, the maximum estimate for anyone else is 5. (Fast rounds have no cap.)
@@ -100,12 +100,12 @@ Round | Forced Trump
 18 | Clubs
 
 Single pass: each player states one final number; there is no back-and-forth raising and no Confirmation Phase.
-Caller / With: the first player to bid the highest number is the Caller; every other player who bid that same number becomes “With”.
+Caller / With: the first player to bid the highest number is the Caller; every other player who bid that same number becomes “With”. **[Superseded 2026-10-21 — With in fast rounds: Current Rules §5]**
 The Golden Super Call (Fast Rounds)
-If a player bids a Super Call (8+) in a fast round, the forced suit is immediately cancelled and that player chooses the trump. If outbid, the suit choice goes to the higher bidder.
-Super Call Reset: only players who bid BEFORE the Super Caller must re-estimate (their estimates were under the old forced suit). Players who bid after it keep their estimates.
+If a player bids a Super Call (8+) in a fast round, the forced suit is immediately cancelled and that player chooses the trump. If outbid, the suit choice goes to the higher bidder. **[Superseded 2026-10-21 — any 8+ declarer may choose the trump: Current Rules §5]**
+Super Call Reset: only players who bid BEFORE the Super Caller must re-estimate (their estimates were under the old forced suit). Players who bid after it keep their estimates. **[Superseded 2026-10-21 — all players except the Super Caller re-declare: Current Rules §5]**
 Round Extension
-Any fast-round Super Call that overrides the forced suit adds one extra round to the game (e.g., the game becomes 19 rounds instead of 18).
+Any fast-round Super Call that overrides the forced suit adds one extra round to the game (e.g., the game becomes 19 rounds instead of 18). **[Superseded 2026-10-21 — extension only if the Caller succeeds: Current Rules §3]**
 ✔ CLARIFIED: Extension rounds REPEAT the 14–18 forced-suit sequence: Round 19 = Sans, 20 = Spades, 21 = Hearts, 22 = Diamonds, 23 = Clubs, and so on. (This supersedes the older “every extension round is always Sanz” wording.)
 4. Official Scoring System
 Let T = actual tricks won, E = estimated bid.
@@ -141,7 +141,7 @@ Result: that round scores ZERO for everyone, and the NEXT round's points multipl
 ✔ CLARIFIED: The multiplier ladder is ×2 → ×4 → ×6 → ×8 on consecutive all-fail rounds, capped at ×8.
 ✔ CLARIFIED: The multiplier applies to EVERY score component (base, Caller/With, sole, Risk, and flat Dash values).
 ✔ CLARIFIED: The multiplier resets to ×1 as soon as any round has at least one successful player.
-✔ CLARIFIED: A zeroed Sa'ayda round still counts toward the 18. If Round 18 itself is a Sa'ayda, the game is forced into Round 19 so the escalation round is actually played.
+✔ CLARIFIED: A zeroed Sa'ayda round still counts toward the 18. If Round 18 itself is a Sa'ayda, the game is forced into Round 19 so the escalation round is actually played. **[Superseded 2026-10-21 — Sa'ayda extension: Current Rules §2]**
 Classic Calculations Mode (Alternate Scoring)
 An alternate, opt-in scoring mode offered alongside the Official Scoring System above. Reverse-engineered and verified against 18 rounds of real game data from a competitor app's “Classic Calculations” mode; a genuinely different per-role formula, not a variant of the Standard-Players formula in §4.
 Let T = actual tricks won, E = estimated bid, miss = |T − E|, and TotalBids = the sum of all four players' final bids for the round.
@@ -188,12 +188,30 @@ Risk applies only to the Risk Player; if that seat is a pre-bid Dash, Risk passe
 With: by auction suit-alignment (any number) or estimation exact match (number + suit). Fast rounds: all top-number bidders except the Caller are With.
 Fast-round Super Call: overrides the forced suit, no confirmation, extends the game by one round; only preceding players re-estimate.
 Extension rounds repeat the 14–18 forced-suit sequence (19=Sans, 20=Spades, ...).
-Sa'ayda multiplier: ×2 → ×4 → ×6 → ×8 (cap), applies to everything, resets on any success; a Round-18 Sa'ayda forces Round 19.
+Sa'ayda multiplier: ×2 → ×4 → ×6 → ×8 (cap), applies to everything, resets on any success; a Round-18 Sa'ayda forces Round 19. **[Superseded 2026-10-21 — Sa'ayda extension: Current Rules §2]**
 Classic Calculations mode (opt-in alternate scoring): Normal=E+13/−miss; Caller/Wizz=E+13+10/−(miss+10 or 20 if TotalBids≤11); Risk=E+13+10/−(miss+10); Wizz-Risk=E+33/−(miss+20); Super Call fixed +42/−20; Dash Call fixed +33/+23 (Under/Over 13) or −20/−10; Normal Dash fixed +23/+13 (Under/Over) or −10/−T; sole winner +10, sole loser doubles capped at −22 — same sole-winner/loser rule as the Official Scoring System.
 All scoring bonuses/penalties stack unless explicitly forbidden.
 — End of Official Reference —
 
 ---
+
+
+## Current Rules — everything agreed with the owner, 2026-10-21 (CONSOLIDATED; governs where older text differs)
+
+> Source: owner rulings of 2026-10-21 (`docs/decisions/2026-10-21-server-authority-and-owner-rulings.md`, §A–§V). Older sentences that these replace are tagged **[Superseded 2026-10-21]** in place and left readable. **The Kotlin engine does not yet implement most of this section** (see the discrepancy list in the decision record); this is the target rule set, not a statement of current code behaviour. Amendments A6.1–A6.11 below are the dated trail.
+
+1. **General Pass (all four pass the auction).** The round is consumed (round 6 all pass → round 7 is played). **Normal Calculation:** the next round is multiplied ×2 and feeds the Sa'ayda ladder (a Sa'ayda in round 7 → round 8 ×4, then ×6, ×8). **Classic:** the round is consumed with **no** multiplier. No limit on how often General Pass or Sa'ayda can happen; the multiplier is capped at **×8**. General Pass can occur only in normal rounds (fast rounds have no auction).
+2. **Sa'ayda match extension.** (a) Count the rounds in the inclusive window **14–18 (FULL) / 6–10 (MINI)** in which a Sa'ayda occurs; each such **round** (not each player) adds one round after the baseline last round (18 / 10). (b) If a Sa'ayda occurs in the **actual current final round**, add one round, and repeat for each new final round until the final round ends with a winner. A Sa'ayda in a non-final round after the window adds nothing. **No cap** on extensions. A tied top score counts as a winner (shared King).
+3. **Super Call extension.** A fast-round Super Call that overrides the forced trump adds one round **only if the Caller succeeds**; it combines with the Sa'ayda count.
+4. **Normal Dash + Risk.** A Normal Dash player who is also the Risk player receives the Risk value **plus** the Normal Dash points, with neither dropped nor counted twice. **Classic:** add both tables (exact Classic numbers to be confirmed at implementation).
+5. **With/Wazz.** *Ordinary rounds:* With = every other player who bid the final Caller's **winning suit** at any time; their With number is their **latest bid in that suit** (a matching number alone is not enough). *Fast rounds:* any player declaring **8+** may choose any trump (Sans, Spades, Hearts, Clubs, Diamonds); the Super Caller's suit replaces the forced suit and **every other player re-declares** (counter-clockwise); a higher Super Call repeats this. With is only a player whose **final number equals the highest winning number exactly**, and, if the trump changed, whose estimate was made **under the final trump**. Not every 8+ declarer is With.
+6. **Placement and Koz on ties.** Koz = every player tied at the **lowest** score, unless all four are tied (then all four are King). A tie at the top shares King. Shared-Koz players are Koz (not Second/Third) and share the same last placement for RP. **No Vote Kick** when the Koz is shared (a unique Koz is required).
+7. **Vote Kick and departure charges.** A passed Vote Kick records **2 Koz** (RANKED, UNRANKED). Leaving a match for **any reason** records **2 Koz in RANKED and UNRANKED** and **1 Koz in ROOM**, applied **when the match finishes** and only if the player did not return. A match abandoned by everyone (all humans gone, or all disconnected for **one minute**) is cancelled and **every player is Koz** and, in RANKED, **loses RP equal to the engine's last-place loss**; a match stopped by a server or quota failure is **never charged** to players.
+8. **Bot takeover and reconnect.** After the decision timer expires the **MEDIUM** bot plays that decision (+1 timeout, 15th removes). If the player is still disconnected after **10 more seconds** (fixed for all timers) the **creator-selected bot** takes the seat and the takeover counter increments; the **7th** takeover removes the player from the match with **2 Koz** (a match-level removal, not an account ban). Ordinary 50-second inactivity does not increment this counter.
+9. **Ranked tables and bot-fill.** Every Ranked table is **created by a player** (who chooses timer, game type, bots and their personality); **Auto-Match joins a waiting player-created table** within the RD29 tier band (≤1 tier apart), after showing the table settings; with none waiting the app says so and offers Create Table. **Wait two minutes from the first player entering**; ready = connected and seated; if ready humans are still missing, a **30-second vote** (≥2 waiting players; more than half of waiting humans must approve; non-votes count as rejection) fills with the creator's bots. RP in a table with bots: humans get normal RP, **opponent strength from humans only**.
+10. **ROOM.** No ROOM without a **full table of four** players.
+11. **Statistics.** Profile shows counts and percentages over Games Played (King, Second, Third, Koz), **aggregated across ROOM, RANKED and UNRANKED**; Ranked RP is separate and Ranked-only; leaderboard deferred from V1.
+12. **Seasons.** Seasons and the two-step reset stay; fixed 90-day seasons; a match is credited to the season in which it completes.
 
 ## Amendment A1 — Legacy tracker Normal-mode Super Call (owner decision 2026-09-17)
 
@@ -256,7 +274,7 @@ Both scoring modes in this document are **first-class and selectable on every ma
 
 `mode` on the match document is **three values: `ROOM`, `RANKED`, or `UNRANKED`** (amending the two-value model RD28 was written with).
 
-- **`ROOM`** — the invite-only table: code-shared, fills no seat from any pool, may start with 2–3 players, push-to-talk voice available.
+- **`ROOM`** — the invite-only table: code-shared, fills no seat from any pool, may start with 2–3 players, push-to-talk voice available. **[Superseded 2026-10-21 — ROOM needs a full table of four: Current Rules §10]**
 - **`RANKED`** — the Ranked match: full progression. **Rank-down is `RANKED` plus a private/password access flag, never a mode of its own**; the flag gates entry and nothing else, so a Rank-down match is a Ranked match for every rule below.
 - **`UNRANKED`** — a first-class, independent match type: rank-blind seat assignment, no progression of any kind. **Unranked is not `ROOM` plus a marker — the authority key itself carries the value**, and each gate below states its Unranked branch explicitly rather than inheriting a Room's.
 
