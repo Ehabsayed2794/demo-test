@@ -487,3 +487,20 @@ trick-bounded reclaim, the five-path taxonomy, MEDIUM's pin to path A, the priva
 timeout counter, the Vote Kick's availability (`RANKED` + `UNRANKED` since 2026-10-17) and no-rejoin permanence, and the frozen
 Firestore rules. **A5 changes only what a match records, in which modes it records it, and when
 the disconnect table may pause for a bounded 90 seconds.**
+
+## Amendment A6 — General Pass, Sa'ayda extension, Normal Dash with Risk (owner rulings 2026-10-21)
+
+> **Status:** rules recorded; **engine not yet changed** (it differs where noted). Record:
+> `docs/decisions/2026-10-21-server-authority-and-owner-rulings.md`. Earlier text above is unchanged.
+
+- **A6.1 General Pass** (all four pass the auction): redeal. **Normal Calculation** applies the Double
+  multiplier; **Classic** redeals with **no** Double. Example, Caller bids 5 and makes 5: Normal
+  (10+5)+10 = 25 → ×2 = 50; Classic 5+13+10 = 28 (the engine today would give 56). Open: composition with a
+  carried Sa'ayda multiplier (Q1).
+- **A6.2 Sa'ayda extension:** the approved behaviour is the engine's: a Sa'ayda in any fast round
+  extends the match. This **conflicts** with §1/§3/§4 above ("final round") and is **not** silently
+  amended; wording ("14 to 18") is open (Q2).
+- **A6.3 Normal Dash + Risk (Normal Calculation):** the Risk player who is a Normal Dash gets the Risk
+  value **plus** the Normal Dash points. Example, total bids 15 (Risk 10): 0 tricks → +20 (engine +10);
+  2 tricks → −22 (engine −12). Classic is open (Q4).
+

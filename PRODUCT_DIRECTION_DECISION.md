@@ -49,3 +49,5 @@ The integration must also resolve whether the selected UI remains static HTML/va
 ## Governance
 
 Every future task must state that it targets `design-ui/` unless it is explicitly labeled legacy `src/` maintenance or migration/deprecation work. A task that changes game semantics must cite the updated authoritative rules document. A task that changes build/deployment must demonstrate that the resulting artifact is the selected `design-ui/` product. This decision should be revisited only by an explicit product-direction decision, not by an implementation convenience.
+
+> **Pointer, 2026-10-21 (text above left unchanged).** Superseded in part by the owner's decision that **Android is the only production client** and the web implementation is not the production game. See `docs/decisions/2026-10-21-server-authority-and-owner-rulings.md`.
