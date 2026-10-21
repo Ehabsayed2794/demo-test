@@ -27,6 +27,7 @@ const callables = {
   restoreDisconnectedSeat: kotlin.restoreDisconnectedSeat,
   getMyRankedProfile: kotlin.getMyRankedProfile,
   getRankedLeaderboard: kotlin.getRankedLeaderboard,
+  joinRankDownRoom: kotlin.joinRankDownRoom,
 };
 
 for (const [name, fn] of Object.entries(callables)) {

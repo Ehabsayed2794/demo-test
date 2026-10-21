@@ -120,7 +120,9 @@ class ScriptedMatch(
     val adapter: MatchAdapter = MatchAdapter(port)
     private val auth: AuthPort = object : AuthPort { override fun currentUid() = uid }
     val store: MatchService = MatchService(db, auth, port, adapter, Deal.seeded(seed))
-    val rooms: RoomService = RoomService(db, auth, matchStarter = store::startMatch)
+    val rooms: RoomService = RoomService(
+      db, auth, matchStarter = store::startMatch, rankDownJoiner = NoRankDownJoinForScript,
+    )
 
     var alignedRound: Int = -1
     var outcome: BiddingOutcome? = null
@@ -777,3 +779,21 @@ private fun bidsFromOutcome(cfg: RoundCfg): Map<String, Bid> =
       else -> Bid(BidType.TRICKS, cfg.estimates.getValue(seat))
     }
   }
+
+/**
+ * S70 — the Rank-down join seam this suite never reaches.
+ *
+ * [ScriptedMatch] creates its room with `rankDown = false`, so
+ * [RoomService.joinRoom] keeps its direct transaction and this is never asked.
+ * It exists because the seam is a required constructor argument, and it answers
+ * with a DENIAL rather than throwing on purpose: if a future edit did route a
+ * scripted join through the gate, the suite should fail as the product does —
+ * with a refusal the room code already handles — not crash in a helper that was
+ * never written to exercise Rank-down.
+ */
+private object NoRankDownJoinForScript : RankDownJoinPort {
+  override suspend fun join(roomId: String): RankDownJoin = RankDownJoin.Denied(
+    Reasons.RANK_DOWN_UNAVAILABLE,
+    "Rank-down joins are unavailable in the scripted suite.",
+  )
+}
