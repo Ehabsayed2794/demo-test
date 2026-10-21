@@ -108,6 +108,19 @@ object Reasons {
   const val LEFT_MATCH = "LEFT_MATCH"
   // S72: idempotent no-op when the seat has already been left.
   const val ALREADY_LEFT = "ALREADY_LEFT"
+
+  // S70 (RD29/RD30) — the Rank-down join gate's vocabulary, kept deliberately
+  // apart from the thrown codes above. RANK_INCOMPATIBLE and
+  // PROFILE_UNAVAILABLE are the server's two ELIGIBILITY denials: they arrive
+  // as a returned `joined: false` payload, never an HttpsError, because a
+  // rank-too-far friend is an ordinary answer to an ordinary question and not
+  // a failed call. RANK_DOWN_UNAVAILABLE is the CLIENT's own catch-all — the
+  // reason a denial is rewritten to when the payload carries a reason this
+  // build has never seen (version skew), so an unknown token from a newer
+  // server can never reach a screen as if the client understood it.
+  const val RANK_INCOMPATIBLE = "RANK_INCOMPATIBLE"
+  const val PROFILE_UNAVAILABLE = "PROFILE_UNAVAILABLE"
+  const val RANK_DOWN_UNAVAILABLE = "RANK_DOWN_UNAVAILABLE"
 }
 
 /** startMatch(roomId): the room↔match atomic write. */

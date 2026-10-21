@@ -31,6 +31,13 @@ class RoomService(
 
   /** startMatch(roomId) — MatchService's atomic room↔match write. */
   private val matchStarter: suspend (roomId: String) -> String,
+  /**
+   * S70 (RD29/RD30) — the Rank-down join gate. Required, not defaulted: a
+   * Rank-down room has no local join path, so a construction site that could
+   * omit this would silently fall back to the direct transaction below and skip
+   * the eligibility check entirely.
+   */
+  private val rankDownJoiner: RankDownJoinPort,
   /** Best-effort currentRoomId mirror onto the player's own profile;
    *  never throws (the room action already succeeded). */
   private val profileRoomSync: suspend (playerId: String, roomId: String?) -> Unit =
@@ -121,10 +128,36 @@ class RoomService(
    * Joins an existing room. Existence/open/not-full validated INSIDE a
    * transaction — the guard against two joins racing for the last slot.
    * Idempotent: joining a room you are already in is a no-op, not an error.
+   *
+   * S70 (RD29/RD30): a Rank-down room is joined through [rankDownJoiner]
+   * instead, because the check compares the caller's rank against the HOST's and
+   * RD29 forbids a client from reading another player's rank at all. Nothing
+   * here reads a profile. The room's own document is read first so the gate is
+   * asked only of rooms that need it — every other room keeps the transaction
+   * below exactly as it was, and a room that cannot be read falls through to it
+   * so the canonical ROOM_NOT_FOUND shape is unchanged.
+   *
+   * The [RankDownJoin.Joined] room is the callable's public projection, which
+   * carries no bot configuration: [RoomDoc]'s RD21 fields therefore read as
+   * their defaults on this path. That is the gate's own rule about what may
+   * leave a room document, and [matchStarter] re-reads the real document, so the
+   * host's settings still seed the match.
    */
   override suspend fun joinRoom(roomId: String, playerId: String): RoomDoc {
     require(roomId.isNotEmpty() && playerId.isNotEmpty()) {
       "joinRoom: roomId and playerId are both required."
+    }
+    val known = loadRoom(roomId)
+    if (known != null && known.mode == MatchMode.RANKED && known.rankDown) {
+      if (known.isMember(playerId)) return known
+      return when (val join = rankDownJoiner.join(roomId)) {
+        is RankDownJoin.Joined -> {
+          syncProfile(playerId, roomId)
+          join.room
+        }
+
+        is RankDownJoin.Denied -> throw ServiceException(join.reason, join.message)
+      }
     }
     val ref = rooms.document(normalizeRoomCode(roomId))
     val joined = runTx(db) { tx ->

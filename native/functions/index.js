@@ -28,6 +28,7 @@ const exported = {
   getMyRankedProfile: kotlin.getMyRankedProfile,
   getRankedLeaderboard: kotlin.getRankedLeaderboard,
   scheduledSeasonReset: kotlin.scheduledSeasonReset,
+  joinRankDownRoom: kotlin.joinRankDownRoom,
 };
 
 for (const [name, fn] of Object.entries(exported)) {
