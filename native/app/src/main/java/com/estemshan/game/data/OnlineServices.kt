@@ -4,6 +4,7 @@ import com.estemshan.engine.GameSession
 import com.estemshan.services.CoroutineMatchScheduler
 import com.estemshan.services.CallableDecisionTimeout
 import com.estemshan.services.CallableSeatReclaim
+import com.estemshan.services.CallableSettlement
 import com.estemshan.services.DecisionTimeoutPort
 import com.estemshan.services.Heartbeat
 import com.estemshan.services.MatchAdapter
@@ -16,6 +17,7 @@ import com.estemshan.services.PlayerService
 import com.estemshan.services.RoomPort
 import com.estemshan.services.RoomService
 import com.estemshan.services.SeatReclaimPort
+import com.estemshan.services.SettlementPort
 import com.estemshan.services.session.AuthPort
 import com.estemshan.services.session.GameSessionBridge
 import com.estemshan.services.session.GameSessionPort
@@ -110,6 +112,16 @@ object OnlineServices {
    */
   val reclaims: SeatReclaimPort by lazy {
     CallableSeatReclaim(FirebaseModule.functions)
+  }
+
+  /**
+   * The settlement seam — the `settleMatch` callable (RD12/RD13), the once-
+   * only authority a completed RANKED match's RP movement comes from. Lazy
+   * for the same reason as [timeouts]: it reads [FirebaseModule.functions],
+   * a computed getter over the Firebase singleton MainActivity initializes.
+   */
+  val settlements: SettlementPort by lazy {
+    CallableSettlement(FirebaseModule.functions)
   }
 
   /**

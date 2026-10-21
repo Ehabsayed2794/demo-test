@@ -36,6 +36,40 @@ external interface FirestoreDb {
 external interface CollectionRef {
   fun doc(id: String): DocRef
   fun get(): Promise<QuerySnapshot>
+  /**
+   * S62: a bounded, recency-ordered window for the RP audit ledger's repeat
+   * detector. The runtime object is a CollectionReference, which is a Query -
+   * both methods exist on it. Only `get()` is called on the result, so typing
+   * them as CollectionRef keeps this file's minimal-surface doctrine.
+   *
+   * `orderBy` on ONE field is deliberate: Firestore's automatic single-field
+   * indexes serve it in both directions. Pairing an equality filter with an
+   * orderBy on a different field would need a composite index, i.e. an
+   * indexes artifact and a deployment - so the detector's window is a
+   * corrections-only collection, materialized at write time by
+   * [SettlementLedger.appendTargets], and this read filters nothing.
+   */
+  fun orderBy(fieldPath: String, directionStr: String): CollectionRef
+  fun limit(count: Int): CollectionRef
+  /**
+   * S64: the seasonal leaderboard's one read - an equality filter on ONE
+   * top-level field of `players`. Firestore indexes every single field
+   * automatically, so this needs no composite index, no `firestore.indexes.json`
+   * artifact and no new collection, which is what keeps `firestore.rules` and
+   * its SHA pin untouched for the whole story. The runtime object is a Query,
+   * not a CollectionReference; only `get()` is called on the result, so typing
+   * it as CollectionRef keeps this file's minimal-surface doctrine - the same
+   * narrowing [orderBy] and [limit] accept.
+   *
+   * The three-argument shape is the SDK's, not a style choice: `where` is the
+   * only filter method firebase-admin 13.10.0 exposes (verified against the
+   * installed package - `Query.prototype.where` is a function of arity 3,
+   * `whereEqualTo` is undefined). A two-argument `whereEqualTo` declaration
+   * compiles, because external declarations are never checked against the real
+   * object, and then dies at runtime as `db.whereEqualTo is not a function` on
+   * the first request. [SeasonLeaderboardEmulatorTest] pins that.
+   */
+  fun where(fieldPath: String, opStr: String, value: Any?): CollectionRef
 }
 
 external interface DocRef {

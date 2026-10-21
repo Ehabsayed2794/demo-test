@@ -73,7 +73,8 @@
 .play .foot,.play .rgt{animation:fade .7s ease-out 1.5s both}
 .play .k3 .st{animation:fade .7s ease-out 1.5s both}
 .sk{animation:shim 2.2s linear infinite}
-.rp{display:inline-flex;gap:14px;align-items:center;margin-left:14px;border:1px solid var(--ink-dim);color:var(--ink);background:none;border-radius:15px;padding:6px 14px;font:600 10px var(--mono);letter-spacing:.14em;cursor:pointer;vertical-align:middle}
-.rp:hover{border-color:var(--ink);color:var(--ink)}.rp:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+/* Replay pill — .replay, not .rp: S45/S51 use .rp for the RP readout block, so a shared sheet would style the readout as a button. */
+.replay{display:inline-flex;gap:14px;align-items:center;margin-left:14px;border:1px solid var(--ink-dim);color:var(--ink);background:none;border-radius:15px;padding:6px 14px;font:600 10px var(--mono);letter-spacing:.14em;cursor:pointer;vertical-align:middle}
+.replay:hover{border-color:var(--ink);color:var(--ink)}.replay:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 .doc.w{width:1904px}.doc td{color:var(--ink-dim)}.doc td:first-child{width:170px}.doc .n{font:500 12px var(--mono);color:var(--ink)}
 .doc.w td:nth-child(2),.doc.w td:nth-child(3),.doc.w td:nth-child(4){width:300px}

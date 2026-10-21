@@ -2,6 +2,7 @@ package com.estemshan.engine
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -155,5 +156,149 @@ class RankedProfileTest {
     // Monotonic: replaying a lower rung afterwards does not rewind it.
     val finalProfile = updateHighestRank(profile, rankLadder[3])
     assertEquals(rankLadder.last(), finalProfile.highestRank)
+  }
+
+  @Test
+  fun progressionIsConsistentAtEveryRungsLowerBound() {
+    for (rung in rankLadder) {
+      val profile = RankedProfile(
+        tier = rung.tier,
+        division = rung.division,
+        rp = rung.lowerBound,
+        seasonId = season,
+      )
+      assertNull(
+        "progressionMismatch(${rung.label()} at ${rung.lowerBound})",
+        progressionMismatch(profile),
+      )
+    }
+  }
+
+  @Test
+  fun progressionStaysConsistentThroughTheLastRpBelowTheNextRung() {
+    for (index in 0 until rankLadder.lastIndex) {
+      val rung = rankLadder[index]
+      val next = rankLadder[index + 1]
+      val rp = next.lowerBound - 1
+      val profile = RankedProfile(
+        tier = rung.tier,
+        division = rung.division,
+        rp = rp,
+        seasonId = season,
+      )
+      assertEquals(rung, rankAt(rp))
+      assertNull(
+        "progressionMismatch(${rung.label()} at $rp)",
+        progressionMismatch(profile),
+      )
+    }
+
+    val king = rankLadder.last()
+    val kingProfile = RankedProfile(
+      tier = king.tier,
+      division = king.division,
+      rp = Int.MAX_VALUE,
+      seasonId = season,
+    )
+    assertEquals(king, rankAt(Int.MAX_VALUE))
+    assertNull(progressionMismatch(kingProfile))
+  }
+
+  @Test
+  fun progressionMismatchNamesTheRpAndBothRungs() {
+    val cases = listOf(
+      RankedProfile(tier = "Gold", division = "I", rp = 0, seasonId = season),
+      RankedProfile(tier = "Bronze", division = "III", rp = 150, seasonId = season),
+      RankedProfile(tier = "King", division = "", rp = 2999, seasonId = season),
+      RankedProfile(tier = "Silver", division = "I", rp = 449, seasonId = season),
+    )
+    for (profile in cases) {
+      val message = progressionMismatch(profile)
+      assertTrue(
+        "expected a mismatch for ${profile.tier} ${profile.division} at rp=${profile.rp}",
+        message != null,
+      )
+      val text = requireNotNull(message)
+      val resolved = rankAt(profile.rp)
+      val stored = ladderRankOf(profile)
+      assertTrue("message must be non-blank: '$text'", text.isNotBlank())
+      assertTrue("message must name rp=${profile.rp}: '$text'", text.contains("rp=${profile.rp}"))
+      assertTrue(
+        "message must name the rung resolved from rp (${resolved.label()}): '$text'",
+        text.contains(resolved.label()),
+      )
+      assertTrue(
+        "message must name the stored rung (${stored.label()}): '$text'",
+        text.contains(stored.label()),
+      )
+    }
+  }
+
+  @Test
+  fun progressionMismatchRejectsNegativeRp() {
+    val profile = RankedProfile(
+      tier = "Bronze",
+      division = "III",
+      rp = -1,
+      seasonId = season,
+    )
+    val message = progressionMismatch(profile)
+    assertTrue("expected a negative-rp mismatch", message != null)
+    val text = requireNotNull(message)
+    assertTrue("message must be non-blank: '$text'", text.isNotBlank())
+    assertTrue("message must name the negative rp: '$text'", text.contains("rp=-1"))
+  }
+
+  @Test
+  fun progressionMismatchLetsAnUnknownTierDivisionPairThrow() {
+    val bogus = RankedProfile(tier = "Platinum", division = "IV", seasonId = season)
+    assertThrows(IllegalArgumentException::class.java) { progressionMismatch(bogus) }
+  }
+
+  @Test
+  fun requireProgressionConsistentThrowsTheMismatchMessage() {
+    val mismatch = RankedProfile(
+      tier = "Gold",
+      division = "I",
+      rp = 0,
+      seasonId = season,
+    )
+    val expected = progressionMismatch(mismatch)
+    assertTrue("expected a mismatch", expected != null)
+    val thrown = assertThrows(IllegalArgumentException::class.java) {
+      requireProgressionConsistent(mismatch)
+    }
+    assertEquals(expected, thrown.message)
+    assertFalse(thrown.message.isNullOrBlank())
+  }
+
+  @Test
+  fun requireProgressionConsistentIsANoOpForAValidProfile() {
+    val valid = RankedProfile(
+      tier = "Silver",
+      division = "II",
+      rp = 400,
+      seasonId = season,
+    )
+    assertNull(progressionMismatch(valid))
+    requireProgressionConsistent(valid)
+  }
+
+  @Test
+  fun placementProfilesRemainConsistentAtBronzeIIIAndZero() {
+    val profiles = listOf(
+      RankedProfile(seasonId = season),
+      beginPlacement(season),
+      skipPlacement(season),
+    )
+    for (profile in profiles) {
+      assertEquals("Bronze", profile.tier)
+      assertEquals("III", profile.division)
+      assertEquals(0, profile.rp)
+      assertNull(
+        "progressionMismatch(${profile.placementState})",
+        progressionMismatch(profile),
+      )
+    }
   }
 }

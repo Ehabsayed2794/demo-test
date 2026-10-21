@@ -10,6 +10,7 @@ import com.estemshan.engine.DEFAULT_SEATS
 import com.estemshan.engine.EmitResult
 import com.estemshan.engine.GameSession
 import com.estemshan.engine.HandAuthority
+import com.estemshan.engine.MatchMode
 import com.estemshan.engine.RoundCfg
 import com.estemshan.engine.RoundResult
 import com.estemshan.engine.RoundScoreInput
@@ -33,6 +34,9 @@ import com.estemshan.engine.restoreHand
 import com.estemshan.engine.withFloorFor
 import com.estemshan.game.data.OnlineServices
 import com.estemshan.game.ui.quickmatch.bidsFromOutcome
+import com.estemshan.game.ui.standings.RankedResultUiState
+import com.estemshan.game.ui.standings.RankedSeasonUiState
+import com.estemshan.game.ui.standings.buildRankedResult
 import com.estemshan.game.ui.standings.buildStandings
 import com.estemshan.services.MatchAdapter
 import com.estemshan.services.MatchSnapshot
@@ -43,6 +47,7 @@ import com.estemshan.services.DecisionTimeoutPort
 import com.estemshan.services.DecisionWindow
 import com.estemshan.services.PlayerPort
 import com.estemshan.services.SeatReclaimPort
+import com.estemshan.services.SettlementPort
 import com.estemshan.services.ROUND_CARD_TOTAL
 import com.estemshan.services.model.BiddingActionInput
 import com.estemshan.services.model.BiddingLogEntry
@@ -111,6 +116,7 @@ class OnlineMatchViewModel(
   private val heartbeat: Heartbeat = OnlineServices.heartbeat,
   private val timeouts: DecisionTimeoutPort = OnlineServices.timeouts,
   private val reclaims: SeatReclaimPort = OnlineServices.reclaims,
+  private val settlements: SettlementPort = OnlineServices.settlements,
 ) : ViewModel() {
 
   private val _state = MutableStateFlow<MatchUiState>(MatchUiState.Connecting)
@@ -212,6 +218,26 @@ class OnlineMatchViewModel(
   /** currentMatchId cleared once for a completed match. */
   private var clearedMatchId: Boolean = false
 
+  /**
+   * The ranked settlement's once-per-session trigger: set the moment the
+   * call is armed, so however many terminal re-deliveries stack up (the
+   * snapshot fan-out, a version bump, a corrected claim), this client asks
+   * the settler EXACTLY ONCE per binding. The once-only authority across
+   * clients is the server's claim record, not this flag.
+   */
+  private var settlementAttempted: Boolean = false
+
+  /** The pending settlement's retry loop, cancelled with the binding. */
+  private var settlementJob: Job? = null
+
+  /**
+   * The reveal the settler has already delivered for THIS match, kept
+   * beside the state so a re-delivery of the terminal document republishes
+   * it instead of clobbering it — the standings are a pure function of the
+   * document, the movement is not, and the two arrive on different paths.
+   */
+  private var rankedReveal: RankedResultUiState? = null
+
   /** Inline rejection text, and the document version it was raised against. */
   private var rejection: String? = null
   private var rejectionVersion: Int? = null
@@ -256,6 +282,9 @@ class OnlineMatchViewModel(
     lastOutcome = null
     scoredRound = null
     clearedMatchId = false
+    settlementAttempted = false
+    settlementJob = null
+    rankedReveal = null
     rejection = null
     rejectionVersion = null
     handle = adapter.subscribeToMatch(matchId, listener, localSeatId = null)
@@ -287,6 +316,12 @@ class OnlineMatchViewModel(
     clearOpponentAway()
     clearTimeoutAlarm()
     clearReclaimSignal()
+    // A settlement mid-retry belongs to the binding that armed it: a rebind
+    // (even to the same match) starts a fresh session whose own first
+    // terminal delivery re-triggers — the server replays the recorded
+    // outcome, so nothing is lost and no reveal leaks across bindings.
+    settlementJob?.cancel()
+    settlementJob = null
     matchId = null
     boundSeat = null
   }
@@ -874,15 +909,102 @@ class OnlineMatchViewModel(
    * real final scores here even though its own in-flight window was partial.
    * Clearing the profile's currentMatchId once is what keeps a relaunch from
    * rejoining a finished match.
+   *
+   * The publish happens BEFORE any network word is spoken: the settlement
+   * (RD13's server-side RP movement) runs in its own coroutine off this
+   * method, so the standings and the currentMatchId clear never wait on it.
+   * A re-delivery of the SAME terminal document skips the write — the
+   * standings are a pure function of the document, so republishing them
+   * could only clobber a ranked reveal that landed in between.
    */
   private suspend fun publishComplete(doc: MatchDoc) {
     val scores = doc.finalScores
     if (scores.isNullOrEmpty()) return
-    _state.value = MatchUiState.MatchComplete(buildStandings(scores))
+    val standings = buildStandings(scores)
+    val current = _state.value
+    if (!(current is MatchUiState.MatchComplete && current.standings == standings)) {
+      _state.value = MatchUiState.MatchComplete(standings, rankedReveal)
+    }
     if (!clearedMatchId) {
       clearedMatchId = true
       val myUid = uid()
       if (myUid != null) runCatching { players.setCurrentMatchId(myUid, null) }
+    }
+    maybeSettle(doc)
+  }
+
+  /**
+   * The ranked settlement trigger — exactly once per match per session, and
+   * RANKED only (ROOM/UNRANKED never settle, RD28). The call is armed here
+   * and its outcome handled off the snapshot path, so the terminal publish
+   * above is never delayed by the network. A redelivery that arrives while
+   * the call is in flight finds [settlementAttempted] already set; a second
+   * CLIENT's call is the server's claim record to absorb, not ours.
+   */
+  private fun maybeSettle(doc: MatchDoc) {
+    if (settlementAttempted) return
+    if (doc.mode != MatchMode.RANKED) return
+    val id = matchId ?: return
+    settlementAttempted = true
+    settlementJob = viewModelScope.launch(worker) { runSettlement(id, doc) }
+  }
+
+  /**
+   * The settlement body: ask the settler once, and act on what it says.
+   * [SettlementPort.SettlementOutcome.NotRanked] and
+   * [SettlementPort.SettlementOutcome.Denied] are terminal — the plain
+   * standings already published are the whole story, and there is no new
+   * user-facing word for a settlement that never came. Only a Retryable
+   * outcome loops, with the alarm's own exponential backoff, so the bound
+   * below is the loop's whole lifetime.
+   */
+  private suspend fun runSettlement(matchId: String, doc: MatchDoc) {
+    var consecutiveFailures = 0
+    while (true) {
+      when (val outcome = settlements.settle(matchId)) {
+        is SettlementPort.SettlementOutcome.Settled -> {
+          publishRanked(doc, outcome)
+          return
+        }
+        is SettlementPort.SettlementOutcome.NotRanked -> return
+        SettlementPort.SettlementOutcome.Denied -> return
+        SettlementPort.SettlementOutcome.Retryable -> {
+          if (++consecutiveFailures > MAX_TRANSIENT_FAILURES) return
+          delay(transientBackoffMillis(consecutiveFailures))
+        }
+      }
+    }
+  }
+
+  /**
+   * Attach the reveal. The movement is the server's own (`you`) fed into
+   * the standings' existing [buildRankedResult]: the client's whole
+   * contribution is the two server numbers — the previous RP and the signed
+   * delta — and nothing else; what the helper derives from them (the display
+   * RP against its floor, the tier labels) is its own long-standing
+   * derivation, not part of this move, and the reveal trusts the pair as
+   * the contract's restatement of the server's `rp` (RD13). An outcome
+   * without `you` — forward-looking wire, no shipped build carries it yet;
+   * the field is the server half's to add — reveals nothing: the plain
+   * standings stand, silently, the same way a denied settlement does.
+   *
+   * The reveal is also parked in [rankedReveal] before it reaches the state,
+   * so the next terminal re-delivery republishes rather than clobbers it. A
+   * replay of the recorded movement arrives here too — `replayed` changes
+   * nothing about what the reveal shows.
+   */
+  private fun publishRanked(doc: MatchDoc, outcome: SettlementPort.SettlementOutcome.Settled) {
+    val movement = outcome.you ?: return
+    val reveal = buildRankedResult(
+      previousRP = movement.previousRp,
+      delta = movement.delta,
+      season = unlistedSeason,
+      userSeat = uid()?.let(doc::uidToSeat),
+    )
+    rankedReveal = reveal
+    val current = _state.value
+    if (current is MatchUiState.MatchComplete && current.ranked == null) {
+      _state.value = current.copy(ranked = reveal)
     }
   }
 
@@ -1183,8 +1305,10 @@ class OnlineMatchViewModel(
      *  to guarantee the loop cannot spin, not to bound the reclaim. */
     const val MAX_RECLAIM_ATTEMPTS = 8
 
-    /** S61 — how many consecutive transient failures one alarm tolerates. The
-     *  backoff below makes those ~31 s of patient retrying, not a burst. */
+    /** How many consecutive transient failures one caller tolerates — the S61
+     *  alarm's, the S73 reclaim poll's, and the ranked settlement's, shared
+     *  budget. The backoff below makes those ~31 s of patient retrying, not a
+     *  burst. */
     const val MAX_TRANSIENT_FAILURES = 6
 
     /** S61 — exponential backoff for a transient callable/network failure:
@@ -1197,3 +1321,12 @@ class OnlineMatchViewModel(
     (TRANSIENT_BACKOFF_BASE_MILLIS shl (failure - 1))
       .coerceAtMost(TRANSIENT_BACKOFF_CAP_MILLIS)
 }
+
+/**
+ * The season window the reveal's SEASON chip would show. The settlement
+ * response carries the caller's movement and nothing about a season, and
+ * there is no client-side source for one that is not invented — so the chip
+ * renders empty until the server half grows the field, rather than showing
+ * fabricated dates. The RP movement itself, the reveal's point, is complete.
+ */
+private val unlistedSeason = RankedSeasonUiState(id = "", start = "", end = "")

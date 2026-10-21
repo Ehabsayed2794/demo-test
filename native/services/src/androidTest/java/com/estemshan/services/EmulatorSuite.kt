@@ -121,6 +121,33 @@ object EmulatorSuite {
     runCatching { clear(AUTH_PORT, "/emulator/v1/projects/$PROJECT_ID/accounts") }
   }
 
+  /**
+   * S74/S72 — terminate the Firestore clients a test minted.
+   *
+   * We deliberately do NOT call `FirebaseApp.delete()` here. Deletion is not
+   * synchronized with Firebase's shared background executor: a Functions
+   * call starts FirebaseInstallations work, and if the app is deleted while
+   * that work is still queued or running, the worker reaches
+   * `FirebaseInstallations.getPrefsWithGeneratedIdMultiProcessSafe` on the
+   * deleted app and throws `IllegalStateException: FirebaseApp was deleted`
+   * off the test thread. That is an uncaught process crash, so it fails
+   * whichever test runs next. There is no public join for that executor:
+   * `getId()` returns immediately when the FID is cached, and `getToken()`
+   * is not a barrier because the background pool has four threads. The only
+   * reliable fix is to keep the app alive.
+   *
+   * `terminate()` is what the quota needs: it shuts down the Firestore
+   * client and unregisters its ConnectivityManager callback. The app
+   * objects themselves are cheap and die with the instrumentation process.
+   *
+   * Cleanup is best-effort: a failure here must not turn a green test red.
+   */
+  fun releaseFirestoreClients(context: Context, tagPrefix: String) = runBlocking {
+    for (app in FirebaseApp.getApps(context).filter { it.name.contains(tagPrefix) }) {
+      runCatching { FirebaseFirestore.getInstance(app).terminate().await() }
+    }
+  }
+
   private fun clear(port: Int, path: String) {
     val conn = (URL("http://$HOST:$port$path").openConnection() as HttpURLConnection).apply {
       requestMethod = "DELETE"

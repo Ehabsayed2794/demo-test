@@ -574,11 +574,26 @@ class SettlementTest {
     var match: Map<String, Any?>?,
     var archives: Map<String, Map<String, Any?>> = emptyMap(),
     var claim: Map<String, Any?>? = null,
+    /** Seated profiles by uid. A uid absent here still reads as an existing,
+     *  unplaced profile — the way a real `players/{uid}` doc with no `rp`. */
+    var profiles: Map<String, Map<String, Any?>> = emptyMap(),
+    /** Uids whose profile DOCUMENT is absent (the fail-closed case). */
+    var missingProfiles: Set<String> = emptySet(),
   ) : SettlementDb {
     var archiveReads = 0
     var txRuns = 0
     var corrections = 0
     var claims = 0
+    var profileReads = 0
+    var appendAttempts = 0
+    var appendThrows = false
+    val appends = mutableListOf<Map<String, Any?>>()
+    var recentReads = 0
+    var recentCorrections: List<Map<String, Any?>>? = null
+    /** Every profile write, in call order: (uid, merged fields). */
+    val profileWrites = mutableListOf<Pair<String, Map<String, Any?>>>()
+    /** Port calls in order, so the reads-before-writes rule is observable. */
+    val events = mutableListOf<String>()
 
     override suspend fun readMatch(matchId: String): Map<String, Any?>? = match
 
@@ -590,7 +605,25 @@ class SettlementTest {
     override suspend fun <T> transact(block: suspend (SettlementDb.SettlementTx) -> T): T {
       txRuns++
       return block(object : SettlementDb.SettlementTx {
-        override suspend fun readClaim(matchId: String): Map<String, Any?>? = claim
+        override suspend fun readClaim(matchId: String): Map<String, Any?>? {
+          events.add("read-claim")
+          return claim
+        }
+
+        override suspend fun readProfile(uid: String): Map<String, Any?>? {
+          profileReads++
+          events.add("read-profile:$uid")
+          // The Admin SDK throws on a read issued after a write in one
+          // transaction, so the fake refuses it too: a fake that allowed the
+          // order would hide the only bug class this port shape exists to stop.
+          if (events.any { it.startsWith("write-") }) {
+            throw IllegalStateException(
+              "Firestore transactions require all reads to be executed before all writes",
+            )
+          }
+          if (uid in missingProfiles) return null
+          return profiles[uid] ?: emptyMap()
+        }
 
         override fun writeCorrection(
           matchId: String,
@@ -598,16 +631,41 @@ class SettlementTest {
           winners: List<String>,
           version: Int,
         ) {
+          events.add("write-correction")
           corrections++
         }
 
+        override fun writeProfile(uid: String, fields: Map<String, Any?>) {
+          events.add("write-profile:$uid")
+          profileWrites.add(uid to fields)
+        }
+
         override fun writeClaim(matchId: String, record: Map<String, Any?>) {
+          events.add("write-claim")
           claims++
-          @Suppress("UNCHECKED_CAST")
-          val outcome = record["outcome"] as Map<String, Any?>
-          claim = mapOf("outcome" to outcome, "settledBy" to (record["settledBy"] as String))
+          // The whole record is kept, movements included: a replay has to be
+          // able to slice the caller's own movement back out of it, exactly as
+          // the claim document allows in Firestore.
+          claim = record
         }
       })
+    }
+
+    override suspend fun appendLedger(record: Map<String, Any?>) {
+      appendAttempts++
+      if (appendThrows) throw IllegalStateException("ledger append failed (test)")
+      appends.add(record)
+    }
+
+    override suspend fun readCorrectionWindow(): List<Map<String, Any?>> {
+      recentReads++
+      // Unset answers the way AdminSettlementDb does: newest-first over the
+      // CORRECTED rows only (what appendTargets would have materialized), so
+      // the window provably contains the record the correction just wrote and
+      // is not diluted by the agreed settles around it.
+      return recentCorrections ?: appends.filter {
+        it["outcomeKind"] == SettlementLedger.OUTCOME_CORRECTED
+      }.reversed()
     }
   }
 
@@ -687,6 +745,218 @@ class SettlementTest {
     assertEquals(false, response["settled"])
     assertEquals(0, db.archiveReads)
     assertEquals(0, db.txRuns)
+  }
+
+  // -- S62 ledger (fake ports) --------------------------------------
+
+  @Test
+  fun correctedSettleAppendsLedgerOnceAndReplayAppendsNever() = runTest {
+    val golden = round1Golden()
+    val parts = round1Parts()
+    val db = FakeDb(
+      match = matchFields(finalScores = mapOf("p1" to 25, "p2" to -1, "p3" to 12, "p4" to 14)),
+      archives = mapOf("1" to rawRound(golden, parts.plays, parts.actions)),
+    )
+    val response = settleOnce(db, settleRequest("u1", "m1"))
+    assertTrue(response["settled"] == true, "expected a settlement but was $response")
+    assertEquals(1, db.appendAttempts)
+    assertEquals(1, db.appends.size)
+    val record = db.appends[0]
+    assertEquals("CORRECTED", record["outcomeKind"])
+    assertEquals("m1", record["matchId"])
+    assertEquals("u1", record["settledBy"])
+    assertEquals("RANKED", record["mode"])
+    assertEquals("FULL", record["gameType"])
+    assertEquals(listOf("u1", "u2", "u3", "u4"), record["players"])
+    // The corrected hook ran the bounded detector once.
+    assertEquals(1, db.recentReads)
+
+    // Retry of the settled match: the replay path is inert for the ledger.
+    val replay = settleOnce(db, settleRequest("u2", "m1"))
+    assertTrue(replay["replayed"] == true, "expected a replay but was $replay")
+    assertEquals(1, db.appendAttempts)
+    assertEquals(1, db.appends.size)
+    assertEquals(1, db.recentReads)
+    assertEquals(1, db.claims)
+    assertEquals(1, db.corrections)
+  }
+
+  @Test
+  fun agreedSettleAppendsAppliedRecordWithoutDetector() = runTest {
+    val golden = round1Golden()
+    val parts = round1Parts()
+    val db = FakeDb(
+      match = matchFields(),
+      archives = mapOf("1" to rawRound(golden, parts.plays, parts.actions)),
+    )
+    val response = settleOnce(db, settleRequest("u1", "m1"))
+    assertTrue(response["corrected"] == false, "expected an agreed settle but was $response")
+    assertEquals(1, db.appends.size)
+    assertEquals("APPLIED", db.appends[0]["outcomeKind"])
+    assertEquals(false, db.appends[0]["corrected"])
+    assertEquals(0, db.recentReads)
+  }
+
+  @Test
+  fun appendFailureDoesNotFailSettlement() = runTest {
+    val golden = round1Golden()
+    val parts = round1Parts()
+    val db = FakeDb(
+      match = matchFields(finalScores = mapOf("p1" to 25, "p2" to -1, "p3" to 12, "p4" to 14)),
+      archives = mapOf("1" to rawRound(golden, parts.plays, parts.actions)),
+    )
+    db.appendThrows = true
+    val response = settleOnce(db, settleRequest("u1", "m1"))
+    assertTrue(
+      response["ok"] == true && response["settled"] == true,
+      "the settlement must survive an append failure but was $response",
+    )
+    assertEquals(1, db.appendAttempts)
+    assertEquals(0, db.appends.size)
+    assertEquals(1, db.claims)
+    assertEquals(1, db.corrections)
+    // The corrected hook is append-independent: the detector still ran.
+    assertEquals(1, db.recentReads)
+  }
+
+  @Test
+  fun recomputeFailureAppendsFailedRecordThenThrows() = runTest {
+    val golden = round1Golden()
+    val parts = round1Parts()
+    val db = FakeDb(
+      match = matchFields(
+        completedRound = 2,
+        finalScores = mapOf("p1" to 0, "p2" to 0, "p3" to 0, "p4" to 0),
+      ),
+      archives = mapOf("1" to rawRound(golden, parts.plays, parts.actions)),
+    )
+    try {
+      settleOnce(db, settleRequest("u1", "m1"))
+      throw AssertionError("expected HttpsError")
+    } catch (e: Throwable) {
+      assertEquals("failed-precondition", e.asDynamic().code as String)
+    }
+    assertEquals(1, db.appends.size)
+    assertEquals("FAILED", db.appends[0]["outcomeKind"])
+    assertEquals("HISTORY_INCOMPLETE", db.appends[0]["failureReason"])
+    assertEquals("u1", db.appends[0]["settledBy"])
+    assertEquals(0, db.claims)
+    assertEquals(0, db.recentReads)
+  }
+
+  @Test
+  fun malformedArchiveAppendsFailedRecord() = runTest {
+    val db = FakeDb(
+      match = matchFields(),
+      archives = mapOf(
+        "1" to mapOf(
+          "round" to 1,
+          "cardLog" to listOf(mapOf("seatId" to "p1", "round" to 1)),
+          "biddingLog" to emptyList<String>(),
+        ),
+      ),
+    )
+    try {
+      settleOnce(db, settleRequest("u1", "m1"))
+      throw AssertionError("expected HttpsError")
+    } catch (e: Throwable) {
+      assertEquals("failed-precondition", e.asDynamic().code as String)
+      assertTrue(
+        (e.asDynamic().message as String).contains("roundArchive/1 is malformed"),
+        "unexpected message: ${e.asDynamic().message}",
+      )
+    }
+    assertEquals(1, db.appends.size)
+    assertEquals("FAILED", db.appends[0]["outcomeKind"])
+    assertEquals("HISTORY_CORRUPT", db.appends[0]["failureReason"])
+  }
+
+  @Test
+  fun noOpAndDeniedAttemptsAppendNothing() = runTest {
+    val roomDb = FakeDb(match = matchFields(mode = "ROOM"))
+    val response = settleOnce(roomDb, settleRequest("u1", "m1"))
+    assertEquals(false, response["settled"])
+    assertEquals(0, roomDb.appendAttempts)
+
+    val deniedDb = FakeDb(match = matchFields())
+    try {
+      settleOnce(deniedDb, settleRequest("stranger", "m1"))
+      throw AssertionError("expected HttpsError")
+    } catch (e: Throwable) {
+      assertEquals("permission-denied", e.asDynamic().code as String)
+    }
+    assertEquals(0, deniedDb.appendAttempts)
+  }
+
+  @Test
+  fun repeatDetectorRunsAfterACorrection() = runTest {
+    val golden = round1Golden()
+    val parts = round1Parts()
+    val db = FakeDb(
+      match = matchFields(finalScores = mapOf("p1" to 25, "p2" to -1, "p3" to 12, "p4" to 14)),
+      archives = mapOf("1" to rawRound(golden, parts.plays, parts.actions)),
+    )
+    db.recentCorrections = listOf(
+      mapOf(
+        "matchId" to "m0",
+        "players" to listOf("u1", "u2", "u3", "u4"),
+        "settledBy" to "u1",
+        "outcomeKind" to "CORRECTED",
+      ),
+      mapOf(
+        "matchId" to "m1",
+        "players" to listOf("u1", "u2", "u3", "u4"),
+        "settledBy" to "u1",
+        "outcomeKind" to "CORRECTED",
+      ),
+    )
+    val response = settleOnce(db, settleRequest("u1", "m1"))
+    assertTrue(response["corrected"] == true, "expected a corrected settle but was $response")
+    // The bounded corrections window was read and fed to the pure detector
+    // (SettlementLedgerTest pins what the detector derives from it).
+    assertEquals(1, db.recentReads)
+  }
+
+  @Test
+  fun aDetectedRepeatCannotChangeTheSettlement() = runTest {
+    val golden = round1Golden()
+    val parts = round1Parts()
+    val fields = matchFields(finalScores = mapOf("p1" to 25, "p2" to -1, "p3" to 12, "p4" to 14))
+    val archives = mapOf("1" to rawRound(golden, parts.plays, parts.actions))
+
+    // A: the table has never been corrected - the detector finds no repeat.
+    val quiet = FakeDb(match = fields, archives = archives)
+    val quietResponse = settleOnce(quiet, settleRequest("u1", "m1"))
+
+    // B: identical settlement, but the window now says this same table was
+    // corrected once before, so S62_REPEAT fires.
+    val loud = FakeDb(match = fields, archives = archives)
+    val roster = listOf("u1", "u2", "u3", "u4")
+    loud.recentCorrections = listOf(
+      mapOf(
+        "matchId" to "m0", "players" to roster, "settledBy" to "u1",
+        "outcomeKind" to "CORRECTED",
+      ),
+      mapOf(
+        "matchId" to "m1", "players" to roster, "settledBy" to "u1",
+        "outcomeKind" to "CORRECTED",
+      ),
+    )
+    val loudResponse = settleOnce(loud, settleRequest("u1", "m1"))
+
+    // A4.3, pinned: the diagnostic signal may not reach the client response,
+    // the correction write, the claim, or even the audit row itself.
+    assertEquals(quietResponse, loudResponse)
+    // The audit row itself is identical too (appendedAt excluded: each call
+    // mints a fresh sentinel object, so it can never compare equal).
+    assertEquals(
+      quiet.appends.single().filterKeys { it != "appendedAt" },
+      loud.appends.single().filterKeys { it != "appendedAt" },
+    )
+    assertEquals(quiet.claims, loud.claims)
+    assertEquals(quiet.corrections, loud.corrections)
+    assertEquals(1, loud.recentReads)
+    assertEquals(1, quiet.recentReads)
   }
 }
 
