@@ -31,6 +31,13 @@ external fun getFirestore(): FirestoreDb
 external interface FirestoreDb {
   fun collection(path: String): CollectionRef
   fun runTransaction(updateFunction: (Transaction) -> Promise<Any?>): Promise<Any?>
+  /**
+   * S59: the season reset's profile migration commits one batch per chunk.
+   * A batch is atomic but NOT transactional - it cannot read - which is
+   * exactly why it is only used for the idempotent field-level progression
+   * merge, never for the season claim.
+   */
+  fun batch(): WriteBatch
 }
 
 external interface CollectionRef {
@@ -102,6 +109,16 @@ external interface Transaction {
   fun delete(ref: DocRef)
 }
 
+external interface WriteBatch {
+  /**
+   * Field-level update of one document - never `set`, so the season reset can
+   * merge six progression fields without erasing career statistics. The Admin
+   * SDK caps one batch at 500 writes; callers chunk well below that.
+   */
+  fun update(ref: DocRef, data: Any?)
+  fun commit(): Promise<Any?>
+}
+
 external object FieldValue {
   fun serverTimestamp(): Any
   /**
@@ -110,4 +127,14 @@ external object FieldValue {
    * rewrite.
    */
   fun arrayUnion(vararg elements: Any?): Any
+}
+
+/**
+ * S59: the season document's next `endsAt` is a computed instant (now + 90
+ * days), not a server-sentinel. `fromMillis` takes epoch millis as a Double —
+ * keeping every millis value this module writes one exact number well below
+ * 2^53, the same range [toPlain] relies on.
+ */
+external object Timestamp {
+  fun fromMillis(milliseconds: Double): Any
 }
