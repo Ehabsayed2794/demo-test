@@ -61,6 +61,21 @@ The owner has fixed the order of the remaining work:
 
 **What this does not change:** the product decisions RD1–RD31, GM1–GM8, D1–D4, and the story definitions. It changes when work happens and when real people see it.
 
+
+## Owner amendment of record (2026-10-21, later): server authority, rules rulings, stats, backup, retention
+
+**Status:** documentation-only. Full text, supersession table and contradictions:
+`docs/decisions/2026-10-21-server-authority-and-owner-rulings.md`; open items:
+`docs/decisions/OPEN_QUESTIONS.md`. Summary: Ranked becomes server-authoritative (proposed
+Cloudflare Workers + SQLite Durable Objects + D1, Firebase Auth kept, no Blaze, free hosting, Stage 0
+local gate first); General Pass is Normal ×2 / Classic no multiplier; Sa'ayda in any fast round
+extends (wording open, Q2); Normal Dash + Risk adds both components (Normal only; Classic open);
+guests may play bots, ROOM and UNRANKED but not Ranked; account deletion deferred (store policy to be
+validated); Ranked bot-fill by a 2-minute wait then a 30-second majority vote; up to seven
+reconnect cycles; ROOM, RANKED and UNRANKED combined result statistics from V1 (RP Ranked-only); leaderboard
+deferred; 90% backup pre-sync rule and post-match failure handling; post-match retention. **Later the same day (owner):** Sa'ayda = per-round count over 14–18 plus a final-round winner check; ROOM stays app-managed with the server recording only the final result; backup hosts new matches only at 90% with one central RP database; Ranked creator chooses bots, 2-minute timer from the first player seated, humans-only opponent strength, bot takeover counter (7th = match removal, 2 Koz). **Not yet
+approved:** the final ADR text naming Cloudflare (approved to be written after Stage 0 passes), and every open question in the register.
+
 ---
 
 ## Owner decisions of record (answered 2026-09-17)
@@ -123,15 +138,19 @@ The full design narrative, the contradiction register, and the per-screen UI imp
 **Authority / security / cost**
 
 - **RD11** **Lightweight Firebase-backed authority: Cloud Functions + Firestore** — NOT a dedicated always-on game server, NOT enterprise-scale. Early-stage game; low infra cost; enough integrity that progression can't be trivially forged; upgradeable later.
+  > **RD11 — pointer, 2026-10-21 (text above left unchanged).** Superseded **for Ranked** in direction: the Ranked runtime is to be server-authoritative (proposed: Cloudflare Workers + Durable Objects + D1, Stage 0 pending). Formal ADR approval is still open (Q12). See `docs/decisions/2026-10-21-server-authority-and-owner-rulings.md`.
 - **RD12** **Correct-and-settle.** Client `finalScores` is not blindly trusted and not merely rejected: the backend **validates, corrects/recomputes the authoritative result, and settles the corrected result**; RP is computed from it.
 - **RD13** Settlement is **idempotent** (once per match), authenticated, retry-resistant. **The client is read-only for rank/RP/history after settlement.** No fabricating wins/scores/RP, no suppressing losses, no double-settling, no client rank manipulation. **Action evidence is ownership-constrained and immutable:** one client must not be able to rewrite another player's actions or fabricate another player's result — each player's action records are written under that player's own identity, and the converged sequence the server re-derives is append-only.
 - **RD14** **Settlement alone is NOT the whole boundary.** If all Ranked-critical state stays client-authoritative, settlement is insufficient. The plan includes **server-side validation of Ranked-critical state, actions, and results**. **Do not claim Cloud Functions provide full realtime authority** — the real boundary is documented below as the **MVP security boundary**.
+  > **RD14 — pointer, 2026-10-21 (text above left unchanged).** The accepted client-converged / retrospective-settlement boundary no longer meets the owner's server-authority requirement for Ranked; superseded in direction, pending Stage 0 and ADR approval. See `docs/decisions/2026-10-21-server-authority-and-owner-rulings.md`.
 - **RD15** Rooms = lower-security, cost-sensitive, no RP progression, no Ranked authority needed. Ranked = critical outcomes protected, authority in the backend.
 - **RD16** **Cost principle:** prefer the lower-cost MVP option provided it creates no unacceptable integrity risk. No expensive infra because it is technically stronger. Strengthen later on growth / revenue / cheating pressure / competitor pressure / budget.
 
 **Ties / King-Koz / Vote Kick / inactivity**
 
 - **RD17** Ties: tie 1st → all are Match King; tie 2nd → all 2nd; tie 3rd → all 3rd; **stats count the placement actually achieved, even when shared**. Tie for last → **no unique Koz → no Vote Kick**; never fabricate a Koz.
+
+  > **RD17 — pointer, 2026-10-21 (text above left unchanged).** The last sentence (tie for last → no unique Koz) is superseded: players tied at the lowest score are all Koz unless all four tie. See `docs/decisions/2026-10-21-server-authority-and-owner-rulings.md` §N.
 - **RD18** **Vote Kick is `RANKED` + `UNRANKED` — not in Rooms** (amended 2026-10-17 — see the RD18 2026-10-17 pointer below; this corrects frozen Batch 1 text in `docs/UI_UX_ROADMAP.md`; see its contradiction register). Only **after Round 7 has FULLY completed** (first vote is Round 8). Target = the **unique** Koz; the target cannot initiate; any other player may. **2 YES of 3 non-target players** (2Y/1N = kick; 1Y/2N = no; no majority by timeout = no). Failure → **5-round cooldown on that same target only**. Success → **permanent** removal, **no rejoin**, recorded as **Koz**. Purpose: griefing/abuse, **not** normal mistakes.
   > **RD18 — amended 2026-10-14 (pointer; the text above is left unchanged).** The recorded
   > result on success is now **2 Koz**, not 1 — per **RD31**, the 2-Koz departure result
@@ -174,8 +193,10 @@ The full design narrative, the contradiction register, and the per-screen UI imp
 - **RD28** **`mode` is three values: `ROOM`, `RANKED`, or `UNRANKED` (amended 2026-10-06; originally two).** Rank-down (formerly Private/Password Ranked) is **NOT a mode** — it is `RANKED` plus a private/password access flag, still awards RP and stats, and allows any tier mix **within RD29** (amended 2026-10-06). `mode` is the authority key that gates voice, Vote Kick, disconnect vote, settlement, and Ranked statistics; the private flag only gates access. **Unranked IS a first-class `mode: UNRANKED` value** (owner decision, 2026-10-06 — repealing this amendment's original "Unranked is `mode: ROOM` + a marker" framing). Every `mode` switch site therefore has an explicit `UNRANKED` branch: voice absent, **Vote Kick present** (corrected 2026-10-17 — the 2026-10-06 enumeration had it absent), disconnect vote present, settlement absent, statistics absent.
 - **RD22** Voice is **`ROOM`-only** (PTT, press-and-hold, Waiting Room + Rooms match). **Never in Ranked, and never in Unranked** (amended 2026-10-06 — Unranked is a first-class mode, not a Room, so it does not inherit a Room's voice).
 - **RD23** **Exactly 9 career stats:** Games Played, King count, King %, 2nd count, 2nd %, 3rd count, 3rd %, Koz count, Koz %. (**Never "10 values."**) Include Public + Private Ranked; **exclude Placement**. Long-press shows **SHORT stats only**: Rank, Games, King %, 2nd %, 3rd %, Koz %. **No player-facing match history for MVP**; an internal RP audit ledger IS required. Profile records **Highest Rank ever**, never erased by seasonal demotion.
+  > **RD23 — pointer, 2026-10-21 (text above left unchanged).** Statistics scope changed: from V1, ROOM and RANKED results combine in the same King/Second/Third/Koz counters; UNRANKED was first excluded, then (later the same day) included — RP stays Ranked-only (decision record §P). Open: Q14, Q16, Q17. See `docs/decisions/2026-10-21-server-authority-and-owner-rulings.md`.
 - **RD24** **Seasons are MVP scope NOW.** Duration **3 months**. End-of-season demotes Tier/Division **two division steps** (Gold I → Gold III), floored at the ladder bottom; **career stats never reset**. Placement never repeats per season. No separate trophy system. **King has no divisions and is demoted to Royal I at season reset** (owner-closed; RD1's division-less King is preserved — this is a destination, not a division).
 - **RD27** **Seasonal Ranked Leaderboard is in scope.** Server-authoritative ordering: rank position, player, Tier/Rank, RP, season, **current player highlighted**. **King players are ranked among themselves by RP above the King lower bound** — King has no divisions, so RP is the only ordering key there (RD3). **Season isolation:** the board shows one season only and resets with the season (RD24); rank position is recomputed per season, never blended. The client may read, never order.
+  > **RD27 — pointer, 2026-10-21 (text above left unchanged).** The seasonal leaderboard is deferred entirely from V1 (decision K). See `docs/decisions/2026-10-21-server-authority-and-owner-rulings.md`.
 
 **Open (do not invent answers)**
 
