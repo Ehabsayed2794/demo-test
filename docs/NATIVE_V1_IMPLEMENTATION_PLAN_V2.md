@@ -23,7 +23,7 @@
 | Baseline PR | #151, docs-only: 6 files, +448 / −9 |
 | Target | Native V1, Android only, 4-player Estemshan, Arabic + English |
 | Planning unit | engineering hours (one experienced Android/Kotlin engineer), excluding external waiting time |
-| Estimate range | **1,638–2,832 engineering hours** (§5.5); roughly 205–354 person-days |
+| Estimate range | **1,626–2,812 engineering hours** (§5.5); roughly 203–352 person-days |
 | Stage 0 status | **NOT YET RUN.** All 13 experiments are engineering investigations, not results |
 | Runtime proposal | Cloudflare Workers + SQLite Durable Objects + D1 is a **PROPOSAL**, not an approved architecture (§5.7, O-06) |
 | Monetization | No billing, ads or IAP in the current baseline and no approved V1 monetization scope (O-09) |
@@ -103,7 +103,7 @@ with **no Firebase Blaze plan** and no billing account attached to the project.
 | Rules | FULL 18 rounds / fast 14–18; MINI 10 / fast 6–10; Normal and Classic calculation; Dash; Risk; With/Wazz; Sa'ayda; Super Call; General Pass; 13 Rule | Any new rule variant invented during implementation |
 | Ranked | 19 ranks, RP engine, placement, Auto-Match with bot fill, seasons, rank-down party gate | Public leaderboard (deferred by owner), cross-season ladders, decay beyond the documented reset |
 | Statistics | Nine career statistics for all finished matches, including UNRANKED and ROOM | Per-mode stat filters beyond what the existing profile model stores |
-| Identity | Anonymous guest, email sign-up/sign-in, Google sign-in, anonymous→registered linking, account deletion path | Apple, phone auth, Google Play Games, other social login |
+| Identity | Anonymous guest, email sign-up/sign-in, Google sign-in, anonymous→registered linking | Apple, phone auth, Google Play Games, other social login; account deletion (Q6 — deferred, store-policy risk accepted) |
 | Android | All 27 surfaces designed, implemented and wired on the fixed 932×430 landscape frame (D10); EN/AR with RTL | Tablet-specific layouts, Wear/TV |
 | Operations | Backup policy, recovery, rollback, incident runbook, $0 free-tier verification | 24/7 on-call, SLA, multi-region failover |
 | Monetization | None | Ads, IAP, subscriptions, cosmetics |
@@ -172,8 +172,8 @@ These are the criteria §5.8 turns into gates. Each is objectively checkable.
 | V1-C9 | Every finished match in every mode updates the nine career statistics; UNRANKED and ROOM are included, not Ranked-only; only RANKED placement matches are excluded, and being mid-placement never suppresses UNRANKED or ROOM statistics | Stats integration tests |
 | V1-C10 | 90-day season, lazy reset and two-step reset pass their vectors; no profile remains stale after settlement | Season reset suite |
 | V1-C11 | All 27 surfaces are implemented and wired or explicitly deferred with owner sign-off; 11 routes reachable; no placeholder strings; EN/AR + RTL render | UI surface checklist + screenshots |
-| V1-C12 | Guests can play ROOM but not RANKED; email sign-up and Google sign-in work; anonymous→registered linking preserves the uid; account deletion path exists in-app and on the web | Auth tests + deletion walkthrough |
-| V1-C13 | Closed test with ≥12 testers opted in continuously for 14 days completed; production access granted; reviewer credentials work; Data safety and deletion declarations live | Play Console records |
+| V1-C12 | Guests can play ROOM but not RANKED; email sign-up and Google sign-in work; anonymous→registered linking preserves the uid | Auth tests |
+| V1-C13 | Closed test with ≥12 testers opted in continuously for 14 days completed; production access granted; reviewer credentials work; Data safety declarations live | Play Console records |
 | V1-C14 | $0/free-tier feasibility measured and approved; backup ≥90%; rollback rehearsed; incident runbook exists; owner signs acceptance | Stage 0 E5/E6/E10/E12 + release checklist |
 
 ### 5.1.6 Top risks
@@ -185,14 +185,14 @@ These are the criteria §5.8 turns into gates. Each is objectively checkable.
 | R-03 | Server-authoritative Ranked is much larger than the current client-owned model suggests | High | High | Treat as a proposal; estimate range wide; Stage 0 first | Eng |
 | R-04 | Free-tier request/storage limits are exceeded by real usage | Medium | High | E5/E6/E10 measurements; capacity model; no leaderboard | Eng |
 | R-05 | Fewer than 12 testers available, resetting the 14-day clock | High | High | Recruit before RC; treat as external wait, not engineering time | Owner |
-| R-06 | Account deletion is treated as compliant when it is only deferred | High | High | In-app path + web resource + declarations are release gates (§5.8 G8) | Owner |
+| R-06 | Account deletion is treated as compliant when it is only deferred | High | High | Owner-accepted deferral risk (Q6): Play may reject the release; deletion stays post-V1 (§5.7.4, O-10). Never described as compliant. | Owner |
 | R-07 | Arabic quality: colloquial draft, 6 dropped placeholders, engine text not localized | High | Medium | Localization epic + native-speaker review gate | Owner |
 | R-08 | Auth wiring incomplete: no google-services plugin, anonymous/email only, no Google sign-in or sign-up | High | High | E6 tasks; real project wiring verified on device | Eng |
 | R-09 | Client-triggered settlement with in-memory retry loses results on process death | High | High | Durable outbox + idempotent settlement (§5.6) | Eng |
 | R-10 | Four matching ROOM/UNRANKED reports can be fabricated or collusive | Medium | Medium | Documented limitation; server records final result only; no RP | Owner |
 | R-11 | Version skew between app, rules and functions | Medium | Medium | Version gate and minimum-client field (§5.6 F-16) | Eng |
 | R-12 | Design coverage: core screens have no artboards; only 12 screens exist, all on the fixed 932×430 landscape frame | High | Medium | E7 works on the D10 932×430 frame: reuse the compliant artboards (S45 included) as-is, fill the missing surfaces | Owner + design |
-| R-13 | Single-engineer capacity: 1,638–2,832 h is 41–71 weeks at 40 productive h/week | High | High | Scope decisions in §5.7; phased release; no hidden parallel work | Owner |
+| R-13 | Single-engineer capacity: 1,626–2,812 h is 41–70 weeks at 40 productive h/week | High | High | Scope decisions in §5.7; phased release; no hidden parallel work | Owner |
 | R-14 | ADR 0002 and the no-Blaze decision conflict | High | Medium | New ADR after Stage 0; ADR 0002 marked superseded in part | Eng |
 
 ### 5.1.7 Decisions required before implementation starts
@@ -220,7 +220,7 @@ The other decisions shape or defer specific work; they do not stop the baseline 
 | Kotlin modules | `native/engine`, `native/app`, `native/services`, `native/functions` | `native/settings.gradle.kts` |
 | Source scale | 252 Kotlin files: 144 production, 108 test | module counts: engine 68 (36/32), app 72 (47/25), services 53 (30/23), functions 59 (31/28) |
 | Engine tests | 473 tests across 32 test classes | `native/engine/src/*Test` |
-| App tests | 183 tests across 25 JVM test files; no `androidTest` source set in `native/app` | `native/app/src/test` |
+| App tests | 183 tests across 24 test classes plus one test fake; no `androidTest` source set in `native/app` | `native/app/src/test` |
 | Services tests | 189 tests | `native/services/src/test` |
 | Functions tests | 516 tests | `native/functions/src/*Test` |
 | Emulator suites | 56 `tests/*.cjs` suites run against Firestore/Auth emulators | root `package.json:13`, `tests/`, `.github/workflows/test.yml` |
@@ -271,7 +271,7 @@ the closing epic and the evidence that closes the gap.
 |---|---|---|---|---|---|---|
 | Ranked runtime | Gameplay is client-owned; the client writes match state under `firestore.rules`; rules cannot verify a shuffle (`firestore.rules:1470-1480`) | 473 engine tests prove client-side rules only; no server-authority test exists | Server-authoritative match state for RANKED only; client cannot forge the result | MISSING — no authority layer for gameplay, no move validation, no server-side deal | E3.1 (after Stage 0/O-06); exit evidence: Stage 0 E1/E2 + authority tests | Stage 0 E1–E10; ADR approval (O-06) |
 | Result settlement | `settleOnce` (`SettlementDb.kt:691`), transaction (`:757`), `foldRankedProgression` (`:608`); client `maybeSettle` (`OnlineMatchViewModel.kt:944`) with `MAX_TRANSIENT_FAILURES = 6` (`:1312`); `Settlement.decide` returns `NoOp` for ROOM/UNRANKED (`Settlement.kt:340-348`) | `SettlementTest`, `SettlementLedgerTest`, `SettlementLedgerEmulatorTest`, `SettlementRpEmulatorTest`, `SettlementResponseTest`; no durable-outbox test | Exactly-once settlement; durable outbox; idempotent claim; no in-memory-only retry | PARTIAL — settlement is client-triggered and retries live only in memory; no durable outbox; departure charges and all-left abandonment not applied | E3.4/E3.5; exit evidence: T-18 fault injection | Runtime (E3.1/E3.3); backup policy |
-| Departure charges | `decideLeave`: Vote Kick → `Koz1`; RANKED/UNRANKED → `Koz2`; ROOM → `None` (`LeaveMatch.kt:50-56`) | `LeaveMatchTest` asserts Vote Kick = 1 Koz, encoding the stale A5.1 rule; `DepartureContractTest`, `LeaveMatchEmulatorTest` cover the other paths | ROOM 1 Koz; UNRANKED/RANKED 2 Koz; a passed Vote Kick 2 Koz in RANKED/UNRANKED (Q14b `:193`, Q14d(1) `:203`); only at finish if not returned; no charge for server/quota failure; 7th takeover 2 Koz in RANKED/UNRANKED (ROOM open, O-03) | INCORRECT — Vote Kick is also INCORRECT: it returns 1 Koz (engine gap; A5.1 stale); ROOM charge missing; no finish-time application; no server-failure exemption; 7th-takeover scope open | E3.5 (O-03); exit evidence: T-14/T-15 | O-03, O-03c; Q14b/Q14d(1) are decided |
+| Departure charges | `decideLeave`: Vote Kick → `Koz1`; RANKED/UNRANKED → `Koz2`; ROOM → `None` (`LeaveMatch.kt:50-56`) | `LeaveMatchTest` asserts Vote Kick = 1 Koz, encoding the stale A5.1 rule; `DepartureContractTest`, `LeaveMatchEmulatorTest` cover the other paths | ROOM 1 Koz; UNRANKED/RANKED 2 Koz; a passed Vote Kick 2 Koz in RANKED/UNRANKED (Q14b `:193`, Q14d(1) `:203`); only at finish if not returned; no charge for server/quota failure; 7th takeover 2 Koz in RANKED/UNRANKED (ROOM open, O-03) | INCORRECT — Vote Kick returns 1 Koz instead of 2 (engine gap; A5.1 stale); ROOM charge missing; no finish-time application; no server-failure exemption; 7th-takeover scope open | E3.5 (O-03); exit evidence: T-14/T-15 | O-03, O-03c; Q14b/Q14d(1) are decided |
 | Matchmaking | No production implementation (`MatchmakingPort.kt:29-33`); navigation hardcodes ROOM (`AppNav.kt:291`); no queue or matchmaking screen | `MatchmakingPoolTest`, `MatchmakingViewModelTest`, `FakeMatchmaking` test an unconnected pool and UI stub | Auto-Match joins a player-created waiting table; 2-minute bot fill; 30 s majority vote; humans-only strength | MISSING — entire matchmaking flow, including bot-fill vote and strength source | E4.1/E4.2; exit evidence: T-20 | Runtime, auth (E3.1/E6); O-07 |
 | ROOM lifecycle | `RoomService.createRoom` (`:55`), `setReady` (`:234`), `maybeStartMatch` (`:273`); `CreateGameScreen` is room-only (`:48-50`); no room list (`LobbyScreen.kt:43-45`) | `RoomViewModelTest`, `TableViewModelTest`, `PlayerServiceTest` | Full table of four; create/join by code; ready/start; leave; no Ranked rules | PARTIAL — no discovery/list, no four-player enforcement surface, navigation only opens ROOM | E4.4; exit evidence: ROOM E2E test | O-04 (ROOM bots) |
 | Statistics | `accumulateRankedStat` returns unchanged unless `mode == RANKED` and not placement (`RankedStats.kt:103`); `accumulateDepartureCharge` (`:151`) | `RankedStatsTest`, `RankedProfileTest` encode the Ranked-only gate | Nine career statistics for **all** finished matches, including ROOM/UNRANKED; counts and percentages over games played; only RANKED placement matches are excluded | INCORRECT — statistics are Ranked-only and placement-gated; ROOM/UNRANKED contribute nothing | E5.1; exit evidence: T-19 | Settlement records (E3.3) |
@@ -284,7 +284,7 @@ the closing epic and the evidence that closes the gap.
 | Core Android surfaces | 4 wired, 7 partial, 7 design-only, 9 missing; `Routes.STANDINGS` dead; `MatchMode.ROOM` hardcoded (`AppNav.kt:291`) | 183 app JVM tests across 25 files, including `StandingsUiTest`; no `androidTest` source set in `native/app` | All 27 surfaces implemented and wired on the 932×430 landscape frame; 11 routes reachable; no dead previews | PARTIAL — 23 surfaces need work (7 partial, 7 design-only, 9 missing); navigation does not expose Ranked/UNRANKED | E7/E8; exit evidence: surface checklist + screenshots | Design sign-off (M7); auth (M6) |
 | Ranked UI | No rank chip; S54 season blank; S45–S56 design-only | `StandingsRankedTest`, `PlacementViewModelTest` cover JVM state only | Rank chip, tier/division, RP progress, season label, placement intro, matchmaking | MISSING — all Ranked-facing UI and state wiring | E7/E8; exit evidence: Ranked UI test + screenshots | M3 API shape; M7 design |
 | Match-time UI | No vote-kick, disconnect-pause, leave or timer UI | `OnlineMatchViewModelTest`, `OpponentAwayTrackerTest` cover view-model state only | Vote Kick, disconnect vote, WAIT countdown, leave confirmation, takeover indicator, 7th removal | MISSING — all in-match decision UI | E7/E8; exit evidence: T-14/T-16 UI tests | T-16 engine rows; M7 |
-| Authentication | `signInAnonymously` / `signInWithEmail` only (`AuthRepository.kt:19-20`); no google-services plugin; no Google, sign-up or deletion screen | `AuthRepositoryTest`, `AuthPortAdapterTest` cover the guest/email adapters | Anonymous guest for ROOM/UNRANKED; email sign-up and Google sign-in for Ranked; linking preserves uid; deletion path | PARTIAL — no Google, no registration, no linking, no deletion; Firebase project wiring unproven on device | E6; exit evidence: T-21 + device walkthrough | Firebase project access; OAuth consent/fingerprints |
+| Authentication | `signInAnonymously` / `signInWithEmail` only (`AuthRepository.kt:19-20`); no google-services plugin; no Google, sign-up or deletion screen | `AuthRepositoryTest`, `AuthPortAdapterTest` cover the guest/email adapters | Anonymous guest for ROOM/UNRANKED; email sign-up and Google sign-in for Ranked; linking preserves uid; deletion deferred (Q6) | PARTIAL — no Google, no registration, no linking; Firebase project wiring unproven on device | E6; exit evidence: T-21 + device walkthrough | Firebase project access; OAuth consent/fingerprints |
 | Rules and security | 2,410-line rules, deny-by-default, catch-all (`:2406`); comment states structural validation only (`:1470-1480`) | 56 root `tests/*.cjs` suites include rules-emulator and real-backend matrices | Deny-by-default, but also enforce what the client must not forge; version gate | PARTIAL — rules validate shape, not fairness; no minimum-client version field | E3.6; exit evidence: rules test suite + adversarial review | Runtime; engine freeze |
 | Functions deployment | 11 exports (`native/functions/index.js:19-33`); `operatorSeasonResetDryRun` absent from the export map; Cloud Functions require Blaze | `CallableAuthTest`, `CallablePayloadBridgingTest` and the `jsNodeTest` suite; deployment itself untested | Deployable runtime under $0/no Blaze; manifest matches exports | NOT DEPLOYABLE — runtime cannot be deployed as-is; manifest drift | E1/E3.1; exit evidence: Stage 0 E1/E9 + deploy dry run | Stage 0; O-06; no-Blaze constraint |
 | CI and release engineering | `android.yml:79` covers app/engine/services unit tests; `.github/workflows/test.yml` runs 56 cjs suites; deploy is hosting-only (`deploy-production.yml:61`); version `0.1.0-phase1` | CI runs green on the recorded suites; no release job test | Build, unit, instrumented, emulator suites, release signing, versioning, store upload | PARTIAL — no release build, signing, bundle upload or version-skew gate | E10/E11; exit evidence: release pipeline run | Signing key (not committed); Play access |
@@ -371,7 +371,7 @@ Legend for expected values:
 | Super Call extension only when Caller succeeds | A6.5 (`:531`) | Extension independent of success | E2.6 | T-05 (success) | T-05 (failure) | A successful Caller Super Call adds one round; a failed one adds none; the Sa'ayda count still adds independently | Engine report |
 | Normal Super Call bid² / half-up loss | A1 (`:220-221`), Q19c | `Scoring.kt:63` | E2.7 (verify only) | T-05 (win rows) | T-05 (loss rows) | Bid 8 win not sole = 64; win sole = 74; loss not sole = −32; loss sole = −42; no separate Caller +10 on the Super Call row | Engine report |
 | Normal Dash + Risk adds both components | A6.3 (`:527-529`) | Risk dropped (`RoundScore.kt:79`) | E2.7 | T-06 (success, sole winner) | T-06 (failure, sole loser, Risk ladder) | At the owner example (total bids 15, Risk 10, takes 0) the score is +20; taking 2 gives −22; neither component is dropped or counted twice | Engine report |
-| Classic scoring tables incl. Super Call +42/−20 | Current Rules §4 (`:150-180`) | `Scoring.kt:112` and table rows | E2.8 (verify) | T-07 (known rows) | T-05 (Classic row) | Bid 5 Classic Caller/With gives 5+13+10 = 28; Super Call gives +42/−20; sole cap is −22; no Normal formula leaks into Classic | Engine report |
+| Classic scoring tables incl. Super Call +42/−20 | Classic Calculations Mode (`:145-178`) | `Scoring.kt:112` and table rows | E2.8 (verify) | T-07 (known rows) | T-05 (Classic row) | Bid 5 Classic Caller/With gives 5+13+10 = 28; Super Call gives +42/−20; sole cap is −22; no Normal formula leaks into Classic | Engine report |
 | Classic Dash + Risk adds both components | A6.8 (`:534`) | Missing; numbers open | E2.8 (blocked O-01) | None until O-01 | T-07 (combined and sole rows, skipped placeholder) | Blocked: no combined Classic Dash+Risk value may be asserted until O-01 fixes the arithmetic; the test stays skipped, not guessed | O-01 decision |
 | Normal With = Caller’s winning suit, last bid in that suit | A6.9 (`:535`), Q19 | Suit-blind floor (`Bidding.kt:273-274`) | E2.4 | T-08 | T-12 | A player who bid the winning suit at any time is With at their last bid **in that suit**; a matching number in another suit is not enough; With at 5 scoring 25 / −12 | Engine report |
 | Fast With = exact highest number, plus final-trump condition | A6.10 (`:536`), Q28 | Everyone ≥8 With (`Bidding.kt:716`) | E2.3/E2.4 | T-10 | T-10 (trump changed, earlier estimate) + T-11 (tie) | Only a player whose final number equals the highest exactly — and whose estimate was made under the final trump when it changed — is With; an 8 is not With when the highest is 10 | Engine report |
@@ -384,7 +384,7 @@ Legend for expected values:
 | Nine statistics for every mode; percentages over games played | Q14c, A6.7 (`:533`), A6.8 (`:534`) | RANKED-only, placement-gated (`RankedStats.kt:103`) | E5.1 | T-19 (all-mode, percent) | T-19 (zero games, placement gate, UNRANKED mid-placement) | 10 ROOM + 10 UNRANKED + 10 RANKED with 3 Kings each → Games Played 30, King count 9, King % 30; a RANKED placement match is excluded; an UNRANKED match during placement counts | Stats tests |
 | 90-day seasons, lazy reset, two-step reset | Q22, `SeasonResetRun.kt:80` | Bulk sweep, 10,000 cap | E5.2 | T-19 (season length, lazy reset) | T-19 (idempotence, reset race) | `endsAt = start + 90 days`; one reset on first access after two missed seasons; two reset runs produce one migration; settlement and reset on one profile keep one total order | Season tests |
 | Auto-Match with 2-min bot fill and 30 s vote; humans-only strength | Q7c/Q26, decisions §F | No implementation (`MatchmakingPort.kt:29-33`) | E4.1/E4.2 | T-20 (join, vote passes, RP with bots) | T-20 (no table, vote fails, tier band) | Auto-Match joins a waiting table ≤1 tier after showing settings; no table → message + Create Table; 2 minutes from first player then a 30 s vote requiring more than half of waiting humans (non-votes reject); strength from humans only | Matchmaking tests |
-| Guests cannot enter Ranked; email sign-up and Google sign-in for Ranked; linking preserves uid | Decisions §D, Q5, Q21 | Anonymous/email only; no Google, sign-up or gate (`AuthRepository.kt:19-20`) | E6 | T-21 (guest ROOM, email, Google) | T-21 (guest Ranked, linking, deletion; App Check not required) | A guest plays ROOM/UNRANKED and is blocked from Ranked; email sign-up and Google sign-in work; linking preserves the uid; in-app and web deletion paths work | Device walkthrough |
+| Guests cannot enter Ranked; email sign-up and Google sign-in for Ranked; linking preserves uid | Decisions §D, Q5, Q21 | Anonymous/email only; no Google, sign-up or gate (`AuthRepository.kt:19-20`) | E6 | T-21 (guest ROOM, email, Google) | T-21 (guest Ranked, linking; App Check not required) | A guest plays ROOM/UNRANKED and is blocked from Ranked; email sign-up and Google sign-in work; linking preserves the uid | Device walkthrough |
 | ROOM/UNRANKED four matching reports; recorded limitation | Decisions §J, Q15c | No convergence enforcement for ROOM/UNRANKED (`Settlement.kt:340-348`) | E3.6 | T-17 (unanimous, duplicate, replay) | T-17 (split, missing, collusion) | A ROOM/UNRANKED result is recorded once on the fourth matching report; splits and missing reports stay pending; duplicates are deduped; collusion is accepted and documented | Settlement tests |
 | Exactly-once settlement with durable outbox | Decisions §I | In-memory 6 retries (`OnlineMatchViewModel.kt:1312`) | E3.4 | T-18 (happy, duplicate) | T-18 (lost response, process death, quota, season race) | Duplicate calls, lost responses, process death and outbox replay produce one stored result and one RP delta; a quota failure writes nothing | Fault injection |
 | ≥200 seeded engine/server parity | Brief Stage 0 E2 | Not run | E1.2 | T-23 (corpus, evidence) | T-23 (diff definition, known gaps) | ≥200 seeds × FULL/MINI × Normal/Classic produce zero unexplained JVM/server diffs; known gaps are listed by defect ID; the post-fix run has zero diffs | Stage 0 report |
@@ -491,8 +491,8 @@ actual final round.
 | Step | Declarer | Call | Trump after | Who re-declares |
 |---|---|---|---|---|
 | 1 | A | 8 | Hearts (changed from forced Sans) | B, C, D; **not A** |
-| 2 | B | 9 | Spades (changed again) | A, C, D; **not B** — A re-declares despite having declared after the first Super Call |
-| 3 | C | 10 | Clubs | A, B, D |
+| 2 | B | 9 | Spades (changed again) | C, D, A; **not B** — A re-declares despite having declared after the first Super Call |
+| 3 | C | 10 | Clubs | D, A, B |
 | 4 | No higher call | — | Clubs | Auction ends; C Caller |
 
 Additional assertions: any 8+ declarer may choose any trump (A6.10); each higher call repeats
@@ -576,7 +576,7 @@ E3.5 changes both code and test.
 | Explicit Leave Match | **1 Koz** | **2 Koz** | **2 Koz** |
 | Automatic 15-timeout removal | **1 Koz** | **2 Koz** | **2 Koz** |
 | Vote Kick | n/a | **2 Koz** | **2 Koz** |
-| Disconnect, permanently replaced | **0** per A5.1 row (`:446`); A6.6 “any reason” conflict → §5.7 O-03c | **2 Koz** | n/a (no vote held in Ranked) |
+| Disconnect, permanently replaced | **0** per A5.1 row (`:446`); A6.6 “any reason” conflict → §5.7 O-03c | **2 Koz** | No disconnect vote in RANKED; a 15-timeout removal or 7th takeover records **2 Koz** |
 | Return before finish | 0 | 0 | 0 |
 | 7th bot takeover | **Open** → §5.7 O-03 | **2 Koz** | **2 Koz** |
 | Server or free-quota failure | 0 | 0 | 0 |
@@ -600,10 +600,11 @@ Abandonment is a separate outcome, not a departure charge:
 
 | Time / event | Expected |
 |---|---|
-| Disconnect at t=0 | Seat remains; no immediate bot |
-| t=10 s, no return | Bot takes over the seat |
-| Return while bot holds the seat | Human reclaims; bot stops |
-| Reconnect cycles 1–7 | Allowed; each takeover waits 10 s |
+| Disconnect at t=0 | Seat remains; no bot yet; the decision clock runs to its timer |
+| Decision timer (5/10/15/20 s) expires, still disconnected | MEDIUM bot plays that decision; the 15-timeout counter increments; the 10 s takeover clock starts |
+| Timer + 10 s, still disconnected | The creator-selected bot takes the seat; the takeover counter increments |
+| Return while the bot holds the seat | Human reclaims; the bot stops |
+| Reconnect cycles 1–7 | Allowed; each takeover needs the decision timer plus 10 s |
 | 7th takeover | Seat removed; 2 Koz recorded in RANKED/UNRANKED; ROOM scope open (O-03) |
 | 15-timeout removal | Independent counter; not the same as takeover; charge per T-15 |
 | ROOM/UNRANKED disconnect vote | 30 s window, play continues, majority 2 of 3; a winning WAIT pauses 90 s after the verdict; no agreement → configured bot |
@@ -677,8 +678,6 @@ Abandonment is a separate outcome, not a departure charge:
 | Email sign-in | Registered user | Ranked allowed |
 | Google sign-in | Registered user chooses Google | Sign-in succeeds; no Google Play Games dependency |
 | Linking | Anonymous → email or Google link | UID preserved; history and stats remain attached |
-| Deletion | In-app delete | Account and profile data deleted through the documented path |
-| Web resource | Deletion URL | Reachable without the app and works |
 | App Check | V1 | Not required (deferred Q21b); do not gate launch on it |
 
 #### T-22 — Multiplier ladder and caps
@@ -773,11 +772,11 @@ activity.
 | P3 — Ranked runtime and settlement | Authority layer, durable outbox, exactly-once settlement, departure charges, recovery, version gate | M1 go; ADR approved; M2 engine frozen | T-15/T-17/T-18 pass; fault injection clean | M3 | 280–504 |
 | P4 — Matchmaking, bots, disconnect | Auto-Match, 2-minute fill, 30 s vote, takeover counter, 7th removal, 60 s cancel | M3; O-03 | T-16/T-20 pass | M4 | 128–224 |
 | P5 — Statistics and seasons | All-mode nine stats, percentages, lazy 90-day reset, race safety | M3 | T-19 passes | M5 | 96–168 |
-| P6 — Authentication and account | Email sign-up/sign-in, guest gate, linking, deletion path | M3 | T-21 passes on device | M6 | 56–96 |
+| P6 — Authentication and account | Email sign-up/sign-in, guest gate, linking | M3 | T-21 passes on device | M6 | 44–76 |
 | P7 — UI design | 27 surfaces on the fixed 932×430 landscape frame (D10), EN/AR, RTL, states, copy | M2 rules frozen; M3 API shape frozen | Design sign-off on all 27 surfaces | M7 | 168–280 |
 | P8 — Native conversion | Compose implementation, navigation, state, accessibility, localization | M7 sign-off; M6 auth | Every non-deferred surface wired; UI tests pass | M8 | 288–480 |
 | P9 — Hardening and operations | Localization review, observability, backup drill, rollback, performance | M8 | Runbook, backup ≥90%, rollback rehearsal | M9 | 96–168 |
-| P10 — Store readiness and real-people testing | Listing, Data safety, deletion URL, credentials, 12 testers × 14 days | M9; build is RC | 14 continuous days complete; production access granted | M10 | 72–136 |
+| P10 — Store readiness and real-people testing | Listing, Data safety, credentials, 12 testers × 14 days | M9; build is RC | 14 continuous days complete; production access granted | M10 | 72–136 |
 | P11 — Release candidate and acceptance | Signed bundle, staged rollout, owner acceptance | M10 | Gate G11 signed | M11 | 40–72 |
 
 Hours are engineering hours from §5.5; external waiting time is separate.
@@ -798,10 +797,10 @@ defines what would count as a result; it does not report one.
 | E7 | Backup lag, outbox, recovery, duplicate RP | Can the backup policy meet ≥90% without a second RP truth? | Inject lag, kill the primary, replay outbox | No duplicate RP; lag measured; recovery documented | P3, G4 |
 | E8 | D1 atomicity, triggers, query limits | Does D1 provide the transactional guarantees settlement needs? | Batch atomicity tests, trigger behaviour, query-limit tests | Settlement can be atomic within documented limits | P3 |
 | E9 | Durable recovery after interruption | Does a match survive process/match interruption? | Kill at trick/round/result/settlement boundaries | Consistent recovery at every boundary | P3, G4 |
-| E10 | Delete/write costs and retention | Do retention and deletion fit request and storage limits? | Measure delete/write costs; model retention | Fits free tier; retention policy costed | P3, G5 |
+| E10 | Write/cleanup costs and retention | Do retention and cleanup fit request and storage limits? | Measure write/cleanup costs; model retention | Fits free tier; retention policy costed | P3, G5 |
 | E11 | Anonymous → registered linking | Does Firebase linking preserve the uid and data? | Link a real anonymous account to email in a test project | UID stable; stats/history intact | P6 |
 | E12 | Hibernation and duration cost | Does hibernation keep idle cost inside the free tier? | Idle table for a full match duration; measure | No billing trigger; duration cost recorded | P3 |
-| E13 | Account deletion and store policy | What exactly must ship for deletion and closed testing? | Verify current Play policy pages and API behaviour | Written checklist with source URLs and access date | P10, G8 |
+| E13 | Account deletion and store policy | What does current Play policy require for closed testing and for account deletion, and what risk does the V1 deferral carry? | Verify current Play policy pages and API behaviour | Written checklist with source URLs and access date | P10, G8 |
 
 Stage 0 does **not** decide the architecture by itself. It produces measurements and a
 recommendation; the owner approves or rejects the runtime through a new ADR (O-06).
@@ -837,7 +836,7 @@ recommendation; the owner approves or rejects the runtime through a new ADR (O-0
 | Seasons | Statistics/profile store | Reset operates on the same profile |
 | UI design | Engine freeze, runtime API shape | Designs must not encode wrong rules or unavailable data |
 | Native conversion | Design sign-off, engine/services APIs | Conversion is a rendering/wiring step, not a design step |
-| Closed testing | Feature-complete build, store assets, deletion path | Testers need a usable build and a compliant listing |
+| Closed testing | Feature-complete build, store assets | Testers need a usable build and a compliant listing |
 | Release | 14 continuous test days, production access, owner acceptance | Policy and owner gates |
 
 ### 5.4.6 Critical path
@@ -903,17 +902,17 @@ unresolved rule. A single-point estimate would hide the two largest risks in the
 | E3 | Ranked runtime and settlement | 280 | 504 | Low | Mandatory, conditional on ADR | Stage 0; O-06 |
 | E4 | Matchmaking, bots, disconnect | 128 | 224 | Medium | Mandatory (part blocked) | O-03 |
 | E5 | Statistics and seasons | 96 | 168 | Medium | Mandatory | None |
-| E6 | Authentication and account | 56 | 96 | Medium | Mandatory | Firebase project access |
+| E6 | Authentication and account | 44 | 76 | Medium | Mandatory | Firebase project access |
 | E7 | UI design | 168 | 280 | Medium | Mandatory | Design sign-off |
 | E8 | Native conversion | 288 | 480 | Medium | Mandatory | Design sign-off |
 | E9 | Hardening and operations | 96 | 168 | Medium | Mandatory | None |
 | E10 | Store readiness and real-people testing | 72 | 136 | Medium | Mandatory | 12 testers; Play review |
 | E11 | Release candidate and acceptance | 40 | 72 | High | Mandatory | Owner acceptance |
-| **Total** | | **1,638** | **2,832** | | | |
+| **Total** | | **1,626** | **2,812** | | | |
 
-Planning midpoint: **2,235 engineering hours** (≈279 person-days). At 40 productive hours per
-week this is **41–71 weeks** of engineering before external waits; at 50 h/week, **33–57 weeks**;
-at 30 h/week, **55–94 weeks**. These are capacity arithmetic, not a schedule promise.
+Planning midpoint: **2,219 engineering hours** (≈277 person-days). At 40 productive hours per
+week this is **41–70 weeks** of engineering before external waits; at 50 h/week, **33–56 weeks**;
+at 30 h/week, **54–94 weeks**. These are capacity arithmetic, not a schedule promise.
 
 ### 5.5.3 Epic detail
 
@@ -949,7 +948,7 @@ does **not** ship product code.
 | E1.7 | E7 backup/outbox/duplicate RP | Fault-injection results and recovery note | 18–30 | Low |
 | E1.8 | E8 D1 atomicity/limits | Atomicity and limit test report | 14–24 | Low |
 | E1.9 | E9 interruption recovery | Boundary kill matrix and results | 10–18 | Low |
-| E1.10 | E10 delete/write/retention costs | Cost and retention note | 4–8 | Medium |
+| E1.10 | E10 write/cleanup/retention costs | Cost and retention note | 4–8 | Medium |
 | E1.11 | E11 auth linking | Linking result and uid evidence | 2–4 | Medium |
 | E1.12 | E12 hibernation/duration | Idle-cost measurement | 2–4 | Medium |
 | E1.13 | E13 policy verification | Checklist with source URLs and access date | 2–4 | High |
@@ -1028,10 +1027,9 @@ Goal: all-mode career statistics and a lazy 90-day season reset that cannot race
 Commands: `:functions:jsNodeTest`, emulator suites, `:engine:jvmTest`. Evidence: stats table for a
 fixture account, reset run report, race test log. Gate: M5.
 
-#### E6 — Authentication and account (56–96 h)
+#### E6 — Authentication and account (44–76 h)
 
-Goal: a guest can play ROOM; a registered user can play Ranked; linking preserves identity; an
-account can be deleted.
+Goal: a guest can play ROOM; a registered user can play Ranked; linking preserves identity.
 
 | Task | Work | Files / symbols | Deps | Acceptance | Hours | Conf. |
 |---|---|---|---|---|---|---|
@@ -1039,8 +1037,6 @@ account can be deleted.
 | E6.2 | Email sign-up and Google sign-in UI | `AuthRepository.kt:19-20`; new screens; OAuth consent/fingerprints | E6.1 | New email account and Google account both sign in | 20–34 | Medium |
 | E6.3 | Guest gate for Ranked/Auto-Match | Navigation and queue guard | E6.2 | T-21 guest rows green | 6–10 | High |
 | E6.4 | Anonymous → registered linking | `linkWithCredential` path | E6.2 | T-21 linking row green; uid stable | 10–18 | Medium |
-| E6.5 | In-app account deletion | Profile/settings; backend delete | E6.2 | T-21 deletion row green | 8–14 | Medium |
-| E6.6 | Web deletion resource | Hosted page | E6.5 | URL reachable without the app | 4–6 | High |
 
 Commands: app unit tests; manual device walkthrough recorded as evidence. Gate: M6, G7.
 
@@ -1098,7 +1094,7 @@ Goal: make the release operable, observable and recoverable.
 | E9.3 | Backup drill and restore evidence | Backup config; runbook | E3.4 | ≥90% coverage demonstrated; restore tested | 16–28 | Medium |
 | E9.4 | Rollback and incident runbook | New runbook | E9.2 | Rollback rehearsed; on-call steps written | 16–28 | High |
 | E9.5 | Startup/performance check | App and runtime | E8 | No regression against Stage 0 E4 measurements | 12–20 | Medium |
-| E9.6 | Security/privacy review | Data flows; rules | E3, E6 | No unapproved data collection; deletion verified | 12–20 | Medium |
+| E9.6 | Security/privacy review | Data flows; rules | E3, E6 | No unapproved data collection; retention matches Q18 | 12–20 | Medium |
 
 Commands: release build, fault drill, restore drill. Evidence: drill logs, runbook, alert
 screenshot. Gate: M9, G4, G9.
@@ -1110,7 +1106,7 @@ Goal: satisfy Play policy and run the mandatory closed test without resetting th
 | Task | Work | Files / symbols | Deps | Acceptance | Hours | Conf. |
 |---|---|---|---|---|---|---|
 | E10.1 | Listing, screenshots, feature graphic, descriptions | `docs/release/play-listing.md`; store assets | E8 | Listing complete in EN/AR | 12–20 | Medium |
-| E10.2 | Data safety and deletion declarations | Play Console; privacy page | E6.5/E6.6 | Declarations match actual data flows | 12–20 | High |
+| E10.2 | Data safety declarations | Play Console; privacy page | E6.2 | Declarations match actual data flows | 12–20 | High |
 | E10.3 | Recruit and manage ≥12 testers | Owner + release checklist | E10.1 | 12 personal accounts opted in | 12–24 | Low |
 | E10.4 | 14-day closed test support | Release candidate | E10.3 | Continuous 14 days; feedback triaged | 20–40 | Medium |
 | E10.5 | Production access application | Play Console | E10.4 | Access granted | 8–16 | Low |
@@ -1120,11 +1116,12 @@ Policy facts used here (verified 2026-10-22): closed testing requires **12 teste
 continuously for 14 days** on personal accounts created after 2023-11-13, followed by a
 production-access application; review usually takes **up to 7 days**; testers must be able to
 sign in, so working credentials are required. Account deletion requires an **in-app path**, a
-**web-accessible deletion resource**, and accurate **Data safety** declarations. The deletion
-deferral is a recorded **risk, not compliance**.
+**web-accessible deletion resource** and accurate **Data safety** declarations; the owner has
+**deferred it from V1 and accepted the store-policy risk (Q6)**, so no deletion work is in this
+plan's scope or hours and shipping without it is a rejection risk, not compliance.
 
-Evidence: Play Console tester list and dates, production-access approval, deletion walkthrough,
-credential test. Gate: M10, G8.
+Evidence: Play Console tester list and dates, production-access approval, credential test, the Q6
+risk acceptance recorded in the 2026-10-21 decision record. Gate: M10, G8.
 
 #### E11 — Release candidate and acceptance (40–72 h)
 
@@ -1141,11 +1138,11 @@ Evidence: signed bundle hash, rollout record, acceptance sign-off. Gate: M11, G1
 
 ### 5.5.4 Engineering time and elapsed time
 
-| Capacity | Low (1,638 h) | High (2,832 h) |
+| Capacity | Low (1,626 h) | High (2,812 h) |
 |---|---|---|
-| 30 productive h/week | 55 weeks | 94 weeks |
-| 40 productive h/week | 41 weeks | 71 weeks |
-| 50 productive h/week | 33 weeks | 57 weeks |
+| 30 productive h/week | 54 weeks | 94 weeks |
+| 40 productive h/week | 41 weeks | 70 weeks |
+| 50 productive h/week | 33 weeks | 56 weeks |
 
 External waits are **not** in those numbers:
 
@@ -1156,7 +1153,6 @@ External waits are **not** in those numbers:
 | Production access review | Usually ≤7 days; plan 7–14 | No |
 | First-release store review | Not guaranteed; plan a buffer | No |
 | Firebase project access and configuration | 1–3 days | Yes |
-| Web deletion page hosting | 1–2 days | Yes |
 
 Calendar tail after feature completeness is therefore **at least 3 weeks** and realistically
 **6–10 weeks** once recruitment, review and one feedback iteration are included. The 2026-09-21
@@ -1262,13 +1258,16 @@ single longest external dependency.
 | During departure charge | Charge once at finish | Charge once at finish |
 | During season reset | Claim/resume; no double migration | n/a |
 
-### 5.6.5 Deletion and retention integrity
+### 5.6.5 Deferred account deletion and retention integrity
 
-Deleting an account must not leave a live RP-bearing profile that can be resurrected by a stale
-client or a queued outbox entry. The deletion path must remove or anonymize the profile, cancel
-pending outbox entries and invalidate sessions. How long anonymized match records are retained
-for integrity and dispute purposes is **not specified** in the current decisions; it is owner
-decision O-10 and must be settled before the Data safety declaration is submitted.
+Account deletion is **deferred from V1** by owner decision (Q6), with the store-policy risk
+accepted, so **no deletion path and no deletion integrity test ship in V1**. When deletion is
+implemented it must remove or anonymize the profile, cancel pending outbox entries and invalidate
+sessions, so that a stale client or a queued outbox entry cannot resurrect an RP-bearing profile.
+Data retained in V1 is what Q18 allows: the final result, the RP ledger and idempotency keys. How
+long anonymized match records are retained for integrity and dispute purposes is **not specified**
+in the current decisions; it is owner decision O-10 and must be settled before the Data safety
+declaration is submitted.
 
 ## 5.7 Open decisions and deferred work
 
@@ -1294,7 +1293,7 @@ answer.
 | Q3 | Super Call extension | Extends only when the Caller succeeds | Owner-approved | `OPEN_QUESTIONS.md` §D |
 | Q4 | Classic Dash + Risk | Adds both tables; the exact combined numbers remain open (O-01) | Owner-approved | `OPEN_QUESTIONS.md` §D; A6.8 |
 | Q5 | Sign-in methods | Google sign-in and email sign-up in Android V1 through Firebase Auth; no Play Games | Owner-approved | `OPEN_QUESTIONS.md` §D |
-| Q6 | Account deletion | Deferred in the old plan and **not compliant**; in-app path + web resource + declarations are mandatory | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q6 | Account deletion | Deferred from V1 by owner decision; the store-policy risk is accepted and the policy is not verified for our app; **not** a compliance claim | Owner-approved | `OPEN_QUESTIONS.md` §D + record §E/Q6 |
 | Q7 | Bot settings | The Ranked game creator chooses bot difficulty and personality | Owner-approved | `OPEN_QUESTIONS.md` §D |
 | Q7b | Ranked entry paths | Two paths: create the table yourself, or Auto-Match | Owner-approved | `OPEN_QUESTIONS.md` §D |
 | Q7c | Auto-Match model | Auto-Match joins a player-created waiting table; bots are the creator's choice | Owner-approved | record §O |
@@ -1337,7 +1336,7 @@ Q14 is superseded by Q14b/Q14c and is not implemented. Q23 and Q25 do not exist 
 
 | ID | Question | Concrete example | Why it blocks | Blocks |
 |---|---|---|---|---|
-| O-01 | Exact Classic Normal Dash + Risk numbers | Classic, total bids 15, Risk 10, seat is Normal Dash and takes 2. Normal Dash failure over = −T = −2; Risk failure = −(miss + 10) = −12. “Add both” gives **−14**. A Wizz-Risk reading gives **−22**. Success under: +23 + 10 = **+33**. The owner must confirm which arithmetic is the rule | E2.8 cannot be implemented or tested; T-07 has a blocked row | E2.8, T-07 |
+| O-01 | Exact Classic Normal Dash + Risk numbers | Classic, total bids 15, Risk value 10, seat is Normal Dash and takes 2 (miss = 2 against its 0 estimate). Reading (a) add components, the operation A6.3 uses in Normal mode: −2 (Normal Dash −T) plus the Risk value −10 = **−12**, with success +23 + 10 = **+33**. Reading (b) add the two complete Classic role formulas: −2 plus −(2 + 10) = **−14**, which counts the same miss twice and has no matching success side (the Risk formula needs an estimate this seat does not have). **−22** is the Normal-mode owner example, not a Classic value, and a Classic Wizz-Risk seat is a different role. The owner must confirm which arithmetic is the rule | E2.8 cannot be implemented or tested; T-07 has a blocked row | E2.8, T-07 |
 | O-02 | Fast-round equal-highest Super Call tie | Fast round: A declares 8♥, B declares 8♠, C and D lower. Who is Caller? Which trump is final? Is B With? Does the extension trigger? Current code uses seat order, which is an invention | Fast auction, With/Wazz, extension and T-11 all depend on it | E2.3, T-11 |
 | O-03 | 7th bot-takeover in ROOM and its interaction with the disconnect vote/WAIT | A player reconnects six times; on the 7th takeover, RANKED/UNRANKED record 2 Koz. In ROOM, is it 2 Koz, 1 Koz, or 0? If a ROOM/UNRANKED 30 s vote is open or a 90 s WAIT is running, does the 7th takeover fire, wait, or reset the cycle? | E4.3 and E3.5 cannot apply a charge or timing rule in ROOM without an answer | E4.3, E3.5, T-16 |
 | O-03c | ROOM permanent disconnect replacement charge | A5.1’s table says ROOM replacement = **no Koz** (`:446`); A6.6 says ROOM leave “for any reason” = **1 Koz**. Which controls? | Settlement would charge or not charge the same event differently | E3.5 |
@@ -1347,7 +1346,7 @@ Q14 is superseded by Q14b/Q14c and is not implemented. Q23 and Q25 do not exist 
 | O-07 | RD9 pool vs RD29 band for Auto-Match | RD9 says a pool; RD29 says joiner and creator are ≤1 tier apart. Two players two tiers apart: same pool or not? | Queue eligibility and T-20 | E4.1 |
 | O-08 | Is voice in V1? | The 2026-09-21 plan included push-to-talk in V1; the current gates are silent; there is no voice code | Scope and estimate; not included in this plan’s hours | Scope |
 | O-09 | Is monetization in V1? | No ads/IAP code; no billing account; old plan assumed AdMob | Scope, policy and $0 constraint | Scope |
-| O-10 | What remains after account deletion? | Q18 keeps result, RP ledger and idempotency keys; deletion must remove the profile and sessions. Are anonymized match rows retained, and for how long? | Data safety declaration and deletion implementation | E6.5, G8 |
+| O-10 | What remains after account deletion? | Q18 keeps result, RP ledger and idempotency keys; deletion must remove the profile and sessions. Are anonymized match rows retained, and for how long? | No V1 work: deletion is deferred (Q6). Needed before any deletion implementation and before the Data safety form states deletion behaviour. | Post-V1 deletion work |
 | O-11 | Are the RP balance constants final? | `RpEngineConfig` defaults (King +30, Second +15, Third −8, Koz −20) are marked placeholders pending a balance pass (RD4). Tests assert mapping and arithmetic against the config, not a final balance | The owner must approve the defaults or supply final numbers before Ranked can be called released | E2.9, G3 |
 
 None of these has a default. Where the plan needed a value to keep writing, it used a **blocked
@@ -1377,6 +1376,7 @@ measured, not voted on.
 | Public leaderboard | Deferred (owner) | Decisions §K; no board in V1 |
 | Inactive-player season records / season board | Not needed in V1 | No board |
 | App Check / Play Integrity | Deferred past V1 | Q21b |
+| Account deletion | Deferred (owner); store-policy risk accepted, policy not verified for our app | Q6; brief §G. A future implementation needs an in-app path, a web resource and Data safety declarations (indicative 12–20 h, **excluded** from this estimate) |
 | Web client | Out of scope | Android-only V1 |
 | iOS | Out of scope | Android-only V1 |
 | ROOM/UNRANKED server authority | Later release; no committed project | Q24 |
@@ -1449,8 +1449,8 @@ release; it is not averaged against passing gates.
 | G4 — Recovery and duplicate settlement | Can the system survive interruption? | T-18 and §5.6 recovery matrix pass; duplicate settlement impossible; quota failure never charges | Fault-injection log | Eng | Any confirmed double RP or lost settled match |
 | G5 — No billing and free tier | Does V1 run at $0? | No billing account; no Blaze; measured usage at 90% of the primary scenario within free limits | Billing console + Stage 0 E5/E6/E10/E12 | Owner + eng | Any billing link; over-limit without a documented plan |
 | G6 — Architecture approval | Is the runtime approved? | ADR approved by owner after G1; supersedes ADR 0002 where needed | Signed ADR | Owner | Implementation proceeding on an unapproved proposal |
-| G7 — Auth and account | Can the right people get in and out? | Guest gate, email sign-up, Google sign-in, linking, deletion path pass on device | Device matrix + deletion walkthrough | Eng | Google or sign-up missing; deletion only promised |
-| G8 — Store policy | Can the app be published? | 12 testers opted in **continuously for 14 days**; production access granted; reviewer credentials verified by a second person; Data safety and deletion URL live; listing accurate | Play Console records + credential test | Owner | Fewer than 12 testers; clock reset; no working credentials; deletion risk unsigned |
+| G7 — Auth and account | Can the right people get in and out? | Guest gate, email sign-up, Google sign-in, linking pass on device | Device matrix | Eng | Google or sign-up missing |
+| G8 — Store policy | Can the app be published? | 12 testers opted in **continuously for 14 days**; production access granted; reviewer credentials verified by a second person; Data safety declarations live; listing accurate | Play Console records + credential test | Owner | Fewer than 12 testers; clock reset; no working credentials; deletion deferral not recorded as owner-accepted |
 | G9 — Production configuration | Is the release configured safely? | Secrets not in VCS; rules deployed; version gate on; backup ≥90%; alerts on; environment separation verified | Config review checklist | Eng | Test project in production; open rules; no alerts |
 | G10 — Rollback and incident response | Can a bad release be stopped? | Rollback rehearsed; incident runbook; halt criteria; owner reachable | Drill log + runbook | Eng + owner | No rollback path; no runbook |
 | G11 — Owner acceptance | Does the owner accept V1? | V1-C1…V1-C14 met; written sign-off | Acceptance record | Owner | Verbal acceptance; open P0 defect |
@@ -1466,9 +1466,9 @@ because Play policy changes.
 | Production access | Apply after the 14 days; review **usually ≤7 days** | Approval record |
 | Low engagement / fewer than 12 | Continued testing required; the 14-day clock is not satisfied | Console status |
 | Reviewer access | Working sign-in credentials and instructions | Second-person login test |
-| Account deletion | In-app path + web-accessible resource + Data safety declarations | Walkthrough + URL + declaration screenshot |
-| Deletion risk | The old deferral is a **recorded risk, not compliance**; owner signs that the path ships | Signed risk/acceptance note |
-| Data safety | Declarations match actual collection, retention and deletion | Completed console form |
+| Account deletion | Play requires an in-app path + web resource; **deferred from V1 by owner decision (Q6)** | Risk acceptance recorded in the 2026-10-21 decision record (no V1 walkthrough) |
+| Deletion risk | The deferral is a **recorded risk, not compliance**; the owner accepted it and will wait for the store's response (Q6) | Decision record §E/Q6 |
+| Data safety | Declarations match actual collection and retention; V1 has no in-app deletion, and the form must state that | Completed console form |
 | Target API level | Re-verify the current requirement at submission; the app currently targets SDK 36 | Policy page + build config |
 
 Sources (accessed **2026-10-22**):
@@ -1579,13 +1579,13 @@ production week passes without an integrity incident or an unpatched P0 defect.
 | E3 Ranked runtime and settlement | 280 | 504 | 392 |
 | E4 Matchmaking, bots, disconnect | 128 | 224 | 176 |
 | E5 Statistics and seasons | 96 | 168 | 132 |
-| E6 Authentication and account | 56 | 96 | 76 |
+| E6 Authentication and account | 44 | 76 | 60 |
 | E7 UI design | 168 | 280 | 224 |
 | E8 Native conversion | 288 | 480 | 384 |
 | E9 Hardening and operations | 96 | 168 | 132 |
 | E10 Store readiness and testing | 72 | 136 | 104 |
 | E11 RC and acceptance | 40 | 72 | 56 |
-| **Total** | **1,638** | **2,832** | **2,235** |
+| **Total** | **1,626** | **2,812** | **2,219** |
 
 Midpoints are arithmetic means, not commitments. The high end is the number to use for capacity
 planning while Stage 0 and O-01…O-03 remain open.
