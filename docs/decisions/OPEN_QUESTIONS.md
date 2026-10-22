@@ -18,7 +18,7 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 | Season attribution across a boundary | DECIDED: completion season | replanning brief |
 | Ranked anonymous policy | DECIDED: no Ranked for guests; linked = registered | D |
 | Disconnect vote in Ranked | RESOLVED: not held (A5.2); configured bot takes the seat (roadmap line 2056) | records |
-| 2 Koz / vote kick 1 Koz / OPEN-4, OPEN-5 | RESOLVED by A5 (except Q14 stats interaction) | A5.1 |
+| Vote kick charge / OPEN-4, OPEN-5 | Vote Kick = **2 Koz** in RANKED+UNRANKED, not held in ROOM (Q14d(1) supersedes A5.1's 1 Koz); OPEN-4/OPEN-5 resolved by A5 | Q14d(1), A5.2 |
 | Match completion off-by-one | RESOLVED: all checks equivalent | engine code |
 | Voice signaling | DECIDED by delegation: match connection when voice is built (voice is ROOM-only, post-V1) | brief |
 | Leaderboard, inactive-player board visibility | DEFERRED (K) | K |
@@ -61,7 +61,8 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 | Q12 | Approved to write the ADR after Stage 0 succeeds (ADR text not yet approved) |
 | Q2e | No Vote Kick when the Koz is shared (unique Koz required); RP of shared Koz: Q2f |
 | Q26 | RD29 tier band joiner↔creator; joiner sees table settings first; no tables → message + Create button |
-| Q14b | ROOM leave (any reason) = 1 Koz; RANKED/UNRANKED leave (any reason) = 2 Koz; charged only when the match finishes and the player did not return (follow-ups Q14c, Q14d) |
+| Q14b | ROOM leave = 1 Koz; RANKED/UNRANKED leave = 2 Koz; charged only when the match finishes and the player did not return. “any reason” is narrowed to a **voluntary** leave by Q14b(1) (follow-ups Q14c, Q14d) |
+| Q14b(1) | **Departure = voluntary leave only (2026-10-22, A6.12).** A non-voluntary disconnect or app close charges nothing; a reconnect inside the takeover window is never a departure; the 7th takeover and the 15-timeout removal are not departures and keep their own 2-Koz charges without an added leave penalty. No charge value changes and no new value is introduced. **Residual: whether “disconnect charges nothing” also repeals the ratified 2-Koz UNRANKED permanent disconnect-replacement cell → O-03c (owner to decide)** |
 | Q1 | General Pass consumes the round: round 6 all pass → round 7 ×2; Sa'ayda in 7 → round 8 ×4 (follow-up Q1b) |
 | Q3 | Super Call extends only if the Caller succeeds |
 | Q14c | UNRANKED enters ALL profile statistics (no RP); reverses decision J's exclusion (follow-up Q15c) |
