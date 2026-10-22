@@ -191,7 +191,7 @@ These are the criteria §5.8 turns into gates. Each is objectively checkable.
 | R-09 | Client-triggered settlement with in-memory retry loses results on process death | High | High | Durable outbox + idempotent settlement (§5.6) | Eng |
 | R-10 | Four matching ROOM/UNRANKED reports can be fabricated or collusive | Medium | Medium | Documented limitation; server records final result only; no RP | Owner |
 | R-11 | Version skew between app, rules and functions | Medium | Medium | Version gate and minimum-client field (§5.6 F-16) | Eng |
-| R-12 | Design coverage: core screens have no artboards; only 12 screens exist, all on the fixed 932×430 landscape frame, and S45 is a non-compliant portrait artboard | High | Medium | E7 works on the D10 932×430 frame: reuse compliant artboards, re-cut S45, fill the missing surfaces | Owner + design |
+| R-12 | Design coverage: core screens have no artboards; only 12 screens exist, all on the fixed 932×430 landscape frame | High | Medium | E7 works on the D10 932×430 frame: reuse the compliant artboards (S45 included) as-is, fill the missing surfaces | Owner + design |
 | R-13 | Single-engineer capacity: 1,638–2,832 h is 41–71 weeks at 40 productive h/week | High | High | Scope decisions in §5.7; phased release; no hidden parallel work | Owner |
 | R-14 | ADR 0002 and the no-Blaze decision conflict | High | Medium | New ADR after Stage 0; ADR 0002 marked superseded in part | Eng |
 
@@ -229,7 +229,7 @@ The other decisions shape or defer specific work; they do not stop the baseline 
 | App identity | `versionCode 1`, `versionName "0.1.0-phase1"`; **no google-services plugin** | `native/app/build.gradle.kts` |
 | CI | Strong build/unit-test job; instrumented job; hosting-only production deploy | `.github/workflows/android.yml:79`, `.github/workflows/deploy-production.yml:61` |
 | Functions deployability | 11 exported callables; no billing account, so Cloud Functions cannot be deployed under the no-Blaze constraint | `native/functions/index.js:19-33` |
-| Design artefacts | 17 HTML files / 12 distinct screens on the fixed **932×430 landscape** frame; one non-compliant portrait artboard (S45) is re-cut | `docs/design/`, `docs/UI_UX_ROADMAP.md:2611-2615`, `docs/NATIVE_V1_PLAN_AND_ESTIMATE.md:716-731` |
+| Design artefacts | 17 HTML files / 12 distinct screens on the fixed **932×430 landscape** frame, S45 included; the checked-in artboards are compliant and are reused, with no re-cut budgeted | `docs/design/`, `docs/design/Estimation Ranked Home S45.html:8`, `docs/UI_UX_ROADMAP.md:2611-2615` |
 | Android surfaces | 27 identified: 4 implemented and wired, 7 partial, 7 design-only, 9 missing | `docs/UI_UX_ROADMAP.md`, `native/app` routes |
 | Navigation | 11 routes; `Routes.STANDINGS` is a dead preview | `native/app/src/main/java/com/estemshan/game/ui/Routes.kt` |
 
@@ -271,7 +271,7 @@ the closing epic and the evidence that closes the gap.
 |---|---|---|---|---|---|---|
 | Ranked runtime | Gameplay is client-owned; the client writes match state under `firestore.rules`; rules cannot verify a shuffle (`firestore.rules:1470-1480`) | 473 engine tests prove client-side rules only; no server-authority test exists | Server-authoritative match state for RANKED only; client cannot forge the result | MISSING — no authority layer for gameplay, no move validation, no server-side deal | E3.1 (after Stage 0/O-06); exit evidence: Stage 0 E1/E2 + authority tests | Stage 0 E1–E10; ADR approval (O-06) |
 | Result settlement | `settleOnce` (`SettlementDb.kt:691`), transaction (`:757`), `foldRankedProgression` (`:608`); client `maybeSettle` (`OnlineMatchViewModel.kt:944`) with `MAX_TRANSIENT_FAILURES = 6` (`:1312`); `Settlement.decide` returns `NoOp` for ROOM/UNRANKED (`Settlement.kt:340-348`) | `SettlementTest`, `SettlementLedgerTest`, `SettlementLedgerEmulatorTest`, `SettlementRpEmulatorTest`, `SettlementResponseTest`; no durable-outbox test | Exactly-once settlement; durable outbox; idempotent claim; no in-memory-only retry | PARTIAL — settlement is client-triggered and retries live only in memory; no durable outbox; departure charges and all-left abandonment not applied | E3.4/E3.5; exit evidence: T-18 fault injection | Runtime (E3.1/E3.3); backup policy |
-| Departure charges | `decideLeave`: Vote Kick → `Koz1`; RANKED/UNRANKED → `Koz2`; ROOM → `None` (`LeaveMatch.kt:50-56`) | `LeaveMatchTest` asserts Vote Kick = 1 Koz, encoding the stale A5.1 rule; `DepartureContractTest`, `LeaveMatchEmulatorTest` cover the other paths | ROOM 1 Koz; UNRANKED/RANKED 2 Koz; a passed Vote Kick 2 Koz in RANKED/UNRANKED (Q14b `:193`, Q14d(1) `:203`); only at finish if not returned; no charge for server/quota failure; 7th takeover 2 Koz in RANKED/UNRANKED (ROOM open, O-03) | PARTIAL — Vote Kick is also INCORRECT: it returns 1 Koz (engine gap; A5.1 stale); ROOM charge missing; no finish-time application; no server-failure exemption; 7th-takeover scope open | E3.5 (O-03); exit evidence: T-14/T-15 | O-03, O-03c; Q14b/Q14d(1) are decided |
+| Departure charges | `decideLeave`: Vote Kick → `Koz1`; RANKED/UNRANKED → `Koz2`; ROOM → `None` (`LeaveMatch.kt:50-56`) | `LeaveMatchTest` asserts Vote Kick = 1 Koz, encoding the stale A5.1 rule; `DepartureContractTest`, `LeaveMatchEmulatorTest` cover the other paths | ROOM 1 Koz; UNRANKED/RANKED 2 Koz; a passed Vote Kick 2 Koz in RANKED/UNRANKED (Q14b `:193`, Q14d(1) `:203`); only at finish if not returned; no charge for server/quota failure; 7th takeover 2 Koz in RANKED/UNRANKED (ROOM open, O-03) | INCORRECT — Vote Kick is also INCORRECT: it returns 1 Koz (engine gap; A5.1 stale); ROOM charge missing; no finish-time application; no server-failure exemption; 7th-takeover scope open | E3.5 (O-03); exit evidence: T-14/T-15 | O-03, O-03c; Q14b/Q14d(1) are decided |
 | Matchmaking | No production implementation (`MatchmakingPort.kt:29-33`); navigation hardcodes ROOM (`AppNav.kt:291`); no queue or matchmaking screen | `MatchmakingPoolTest`, `MatchmakingViewModelTest`, `FakeMatchmaking` test an unconnected pool and UI stub | Auto-Match joins a player-created waiting table; 2-minute bot fill; 30 s majority vote; humans-only strength | MISSING — entire matchmaking flow, including bot-fill vote and strength source | E4.1/E4.2; exit evidence: T-20 | Runtime, auth (E3.1/E6); O-07 |
 | ROOM lifecycle | `RoomService.createRoom` (`:55`), `setReady` (`:234`), `maybeStartMatch` (`:273`); `CreateGameScreen` is room-only (`:48-50`); no room list (`LobbyScreen.kt:43-45`) | `RoomViewModelTest`, `TableViewModelTest`, `PlayerServiceTest` | Full table of four; create/join by code; ready/start; leave; no Ranked rules | PARTIAL — no discovery/list, no four-player enforcement surface, navigation only opens ROOM | E4.4; exit evidence: ROOM E2E test | O-04 (ROOM bots) |
 | Statistics | `accumulateRankedStat` returns unchanged unless `mode == RANKED` and not placement (`RankedStats.kt:103`); `accumulateDepartureCharge` (`:151`) | `RankedStatsTest`, `RankedProfileTest` encode the Ranked-only gate | Nine career statistics for **all** finished matches, including ROOM/UNRANKED; counts and percentages over games played; only RANKED placement matches are excluded | INCORRECT — statistics are Ranked-only and placement-gated; ROOM/UNRANKED contribute nothing | E5.1; exit evidence: T-19 | Settlement records (E3.3) |
@@ -323,7 +323,7 @@ is **not** part of this plan’s allowed changes.
 | 19-rank RP model and arithmetic | `RpEngine` has base, round and final delta logic | Fix placement input, keep arithmetic |
 | 2,410-line deny-by-default rules | Strong structural baseline | Add version gate and adversarial review |
 | 11 callable functions and 56 emulator suites | Settlement, season, party and timeout logic already tested | Port behind the approved runtime |
-| 12 design screens (932×430) | Visual language and copy exist | Reuse compliant artboards, re-cut S45, keep tokens |
+| 12 design screens (932×430) | Visual language and copy exist | Reuse the compliant artboards, keep tokens |
 | CI build/test pipeline | Catches regressions in four modules | Extend with release and parity jobs |
 
 ### 5.2.5 What the baseline does not prove
@@ -371,7 +371,7 @@ Legend for expected values:
 | Super Call extension only when Caller succeeds | A6.5 (`:531`) | Extension independent of success | E2.6 | T-05 (success) | T-05 (failure) | A successful Caller Super Call adds one round; a failed one adds none; the Sa'ayda count still adds independently | Engine report |
 | Normal Super Call bid² / half-up loss | A1 (`:220-221`), Q19c | `Scoring.kt:63` | E2.7 (verify only) | T-05 (win rows) | T-05 (loss rows) | Bid 8 win not sole = 64; win sole = 74; loss not sole = −32; loss sole = −42; no separate Caller +10 on the Super Call row | Engine report |
 | Normal Dash + Risk adds both components | A6.3 (`:527-529`) | Risk dropped (`RoundScore.kt:79`) | E2.7 | T-06 (success, sole winner) | T-06 (failure, sole loser, Risk ladder) | At the owner example (total bids 15, Risk 10, takes 0) the score is +20; taking 2 gives −22; neither component is dropped or counted twice | Engine report |
-| Classic scoring tables incl. Super Call +42/−20 | Current Rules §4 (`:150-180`) | `Scoring.kt:112` and table rows | E2.8 (verify) | T-07 (known rows) | T-05 (Classic row) | Bid 5 Classic E+13 gives 28; Super Call gives +42/−20; sole cap is −22; no Normal formula leaks into Classic | Engine report |
+| Classic scoring tables incl. Super Call +42/−20 | Current Rules §4 (`:150-180`) | `Scoring.kt:112` and table rows | E2.8 (verify) | T-07 (known rows) | T-05 (Classic row) | Bid 5 Classic Caller/With gives 5+13+10 = 28; Super Call gives +42/−20; sole cap is −22; no Normal formula leaks into Classic | Engine report |
 | Classic Dash + Risk adds both components | A6.8 (`:534`) | Missing; numbers open | E2.8 (blocked O-01) | None until O-01 | T-07 (combined and sole rows, skipped placeholder) | Blocked: no combined Classic Dash+Risk value may be asserted until O-01 fixes the arithmetic; the test stays skipped, not guessed | O-01 decision |
 | Normal With = Caller’s winning suit, last bid in that suit | A6.9 (`:535`), Q19 | Suit-blind floor (`Bidding.kt:273-274`) | E2.4 | T-08 | T-12 | A player who bid the winning suit at any time is With at their last bid **in that suit**; a matching number in another suit is not enough; With at 5 scoring 25 / −12 | Engine report |
 | Fast With = exact highest number, plus final-trump condition | A6.10 (`:536`), Q28 | Everyone ≥8 With (`Bidding.kt:716`) | E2.3/E2.4 | T-10 | T-10 (trump changed, earlier estimate) + T-11 (tie) | Only a player whose final number equals the highest exactly — and whose estimate was made under the final trump when it changed — is With; an 8 is not With when the highest is 10 | Engine report |
@@ -1047,14 +1047,14 @@ Commands: app unit tests; manual device walkthrough recorded as evidence. Gate: 
 #### E7 — UI design (168–280 h)
 
 Goal: design all 27 surfaces on the fixed **932×430 landscape** frame (D10), against frozen rules
-and the real API shape, in English and Arabic. Compliant existing artboards are reused, the
-non-compliant portrait frame (S45) is re-cut, and missing surfaces and states are designed new.
+and the real API shape, in English and Arabic. Compliant existing artboards (all checked in at
+932×430, including S45) are reused, and missing surfaces and states are designed new.
 
 | Task | Work | Files / symbols | Deps | Acceptance | Hours | Conf. |
 |---|---|---|---|---|---|---|
 | E7.1 | Landscape design system and 932×430 grid | New artboard library on the fixed frame | M2 | Tokens, type, spacing, RTL rules for 932×430 | 24–40 | Medium |
 | E7.2 | Core 12 screens | `docs/design/`; S01–S12 equivalents | E7.1 | Every core screen has a compliant 932×430 artboard (reused, re-cut or new) | 48–80 | Medium |
-| E7.3 | Ranked, placement, matchmaking, seasons | S45–S56 surfaces; S45 re-cut from portrait | E7.1 | 932×430 screens/states for rank chip, queue, placement, season label | 32–52 | Medium |
+| E7.3 | Ranked, placement, matchmaking, seasons | S45–S56 surfaces (existing 932×430 artboards reused) | E7.1 | 932×430 screens/states for rank chip, queue, placement, season label | 32–52 | Medium |
 | E7.4 | In-match overlays: vote, WAIT, takeover, leave | S63/S72/S74 surfaces | E7.1 | Every overlay has default/loading/error states at 932×430 | 24–40 | Medium |
 | E7.5 | Profile, nine statistics, history | S03/S44 surfaces | E7.1 | Nine stats + percentages designed at 932×430 | 20–36 | Medium |
 | E7.6 | Arabic copy, RTL, terminology review | Strings and artboards | E7.2–E7.5 | Native-speaker sign-off; no dropped placeholders | 20–32 | Medium |
@@ -1064,9 +1064,10 @@ Files: `docs/design/*.html`, `docs/UI_UX_ROADMAP.md`, `native/app/src/main/res/v
 screenshots. Gate: M7.
 
 Estimate assumption: the 168–280 h range is unchanged from the first draft. It assumes the
-existing 932×430 artboards are reused where compliant and S45 is re-cut at 932×430, so the
-portrait-only rework is removed; the saved hours are absorbed by filling the surfaces that have no
-artboard. No portrait artboard is produced.
+existing artboards, S45 included, are reused as-is on the D10 932×430 frame, so no re-cut is
+budgeted; the historical “390×844 / re-cut” statement in
+`docs/NATIVE_V1_PLAN_AND_ESTIMATE.md:729-733` is stale (that file is historical). The saved hours
+are absorbed by filling the surfaces that have no artboard. No portrait artboard is produced.
 
 #### E8 — Native conversion (288–480 h)
 
@@ -1317,13 +1318,13 @@ answer.
 | Q18 | Data retention | Keep the final result, RP ledger and idempotency keys; delete action history | Owner-approved | `OPEN_QUESTIONS.md` §D |
 | Q19 | Normal With | Winning-suit alignment; the With number is the player's last bid in that suit | Owner-approved | `OPEN_QUESTIONS.md` §D |
 | Q19c | A1 bid² wording | The A1 “legacy tracker only” sentence is corrected in the documents only; no code or scoring change; bid² stays | Owner-approved | record §T |
-| Q28 | Fast-round With (superseded) | Q28 was restated by the later fast-round ruling at `:242-250`, which supersedes it; the plan follows the later ruling (exact number plus the final-trump condition) | Owner-approved | record §T |
-| Q29 | Re-declaration order | After each Super Call, every player except the Super Caller re-declares under the new trump, counter-clockwise; players who bid after the Super Caller no longer keep their estimate | Owner-approved | record §T |
 | Q20 | Outage | Timers freeze and resume; no timeout is charged | Owner-approved | `OPEN_QUESTIONS.md` §D |
 | Q21 | Auth gate | Ranked requires a registered account (App Check is Q21b) | Owner-approved | `OPEN_QUESTIONS.md` §D |
 | Q21b | App Check / Play Integrity | Deferred past V1 | Deferred beyond V1 | `OPEN_QUESTIONS.md` §D |
 | Q22 | Seasons | Lazy reset, no inactive-player records, 90-day seasons, two-step reset | Owner-approved | `OPEN_QUESTIONS.md` §D |
 | Q24 | ROOM/UNRANKED authority | Stay app-managed; any server move is a later release with no committed project | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q28 | Fast-round With (superseded) | Q28 was restated by the later fast-round ruling at `record §U:242-250`, which supersedes it; the plan follows the later ruling (exact number plus the final-trump condition) | Owner-approved | record §T |
+| Q29 | Re-declaration order | After each Super Call, every player except the Super Caller re-declares under the new trump, counter-clockwise; players who bid after the Super Caller no longer keep their estimate | Owner-approved | record §T |
 | Q26 | Auto-Match join rules | RD29 band (≤1 tier); the joiner sees the table settings first; no table → “no tables right now” + Create Table | Owner-approved | record §O |
 | Q27 | Everyone-left outcome | Cancelled as soon as the last human leaves; all players Koz; RANKED RP = the engine's last-place loss; server/quota failure exempt; ROOM/UNRANKED record Koz without RP | Owner-approved | record §Q |
 | Q27b | Leave versus disconnect | An explicit leave cancels immediately only if no player remains; a disconnection follows the 10 s rule, then the bot; all humans disconnected for a fixed short period → cancel | Owner-approved | record §Q |
