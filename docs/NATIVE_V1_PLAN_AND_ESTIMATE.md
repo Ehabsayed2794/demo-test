@@ -1,5 +1,9 @@
 # Estemshan Native v1 — Project Plan & Estimation (Remaining Work to Release)
 
+> **HISTORICAL — SUPERSEDED.** This 2026-09-21 plan is retained unchanged as history. The current
+> plan is [`docs/NATIVE_V1_IMPLEMENTATION_PLAN_V2.md`](NATIVE_V1_IMPLEMENTATION_PLAN_V2.md)
+> (2026-10-22, baseline `7a7e65c`). Do not use this file for scope, sequencing or estimates.
+
 **Date:** 2026-09-21 · **Prepared by:** Senior PM / Tech Lead / Estimation role
 **Baseline:** git `origin/main` @ `a8fc086` (verified, not the stale checked-out branch)
 **Operating model:** 1 engineer + AI coding agents (matches actual cadence — Phases 0–10 landed at ~1 phase/day, Sep 17–19)
