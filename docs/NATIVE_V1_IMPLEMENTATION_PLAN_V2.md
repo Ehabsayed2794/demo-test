@@ -43,9 +43,10 @@ planning pass; it is not a claim that every lower source has been rewritten.
 | 6 | Code, tests, rules files | **Evidence of what exists**, never evidence of what is correct |
 
 A lower-ranked source that contradicts a higher one is recorded as a documentation defect
-(§5.2.3), not silently followed. Two known cases matter immediately: the Current Rules summary
-still says Vote Kick records 2 Koz, and A6.7 still says the same, while the binding owner ruling
-(A5.1, 2026-10-17) says **1 Koz**. This plan uses 1 Koz.
+(§5.2.3), not silently followed. One case matters immediately: Current Rules item 7 and A6.7
+record a passed Vote Kick as **2 Koz**, matching the binding owner rulings Q14b and Q14d(1)
+(2026-10-21). A5.1's “1 Koz” and `OPEN_QUESTIONS.md` §B are stale (D-01, D-12), and the engine
+returns 1 Koz (`LeaveMatch.kt:53`) — an implementation gap, not the rule. This plan uses **2 Koz**.
 
 ### Scope of this document
 
@@ -103,7 +104,7 @@ with **no Firebase Blaze plan** and no billing account attached to the project.
 | Ranked | 19 ranks, RP engine, placement, Auto-Match with bot fill, seasons, rank-down party gate | Public leaderboard (deferred by owner), cross-season ladders, decay beyond the documented reset |
 | Statistics | Nine career statistics for all finished matches, including UNRANKED and ROOM | Per-mode stat filters beyond what the existing profile model stores |
 | Identity | Anonymous guest, email sign-up/sign-in, Google sign-in, anonymous→registered linking, account deletion path | Apple, phone auth, Google Play Games, other social login |
-| Android | All 27 surfaces designed, implemented and wired; EN/AR with RTL | Tablet-specific layouts, landscape-only redesign, Wear/TV |
+| Android | All 27 surfaces designed, implemented and wired on the fixed 932×430 landscape frame (D10); EN/AR with RTL | Tablet-specific layouts, Wear/TV |
 | Operations | Backup policy, recovery, rollback, incident runbook, $0 free-tier verification | 24/7 on-call, SLA, multi-region failover |
 | Monetization | None | Ads, IAP, subscriptions, cosmetics |
 | Voice | None | Push-to-talk or any real-time voice |
@@ -125,7 +126,7 @@ The three modes do not have the same trust model, and V1 must not pretend they d
 | Who reports the result | All four clients; backend requires matching reports | All four clients; backend requires matching reports | Server computes; client report is advisory |
 | RP | None | None (frozen) | Yes, one source of truth |
 | Career statistics | Yes (all nine) | Yes (all nine) | Yes (all nine) |
-| Vote Kick | Not held in ROOM | 1 Koz | 1 Koz |
+| Vote Kick | Not held in ROOM | 2 Koz (Q14d(1)) | 2 Koz (Q14d(1)) |
 | Departure charge | 1 Koz (§5.2.3 D-02) | 2 Koz | 2 Koz |
 | RD31 2-Koz doubling | Excluded | Applies | Applies |
 | Bot fill | Allowed (owner scope question C18) | Allowed per existing rules | 2-minute fill + 30-second majority vote |
@@ -135,6 +136,10 @@ Two consequences follow. First, “server-authoritative” is a **RANKED-only** 
 ROOM would contradict the owner's explicit app-managed decision and add cost for no integrity
 gain. Second, statistics are **not** a Ranked feature: UNRANKED and ROOM matches must update
 them, which is the opposite of the baseline's `accumulateRankedStat` gate.
+
+Vote Kick is **2 Koz in RANKED and UNRANKED** and is not held in ROOM (Q14b `:193`, Q14d(1)
+`:203`; Current Rules item 7 and A6.7 agree). A5.1's 1 Koz is superseded; the engine still
+returns `Koz1` (`LeaveMatch.kt:53`), which is a code gap, not the rule.
 
 ### 5.1.4 Hard constraints
 
@@ -164,7 +169,7 @@ These are the criteria §5.8 turns into gates. Each is objectively checkable.
 | V1-C6 | Duplicate settlement calls and replayed requests produce exactly one stored result and one RP delta | Idempotency test log |
 | V1-C7 | Interruption at trick, round, result and settlement boundaries recovers to a consistent state within the documented bound | Recovery test matrix (§5.6) |
 | V1-C8 | Departure charges match the owner table for all three modes, only at match finish, never for server/quota failure | Charge vector suite |
-| V1-C9 | Every finished match in every mode updates the nine career statistics; UNRANKED is included; the Ranked placement gate applies only to placement matches | Stats integration tests |
+| V1-C9 | Every finished match in every mode updates the nine career statistics; UNRANKED and ROOM are included, not Ranked-only; only RANKED placement matches are excluded, and being mid-placement never suppresses UNRANKED or ROOM statistics | Stats integration tests |
 | V1-C10 | 90-day season, lazy reset and two-step reset pass their vectors; no profile remains stale after settlement | Season reset suite |
 | V1-C11 | All 27 surfaces are implemented and wired or explicitly deferred with owner sign-off; 11 routes reachable; no placeholder strings; EN/AR + RTL render | UI surface checklist + screenshots |
 | V1-C12 | Guests can play ROOM but not RANKED; email sign-up and Google sign-in work; anonymous→registered linking preserves the uid; account deletion path exists in-app and on the web | Auth tests + deletion walkthrough |
@@ -186,7 +191,7 @@ These are the criteria §5.8 turns into gates. Each is objectively checkable.
 | R-09 | Client-triggered settlement with in-memory retry loses results on process death | High | High | Durable outbox + idempotent settlement (§5.6) | Eng |
 | R-10 | Four matching ROOM/UNRANKED reports can be fabricated or collusive | Medium | Medium | Documented limitation; server records final result only; no RP | Owner |
 | R-11 | Version skew between app, rules and functions | Medium | Medium | Version gate and minimum-client field (§5.6 F-16) | Eng |
-| R-12 | Design coverage: core screens have no artboards; all mockups are 932×430 landscape | High | Medium | E7 designs portrait first for the 27 surfaces | Owner + design |
+| R-12 | Design coverage: core screens have no artboards; only 12 screens exist, all on the fixed 932×430 landscape frame, and S45 is a non-compliant portrait artboard | High | Medium | E7 works on the D10 932×430 frame: reuse compliant artboards, re-cut S45, fill the missing surfaces | Owner + design |
 | R-13 | Single-engineer capacity: 1,638–2,832 h is 41–71 weeks at 40 productive h/week | High | High | Scope decisions in §5.7; phased release; no hidden parallel work | Owner |
 | R-14 | ADR 0002 and the no-Blaze decision conflict | High | Medium | New ADR after Stage 0; ADR 0002 marked superseded in part | Eng |
 
@@ -213,18 +218,18 @@ The other decisions shape or defer specific work; they do not stop the baseline 
 | PR #151 shape | Docs only: 6 files, +448 / −9 | `git show --stat 7a7e65c` |
 | Working branch | `docs/native-v1-implementation-plan-v2` | branch created from `7a7e65c` |
 | Kotlin modules | `native/engine`, `native/app`, `native/services`, `native/functions` | `native/settings.gradle.kts` |
-| Source scale | 252 Kotlin files: 144 production, 108 test | module counts: engine 69 (36/32), app 99 (47/25), services 56 (30/23), functions 63 (31/28) |
+| Source scale | 252 Kotlin files: 144 production, 108 test | module counts: engine 68 (36/32), app 72 (47/25), services 53 (30/23), functions 59 (31/28) |
 | Engine tests | 473 tests across 32 test classes | `native/engine/src/*Test` |
-| App tests | 183 tests across 25 JVM test files; no `androidTest` directory | `native/app/src/test` |
+| App tests | 183 tests across 25 JVM test files; no `androidTest` source set in `native/app` | `native/app/src/test` |
 | Services tests | 189 tests | `native/services/src/test` |
 | Functions tests | 516 tests | `native/functions/src/*Test` |
-| Emulator suites | 56 `tests/*.cjs` suites run against Firestore/Auth emulators | `native/functions/package.json`, `.github/workflows/test.yml` |
+| Emulator suites | 56 `tests/*.cjs` suites run against Firestore/Auth emulators | root `package.json:13`, `tests/`, `.github/workflows/test.yml` |
 | Rules file | 2,410 lines, deny-by-default, structural validation only | `firestore.rules:1470-1480`, catch-all `:2406` |
-| Android toolchain | Kotlin 1.9.25, Gradle 8.14.3, Java 17, compileSdk/targetSdk 36, minSdk 26 | `native/app/build.gradle.kts`, `native/gradle/libs.versions.toml` |
+| Android toolchain | Kotlin 1.9.25, Gradle 8.14.3, Java 17, compileSdk/targetSdk 36, minSdk 26 | `native/build.gradle.kts:9-14`, `native/gradle/wrapper/gradle-wrapper.properties:3`, `native/app/build.gradle.kts:58-67`, Java 17 at `native/app/build.gradle.kts:184-188` |
 | App identity | `versionCode 1`, `versionName "0.1.0-phase1"`; **no google-services plugin** | `native/app/build.gradle.kts` |
 | CI | Strong build/unit-test job; instrumented job; hosting-only production deploy | `.github/workflows/android.yml:79`, `.github/workflows/deploy-production.yml:61` |
 | Functions deployability | 11 exported callables; no billing account, so Cloud Functions cannot be deployed under the no-Blaze constraint | `native/functions/index.js:19-33` |
-| Design artefacts | 17 HTML files / 12 distinct screens, all **932×430 landscape**; no portrait artboards | `docs/design/`, `docs/UI_UX_ROADMAP.md:2612-2615` |
+| Design artefacts | 17 HTML files / 12 distinct screens on the fixed **932×430 landscape** frame; one non-compliant portrait artboard (S45) is re-cut | `docs/design/`, `docs/UI_UX_ROADMAP.md:2611-2615`, `docs/NATIVE_V1_PLAN_AND_ESTIMATE.md:716-731` |
 | Android surfaces | 27 identified: 4 implemented and wired, 7 partial, 7 design-only, 9 missing | `docs/UI_UX_ROADMAP.md`, `native/app` routes |
 | Navigation | 11 routes; `Routes.STANDINGS` is a dead preview | `native/app/src/main/java/com/estemshan/game/ui/Routes.kt` |
 
@@ -235,51 +240,55 @@ Status vocabulary: **Implemented** (behaviour exists and is broadly correct), **
 binding rule), **Missing** (no implementation), **Not deployable** (code exists but cannot run
 in production under the V1 constraints).
 
-Every row has seven columns: requirement area, required V1 behaviour, baseline evidence,
-status, gap, planned work, and the evidence that closes the gap.
+Every table uses the brief §5.2 columns: requirement/subsystem, current implementation and code
+evidence, existing tests and their evidence, approved target behaviour, gap or contradiction,
+proposed work, and dependencies/blockers. The status is folded into the gap column as its first
+word (“IMPLEMENTED — …”, “PARTIAL — …”, “INCORRECT — …”, “MISSING — …”, “NOT DEPLOYABLE — …”), so
+the seven mandated columns stay intact without losing the status distinction. Proposed work names
+the closing epic and the evidence that closes the gap.
 
 #### A. Gameplay, rules and scoring
 
-| Area | Required V1 behaviour | Baseline evidence | Status | Gap | Planned work | Exit evidence |
+| Requirement / subsystem | Current implementation + code evidence | Existing tests + evidence | Approved target behaviour | Gap or contradiction | Proposed work | Dependencies / blockers |
 |---|---|---|---|---|---|---|
-| Match and round structure | FULL 18 rounds (fast 14–18), MINI 10 (fast 6–10), 4 players, 13 tricks, counter-clockwise | `GameType.FULL(18,14,5)` / `MINI(10,6,1)` in `Bidding.kt:111-113`; engine test suite | Implemented | None known at the structural level; extension and pass rules are separate rows | E2.1 regression lock | Engine test report |
-| Auction and bid validation | Minimum bid 4; Caller’s winning suit binds With; Estimation Jump-In respects the rule | `withFloorFor` reads the last `BID` in **any** suit (`Bidding.kt:273-274`); `forbiddenEstimateFor` (`Bidding.kt`) is number-only | Partial | With floor is suit-blind; jump-in does not carry suit semantics | E2.2 | New auction matrix tests (§5.3 T-08/T-12) |
-| Fast Super Call | Every higher 8+ Super Call re-opens confirmation; every player except the Super Caller re-declares; trump may change | `fastSuperResolved` set once (`Bidding.kt:594`, `:609`); replacement trump wipes **only seats before the Caller** (`Bidding.kt:575-585`); every 8+ becomes With (`superCandidates`, `:707-722`) with a seat-order tie-break | Incorrect | One-shot resolution; later estimates stay committed; With set and tie-break invented | E2.3 | T-09/T-11 vectors; owner decision O-02 for ties |
-| With / Wazz | Normal: With = anyone who bid the Caller’s winning suit, number = their last bid in that suit. Fast: highest winning number **exactly**, plus final-trump estimate if trump changed; not every 8+ | Same `superCandidates.drop(1)` path (`Bidding.kt:716`); floor suit-blind | Incorrect | Over-inclusive With set; no final-trump re-estimate rule | E2.3/E2.4 | T-08/T-10/T-12 |
-| General Pass | Consumes the round; Normal applies ×2; Classic consumes with no multiplier; multiplier sequence ×2→×4→×6→×8 | `doubled = minOf(state.roundMultiplier * 2, 8)` (`Bidding.kt:496`); client re-deals the same round (`QuickMatchViewModel.kt:154-166`; `OnlineMatchViewModel.kt:724` returns on `GeneralPass`); Classic doubles | Incorrect | Same-round replay; sequence skips ×6; Classic wrongly doubles; no round consumption | E2.5 | T-01/T-02/T-22 |
-| Sa'ayda extension | Each 14–18 round with Sa'ayda adds a round; final round repeats until it ends with a winner; no caps; MINI 6–10 mirror | Window-only extension; caps FULL 5 / MINI 1 enforced and user-facing (`A2.1`); no final-round repeat | Partial | No repeat-until-winner; caps contradict Q2c; MINI final repeat absent | E2.6 | T-03/T-04 |
-| Round extension | Extension only when the Super Caller succeeds; combines with Sa'ayda count | `computeRoundExtension` returns false outside `firstFastRound..baseRounds` (`RoundScore.kt:222-238`) | Partial | No extension from the final round; combination with count untested | E2.6 | T-04/T-05 |
-| Normal scoring | 10+T; Caller/With ±10; sole ±10; Risk; Super Call bid² win / half-up loss; Normal Dash + Risk **adds** both | Super Call and Dash rows correct (`Scoring.kt:63`, `:75`); `normalRoleFor` returns `REG_DASH` before checking `isRisk` (`RoundScore.kt:79`) | Partial | Dash+Risk silently drops the Risk component (engine +10 instead of +20 at the owner example) | E2.7 | T-06 |
-| Classic scoring | Separate tables: E+13, Caller penalty 10/20, Risk ±10, Wizz-Risk E+33, Super Call +42/−20, Dash tables, sole cap −22; Classic Dash+Risk adds both | Base tables present (`Scoring.kt:112` for flat Super Call); Dash+Risk absent; numbers for Classic Dash+Risk open (Q4) | Partial | Missing Classic Dash+Risk; owner numbers unresolved | E2.8 (blocked on O-01) | T-07 / O-01 |
-| Placement and Koz | Tied lowest are all Koz unless all four tie (then all King); shared Koz is not Second/Third | `placementRank` = 1 + seats strictly ahead (`Placement.kt:212`); `placementOutcome` maps rank 3 → THIRD (`:218-222`); comment defends “a Koz is never fabricated” | Incorrect | Tied-lowest players become THIRD; shared Koz unsupported | E2.9 | T-13 |
-| RP engine | 19 ranks; base Koz −20 / Third −8; MINI ×0.5 ties away from zero; RD29 band; one source of truth | `baseKozLoss = -20`, `baseThirdLoss = -8` (`RpEngine.kt:76-78`); `computeBaseDelta` (`:200`); `roundDelta` (`:327`); `finalRpDelta` (`:347`) | Partial | Correct arithmetic, but inherits the placement bug, so tied-lowest players receive Third loss | E2.9/E3.2 | T-13/T-20 |
-| Bots | Seat takeover, bot profile from room config, deterministic play | `botProfileFor` (`TimeoutResolution.kt:417`); bot takeover path exists; engine bot tests | Partial | Bot play exists, but the 7th-takeover charge rule and ROOM scope are unresolved (O-03) | E2.10/E4.3 | Bot match suite |
-| Inactivity and takeover | 10 s disconnect delay, then takeover; no 50 s engine clock; 7th takeover removes and records 2 Koz in RANKED/UNRANKED (ROOM open, O-03); 60 s all-gone cancellation | `TAKEOVER_THRESHOLD_MILLIS = 50_000L` (`InactivityClock.kt:143`); comment “There is no timeout count here” (`:147`); 15-timeout removal threshold 15 (`TimeoutResolution.kt:245`) | Incorrect | Uses the 50 s S73 clock as the takeover trigger; no 10 s delay, no takeover counter, no 7th removal, no 60 s cancel | E2.10/E4.3 | T-16 |
+| Match and round structure | `GameType.FULL(18,14,5)` / `MINI(10,6,1)` in `Bidding.kt:111-113`; 4 seats, 13 tricks, counter-clockwise | `GameTypeTest`, `GameSessionTest`; 473 engine tests green at `7a7e65c` | FULL 18 rounds (fast 14–18), MINI 10 (fast 6–10), 4 players, 13 tricks, counter-clockwise | IMPLEMENTED — no structural gap known; extension and pass rules are separate rows | E2.1 regression lock; exit evidence: engine test report | None |
+| Auction and bid validation | `withFloorFor` reads the last `BID` in **any** suit (`Bidding.kt:273-274`); `forbiddenEstimateFor` (`Bidding.kt`) is number-only | `BiddingTest`, `BidBrainTest` encode current auction behaviour | Minimum bid 4; Caller’s winning suit binds With; Estimation Jump-In respects the rule | PARTIAL — With floor is suit-blind; jump-in does not carry suit semantics | E2.2; exit evidence: new auction matrix tests (§5.3 T-08/T-12) | None; O-02 only for the fast tie case |
+| Fast Super Call | `fastSuperResolved` set once (`Bidding.kt:594`, `:609`); replacement trump wipes **only seats before the Caller** (`Bidding.kt:575-585`); every 8+ becomes With (`superCandidates`, `:707-722`) with a seat-order tie-break | `BiddingTest` fast-super cases and root `tests/fast-super-reset.test.cjs` encode one-shot resolution | Every higher 8+ Super Call re-opens confirmation; every player except the Super Caller re-declares; trump may change | INCORRECT — one-shot resolution; later estimates stay committed; With set and tie-break invented | E2.3; exit evidence: T-09/T-11 vectors | O-02 for the equal-highest tie; T-11 stays a skipped placeholder until then |
+| With / Wazz | Same `superCandidates.drop(1)` path (`Bidding.kt:716`); floor suit-blind (`Bidding.kt:273-274`) | `BiddingTest`, `ScoringTest` cover number-only With, not suit semantics | Normal: With = anyone who bid the Caller’s winning suit, number = their last bid in that suit. Fast: highest winning number **exactly**, plus final-trump estimate if trump changed; not every 8+ | INCORRECT — over-inclusive With set; no final-trump re-estimate rule | E2.3/E2.4; exit evidence: T-08/T-10/T-12 | None; Q28/Q29 answers recorded (§5.7.1) |
+| General Pass | `doubled = minOf(state.roundMultiplier * 2, 8)` (`Bidding.kt:496`); client re-deals the same round (`QuickMatchViewModel.kt:154-166`; `OnlineMatchViewModel.kt:724` returns on `GeneralPass`); Classic doubles | `BiddingTest`, `QuickMatchViewModelTest`, `OnlineMatchViewModelTest` encode the redeal | Consumes the round; Normal ×2; Classic consumes with no multiplier; multiplier sequence ×2→×4→×6→×8 | INCORRECT — same-round replay; sequence skips ×6; Classic wrongly doubles; no round consumption | E2.5; exit evidence: T-01/T-02/T-22 | None |
+| Sa'ayda extension | Window-only extension; caps FULL 5 / MINI 1 enforced and user-facing (`A2.1`); no final-round repeat | `RoundScoreTest` covers the capped window | Each 14–18 round with Sa'ayda adds a round; final round repeats until it ends with a winner; no caps; MINI 6–10 mirror | PARTIAL — no repeat-until-winner; caps contradict Q2c; MINI final repeat absent | E2.6; exit evidence: T-03/T-04 | None |
+| Round extension | `computeRoundExtension` returns false outside `firstFastRound..baseRounds` (`RoundScore.kt:222-238`) | `RoundScoreTest` covers fast-window success only | Extension only when the Super Caller succeeds; combines with Sa'ayda count | PARTIAL — no extension from the final round; combination with count untested | E2.6; exit evidence: T-04/T-05 | None |
+| Normal scoring | Super Call and Dash rows correct (`Scoring.kt:63`, `:75`); `normalRoleFor` returns `REG_DASH` before checking `isRisk` (`RoundScore.kt:79`) | `ScoringTest`, `RoundScoreTest` green; a test encodes the dropped Risk | 10+T; Caller/With ±10; sole ±10; Risk; Super Call bid² win / half-up loss; Normal Dash + Risk **adds** both | PARTIAL — Dash+Risk silently drops the Risk component (engine +10 instead of +20 at the owner example) | E2.7; exit evidence: T-06 | None (O-01 covers Classic only) |
+| Classic scoring | Base tables present (`Scoring.kt:112` for flat Super Call); Dash+Risk absent; numbers for Classic Dash+Risk open (Q4) | `ScoringTest` Classic rows; no combined-row test | Separate tables: E+13, Caller penalty 10/20, Risk ±10, Wizz-Risk E+33, Super Call +42/−20, Dash tables, sole cap −22; Classic Dash+Risk adds both | PARTIAL — missing Classic Dash+Risk; owner numbers unresolved | E2.8 (blocked on O-01); exit evidence: T-07 / O-01 | O-01 |
+| Placement and Koz | `placementRank` = 1 + seats strictly ahead (`Placement.kt:212`); `placementOutcome` maps rank 3 → THIRD (`:218-222`); comment defends “a Koz is never fabricated” | `PlacementTest`, `PlacementScoringTest` encode tied-lowest → Third | Tied lowest are all Koz unless all four tie (then all King); shared Koz is not Second/Third | INCORRECT — tied-lowest players become THIRD; shared Koz unsupported | E2.9; exit evidence: T-13 | None |
+| RP engine | `baseKozLoss = -20`, `baseThirdLoss = -8` (`RpEngine.kt:76-78`); `computeBaseDelta` (`:200`); `roundDelta` (`:327`); `finalRpDelta` (`:347`) | `RpEngineTest`, `RpEngineMixedTierTest` pass on current arithmetic | 19 ranks; base Koz −20 / Third −8; MINI ×0.5 ties away from zero; RD29 band; one source of truth | PARTIAL — correct arithmetic, but inherits the placement bug, so tied-lowest players receive Third loss | E2.9/E3.2; exit evidence: T-13/T-20 | O-11 for the balance constants |
+| Bots | `botProfileFor` (`TimeoutResolution.kt:417`); bot takeover path exists | `BotPersonalityTest`, `BotTierTest`, `BotVsBotSmokeTest`, `BotTrioTest` | Seat takeover, bot profile from room config, deterministic play | PARTIAL — bot play exists, but the 7th-takeover charge rule and ROOM scope are unresolved (O-03) | E2.10/E4.3; exit evidence: bot match suite | O-03, O-04 |
+| Inactivity and takeover | `TAKEOVER_THRESHOLD_MILLIS = 50_000L` (`InactivityClock.kt:143`); comment “There is no timeout count here” (`:147`); 15-timeout removal threshold 15 (`TimeoutResolution.kt:245`) | `InactivityClockTest`, `InactiveTakeoverTest`, `DisconnectVoteTest` cover the 50 s clock | 10 s disconnect delay, then takeover; no 50 s engine clock; 7th takeover removes and records 2 Koz in RANKED/UNRANKED (ROOM open, O-03); 60 s all-gone cancellation | INCORRECT — uses the 50 s S73 clock as the takeover trigger; no 10 s delay, no takeover counter, no 7th removal, no 60 s cancel | E2.10/E4.3; exit evidence: T-16 | O-03 |
 
 #### B. Ranked runtime, settlement and progression data
 
-| Area | Required V1 behaviour | Baseline evidence | Status | Gap | Planned work | Exit evidence |
+| Requirement / subsystem | Current implementation + code evidence | Existing tests + evidence | Approved target behaviour | Gap or contradiction | Proposed work | Dependencies / blockers |
 |---|---|---|---|---|---|---|
-| Ranked runtime | Server-authoritative match state for RANKED only; client cannot forge the result | Gameplay is client-owned; the client writes match state under `firestore.rules`; rules cannot verify a shuffle (`firestore.rules:1470-1480`) | Missing | No authority layer for gameplay, no move validation, no server-side deal | E3.1 (after Stage 0/O-06) | Stage 0 E1/E2 + authority tests |
-| Result settlement | Exactly-once settlement; durable outbox; idempotent claim; no in-memory-only retry | `settleOnce` (`SettlementDb.kt:691`), transaction (`:757`), `foldRankedProgression` (`:608`); client `maybeSettle` (`OnlineMatchViewModel.kt:944`) with `MAX_TRANSIENT_FAILURES = 6` (`:1312`); `Settlement.decide` returns `NoOp` for ROOM/UNRANKED (`Settlement.kt:340-348`) | Partial | Settlement is client-triggered and retries live only in memory; no durable outbox; departure charges and all-left abandonment not applied | E3.4/E3.5 | T-18 fault injection |
-| Departure charges | ROOM 1 Koz; UNRANKED/RANKED 2 Koz; only at finish if not returned; no charge for server/quota failure; 7th takeover 2 Koz in RANKED/UNRANKED (ROOM open, O-03) | `decideLeave`: Vote Kick → `Koz1`; RANKED/UNRANKED → `Koz2`; ROOM → `None` (`LeaveMatch.kt:50-56`) | Partial | ROOM charge missing; no finish-time application; no server-failure exemption; 7th-takeover scope open | E3.5 (O-03) | T-14/T-15 |
-| Matchmaking | Auto-Match joins a player-created waiting table; 2-minute bot fill; 30 s majority vote; humans-only strength | No production implementation (`MatchmakingPort.kt:29-33`); navigation hardcodes ROOM (`AppNav.kt:291`); no queue or matchmaking screen | Missing | Entire matchmaking flow, including bot-fill vote and strength source | E4.1/E4.2 | T-20 |
-| ROOM lifecycle | Full table of four; create/join by code; ready/start; leave; no Ranked rules | `RoomService.createRoom` (`:55`), `setReady` (`:234`), `maybeStartMatch` (`:273`); `CreateGameScreen` is room-only (`:48-50`); no room list (`LobbyScreen.kt:43-45`) | Partial | No discovery/list, no four-player enforcement surface, navigation only opens ROOM | E4.4 | ROOM E2E test |
-| Statistics | Nine career statistics for **all** finished matches, including ROOM/UNRANKED; counts and percentages over games played; the Ranked placement gate applies only to placement matches | `accumulateRankedStat` returns unchanged unless `mode == RANKED` and not placement (`RankedStats.kt:103`); `accumulateDepartureCharge` (`:151`) | Incorrect | Statistics are Ranked-only and placement-gated; ROOM/UNRANKED contribute nothing | E5.1 | T-19 |
-| Seasons | 90-day seasons, lazy reset, two-step reset, no bulk 10,000-profile sweep as the only mechanism | `NINETY_DAYS_MILLIS` (`SeasonResetRun.kt:80`); `MAX_RESET_PROFILES = 10_000` (`SeasonResetDb.kt:103`); scheduled sweep | Partial | Bulk sweep caps at 10,000 and is not lazy per profile; reset races settlement | E5.2 | T-19 + reset race tests |
+| Ranked runtime | Gameplay is client-owned; the client writes match state under `firestore.rules`; rules cannot verify a shuffle (`firestore.rules:1470-1480`) | 473 engine tests prove client-side rules only; no server-authority test exists | Server-authoritative match state for RANKED only; client cannot forge the result | MISSING — no authority layer for gameplay, no move validation, no server-side deal | E3.1 (after Stage 0/O-06); exit evidence: Stage 0 E1/E2 + authority tests | Stage 0 E1–E10; ADR approval (O-06) |
+| Result settlement | `settleOnce` (`SettlementDb.kt:691`), transaction (`:757`), `foldRankedProgression` (`:608`); client `maybeSettle` (`OnlineMatchViewModel.kt:944`) with `MAX_TRANSIENT_FAILURES = 6` (`:1312`); `Settlement.decide` returns `NoOp` for ROOM/UNRANKED (`Settlement.kt:340-348`) | `SettlementTest`, `SettlementLedgerTest`, `SettlementLedgerEmulatorTest`, `SettlementRpEmulatorTest`, `SettlementResponseTest`; no durable-outbox test | Exactly-once settlement; durable outbox; idempotent claim; no in-memory-only retry | PARTIAL — settlement is client-triggered and retries live only in memory; no durable outbox; departure charges and all-left abandonment not applied | E3.4/E3.5; exit evidence: T-18 fault injection | Runtime (E3.1/E3.3); backup policy |
+| Departure charges | `decideLeave`: Vote Kick → `Koz1`; RANKED/UNRANKED → `Koz2`; ROOM → `None` (`LeaveMatch.kt:50-56`) | `LeaveMatchTest` asserts Vote Kick = 1 Koz, encoding the stale A5.1 rule; `DepartureContractTest`, `LeaveMatchEmulatorTest` cover the other paths | ROOM 1 Koz; UNRANKED/RANKED 2 Koz; a passed Vote Kick 2 Koz in RANKED/UNRANKED (Q14b `:193`, Q14d(1) `:203`); only at finish if not returned; no charge for server/quota failure; 7th takeover 2 Koz in RANKED/UNRANKED (ROOM open, O-03) | PARTIAL — Vote Kick is also INCORRECT: it returns 1 Koz (engine gap; A5.1 stale); ROOM charge missing; no finish-time application; no server-failure exemption; 7th-takeover scope open | E3.5 (O-03); exit evidence: T-14/T-15 | O-03, O-03c; Q14b/Q14d(1) are decided |
+| Matchmaking | No production implementation (`MatchmakingPort.kt:29-33`); navigation hardcodes ROOM (`AppNav.kt:291`); no queue or matchmaking screen | `MatchmakingPoolTest`, `MatchmakingViewModelTest`, `FakeMatchmaking` test an unconnected pool and UI stub | Auto-Match joins a player-created waiting table; 2-minute bot fill; 30 s majority vote; humans-only strength | MISSING — entire matchmaking flow, including bot-fill vote and strength source | E4.1/E4.2; exit evidence: T-20 | Runtime, auth (E3.1/E6); O-07 |
+| ROOM lifecycle | `RoomService.createRoom` (`:55`), `setReady` (`:234`), `maybeStartMatch` (`:273`); `CreateGameScreen` is room-only (`:48-50`); no room list (`LobbyScreen.kt:43-45`) | `RoomViewModelTest`, `TableViewModelTest`, `PlayerServiceTest` | Full table of four; create/join by code; ready/start; leave; no Ranked rules | PARTIAL — no discovery/list, no four-player enforcement surface, navigation only opens ROOM | E4.4; exit evidence: ROOM E2E test | O-04 (ROOM bots) |
+| Statistics | `accumulateRankedStat` returns unchanged unless `mode == RANKED` and not placement (`RankedStats.kt:103`); `accumulateDepartureCharge` (`:151`) | `RankedStatsTest`, `RankedProfileTest` encode the Ranked-only gate | Nine career statistics for **all** finished matches, including ROOM/UNRANKED; counts and percentages over games played; only RANKED placement matches are excluded | INCORRECT — statistics are Ranked-only and placement-gated; ROOM/UNRANKED contribute nothing | E5.1; exit evidence: T-19 | Settlement records (E3.3) |
+| Seasons | `NINETY_DAYS_MILLIS` (`SeasonResetRun.kt:80`); `MAX_RESET_PROFILES = 10_000` (`SeasonResetDb.kt:103`); scheduled sweep | `SeasonResetTest`, `SeasonResetRunTest`, `SeasonResetJobTest`, `SeasonResetDryRunEmulatorTest` | 90-day seasons, lazy reset, two-step reset, no bulk 10,000-profile sweep as the only mechanism | PARTIAL — bulk sweep caps at 10,000 and is not lazy per profile; reset races settlement | E5.2; exit evidence: T-19 + reset race tests | Statistics/profile store |
 
 #### C. Android product, security, delivery and operations
 
-| Area | Required V1 behaviour | Baseline evidence | Status | Gap | Planned work | Exit evidence |
+| Requirement / subsystem | Current implementation + code evidence | Existing tests + evidence | Approved target behaviour | Gap or contradiction | Proposed work | Dependencies / blockers |
 |---|---|---|---|---|---|---|
-| Core Android surfaces | All 27 surfaces implemented and wired; 11 routes reachable; no dead previews | 4 wired, 7 partial, 7 design-only, 9 missing; `Routes.STANDINGS` dead; `MatchMode.ROOM` hardcoded (`AppNav.kt:291`) | Partial | 23 surfaces need work (7 partial, 7 design-only, 9 missing); navigation does not expose Ranked/UNRANKED | E7/E8 | Surface checklist + screenshots |
-| Ranked UI | Rank chip, tier/division, RP progress, season label, placement intro, matchmaking | No rank chip; S54 season blank; S45–S56 design-only | Missing | All Ranked-facing UI and state wiring | E7/E8 | Ranked UI test + screenshots |
-| Match-time UI | Vote Kick, disconnect vote, WAIT countdown, leave confirmation, takeover indicator, 7th removal | No vote-kick, disconnect-pause, leave or timer UI | Missing | All in-match decision UI | E7/E8 | T-14/T-16 UI tests |
-| Authentication | Anonymous guest for ROOM/UNRANKED; email sign-up and Google sign-in for Ranked; linking preserves uid; deletion path | `signInAnonymously` / `signInWithEmail` only (`AuthRepository.kt:19-20`); no google-services plugin; no Google, sign-up or deletion screen | Partial | No Google, no registration, no linking, no deletion; Firebase project wiring unproven on device | E6 | T-21 + device walkthrough |
-| Rules and security | Deny-by-default, but also enforce what the client must not forge; version gate | 2,410-line rules, deny-by-default, catch-all (`:2406`); comment states structural validation only (`:1470-1480`) | Partial | Rules validate shape, not fairness; no minimum-client version field | E3.6 | Rules test suite + adversarial review |
-| Functions deployment | Deployable runtime under $0/no Blaze; manifest matches exports | 11 exports (`native/functions/index.js:19-33`); `operatorSeasonResetDryRun` absent from the export map; Cloud Functions require Blaze | Not deployable | Runtime cannot be deployed as-is; manifest drift | E1/E3.1 | Stage 0 E1/E9 + deploy dry run |
-| CI and release engineering | Build, unit, instrumented, emulator suites, release signing, versioning, store upload | `android.yml:79` covers app/engine/services unit tests; `.github/workflows/test.yml` runs 56 cjs suites; deploy is hosting-only (`deploy-production.yml:61`); version `0.1.0-phase1` | Partial | No release build, signing, bundle upload or version-skew gate | E10/E11 | Release pipeline run |
-| Backup, observability and recovery | ≥90% backup coverage for the primary RP store; outbox; recovery runbook; alerts; rollback | No backup, alerting or runbook artefacts found | Missing | Operational readiness entirely absent | E3.4/E9 | Stage 0 E7 + gate G4 |
+| Core Android surfaces | 4 wired, 7 partial, 7 design-only, 9 missing; `Routes.STANDINGS` dead; `MatchMode.ROOM` hardcoded (`AppNav.kt:291`) | 183 app JVM tests across 25 files, including `StandingsUiTest`; no `androidTest` source set in `native/app` | All 27 surfaces implemented and wired on the 932×430 landscape frame; 11 routes reachable; no dead previews | PARTIAL — 23 surfaces need work (7 partial, 7 design-only, 9 missing); navigation does not expose Ranked/UNRANKED | E7/E8; exit evidence: surface checklist + screenshots | Design sign-off (M7); auth (M6) |
+| Ranked UI | No rank chip; S54 season blank; S45–S56 design-only | `StandingsRankedTest`, `PlacementViewModelTest` cover JVM state only | Rank chip, tier/division, RP progress, season label, placement intro, matchmaking | MISSING — all Ranked-facing UI and state wiring | E7/E8; exit evidence: Ranked UI test + screenshots | M3 API shape; M7 design |
+| Match-time UI | No vote-kick, disconnect-pause, leave or timer UI | `OnlineMatchViewModelTest`, `OpponentAwayTrackerTest` cover view-model state only | Vote Kick, disconnect vote, WAIT countdown, leave confirmation, takeover indicator, 7th removal | MISSING — all in-match decision UI | E7/E8; exit evidence: T-14/T-16 UI tests | T-16 engine rows; M7 |
+| Authentication | `signInAnonymously` / `signInWithEmail` only (`AuthRepository.kt:19-20`); no google-services plugin; no Google, sign-up or deletion screen | `AuthRepositoryTest`, `AuthPortAdapterTest` cover the guest/email adapters | Anonymous guest for ROOM/UNRANKED; email sign-up and Google sign-in for Ranked; linking preserves uid; deletion path | PARTIAL — no Google, no registration, no linking, no deletion; Firebase project wiring unproven on device | E6; exit evidence: T-21 + device walkthrough | Firebase project access; OAuth consent/fingerprints |
+| Rules and security | 2,410-line rules, deny-by-default, catch-all (`:2406`); comment states structural validation only (`:1470-1480`) | 56 root `tests/*.cjs` suites include rules-emulator and real-backend matrices | Deny-by-default, but also enforce what the client must not forge; version gate | PARTIAL — rules validate shape, not fairness; no minimum-client version field | E3.6; exit evidence: rules test suite + adversarial review | Runtime; engine freeze |
+| Functions deployment | 11 exports (`native/functions/index.js:19-33`); `operatorSeasonResetDryRun` absent from the export map; Cloud Functions require Blaze | `CallableAuthTest`, `CallablePayloadBridgingTest` and the `jsNodeTest` suite; deployment itself untested | Deployable runtime under $0/no Blaze; manifest matches exports | NOT DEPLOYABLE — runtime cannot be deployed as-is; manifest drift | E1/E3.1; exit evidence: Stage 0 E1/E9 + deploy dry run | Stage 0; O-06; no-Blaze constraint |
+| CI and release engineering | `android.yml:79` covers app/engine/services unit tests; `.github/workflows/test.yml` runs 56 cjs suites; deploy is hosting-only (`deploy-production.yml:61`); version `0.1.0-phase1` | CI runs green on the recorded suites; no release job test | Build, unit, instrumented, emulator suites, release signing, versioning, store upload | PARTIAL — no release build, signing, bundle upload or version-skew gate | E10/E11; exit evidence: release pipeline run | Signing key (not committed); Play access |
+| Backup, observability and recovery | No backup, alerting or runbook artefacts found | No tests | ≥90% backup coverage for the primary RP store; outbox; recovery runbook; alerts; rollback | MISSING — operational readiness entirely absent | E3.4/E9; exit evidence: Stage 0 E7 + gate G4 | Runtime; O-06 |
 
 ### 5.2.3 Documentation defects found
 
@@ -289,7 +298,7 @@ is **not** part of this plan’s allowed changes.
 
 | ID | Defect | Where | Binding resolution | Action |
 |---|---|---|---|---|
-| D-01 | Vote Kick recorded as **2 Koz** | Current Rules item 7 (`CANONICAL_RULES.md:209`) and A6.7 (`:533`) | **1 Koz** (A5.1 `:445`, `:449`; A4 amendment `:365`; owner ruling 2026-10-17) | Rules correction ticket; tests use 1 Koz |
+| D-01 | Vote Kick recorded as **1 Koz** in the A5.1 charge table and its “Vote Kick records 1 Koz, final” note | A5.1 (`CANONICAL_RULES.md:445`, `:449`); the A4 amendment (`:365`) is only a supersession pointer | **2 Koz** in RANKED and UNRANKED (Q14b `:193`, Q14d(1) `:203`); Current Rules item 7 (`:209`) and A6.7 (`:533`) are correct | Correct A5.1 (and `OPEN_QUESTIONS.md` §B, D-12); tests use 2 Koz; the engine returns `Koz1` (`LeaveMatch.kt:53`) — implementation gap for E3.5 |
 | D-02 | ROOM departure described as “no 2-Koz rule” without stating the 1-Koz charge | A5.1 charge table (`:441-447`) vs A6.6 (`:532`) | **ROOM 1 Koz**, excluded from RD31’s 2-Koz charge | Clarify A5.1 table footnote |
 | D-03 | A6.1 says a General Pass is a “redeal”; A6.4 says it **consumes the round** | A6.1 (`:516`) vs A6.4 (`:530`) | **Consumes the round**; A6.1 wording superseded in part | Consolidate A6.1/A6.4 |
 | D-04 | A6.9 fast-round With is superseded by A6.10 but both remain normative-looking | A6.9 (`:535`), A6.10 (`:536`) | A6.10 controls fast rounds; A6.9 controls Normal | Consolidate into one paragraph |
@@ -297,10 +306,10 @@ is **not** part of this plan’s allowed changes.
 | D-06 | Extension caps “up to 5” / “exactly 1” | A2.1 (`:241`), A2.2 (`:249`) | **Caps removed** (Q2c; A6.2 follow-up) | Remove caps from A2.1/A2.2 |
 | D-07 | A1 body scopes bid² to the legacy tracker | A1 (`:216-224`) | Native Normal mode applies bid² (Q19c pointer at `:224`) | Body text correction; numbers are correct |
 | D-08 | ADR 0002 defines a Firebase Functions runtime | `docs/adr/0002-functions-runtime.md` | Conflicts with no-Blaze and with the Cloudflare **proposal** | New ADR after Stage 0; mark 0002 superseded in part |
-| D-09 | RD25 makes Ranked launch-blocking, but no-Blaze prevents deploying its functions | Old plan `docs/NATIVE_V1_PLAN_AND_ESTIMATE.md:58` | Unresolved until the runtime decision; Stage 0 exists to resolve it | §5.7 O-06 |
+| D-09 | RD25 makes Ranked launch-blocking, but no-Blaze prevents deploying its functions | Old plan `docs/NATIVE_V1_PLAN_AND_ESTIMATE.md:62` | Unresolved until the runtime decision; Stage 0 exists to resolve it | §5.7 O-06 |
 | D-10 | Story numbers S36–S44 (design) collide with S36–S74 (plan) and E7 uses S65–S69 | `docs/UI_UX_ROADMAP.md:812-819` | **Map by name, never by number** | Keep the warning; cite names in this plan |
 | D-11 | `AGENTS.md` calls the 2026-09-21 file the “only plan document” | `AGENTS.md:3-8` | This V2 plan is current; old file is historical | Pointer edit (part of this task) |
-| D-12 | Q14d answer still says Vote Kick 2 Koz | `docs/decisions/2026-10-21-server-authority-and-owner-rulings.md` §N | 1 Koz per A5.1 | Mark Q14d superseded |
+| D-12 | `OPEN_QUESTIONS.md` §B still records “vote kick 1 Koz” as resolved by A5.1 | `docs/decisions/OPEN_QUESTIONS.md:21` | **2 Koz** (Q14d(1) `:203`); Q14d itself is no longer a defect | Update §B to point at Q14d(1); do not mark Q14d superseded |
 | D-13 | “All players are Koz” abandonment wording does not distinguish humans from bots or specify ROOM | A5.1 (`:209`), A6.7 (`:533`) | Partially unresolved; see §5.7 O-03 | Owner clarification |
 | D-14 | Fast takeover timings (10 s/7th) sit beside disconnect vote (30 s/90 s WAIT) without an interaction rule | `docs/decisions/2026-10-21...md` §G vs A5.2 (`:455-466`) | **Not defined**; do not invent | §5.7 O-03 |
 | D-15 | Current Rules is a 12-item summary, not the full rule set; coverage is uneven across areas | Current Rules (`:199-214`) | Use it as summary only; amendments and decisions govern detail | Note in rules index |
@@ -314,7 +323,7 @@ is **not** part of this plan’s allowed changes.
 | 19-rank RP model and arithmetic | `RpEngine` has base, round and final delta logic | Fix placement input, keep arithmetic |
 | 2,410-line deny-by-default rules | Strong structural baseline | Add version gate and adversarial review |
 | 11 callable functions and 56 emulator suites | Settlement, season, party and timeout logic already tested | Port behind the approved runtime |
-| 12 design screens (932×430) | Visual language and copy exist | Redesign portrait; keep tokens |
+| 12 design screens (932×430) | Visual language and copy exist | Reuse compliant artboards, re-cut S45, keep tokens |
 | CI build/test pipeline | Catches regressions in four modules | Extend with release and parity jobs |
 
 ### 5.2.5 What the baseline does not prove
@@ -324,8 +333,9 @@ is **not** part of this plan’s allowed changes.
   suite at `7a7e65c` proves consistency with today’s code, not with the owner’s rules.
 - **The rules file is not an authority layer.** It validates document shape; it cannot verify a
   shuffle, a legal play or a score (`firestore.rules:1470-1480`).
-- **Nothing runs on a device.** There is no `androidTest` suite, so UI wiring, auth and
-  navigation are unproven outside JVM tests.
+- **Nothing runs on a device.** There is no `androidTest` suite in `native/app`, so UI wiring,
+  auth and navigation are unproven outside JVM tests. (`native/services/src/androidTest` exists,
+  but it exercises emulator-backed services, not the UI.)
 - **Nothing is measured.** Free-tier limits, backup lag, startup and bundle size have not been
   measured; Stage 0 exists because of this.
 - **Nothing is releasable.** There is no signed release build, no store listing pipeline, no
@@ -335,10 +345,13 @@ is **not** part of this plan’s allowed changes.
 
 ### 5.3.1 Method and legend
 
-Every V1 rule is traced from its **binding source** to **planned implementation**, a **test ID**
-and a **release evidence** item. Test IDs are stable strings used in test names and in the
-release checklist. A rule with no test ID is not releasable; a test with no rule is either a
-regression guard or should be deleted.
+Every V1 rule is traced from its **binding source** to **current implementation evidence**, a
+**planned implementation task**, **positive tests**, **negative and edge-case tests**, a
+**per-rule acceptance criterion** and a **release evidence** item. Acceptance is per rule: a rule
+is not releasable because a sibling rule in the same area passes. Positive and negative tests are
+separate columns so a happy path cannot stand in for the rejected or edge cases. Test IDs are
+stable strings used in test names and in the release checklist. A rule with no test ID is not
+releasable; a test with no rule is either a regression guard or should be deleted.
 
 Legend for expected values:
 
@@ -351,31 +364,31 @@ Legend for expected values:
 
 ### 5.3.2 Master traceability table
 
-| Requirement | Binding source | Baseline evidence | Planned task | Test IDs | Release evidence |
-|---|---|---|---|---|---|
-| General Pass consumes the round; Normal ×2; Classic no multiplier; ladder ×2→×4→×6→×8 | A6.4 (`CANONICAL_RULES.md:530`), Current Rules item 1 (`:203`) | Same-round replay; `Bidding.kt:496`; `QuickMatchViewModel.kt:154-166`; `OnlineMatchViewModel.kt:724` | E2.5 | T-01, T-02, T-22 | Engine report + §5.8 G2 |
-| Sa'ayda per-round extension, final-round repeat, no caps | A6.2 (`:520-526`), Q2c | Window-only; caps 5/1; no final repeat (`RoundScore.kt:222-238`) | E2.6 | T-03, T-04 | Engine report |
-| Super Call extension only when Caller succeeds | A6.5 (`:531`) | Extension independent of success | E2.6 | T-05 | Engine report |
-| Normal Super Call bid² / half-up loss | A1 (`:220-221`), Q19c | `Scoring.kt:63` | E2.7 (verify only) | T-05 | Engine report |
-| Normal Dash + Risk adds both components | A6.3 (`:527-529`) | Risk dropped (`RoundScore.kt:79`) | E2.7 | T-06 | Engine report |
-| Classic scoring tables incl. Super Call +42/−20 | Current Rules §4 (`:150-180`) | `Scoring.kt:112` and table rows | E2.8 (verify) | T-07 | Engine report |
-| Classic Dash + Risk adds both components | A6.8 (`:534`) | Missing; numbers open | E2.8 (blocked O-01) | T-07 | O-01 decision |
-| Normal With = Caller’s winning suit, last bid in that suit | A6.9 (`:535`), Q19 | Suit-blind floor (`Bidding.kt:273-274`) | E2.4 | T-08, T-12 | Engine report |
-| Fast With = exact highest number, plus final-trump condition | A6.10 (`:536`), Q28 | Everyone ≥8 With (`Bidding.kt:716`) | E2.3/E2.4 | T-10, T-11 | Engine report |
-| Fast Super Call re-declaration by every non-Caller | A6.11 (`:537`), Q29 | One-shot; keeps later estimates (`Bidding.kt:577-609`) | E2.3 | T-09 | Engine report |
-| Shared Koz and shared King | Q2d, A6.2 (`:526`) | Tied lowest → Third (`Placement.kt:212-222`) | E2.9 | T-13 | Engine report |
-| Vote Kick 1 Koz, unique Koz only, no ROOM vote | A5.1 (`:445`, `:449`), controller ruling | `LeaveMatch.kt:53` returns Koz1; no unique-Koz guard | E3.5 | T-14 | Settlement tests |
-| ROOM 1 Koz; RANKED/UNRANKED 2 Koz; charge at finish only | A6.6 (`:532`), A5.1 (`:441-447`) | ROOM returns None (`LeaveMatch.kt:56`) | E3.5 | T-15 | Settlement tests |
-| 7th takeover removes and records 2 Koz in RANKED/UNRANKED; ROOM scope open | Decisions §G; controller ruling | No takeover counter (`InactivityClock.kt:147`) | E4.3 (scope O-03) | T-16 | O-03 decision |
-| Disconnect 10 s → takeover; 30 s vote; 90 s WAIT; 60 s all-gone cancel | A5.2 (`:455-466`), Q27c | 50 s clock only | E4.3 | T-16 | Engine + UI tests |
-| Nine statistics for every mode; percentages over games played | Q14c, A6.7 (`:533`), A6.8 (`:534`) | RANKED-only, placement-gated (`RankedStats.kt:103`) | E5.1 | T-19 | Stats tests |
-| 90-day seasons, lazy reset, two-step reset | Q22, `SeasonResetRun.kt:80` | Bulk sweep, 10,000 cap | E5.2 | T-19 | Season tests |
-| Auto-Match with 2-min bot fill and 30 s vote; humans-only strength | Q7c/Q26, decisions §F | No implementation (`MatchmakingPort.kt:29-33`) | E4.1/E4.2 | T-20 | Matchmaking tests |
-| Guests cannot enter Ranked; email sign-up and Google sign-in for Ranked; linking preserves uid | Decisions §D, Q5, Q21 | Anonymous/email only; no Google, sign-up or gate (`AuthRepository.kt:19-20`) | E6 | T-21 | Device walkthrough |
-| ROOM/UNRANKED four matching reports; recorded limitation | Decisions §J, Q15c | No convergence enforcement for ROOM/UNRANKED (`Settlement.kt:340-348`) | E3.6 | T-17 | Settlement tests |
-| Exactly-once settlement with durable outbox | Decisions §I | In-memory 6 retries (`OnlineMatchViewModel.kt:1312`) | E3.4 | T-18 | Fault injection |
-| ≥200 seeded engine/server parity | Brief Stage 0 E2 | Not run | E1.2 | T-23 | Stage 0 report |
-| Auction floor, Call Cap, 13 Rule, Dash max 2, Risk values | Current Rules §2/§5 (`:84-98`, `:190-198`) | Implemented; floor defects noted | E2.2 | T-24 | Engine report |
+| Requirement | Binding source | Current implementation evidence | Planned task | Positive tests | Negative / edge-case tests | Acceptance criterion | Release evidence |
+|---|---|---|---|---|---|---|---|
+| General Pass consumes the round; Normal ×2; Classic no multiplier; ladder ×2→×4→×6→×8 | A6.4 (`CANONICAL_RULES.md:530`), Current Rules item 1 (`:203`), Q1b | Same-round replay; `Bidding.kt:496`; `QuickMatchViewModel.kt:154-166`; `OnlineMatchViewModel.kt:724` | E2.5 | T-01, T-02 | T-22 | Round 6 all-pass consumes round 6 and round 7 is played at ×2; successive passes give ×4, ×6, ×8 (not ×8 at the third pass); Classic consumes with no multiplier; the multiplier never exceeds ×8 | Engine report + §5.8 G2 |
+| Sa'ayda per-round extension, final-round repeat, no caps | A6.2 (`:520-526`), Q2c | Window-only; caps 5/1; no final repeat (`RoundScore.kt:222-238`) | E2.6 | T-03 | T-04 | Each counted Sa'ayda in 14–18 adds one round (five give 18+5=23, no rejection); a final-round Sa'ayda adds and repeats until a winner; a non-final post-window Sa'ayda adds nothing | Engine report |
+| Super Call extension only when Caller succeeds | A6.5 (`:531`) | Extension independent of success | E2.6 | T-05 (success) | T-05 (failure) | A successful Caller Super Call adds one round; a failed one adds none; the Sa'ayda count still adds independently | Engine report |
+| Normal Super Call bid² / half-up loss | A1 (`:220-221`), Q19c | `Scoring.kt:63` | E2.7 (verify only) | T-05 (win rows) | T-05 (loss rows) | Bid 8 win not sole = 64; win sole = 74; loss not sole = −32; loss sole = −42; no separate Caller +10 on the Super Call row | Engine report |
+| Normal Dash + Risk adds both components | A6.3 (`:527-529`) | Risk dropped (`RoundScore.kt:79`) | E2.7 | T-06 (success, sole winner) | T-06 (failure, sole loser, Risk ladder) | At the owner example (total bids 15, Risk 10, takes 0) the score is +20; taking 2 gives −22; neither component is dropped or counted twice | Engine report |
+| Classic scoring tables incl. Super Call +42/−20 | Current Rules §4 (`:150-180`) | `Scoring.kt:112` and table rows | E2.8 (verify) | T-07 (known rows) | T-05 (Classic row) | Bid 5 Classic E+13 gives 28; Super Call gives +42/−20; sole cap is −22; no Normal formula leaks into Classic | Engine report |
+| Classic Dash + Risk adds both components | A6.8 (`:534`) | Missing; numbers open | E2.8 (blocked O-01) | None until O-01 | T-07 (combined and sole rows, skipped placeholder) | Blocked: no combined Classic Dash+Risk value may be asserted until O-01 fixes the arithmetic; the test stays skipped, not guessed | O-01 decision |
+| Normal With = Caller’s winning suit, last bid in that suit | A6.9 (`:535`), Q19 | Suit-blind floor (`Bidding.kt:273-274`) | E2.4 | T-08 | T-12 | A player who bid the winning suit at any time is With at their last bid **in that suit**; a matching number in another suit is not enough; With at 5 scoring 25 / −12 | Engine report |
+| Fast With = exact highest number, plus final-trump condition | A6.10 (`:536`), Q28 | Everyone ≥8 With (`Bidding.kt:716`) | E2.3/E2.4 | T-10 | T-10 (trump changed, earlier estimate) + T-11 (tie) | Only a player whose final number equals the highest exactly — and whose estimate was made under the final trump when it changed — is With; an 8 is not With when the highest is 10 | Engine report |
+| Fast Super Call re-declaration by every non-Caller | A6.11 (`:537`), Q29 | One-shot; keeps later estimates (`Bidding.kt:577-609`) | E2.3 | T-09 | T-09 (repeat/order) + T-11 (tie) | Each higher 8+ call wipes prior declarations and every non-Caller re-declares counter-clockwise, including a player who already re-declared; the equal-highest tie stays blocked on O-02 | Engine report |
+| Shared Koz and shared King | Q2d, A6.2 (`:526`) | Tied lowest → Third (`Placement.kt:212-222`) | E2.9 | T-13 (cases 1, 4, 6) | T-13 (cases 2, 3, 5) | 100/99/99/99 → King + three Koz; 100/99/10/10 → King, Second, two Koz; all four equal → all King; a tied-lowest seat is never Third | Engine report |
+| Vote Kick 2 Koz, unique Koz only, no ROOM vote | Q14d(1) (`decisions/2026-10-21…md:203`), Q14b (`:193`), Q2e; A5.1 `:445`/`:449` superseded | `LeaveMatch.kt:53` returns Koz1 — code gap; no unique-Koz guard | E3.5 | T-14 (charge) | T-14 (shared Koz, ROOM, return) | A passed Vote Kick against a unique Koz records 2 Koz at match finish in RANKED and UNRANKED; no vote when the Koz is shared; no vote in ROOM; a target who returns is not charged | Settlement tests |
+| ROOM 1 Koz; RANKED/UNRANKED 2 Koz; charge at finish only | A6.6 (`:532`), Q14b (`:193`) | ROOM returns None (`LeaveMatch.kt:56`) | E3.5 | T-15 (explicit leave, 15-timeout) | T-15 (return, server/quota failure, ROOM replacement → O-03c) | ROOM departure records 1 Koz; RANKED/UNRANKED record 2 Koz; the charge applies only at finish and only if the player did not return; infrastructure failure never charges | Settlement tests |
+| 7th takeover removes and records 2 Koz in RANKED/UNRANKED; ROOM scope open | Current Rules item 8 (`:210`), Q10c, Q11 | No takeover counter (`InactivityClock.kt:147`) | E4.3 (scope O-03) | T-16 (7th row) | T-16 (ROOM scope, vote/WAIT interaction) | The 7th qualifying takeover removes the seat and records 2 Koz in RANKED/UNRANKED; ROOM amount and timing remain blocked by O-03 | O-03 decision |
+| Disconnect 10 s → takeover; 30 s vote; 90 s WAIT; 60 s all-gone cancel | A5.2 (`:455-466`), Q27c | 50 s clock only | E4.3 | T-16 (takeover, vote) | T-16 (no pause, reclaim, all-gone) | The bot takes over 10 s after the decision timer; the ROOM/UNRANKED vote runs 30 s; a winning WAIT pauses 90 s after the verdict; all humans gone for 60 s cancels; gameplay continues during the ballot | Engine + UI tests |
+| Nine statistics for every mode; percentages over games played | Q14c, A6.7 (`:533`), A6.8 (`:534`) | RANKED-only, placement-gated (`RankedStats.kt:103`) | E5.1 | T-19 (all-mode, percent) | T-19 (zero games, placement gate, UNRANKED mid-placement) | 10 ROOM + 10 UNRANKED + 10 RANKED with 3 Kings each → Games Played 30, King count 9, King % 30; a RANKED placement match is excluded; an UNRANKED match during placement counts | Stats tests |
+| 90-day seasons, lazy reset, two-step reset | Q22, `SeasonResetRun.kt:80` | Bulk sweep, 10,000 cap | E5.2 | T-19 (season length, lazy reset) | T-19 (idempotence, reset race) | `endsAt = start + 90 days`; one reset on first access after two missed seasons; two reset runs produce one migration; settlement and reset on one profile keep one total order | Season tests |
+| Auto-Match with 2-min bot fill and 30 s vote; humans-only strength | Q7c/Q26, decisions §F | No implementation (`MatchmakingPort.kt:29-33`) | E4.1/E4.2 | T-20 (join, vote passes, RP with bots) | T-20 (no table, vote fails, tier band) | Auto-Match joins a waiting table ≤1 tier after showing settings; no table → message + Create Table; 2 minutes from first player then a 30 s vote requiring more than half of waiting humans (non-votes reject); strength from humans only | Matchmaking tests |
+| Guests cannot enter Ranked; email sign-up and Google sign-in for Ranked; linking preserves uid | Decisions §D, Q5, Q21 | Anonymous/email only; no Google, sign-up or gate (`AuthRepository.kt:19-20`) | E6 | T-21 (guest ROOM, email, Google) | T-21 (guest Ranked, linking, deletion; App Check not required) | A guest plays ROOM/UNRANKED and is blocked from Ranked; email sign-up and Google sign-in work; linking preserves the uid; in-app and web deletion paths work | Device walkthrough |
+| ROOM/UNRANKED four matching reports; recorded limitation | Decisions §J, Q15c | No convergence enforcement for ROOM/UNRANKED (`Settlement.kt:340-348`) | E3.6 | T-17 (unanimous, duplicate, replay) | T-17 (split, missing, collusion) | A ROOM/UNRANKED result is recorded once on the fourth matching report; splits and missing reports stay pending; duplicates are deduped; collusion is accepted and documented | Settlement tests |
+| Exactly-once settlement with durable outbox | Decisions §I | In-memory 6 retries (`OnlineMatchViewModel.kt:1312`) | E3.4 | T-18 (happy, duplicate) | T-18 (lost response, process death, quota, season race) | Duplicate calls, lost responses, process death and outbox replay produce one stored result and one RP delta; a quota failure writes nothing | Fault injection |
+| ≥200 seeded engine/server parity | Brief Stage 0 E2 | Not run | E1.2 | T-23 (corpus, evidence) | T-23 (diff definition, known gaps) | ≥200 seeds × FULL/MINI × Normal/Classic produce zero unexplained JVM/server diffs; known gaps are listed by defect ID; the post-fix run has zero diffs | Stage 0 report |
+| Auction floor, Call Cap, 13 Rule, Dash max 2, Risk values | Current Rules §2/§5 (`:84-98`, `:190-198`) | Implemented; floor defects noted | E2.2 | T-24 (minimum bid, Super threshold, Risk values) | T-24 (third Dash, 13 Rule scope, fast Call Cap, With floor) | Bid 3 is rejected and 4 accepted; a third pre-bid Dash is rejected; the 13 Rule forces 1–13 only when the first three sum to 13; Call Cap applies in normal rounds only; a With bid below the last winning-suit bid is rejected | Engine report |
 
 ### 5.3.3 Rule and scoring vectors
 
@@ -537,18 +550,24 @@ before G3 (O-11).
 
 Derived invariant: if not all four totals are equal, **every** seat holding the minimum total is
 Koz regardless of its competition rank. The current `placementRank` implementation violates this
-for cases 2, 3 and 5.
+for cases 2 and 3 (case 5, 100/90/90/80, already places the unique 80 last).
 
 #### T-14 — Vote Kick
 
 | Case | Setup | Expected |
 |---|---|---|
-| Charge | RANKED or UNRANKED, Vote Kick passes against a unique Koz | **1 Koz**, applied at match finish |
+| Charge | RANKED or UNRANKED, Vote Kick passes against a unique Koz | **2 Koz**, applied at match finish |
 | Shared Koz | Two players tied at the bottom | Vote unavailable; no kick target |
 | ROOM | Any ROOM table | Vote unavailable (ROOM is not a Vote Kick mode) |
 | Return | Target reconnects and finishes the match | No charge |
 | RP | Vote Kick in RANKED | Koz charge is a departure record; RP uses the match outcome, not a second last-place penalty |
 | Ballot | Threshold and UI | Per S63 design; this plan tests the **charge and availability**, not a re-invented threshold |
+
+Charge provenance: a passed Vote Kick is **2 Koz in RANKED and UNRANKED** (Q14b
+`docs/decisions/2026-10-21-server-authority-and-owner-rulings.md:193`, Q14d(1) `:203`); A5.1's
+1 Koz (`CANONICAL_RULES.md:445`, `:449`) is superseded, and `OPEN_QUESTIONS.md` §B is stale
+(D-01, D-12). The engine returns `Koz1` (`LeaveMatch.kt:53`) and `LeaveMatchTest` asserts it —
+E3.5 changes both code and test.
 
 #### T-15 — Departure charge matrix
 
@@ -556,13 +575,18 @@ for cases 2, 3 and 5.
 |---|---|---|---|
 | Explicit Leave Match | **1 Koz** | **2 Koz** | **2 Koz** |
 | Automatic 15-timeout removal | **1 Koz** | **2 Koz** | **2 Koz** |
-| Vote Kick | n/a | **1 Koz** | **1 Koz** |
+| Vote Kick | n/a | **2 Koz** | **2 Koz** |
 | Disconnect, permanently replaced | **0** per A5.1 row (`:446`); A6.6 “any reason” conflict → §5.7 O-03c | **2 Koz** | n/a (no vote held in Ranked) |
 | Return before finish | 0 | 0 | 0 |
 | 7th bot takeover | **Open** → §5.7 O-03 | **2 Koz** | **2 Koz** |
 | Server or free-quota failure | 0 | 0 | 0 |
 | Charge timing | Only when the match finishes and the player did not return | Same | Same |
-| RD31 doubling | **Excluded** | Applies to the 2-Koz paths | Applies to the 2-Koz paths |
+| RD31 2-Koz rule | **Excluded** | Applies to the 2-Koz paths | Applies to the 2-Koz paths |
+
+The 2 Koz in Q14b/Q14d(1) is the final charge. A5.1's “1 Koz, final” was itself a one-path
+amendment to RD31's 2-Koz departure result
+(`docs/decisions/2026-10-16-open4-open5-owner-closure.md:57`) and is superseded by Q14d(1); a passed
+Vote Kick is 2 Koz, not 1 and not 4.
 
 Abandonment is a separate outcome, not a departure charge:
 
@@ -750,7 +774,7 @@ activity.
 | P4 — Matchmaking, bots, disconnect | Auto-Match, 2-minute fill, 30 s vote, takeover counter, 7th removal, 60 s cancel | M3; O-03 | T-16/T-20 pass | M4 | 128–224 |
 | P5 — Statistics and seasons | All-mode nine stats, percentages, lazy 90-day reset, race safety | M3 | T-19 passes | M5 | 96–168 |
 | P6 — Authentication and account | Email sign-up/sign-in, guest gate, linking, deletion path | M3 | T-21 passes on device | M6 | 56–96 |
-| P7 — UI design | 27 surfaces, portrait-first, EN/AR, RTL, states, copy | M2 rules frozen; M3 API shape frozen | Design sign-off on all 27 surfaces | M7 | 168–280 |
+| P7 — UI design | 27 surfaces on the fixed 932×430 landscape frame (D10), EN/AR, RTL, states, copy | M2 rules frozen; M3 API shape frozen | Design sign-off on all 27 surfaces | M7 | 168–280 |
 | P8 — Native conversion | Compose implementation, navigation, state, accessibility, localization | M7 sign-off; M6 auth | Every non-deferred surface wired; UI tests pass | M8 | 288–480 |
 | P9 — Hardening and operations | Localization review, observability, backup drill, rollback, performance | M8 | Runbook, backup ≥90%, rollback rehearsal | M9 | 96–168 |
 | P10 — Store readiness and real-people testing | Listing, Data safety, deletion URL, credentials, 12 testers × 14 days | M9; build is RC | 14 continuous days complete; production access granted | M10 | 72–136 |
@@ -793,7 +817,7 @@ recommendation; the owner approves or rejects the runtime through a new ADR (O-0
 | M4 | Matchmaking, bot fill and disconnect flows accepted |
 | M5 | Stats and seasons accepted |
 | M6 | Auth and account lifecycle accepted on device |
-| M7 | Design sign-off: all 27 surfaces designed, portrait-first, EN/AR |
+| M7 | Design sign-off: all 27 surfaces designed on the 932×430 landscape frame, EN/AR |
 | M8 | Feature-complete Android build: all non-deferred surfaces wired |
 | M9 | Hardening complete: localization review, backup drill, rollback rehearsal |
 | M10 | Closed test complete: 12 testers × 14 continuous days; production access granted |
@@ -819,22 +843,20 @@ recommendation; the owner approves or rejects the runtime through a new ADR (O-0
 ### 5.4.6 Critical path
 
 ```
-P0 → P1 Stage 0 ─────────────┐
-        │                    ▼
-        └────→ P2 engine → P3 runtime → P4 matchmaking → P5 stats → P6 auth
-                                                      │
-                                                      ▼
-                                                   P7 design → P8 conversion → P9 hardening
-                                                                                   │
-                                                                                   ▼
-                                                                     P10 closed test (14 days)
-                                                                                   │
-                                                                                   ▼
-                                                                              P11 release
+P0 ─┬─→ P1 Stage 0 ─┐
+    └─→ P2 engine ──┴──→ P3 runtime ──→ P4/P5/P6 in parallel ──┐
+                                                               ▼
+                                       P7 design → P8 conversion → P9 hardening
+                                                                     │
+                                                                     ▼
+                                                    P10 closed test (14 days) → P11 release
 ```
 
-The critical path is **P1 → P3 → P7 → P8 → P10 → P11**. P2 runs in parallel with P1 and must
-finish before P7. P4–P6 run after P3 and before P7’s sign-off where they change the UI contract.
+The critical path is **P0 → (P1 Stage 0 ∥ P2 engine) → P3 → P7 → P8 → P10 → P11**. P1 and P2 run
+in parallel after P0 and **both** gate P3: Stage 0 supplies the go/no-go and the ADR input, and P2
+supplies the frozen engine that P3's server runtime re-executes. P2 is therefore on the critical
+path, not merely an input to design; “P2 must finish before P7” would understate the dependency.
+P4–P6 run after P3 and before P7's sign-off where they change the UI contract.
 The 14-day closed test and the review period are **elapsed time, not engineering time**; they
 dominate the calendar tail and cannot be compressed by adding engineers.
 
@@ -843,8 +865,9 @@ dominate the calendar tail and cannot be compressed by adding engineers.
 1. **No rule is implemented twice.** The engine is the only rules implementation; the server
    runtime executes the same module (Stage 0 E1/E2).
 2. **No design before rule freeze.** A beautiful screen for a wrong rule is rework.
-3. **No conversion before design sign-off.** Compose work starts from approved portrait
-   artboards, not from the 932×430 HTML mockups.
+3. **No conversion before design sign-off.** Compose work starts from approved **932×430
+   landscape** artboards (D10), not from unapproved mockups; a portrait frame is non-compliant
+   and is re-cut, never implemented.
 4. **No real-people testing before feature completeness.** Closed testing is the last step
    before publishing; using it as a beta for unfinished features burns the 14-day clock.
 5. **Stage 0 does not reorder delivery.** It gates the runtime; it does not move design ahead of
@@ -864,7 +887,7 @@ dominate the calendar tail and cannot be compressed by adding engineers.
 | Excluded | External waiting (store review, tester recruitment, 14-day closed test), owner decision time, procurement, third-party outages |
 | Contingency | Embedded in the high end of each range; no separate percentage is added |
 | Scale evidence | 252 Kotlin files, 1,361 existing tests across four modules, 56 emulator suites, 2,410 rules lines, 27 UI surfaces, 12 existing design screens |
-| Comparability | The 2026-09-21 plan’s headline was **1,188 h** pre-contingency and **~1,366 h** after 15% for an overlapping but different scope (`docs/NATIVE_V1_PLAN_AND_ESTIMATE.md:1326-1327`); this plan adds Stage 0, server-authoritative Ranked, all-mode statistics, full design and store work |
+| Comparability | The 2026-09-21 plan’s headline was **1,188 h** pre-contingency and **~1,366 h** after 15% for an overlapping but different scope (`docs/NATIVE_V1_PLAN_AND_ESTIMATE.md:1330-1331`); this plan adds Stage 0, server-authoritative Ranked, all-mode statistics, full design and store work |
 | Uncertainty | Low for infrastructure-dependent work (E1, E3), medium for engine/UI, higher for store timing |
 
 The ranges are deliberately wide where the work depends on an unapproved architecture or an
@@ -1023,21 +1046,27 @@ Commands: app unit tests; manual device walkthrough recorded as evidence. Gate: 
 
 #### E7 — UI design (168–280 h)
 
-Goal: design all 27 surfaces portrait-first, against frozen rules and the real API shape, in
-English and Arabic.
+Goal: design all 27 surfaces on the fixed **932×430 landscape** frame (D10), against frozen rules
+and the real API shape, in English and Arabic. Compliant existing artboards are reused, the
+non-compliant portrait frame (S45) is re-cut, and missing surfaces and states are designed new.
 
 | Task | Work | Files / symbols | Deps | Acceptance | Hours | Conf. |
 |---|---|---|---|---|---|---|
-| E7.1 | Portrait design system and grid | New artboard library | M2 | Tokens, type, spacing, RTL rules | 24–40 | Medium |
-| E7.2 | Core 12 screens | `docs/design/`; S01–S12 equivalents | E7.1 | Every core screen has a portrait artboard | 48–80 | Medium |
-| E7.3 | Ranked, placement, matchmaking, seasons | S45–S56 surfaces | E7.1 | Screens/states for rank chip, queue, placement, season label | 32–52 | Medium |
-| E7.4 | In-match overlays: vote, WAIT, takeover, leave | S63/S72/S74 surfaces | E7.1 | Every overlay has default/loading/error states | 24–40 | Medium |
-| E7.5 | Profile, nine statistics, history | S03/S44 surfaces | E7.1 | Nine stats + percentages designed | 20–36 | Medium |
+| E7.1 | Landscape design system and 932×430 grid | New artboard library on the fixed frame | M2 | Tokens, type, spacing, RTL rules for 932×430 | 24–40 | Medium |
+| E7.2 | Core 12 screens | `docs/design/`; S01–S12 equivalents | E7.1 | Every core screen has a compliant 932×430 artboard (reused, re-cut or new) | 48–80 | Medium |
+| E7.3 | Ranked, placement, matchmaking, seasons | S45–S56 surfaces; S45 re-cut from portrait | E7.1 | 932×430 screens/states for rank chip, queue, placement, season label | 32–52 | Medium |
+| E7.4 | In-match overlays: vote, WAIT, takeover, leave | S63/S72/S74 surfaces | E7.1 | Every overlay has default/loading/error states at 932×430 | 24–40 | Medium |
+| E7.5 | Profile, nine statistics, history | S03/S44 surfaces | E7.1 | Nine stats + percentages designed at 932×430 | 20–36 | Medium |
 | E7.6 | Arabic copy, RTL, terminology review | Strings and artboards | E7.2–E7.5 | Native-speaker sign-off; no dropped placeholders | 20–32 | Medium |
 
 Files: `docs/design/*.html`, `docs/UI_UX_ROADMAP.md`, `native/app/src/main/res/values/strings.xml`,
-`values-ar/strings.xml`. Evidence: signed design checklist per surface; portrait screenshots.
-Gate: M7.
+`values-ar/strings.xml`. Evidence: signed design checklist per surface; **932×430 landscape**
+screenshots. Gate: M7.
+
+Estimate assumption: the 168–280 h range is unchanged from the first draft. It assumes the
+existing 932×430 artboards are reused where compliant and S45 is re-cut at 932×430, so the
+portrait-only rework is removed; the saved hours are absorbed by filling the surfaces that have no
+artboard. No portrait artboard is produced.
 
 #### E8 — Native conversion (288–480 h)
 
@@ -1152,8 +1181,9 @@ single longest external dependency.
   re-estimated from scratch, not patched. The 280–504 h range assumes the proposal works.
 - **Rule decisions (O-01…O-03).** An answer broader than the examples in §5.3 expands E2 and
   E4; an answer that changes a scoring table expands E2.8.
-- **Design direction.** If portrait-first design is rejected, E7/E8 rework invalidates the
-  medium confidence in those epics.
+- **Design direction.** The canvas is fixed by D10: every screen is 932×430 landscape and no
+  portrait screen exists. If the owner changes that rule, E7/E8 rework invalidates the medium
+  confidence in those epics.
 - **Testers.** If 12 testers cannot be recruited, V1 cannot ship regardless of engineering; the
   estimate is not the constraint.
 - **Architecture approval.** Any architecture other than the proposal is a new estimate, not a
@@ -1244,41 +1274,63 @@ decision O-10 and must be settled before the Data safety declaration is submitte
 ### 5.7.1 Answered questions — do not ask again
 
 These are owner-approved or otherwise settled. This plan implements them; it does not reopen
-them. Labels: **Owner-approved**, **Owner-approved (supersedes …)**, **Deferred beyond V1**,
-**Engineering investigation**.
+them. Every row carries exactly one of the four brief labels: **Owner-approved**,
+**Engineering investigation**, **Owner decision required**, **Deferred beyond V1**. Rows labelled
+“Owner decision required” are all in §5.7.2 (O-01…O-11); rows labelled “Engineering
+investigation” are all in §5.7.3 (T1–T9). Each question has its own row where it has its own
+answer.
 
-| Topic | Decision | Label | Source |
-|---|---|---|---|
-| General Pass | Consumes the round; Normal ×2; Classic no multiplier; ladder ×2→×4→×6→×8 | Owner-approved | Q1, Q1b, A6.4 |
-| Sa'ayda | Per-round extension in 14–18; final-round repeat until a winner; no caps; MINI mirrors 6–10 | Owner-approved (supersedes earlier final-round-only wording) | Q2, Q2b, Q2c, A6.2 |
-| Koz on ties | All tied at the lowest are Koz unless all four tie; shared Koz gets the same last-place RP | Owner-approved (supersedes RD17 last sentence) | Q2d, Q2f, A6.2 |
-| Vote Kick charge | **1 Koz**, RANKED and UNRANKED; unique Koz only; no ROOM vote | Owner-approved (supersedes Current Rules :209 and A6.7) | A5.1, Q2e |
-| Super Call extension | Only when the Caller succeeds | Owner-approved | Q3 |
-| Classic Dash + Risk | Adds both components; exact numbers confirmed later | Owner-approved principle, **numbers open O-01** | Q4, A6.8 |
-| Sign-in methods | Google sign-in and email sign-up in Android V1 through Firebase Auth; no Play Games | Owner-approved | Q5, decisions §D |
-| Account deletion | Deferred in the old plan; **not compliant**; in-app path + web link + declarations required | Owner-approved risk, compliance work mandatory | Q6, decisions §E, controller ruling |
-| Ranked bot settings and Auto-Match | Creator chooses bots; Auto-Match joins a player-created table; joiner sees settings | Owner-approved | Q7, Q7b, Q7c, Q26 |
-| Bot fill timing | 2 minutes from first player; ready = connected and seated; 30 s vote; >half of waiting humans; non-votes reject | Owner-approved | Q8, decisions §F, Current Rules :211 |
-| RP with bots | Humans get normal RP; opponent strength from humans only | Owner-approved | Q9 |
-| Disconnect and takeover | Server detects; decision timer; 10 s more; bot takes over; takeover counter increments only for bot takeover | Owner-approved | Q10, Q10b, Q10c |
-| 7th takeover | Removed from the match, 2 Koz, no account ban | Owner-approved (ROOM scope open O-03) | Q11 |
-| Architecture approval | ADR after Stage 0 succeeds; ADR text not yet approved | Owner-approved process, **decision open O-06** | Q12 |
-| Backup at 90% | Backup hosts new matches; running matches stay; results wait for one central RP database | Owner-approved | Q13, decisions §I |
-| ROOM authority | App-managed; server records final result only; four matching reports | Owner-approved | Q15, Q15b, Q24 |
-| UNRANKED | No RP; enters all statistics; four matching reports | Owner-approved (reverses A3.5) | Q14c, Q15c |
-| Departure charges | ROOM 1 Koz; RANKED/UNRANKED 2 Koz; at finish, if not returned | Owner-approved | Q14b, A6.6 |
-| ROOM size | Full table of four; no 2–3 player start | Owner-approved (supersedes A3.1) | Q16, A6.8 |
-| Statistics | Counts and percentages over Games Played, aggregated across all modes | Owner-approved | Q17, A6.8 |
-| Data retention | Keep final result, RP ledger and idempotency keys; delete action history | Owner-approved | Q18 |
-| With rules | Normal: winning-suit alignment, floor = last number in that suit. Fast: exact highest number plus final-trump condition | Owner-approved (supersedes engine) | Q19, Q19c, Q28, Q29 |
-| Outage | Timers freeze and resume; no timeout charged | Owner-approved | Q20 |
-| Auth gate and App Check | Ranked requires a registered account; App Check/Play Integrity deferred past V1 | Owner-approved / Deferred | Q21, Q21b |
-| Seasons | Lazy reset, no inactive-player records, 90-day seasons, two-step reset | Owner-approved | Q22 |
-| Everyone-left | Last explicit leave cancels immediately; all disconnected waits 60 s; all Koz; RP = last-place loss; server/quota exempt; ROOM/UNRANKED Koz without RP | Owner-approved | Q27, Q27b, Q27c |
-| Vote Kick (duplicate) | Q14d still says 2 Koz; **A5.1 controls at 1 Koz** | Stale answer, documentation defect D-12 | Q14d |
+| Q | Topic | Decision as recorded | Label | Source |
+|---|---|---|---|---|
+| Q1 | General Pass | Consumes the round: round 6 all pass → round 7 played ×2 | Owner-approved | record §O |
+| Q1b | General Pass / Sa'ayda repeats | No cap on passes or Sa'aydas; only the multiplier caps at ×8; a Classic General Pass consumes the round with no multiplier | Owner-approved | record §P |
+| Q2 | Sa'ayda count | Count rounds 14–18 (+1 per counted round), then check the final round; each counted Sa'ayda adds one round | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q2b | Sa'ayda MINI and interactions | MINI mirrors 6–10; Super Call extensions combine with the count; a tied final round counts as having a winner | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q2c | Extension caps | Caps removed; the final-round winner rule repeats until a winner | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q2d | Koz on ties | Every player tied at the lowest is Koz unless all four tie (then all King); shared Koz is not Second/Third; supersedes RD17's last sentence | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q2e | Vote Kick on a shared Koz | No Vote Kick when the Koz is shared; the target must be a unique Koz | Owner-approved | record §O |
+| Q2f | RP for a shared Koz | Players tied at the bottom take the same last placement for RP | Owner-approved | record §P |
+| Q3 | Super Call extension | Extends only when the Caller succeeds | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q4 | Classic Dash + Risk | Adds both tables; the exact combined numbers remain open (O-01) | Owner-approved | `OPEN_QUESTIONS.md` §D; A6.8 |
+| Q5 | Sign-in methods | Google sign-in and email sign-up in Android V1 through Firebase Auth; no Play Games | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q6 | Account deletion | Deferred in the old plan and **not compliant**; in-app path + web resource + declarations are mandatory | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q7 | Bot settings | The Ranked game creator chooses bot difficulty and personality | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q7b | Ranked entry paths | Two paths: create the table yourself, or Auto-Match | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q7c | Auto-Match model | Auto-Match joins a player-created waiting table; bots are the creator's choice | Owner-approved | record §O |
+| Q8 | Bot-fill timing | Two minutes from the first player entering; ready = connected and seated | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q9 | RP with bots | Humans get normal RP; opponent strength comes from humans only | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q10 | Takeover counter | Increments only when a bot takes over after a disconnection, not for the 50 s inactivity timeout | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q10b | Disconnect detection | Server detects the disconnection; waits the decision timer, then 10 more seconds; then the bot takes over | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q10c | Takeover sequence | MEDIUM bot plays the decision and the timeout counter increments; after 10 more disconnected seconds the creator's bot takes the seat and the takeover counter increments; 10 s is fixed for all timers | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q11 | 7th takeover | Removed from the current match, 2 Koz, not an account ban; ROOM scope open (O-03) | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q12 | Architecture approval | Write the ADR after Stage 0 succeeds; the ADR text itself is not yet approved (O-06) | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q13 | Backup at 90% | Backup hosts new matches; running matches stay; results wait for one central RP database | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q14b | Departure charges | ROOM leave for any reason = 1 Koz; RANKED/UNRANKED leave for any reason = 2 Koz; charged only at finish if the player did not return; supersedes A5.1 where they differ | Owner-approved | record §O |
+| Q14c | UNRANKED statistics | UNRANKED computes no RP but enters all profile statistics; reverses A3.5 and the earlier Q14 line | Owner-approved | record §P |
+| Q14d(1) | Vote Kick charge | A passed Vote Kick records **2 Koz** in RANKED and UNRANKED; supersedes A5.1's 1 Koz; ROOM has no Vote Kick | Owner-approved | record §P |
+| Q14d(2) | Abandoned match | If a match never finishes because everyone left, every player is counted Koz and has RP deducted; details open (Q27) | Owner-approved | record §P |
+| Q15 | ROOM authority | ROOM stays app-managed; the server records the final result only | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q15b | ROOM result recording | A ROOM result is recorded only when all four players' apps report matching results | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q15c | UNRANKED result recording | An UNRANKED result is recorded under the same four-matching-reports condition as ROOM | Owner-approved | record §Q |
+| Q16 | ROOM size | No ROOM without a full table of four; supersedes A3.1's 2–3 player start | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q17 | Statistics basis | Counts and percentages over Games Played, aggregated across ROOM, RANKED and UNRANKED | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q18 | Data retention | Keep the final result, RP ledger and idempotency keys; delete action history | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q19 | Normal With | Winning-suit alignment; the With number is the player's last bid in that suit | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q19c | A1 bid² wording | The A1 “legacy tracker only” sentence is corrected in the documents only; no code or scoring change; bid² stays | Owner-approved | record §T |
+| Q28 | Fast-round With (superseded) | Q28 was restated by the later fast-round ruling at `:242-250`, which supersedes it; the plan follows the later ruling (exact number plus the final-trump condition) | Owner-approved | record §T |
+| Q29 | Re-declaration order | After each Super Call, every player except the Super Caller re-declares under the new trump, counter-clockwise; players who bid after the Super Caller no longer keep their estimate | Owner-approved | record §T |
+| Q20 | Outage | Timers freeze and resume; no timeout is charged | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q21 | Auth gate | Ranked requires a registered account (App Check is Q21b) | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q21b | App Check / Play Integrity | Deferred past V1 | Deferred beyond V1 | `OPEN_QUESTIONS.md` §D |
+| Q22 | Seasons | Lazy reset, no inactive-player records, 90-day seasons, two-step reset | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q24 | ROOM/UNRANKED authority | Stay app-managed; any server move is a later release with no committed project | Owner-approved | `OPEN_QUESTIONS.md` §D |
+| Q26 | Auto-Match join rules | RD29 band (≤1 tier); the joiner sees the table settings first; no table → “no tables right now” + Create Table | Owner-approved | record §O |
+| Q27 | Everyone-left outcome | Cancelled as soon as the last human leaves; all players Koz; RANKED RP = the engine's last-place loss; server/quota failure exempt; ROOM/UNRANKED record Koz without RP | Owner-approved | record §Q |
+| Q27b | Leave versus disconnect | An explicit leave cancels immediately only if no player remains; a disconnection follows the 10 s rule, then the bot; all humans disconnected for a fixed short period → cancel | Owner-approved | record §Q |
+| Q27c | All-disconnected period | Wait one minute, then cancel even if players are still registered at the table | Owner-approved | `OPEN_QUESTIONS.md` §D |
 
-Q23 and Q25 do not exist in the register; §A of `OPEN_QUESTIONS.md` is empty. There is no
-unanswered question hiding under those numbers.
+Q14 is superseded by Q14b/Q14c and is not implemented. Q23 and Q25 do not exist in the register;
+§A of `OPEN_QUESTIONS.md` is empty. There is no unanswered question hiding under those numbers.
 
 ### 5.7.2 Owner decisions required
 
@@ -1391,7 +1443,7 @@ release; it is not averaged against passing gates.
 |---|---|---|---|---|---|
 | G0 — Baseline | Is the starting point reproducible? | Clean clone builds; recorded suite counts reproduce | CI log, test counts | Eng | Build depends on local state |
 | G1 — Stage 0 and parity | Is the proposed runtime feasible? | All 13 experiments have results; ≥200 seeded matches with zero unexplained diffs; bundle/startup within platform limits; recommendation written | `stage0-report.md` with raw data | Eng + owner | “Mostly works”; unexplained diffs; no capacity model |
-| G2 — Rule coverage and regression | Are the V1 rules implemented and tested? | Every P0 rule in §5.3 has a passing test; all pre-existing suites pass or have documented equal replacements; no skipped P0 test except O-01/O-02 with a recorded deferral | Test report mapped to T-IDs | Eng | A rule “verified by reading”; skipped test counted as pass |
+| G2 — Rule coverage and regression | Are the V1 rules implemented and tested? | Every P0 rule in §5.3 has a passing test; all pre-existing suites pass or have documented equal replacements; no skipped P0 test except O-01, O-02, O-03/O-03c with a recorded deferral | Test report mapped to T-IDs | Eng | A rule “verified by reading”; skipped test counted as pass |
 | G3 — RP integrity | Is RP correct and single-sourced? | T-13/T-15/T-19/T-20 vectors pass; one RP source; no double application under retry | Vector report + ledger audit | Eng | Two stores can award RP; client computes RP |
 | G4 — Recovery and duplicate settlement | Can the system survive interruption? | T-18 and §5.6 recovery matrix pass; duplicate settlement impossible; quota failure never charges | Fault-injection log | Eng | Any confirmed double RP or lost settled match |
 | G5 — No billing and free tier | Does V1 run at $0? | No billing account; no Blaze; measured usage at 90% of the primary scenario within free limits | Billing console + Stage 0 E5/E6/E10/E12 | Owner + eng | Any billing link; over-limit without a documented plan |
@@ -1425,8 +1477,9 @@ Sources (accessed **2026-10-22**):
 - “Understanding Google Play’s app account deletion requirements” —
   <https://support.google.com/googleplay/android-developer/answer/13327111?hl=en>
 
-The older “20 testers” figure is **not** the current page text and must not be used. The plan
-uses 12 testers / 14 continuous days.
+The current requirement, for personal accounts created after 2023-11-13, is **12 testers opted in
+continuously for 14 days** before a production-access application. The older “20 testers” figure
+must not be used.
 
 If the 2026-09-21 note that only **4 testers** were available is still true, G8 is the project’s
 hardest external gate and should start before the RC exists.
@@ -1490,7 +1543,7 @@ production week passes without an integrity incident or an unpatched P0 defect.
 | `docs/rules/CANONICAL_RULES.md` | Current Rules summary; amendments A1–A6; charge table; RP definitions | §5.1, §5.2, §5.3, §5.7 |
 | `docs/decisions/2026-10-21-server-authority-and-owner-rulings.md` | Owner rulings A–V, Q answers, authority and backup decisions | §5.1, §5.2, §5.6, §5.7 |
 | `docs/decisions/OPEN_QUESTIONS.md` | Q/T inventory; answered list; empty §A | §5.7 |
-| `docs/decisions/2026-10-16-open4-open5-owner-closure.md` | A5.1 scope: 2 Koz RANKED/UNRANKED, ROOM excluded, Vote Kick 1 Koz | §5.2.3, §5.7 |
+| `docs/decisions/2026-10-16-open4-open5-owner-closure.md` | A5.1 charge table; its Vote Kick 1 Koz (`:445`, `:449`) is superseded by Q14b/Q14d(1)'s 2 Koz | §5.2.3, §5.7 |
 | `docs/NATIVE_V1_PLAN_AND_ESTIMATE.md` | Old plan and delivery-order amendment; historical baseline | Header, §5.7 |
 | `docs/UI_UX_ROADMAP.md` | 27 surfaces, S-number collision warning, artboard sizes | §5.2, §5.4, §5.5 |
 | `docs/adr/0002-functions-runtime.md` | Firebase Functions runtime assumption | §5.2.3 D-08 |
