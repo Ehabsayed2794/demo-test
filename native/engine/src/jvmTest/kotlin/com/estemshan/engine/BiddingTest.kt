@@ -354,7 +354,7 @@ class BiddingTest {
     assertEquals("p2", o.leaderId)
   }
 
-  // ── General pass: all four pass → redeal at doubled (×8-capped) multiplier ──
+  // ── General pass: all four pass → the next round's multiplier ──
   @Test
   fun generalPassDoublesMultiplier() {
     var s = normal("p1")
@@ -369,7 +369,7 @@ class BiddingTest {
       else -> throw AssertionError("expected GeneralPass, got $r")
     }
 
-    var capped = initNormalRound(1, "p1", seats, 5)
+    var capped = initNormalRound(1, "p1", seats, 8)
     capped = declineAllDash(capped)
     capped = auction(capped, "p1", isPass = true)
     capped = auction(capped, "p2", isPass = true)
@@ -378,6 +378,75 @@ class BiddingTest {
       is EmitResult.GeneralPass -> assertEquals(8, r.doubledMultiplier)
       else -> throw AssertionError("expected capped GeneralPass, got $r")
     }
+  }
+
+  /** Drives a normal all-pass auction at [multiplier] and returns the emission. */
+  private fun generalPass(
+    multiplier: Int,
+    scoringMode: ScoringMode = ScoringMode.NORMAL,
+  ): EmitResult.GeneralPass {
+    var s = initNormalRound(1, "p1", seats, multiplier, scoringMode = scoringMode)
+    s = declineAllDash(s)
+    s = auction(s, "p1", isPass = true)
+    s = auction(s, "p2", isPass = true)
+    s = auction(s, "p3", isPass = true)
+    val last = BiddingIntent.AuctionBid("p4", true)
+    assertTrue(canSubmit(s, last).legal)
+    return when (val r = emit(s, last)) {
+      is EmitResult.GeneralPass -> r
+      else -> throw AssertionError("expected GeneralPass, got $r")
+    }
+  }
+
+  @Test
+  fun generalPassNormalMultiplierWalksTheLadderAdditively() {
+    assertEquals(2, generalPass(1).doubledMultiplier)
+    assertEquals("2 -> 4", 4, generalPass(2).doubledMultiplier)
+    assertEquals("4 -> 6 (the old x2 produced 8)", 6, generalPass(4).doubledMultiplier)
+    assertEquals("6 -> 8", 8, generalPass(6).doubledMultiplier)
+    assertEquals("8 is the cap", 8, generalPass(8).doubledMultiplier)
+  }
+
+  @Test
+  fun generalPassClassicAppliesNoMultiplier() {
+    for (multiplier in listOf(1, 2, 4, 8)) {
+      assertEquals(
+        "Classic round at multiplier $multiplier",
+        1,
+        generalPass(multiplier, ScoringMode.CLASSIC).doubledMultiplier,
+      )
+    }
+  }
+
+  @Test
+  fun generalPassStateOtherwiseDescribesTheCancelledRound() {
+    val result = generalPass(4)
+    val state = result.state
+    assertEquals(6, result.doubledMultiplier)
+    assertEquals("the emitted state is still the cancelled round", 1, state.round)
+    assertEquals("roundMultiplier is not advanced here", 4, state.roundMultiplier)
+    assertEquals(ScoringMode.NORMAL, state.scoringMode)
+    assertTrue(state.activeBidders.isEmpty())
+    assertEquals(0, state.auctionTop)
+    assertNull(state.auctionSuit)
+    assertNull(state.auctionBidder)
+    assertNull(state.waitingFor)
+    assertTrue(state.withPlayers.isEmpty())
+    assertEquals(BidAction("p4", "PASS"), state.actionHistory.last())
+  }
+
+  @Test
+  fun scoringModeDefaultsToNormalAndIsStampedIntoTheState() {
+    assertEquals(ScoringMode.NORMAL, normal("p1").scoringMode)
+    assertEquals(ScoringMode.NORMAL, fast(15, "p1").scoringMode)
+    assertEquals(
+      ScoringMode.CLASSIC,
+      initNormalRound(1, "p1", seats, scoringMode = ScoringMode.CLASSIC).scoringMode,
+    )
+    assertEquals(
+      ScoringMode.CLASSIC,
+      initFastRound(15, "p1", seats, scoringMode = ScoringMode.CLASSIC).scoringMode,
+    )
   }
 
   // ── Rejections: cap, With floor, forbidden 13, confirm guards ──

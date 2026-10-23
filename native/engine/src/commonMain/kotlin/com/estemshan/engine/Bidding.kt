@@ -64,7 +64,14 @@ sealed class EmitResult {
   data class Applied(val state: BiddingState) : EmitResult()
   data class Rejected(val reason: String) : EmitResult()
   data class Completed(val state: BiddingState, val outcome: BiddingOutcome) : EmitResult()
-  /** All four passed the auction — redeal at the doubled (×8-capped) multiplier. */
+  /**
+   * All four passed the auction, so the round is cancelled and the next
+   * round number is dealt fresh. [doubledMultiplier] is the multiplier that
+   * immediately following round is scored at — Normal opens Q51's ladder at
+   * ×2 and adds 2 per pass (×2 → ×4 → ×6 → ×8, capped at ×8), while Classic
+   * carries no multiplier (1). The name is kept for its existing callers;
+   * [state]'s `roundMultiplier` still describes the round just cancelled.
+   */
   data class GeneralPass(val state: BiddingState, val doubledMultiplier: Int) : EmitResult()
 }
 
@@ -91,6 +98,12 @@ data class BiddingState(
   val gameType: GameType = GameType.FULL,
   val actionHistory: List<BidAction>,
   val roundMultiplier: Int,
+  /**
+   * Scoring ruleset governing this round, stamped by the caller (GameSession
+   * owns the match-level value). Defaults to NORMAL so every caller that does
+   * not pass one keeps the pre-existing behaviour.
+   */
+  val scoringMode: ScoringMode = ScoringMode.NORMAL,
 )
 
 const val MAX_DASH_CALLS = 2
@@ -160,6 +173,7 @@ fun initNormalRound(
   seats: List<String> = DEFAULT_SEATS,
   multiplier: Int = 1,
   gameType: GameType = GameType.FULL,
+  scoringMode: ScoringMode = ScoringMode.NORMAL,
 ): BiddingState = BiddingState(
   round = round,
   subPhase = BiddingPhase.DASH,
@@ -181,6 +195,7 @@ fun initNormalRound(
   gameType = gameType,
   actionHistory = emptyList(),
   roundMultiplier = multiplier,
+  scoringMode = scoringMode,
 )
 
 fun initFastRound(
@@ -189,6 +204,7 @@ fun initFastRound(
   seats: List<String> = DEFAULT_SEATS,
   multiplier: Int = 1,
   gameType: GameType = GameType.FULL,
+  scoringMode: ScoringMode = ScoringMode.NORMAL,
 ): BiddingState {
   val fixedTrump = fixedTrumpFor(round, gameType)
   return BiddingState(
@@ -213,6 +229,7 @@ fun initFastRound(
     gameType = gameType,
     actionHistory = emptyList(),
     roundMultiplier = multiplier,
+    scoringMode = scoringMode,
   )
 }
 
@@ -491,9 +508,18 @@ private fun emitAuctionBid(state: BiddingState, intent: BiddingIntent.AuctionBid
   }
 
   if (active.isEmpty() && auctionBidder == null) {
-    // General pass — no rule-doc formula of its own: redeal at the doubled
-    // multiplier, capped at ×8 like the Sa'ayda ladder.
-    val doubled = minOf(state.roundMultiplier * 2, 8)
+    // General Pass cancels this round; Session.nextRound() then bumps the
+    // number and deals fresh. This value is what the immediately following
+    // round is scored at: Normal walks Q51's ladder x2 -> x4 -> x6 -> x8
+    // (+2 per pass, capped at x8); Classic carries no multiplier.
+    // roundMultiplier itself stays put — it describes the cancelled round.
+    val nextMultiplier = when {
+      state.scoringMode == ScoringMode.CLASSIC -> 1
+      // x1 is the "no multiplier" entry, so the first pass opens the
+      // ladder at x2 rather than x1+2; every later pass adds 2.
+      state.roundMultiplier == 1 -> 2
+      else -> minOf(state.roundMultiplier + 2, 8)
+    }
     return EmitResult.GeneralPass(
       state.copy(
         activeBidders = active,
@@ -504,7 +530,7 @@ private fun emitAuctionBid(state: BiddingState, intent: BiddingIntent.AuctionBid
         waitingFor = null,
         actionHistory = history + BidAction(pId, "PASS"),
       ),
-      doubled,
+      nextMultiplier,
     )
   }
 
