@@ -17,12 +17,9 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 | O-16 | P2 | Is Stage 0 the next work item, or does IAP stay planned-but-blocked until a runtime is approved? | Play Billing verification needs a backend; Firebase Spark cannot host it and Cloudflare Workers is not approved (O-06). No purchase code can ship either way. | (a) run Stage 0 next; (b) keep IAP blocked. **Recommendation (not approved): (b).** | O-06; plan V2 §5.9; N-5 |
 | O-17 | P2 | In what order should the implementation sprints run? | The order changes delivery sequence and review load, not the rules. | Proposed: S1 → S2/S4 → S3 → S5/S6 → S7 → S8. **Recommendation (not approved): as proposed**, because S2 depends on S1's round progression. | plan V2 §5.10 |
 | O-18 | P2 | Does the owner supply Arabic prose for the new rule text, or do the rule documents stay English with Arabic only in the app? | The R-07 localization gate applies to user-facing text; the rule documents are English today. | (a) English rule documents, Arabic app labels only; (b) owner supplies Arabic rule prose. **Recommendation (not approved): (a).** | 2026-10-23 record §5; R-07 |
-| O-19 | **P1** | Does the owner authorize the **Firestore rules change** required by Option B: a `currentMultiplier` field on the match document, its create/advance allowlists, a General Pass advance branch, and a pass-archive variant? | The architecture is approved, but the online pass cannot persist continuity without the field; the current rules deny any multiplier key and require 52 cards for a round archive, which a pass round never has. | **Authorize the minimal change** (record §1.5), with emulator denial tests; do not authorize a broader rules rewrite. **Recommendation (not approved): authorize.** | `2026-10-23-direction-multiplier-rounds-git.md` §1.5 |
-| O-20 | P2 | Does the owner ratify the **Git collaboration policy** (integration branch, push cadence, direct-merge vs PR)? | The owner forbade assuming a push/PR/merge ban; without a publication mechanism, other agents cannot see uncommitted work and cross-agent handoffs stall. | **Ratify record §4 as written**; keep `main` PR-only through the owner's web UI. **Recommendation (not approved): ratify.** | `2026-10-23-direction-multiplier-rounds-git.md` §4 |
 
-> All eight rows are **open**; O-19 is **P1** because it blocks the online half of S1. Every recommendation
-> is explicitly **not approved**. The Arabic wording of any future rule text remains the owner's to supply
-> (the plan's R-07 localization gate still holds).
+> All six rows are **open**. Every recommendation is explicitly **not approved**. The Arabic wording of any
+> future rule text remains the owner's to supply (the plan's R-07 localization gate still holds).
 
 ## B. Resolved / decided / deferred (no question needed)
 
@@ -49,11 +46,11 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 |---|---|---|
 | Match length | **DECIDED:** 18 base rounds (FULL) / 10 (MINI); **14 is `firstFastRound`**, the start of the fast window, never the match length; an extended ceiling is live (`18 + N`) | Q48 / A8.8 + the owner's 2026-10-23 clarification |
 | Online General Pass | **DECIDED: Option B** — persist `currentMultiplier` on the match document, written with the round advance and read on every cold start | `2026-10-23-direction-multiplier-rounds-git.md` §1 |
-| Firestore rules for Option B | **OPEN → O-19**; the architecture is approved, the rules change is not authorized | record §1.5 |
+| Firestore rules for Option B | **DECIDED 2026-10-23 (O-19):** APPROVED with strict scope — minimal `currentMultiplier` allowlists/validation, a narrow pass advance without the 52-card requirement, a pass-archive variant that does not weaken ordinary rounds, legacy fallback, continuity and emulator tests. Implementation NOT STARTED; dedicated feature branch required | record §1.5, §9 |
 | S2 fix ownership | **DECIDED:** Agent 4 is primary for the three defects; every fix needs a proving test | record §3 |
-| Git collaboration | **PROPOSED** (record §4); no push/PR/merge ban is assumed; ratification → O-20 | record §4 |
+| Git collaboration | **DECIDED 2026-10-23 (O-20):** one shared integration branch (`main`), one feature branch/worktree per agent, frequent commits pushed promptly, no uncoordinated shared-file edits, integration only after review + green tests; PRs and merges permitted; uncommitted work is not cross-machine visible | record §4; `docs/agents/git-workflow.md` |
 | D: migration | **APPROVED — NOT EXECUTED**; the per-worktree audit is recorded, the move is not | record §5 |
-| 19 `*-Review.zip` deletion | **VERIFIED — NOT EXECUTED**; they are tracked in git and recoverable | record §6 |
+| 19 `*-Review.zip` deletion | **EXECUTED 2026-10-23:** 19 tracked archives removed in commit `438736e` (19 files, 0 insertions, 0 deletions); 0 remain; originals recoverable from `eb352dc`; no worktree/cache/output touched | record §6 |
 
 ### Decided on 2026-10-22 and 2026-10-23
 
@@ -166,6 +163,7 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 > verbatim under the pointer convention.
 >
 > **Directions of 2026-10-23 without a Q number** — the 18-round base clarification, Option B, Agent 4's
-> S2 ownership, the Git policy proposal, the D: migration and the Option A deletion — are recorded in
-> `docs/decisions/2026-10-23-direction-multiplier-rounds-git.md` and listed in §B. O-19 and O-20 are the
-> only new open questions they create.
+> S2 ownership, the Git policy, the D: migration and the Option A deletion — are recorded in
+> `docs/decisions/2026-10-23-direction-multiplier-rounds-git.md` and listed in §B. **O-19 and O-20 were
+> both decided on 2026-10-23** (rules authorized with strict scope; Git policy ratified); they are no longer
+> open questions.

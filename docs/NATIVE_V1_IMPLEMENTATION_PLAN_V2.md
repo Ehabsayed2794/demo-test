@@ -1814,7 +1814,7 @@ S8 Play Billing verification ── BLOCKED on O-06 (no runtime approved)
 | Sprint | Goal | Depends on | Status |
 |---|---|---|---|
 | S0 | Record Q35–Q52; canonical/plan/roadmap; five suit labels; Platinum label | — | **EXECUTED** 2026-10-23 (documentation + labels only; no behavioural code) |
-| S1 | General Pass: new round number, fresh deal, Normal ×2 / Classic none, replay parity, persisted multiplier (Option B) | S0 | **IN PROGRESS — uncommitted, not accepted**; online half **BLOCKED on O-19** |
+| S1 | General Pass: new round number, fresh deal, Normal ×2 / Classic none, replay parity, persisted multiplier (Option B) | S0 | **IN PROGRESS — uncommitted, not accepted**; online half **AUTHORIZED (O-19 closed 2026-10-23), implementation NOT STARTED** |
 | S2 | Wire Sa'ayda extensions into the production match flow, with tests | S1 | **IN PROGRESS — uncommitted, not accepted** (finality unproven, old-caller compile break) |
 | S3 | ROOM/RANKED/UNRANKED career statistics; RP Ranked-only; nine stat labels | S0 | PLANNED |
 | S4 | O-02b fast-bid duplicate declaration, first-declarer Caller, suit tie-break | S1 | **IN PROGRESS — uncommitted, two known reds** |
@@ -1824,10 +1824,10 @@ S8 Play Billing verification ── BLOCKED on O-06 (no runtime approved)
 | S8 | Play Billing verification + entitlement ledger | O-06 approval | **BLOCKED** |
 
 **Execution status at 2026-10-23 (not acceptance).** S1, S2 and S4 have uncommitted agent work in the
-`D:\demo-test-plan-v2-ag*` worktrees; none is committed, merged or accepted. S1's offline half exists but
-its online half is blocked on **O-19** (the persisted multiplier needs a rules change); S2 does not yet
-prove the final-round repeat and breaks old-signature callers; S4 has two genuine reds. An **IN PROGRESS**
-row is not a delivery claim.
+`D:\demo-test-plan-v2-ag*` worktrees; none is committed, merged or accepted. S1's offline half exists; its
+online half was **authorized by O-19 on 2026-10-23** and is **not yet started** (dedicated feature branch;
+see the record §1.5 and §9). S2 does not yet prove the final-round repeat and breaks old-signature
+callers; S4 has two genuine reds. An **IN PROGRESS** row is not a delivery claim.
 
 **Round-count source of truth [D].** FULL is **18 base rounds** (MINI 10); "14–18" is the **fast window**,
 never the match length. The ceiling is **live**: `maxRounds = base + N`. Any sound, button, series loop or
@@ -1880,8 +1880,12 @@ so a reconnect sees 7).
    (`docs/decisions/2026-10-23-direction-multiplier-rounds-git.md` §1) and survives **redeal, reconnect,
    reload and cold start** in both game types; Classic is always ×1. The field is written with the round
    advance, never reconstructed from a transient sync message.
-8. **Rules gate:** the pass advance is a rules-authorized transaction. Until **O-19** is answered, the
-   online half stops at the rules gate and returns the proposed diff; it never edits `firestore.rules`.
+8. **Rules authorization (O-19, CLOSED 2026-10-23):** the minimal rules change is approved — 
+   `currentMultiplier` allowlists/validation, a narrow General Pass advance without the 52-card requirement,
+   and a pass-round archive variant that does not weaken ordinary-round validation. It is implemented on a
+   **dedicated feature branch**, never inside Agent 4's S2 scope. Legacy documents without the field fall
+   back compatibly with tests; accepted/rejected cases are proven in the Firestore Emulator. No acceptance
+   without the exact diff and test counts.
 
 **Tests:** `:engine:jvmTest` — `BiddingTest:359-379`, `GameSessionTest`, `BotVsBotSmokeTest:128-137`;
 `:app:testDebugUnitTest` — `QuickMatchViewModelTest:110/138/195-196/229/312`,

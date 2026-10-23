@@ -41,7 +41,8 @@ is written by this record.
 > **Pointer, 2026-10-23 (online half; section body unchanged).** The online General Pass is now specified as
 > **Option B** — a persisted `currentMultiplier` on the match document, written with the round advance and
 > read on every cold start — in `docs/decisions/2026-10-23-direction-multiplier-rounds-git.md` §1. The
-> Firestore rules change it requires is **not authorized** (O-19).
+> Firestore rules change it requires was **authorized on 2026-10-23** with strict scope limits (O-19 closed,
+> record §1.5); the implementation has not started.
 
 ## 2. Sprint scope directive [D]
 
@@ -119,8 +120,8 @@ no push, PR or merge.
 
 > **Pointer, 2026-10-23 (supersedes the default, not a rule).** "No push, PR or merge" was an execution
 > default, not an owner restriction. The owner's 2026-10-23 direction forbids inventing Git permission
-> limits and asks for a proposed collaboration policy; see
-> `docs/decisions/2026-10-23-direction-multiplier-rounds-git.md` §4 (O-20).
+> limits; the collaboration policy was **ratified on 2026-10-23** (O-20 closed) — see
+> `docs/decisions/2026-10-23-direction-multiplier-rounds-git.md` §4 and `docs/agents/git-workflow.md`.
 
 ## 6. What this record does not do
 

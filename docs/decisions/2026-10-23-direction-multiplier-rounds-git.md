@@ -1,9 +1,11 @@
 # 2026-10-23 — Owner direction: persisted multiplier (Option B), 18-round base, S2 ownership, Git policy, migration and cleanup
 
-**Status: RECORDED (documentation and audit only).** Source: the owner's message of 2026-10-23 (seven
-sections), following `docs/decisions/2026-10-23-final-owner-answers.md` (Q51/Q52). Nothing in this record
-claims a code change, a rules change, a move, a deletion or a test run unless that section says **EXECUTED**
-and names the verification.
+**Status: RECORDED — O-19 and O-20 CLOSED 2026-10-23; archive deletion EXECUTED; everything else is
+documentation or planned work.** Source: the owner's message of 2026-10-23 (seven sections) and the
+follow-up decision message of 2026-10-23 authorizing O-19 and ratifying O-20, following
+`docs/decisions/2026-10-23-final-owner-answers.md` (Q51/Q52). Nothing in this record claims a code change,
+a rules change, a move, a deletion or a test run unless that section says **EXECUTED** and names the
+verification.
 
 Labels: **[D]** owner-confirmed · **[R]** recommendation, not approved · **[O]** open question ·
 **[V]** assumption that needs code verification · **[G]** confirmed implementation gap ·
@@ -97,7 +99,12 @@ Agent branches are uncommitted and not accepted):
 | Cold start after a Sa'ayda extension | ×1 | The persisted Sa'ayda value |
 | Server settlement/replay | `ROUND_MULTIPLIER_DEFAULT` | The doc value; a mismatch is CORRUPT/INCOMPLETE, never silently ×1 |
 
-### 1.5 Firestore Rules impact — **REQUIRED, NOT AUTHORIZED** [O-19]
+### 1.5 Firestore Rules impact — **AUTHORIZED 2026-10-23** [O-19 CLOSED]
+
+**Owner decision (2026-10-23): APPROVED, with strict scope limits.** The owner authorized the minimal
+rules and online match-flow change required by Option B. The source of truth is confirmed as
+`matches/{matchId}.currentMultiplier`, mirrored by `RoundState.multiplier`. This is an authorization to
+implement on a dedicated feature branch; **no rules edit has been made yet** (status: NOT STARTED, §9).
 
 Option B **cannot** be implemented under the current rules without a rules change. This is a hard finding,
 not an assumption:
@@ -111,7 +118,7 @@ not an assumption:
    Pass round has **no card plays**, so it can neither use the existing advance transaction nor create a
    normal archive.
 
-**Proposed minimal rules surface (for approval, not implemented):**
+**Authorized minimal rules surface (binding implementation scope):**
 
 - Add `currentMultiplier` to both match-create allowlists and to the round-advance allowlist.
 - Validate `newData.currentMultiplier is int`, `>= 1`, `<= 8`; Classic (`scoringMode == 'CLASSIC'`)
@@ -121,15 +128,26 @@ not an assumption:
   four distinct seats, every entry `isPass == true` and `round == oldData.currentRound`; `version + 1`;
   `currentRound + 1`; the same dealer rotation and log/bid resets as a normal advance; and
   `currentMultiplier` equal to the rules-computed ladder (Classic 1; Normal 1→2, else `min(old + 2, 8)`).
-- **Pass archive:** because the current 52-card invariant is load-bearing, the pass round needs either
-  (a) a `roundArchive` variant with `cardLog == []`, `biddingLog.size() == 4`, all four passes, and a
-  `passed: true` marker (recommended — preserves "every completed round is archived"), or (b) no archive
-  for a pass round. Option (b) loses the replay evidence; Option (a) is the smaller semantic change but a
-  larger rules edit. The choice is part of **O-19**.
+- **Pass archive:** the owner resolved the open variant — update `roundArchive` validation to accept a
+  legitimate pass-terminated round (empty `cardLog`, four all-pass `biddingLog` entries, a pass marker)
+  **without weakening validation for ordinary rounds**. The ordinary 52-card invariant stays mandatory.
+  Option (b), "no archive for a pass round", is rejected: it would lose replay evidence.
 
-**Not authorized:** the owner's direction approves the architecture; it does **not** authorize editing
-`firestore.rules`. No rules edit was made in this round. The implementation sprint must stop at the rules
-gate and return the proposed diff for approval.
+**Owner-imposed work requirements (acceptance gates):**
+
+1. Field allowlists and validations for `currentMultiplier`.
+2. A narrowly scoped General Pass advance path that does not require 52 cards for a cancelled pass round.
+3. Round-archive validation accepts a legitimate pass round without weakening ordinary-round validation.
+4. Classic stays ×1; Normal keeps the Double after a General Pass.
+5. Legacy match documents without `currentMultiplier` fall back compatibly, with explicit tests proving
+   the fallback.
+6. Persistence proven through reload, reconnect and cold start, including the Sa'ayda continuity case.
+7. Firestore Emulator tests covering accepted and rejected cases: invalid multiplier values, unauthorized
+   fields, ordinary 52-card rounds, and valid pass-round archives.
+
+**Execution constraints:** dedicated feature branch; no weakening of unrelated security rules; report the
+exact diff, rules tests, engine/service tests, failures and skipped tests; no acceptance claim without
+evidence. **Agent 4's S2 scope is unchanged** — the multiplier implementation is not added to it.
 
 ### 1.6 Scope and risks
 
@@ -284,12 +302,13 @@ renumbering. The live ceiling is read, never redefined.
 
 ---
 
-## 4. Git and collaboration policy [R]
+## 4. Git and collaboration policy **[D] — RATIFIED 2026-10-23 (O-20 CLOSED)**
 
 The owner directed that **no rule preventing push, pull request or merge may be assumed** and that no Git
-permission limit may be invented. What follows is a **proposal**, not an owner-ratified policy. The earlier
-"no push, PR or merge" line in `2026-10-23-final-owner-answers.md` §5 was an execution default, not a
-restriction; it is superseded as a default by this section.
+permission limit may be invented. On 2026-10-23 the owner **approved** the policy below; it is no longer a
+proposal. The earlier "no push, PR or merge" line in `2026-10-23-final-owner-answers.md` §5 was an
+execution default, not a restriction, and is superseded by this section. The agent-facing summary lives in
+`docs/agents/git-workflow.md`.
 
 ### 4.1 The hard fact about Git
 
@@ -297,29 +316,30 @@ restriction; it is superseded as a default by this section.
 travels; `push` publishes commits; `fetch`/`pull` receive them. Two separate worktrees — even on the same
 disk, even sharing one object database — do **not** see each other's uncommitted files or index. A shared
 folder is the only way two processes read the same uncommitted bytes, and the current agent setup uses
-separate worktrees, so it does **not** provide real-time sharing before a commit. Real-time sharing before
-commit therefore requires either (a) one shared working directory, or (b) commit + push + fetch.
+separate worktrees, so it does **not** provide real-time sharing before a commit. Cross-environment sharing
+therefore requires **commit + push + fetch**; nothing else counts as publication.
 
-### 4.2 Proposed mechanism
+### 4.2 Ratified mechanism
 
-| Concern | Proposal |
+| Concern | Policy (approved) |
 |---|---|
 | Shared workspace | One repo, worktrees on `D:` (`D:\demo-test`, `D:\demo-test-<sprint>`). Worktrees share commits, not uncommitted state. |
-| Integration branch | `integration/v1` off `main` (or `main` directly if the owner prefers a single branch). `main` stays the release line, merged by the owner through a web-UI PR. |
-| Agent branch | `agent/sN-<slug>` off the current integration tip. One branch per sprint; short-lived. |
-| Commit cadence | Small commits at each green checkpoint, with the mandated identity. Commit before asking another agent to build on the work. |
-| Push cadence | Push the agent branch to `origin` at each checkpoint (or at minimum when handing off). Others `git fetch` and rebase. This is the only cross-agent publication mechanism. |
-| Seeing changes | `git fetch origin` → `git rebase origin/integration/v1` → re-read `git log`/`git status`. Never read another worktree's uncommitted files as if they were published. |
-| Conflict prevention | One owner per shared file at a time (`QuickMatchFlow.kt`, `QuickMatchViewModel.kt`, `OnlineMatchViewModel.kt`, `MatchService.kt`, `firestore.rules`). Announce shared-file edits in the checkpoint; merge the shared-file change first and rebase the others. No broad reformatting; no `git add -A`. |
-| Tests before integration | Targeted suites for the sprint + the full engine/app/services/functions unit suites + the acceptance suite. No merge on red. Instrumented suites where the change crosses Firestore. |
-| Branch vs PR vs direct merge | Isolated, non-overlapping, fully green work: direct fast-forward/merge into `integration/v1` locally is allowed **if the owner ratifies it**. Overlapping or risky work (rules, settlement, schema): PR for review. `main`: PR only, owner's web UI. |
-| Rollback | Never force-push a shared branch. Revert with a new commit; keep the integration history linear where practical. |
+| Integration branch | One shared integration branch — currently `main`. Every agent branch starts from its current tip and lands there only after review and green tests. |
+| Agent branch | `agent/sN-<slug>` off the integration tip. One branch and one worktree per sprint; short-lived. |
+| Commit cadence | Small, coherent commits at each green checkpoint, with the mandated identity. Commit before asking another agent to build on the work. |
+| Push cadence | Push the agent branch to `origin` at each checkpoint and always when handing off, so other agents and environments can fetch it. This is the only cross-agent publication mechanism. |
+| Seeing changes | `git fetch origin` → `git rebase origin/main` → re-read `git log`/`git status`. Never treat another worktree's uncommitted files as published. |
+| Conflict prevention | One owner per shared file at a time (`QuickMatchFlow.kt`, `QuickMatchViewModel.kt`, `OnlineMatchViewModel.kt`, `MatchService.kt`, `firestore.rules`). Announce shared-file edits in the checkpoint; land the shared-file change first and rebase the others. No broad reformatting; no `git add -A`. |
+| Tests before integration | Targeted suites for the sprint + the full engine/app/services/functions unit suites + the acceptance suite. No merge on red. Instrumented or emulator suites where the change crosses Firestore. |
+| Branch vs PR vs direct merge | Pull requests and merges are **permitted**, not banned. Isolated, non-overlapping, fully green work may merge directly after review; overlapping or risky work (rules, settlement, schema) goes through a PR. `main` merges happen in the owner's web UI. |
+| Merge discipline | Never merge unverified changes into the integration branch just to make them visible sooner. Visibility comes from pushing the agent branch, not from merging early. |
+| Rollback | Never force-push a shared branch. Revert with a new commit; keep integration history linear where practical. |
 
 ### 4.3 What this policy does not do
 
 It does not ban push, PR or merge, and it does not grant any permission the owner has not granted. The only
 standing constraints are the owner's: PRs are opened in the web UI, `gh` is not installed, and commits use
-the mandated identity. Ratification is **O-20**.
+the mandated identity. Ratification was **O-20**; it is now closed.
 
 ---
 
@@ -396,31 +416,61 @@ Synchronization (Authority Layer)"). They are therefore recoverable from history
 eb352dc:Sprint-3.4-Review.zip`), and deleting them is a **repository-content commit**, not a disk cleanup.
 Deleting them does not materially free C:; the disk pressure is Gradle caches and build outputs.
 
-### 6.3 Result
+### 6.3 Result — **EXECUTED 2026-10-23**
 
-**Not deleted.** No archive was removed, moved or modified. Because they are tracked, the deletion belongs
-in a dedicated commit on the branch the owner chooses (the docs branch or, after the migration, `main`).
-The verified list is above; the command is `git rm -- <the 19 paths>` followed by a commit and a
-`git status` confirmation. This record does not claim that deletion happened.
+The exact list was re-verified (19 tracked paths), then removed in a dedicated commit on
+`docs/native-v1-implementation-plan-v2`: **`438736e`** — *"Chore(archives): delete the 19 approved
+*-Review.zip snapshots"* (19 files changed, 0 insertions, 0 deletions). Verification after the commit:
+
+- `git ls-files -- '*Review.zip' | wc -l` → **0**
+- `git cat-file -e eb352dc:Sprint-2.8-Review.zip` and `eb352dc:Task-Service-Layer-Review.zip` → both
+  resolve, so every archive is still recoverable from history.
+- `git status` after the commit showed only Agent 1's three uncommitted engine files; no other file was
+  included in the commit.
+- No worktree, cache or other output was touched.
+
+The archive contents were not individually listed (local listing produced no output), so recovery is
+guaranteed by git history, not by a content inspection.
 
 ---
 
-## 7. New open questions
+## 7. Questions closed on 2026-10-23
 
-| ID | Question | Why it matters | Recommendation (not approved) |
-|---|---|---|---|
-| O-19 | Does the owner authorize the **Firestore rules change** required by Option B: a `currentMultiplier` field on the match doc, its create/advance allowlists, a General Pass advance branch, and a pass-archive variant? | Without it, the online pass cannot persist continuity; the architecture is approved but the security surface is not. | Authorize the **minimal** change in §1.5, with the emulator denial tests; do not authorize a broader rules rewrite. |
-| O-20 | Does the owner ratify the **Git collaboration policy** in §4 (integration branch, push cadence, direct-merge vs PR)? | The current agent flow has no publication mechanism for uncommitted work; the earlier "no push/PR/merge" was a default, not a rule. | Ratify §4 as written; keep `main` PR-only via the owner's web UI. |
+| ID | Question | Decision (2026-10-23) |
+|---|---|---|
+| O-19 | Does the owner authorize the Firestore rules change required by Option B? | **CLOSED — APPROVED with strict scope limits.** Minimal rules + online match-flow change only: `currentMultiplier` allowlists/validation, a narrowly scoped General Pass advance without the 52-card requirement, a pass-round archive variant that does not weaken ordinary-round validation, Classic ×1 / Normal Double preserved, legacy fallback with tests, reload/reconnect/cold-start and Sa'ayda continuity proven, emulator accepted/rejected tests. Dedicated feature branch; exact diff and test evidence required. — see §1.5 and §9. |
+| O-20 | Does the owner ratify the Git collaboration policy? | **CLOSED — APPROVED.** One shared integration branch; one feature branch/worktree per agent; frequent coherent commits pushed promptly; no uncoordinated edits to the same files; integrate only after review and passing tests; PRs and merges permitted; never merge unverified work just for visibility. — see §4. |
 
-All other questions in this record are decided, verified or explicitly marked as assumptions. The existing
-open register (O-12, O-13, O-15, O-16, O-17, O-18) is unchanged.
+The remaining register (O-12, O-13, O-15, O-16, O-17, O-18) stays open and is unchanged by this record.
 
 ---
 
 ## 8. What this record does not do
 
-- It does not implement Option B, edit `firestore.rules`, or claim the online pass works.
+- It authorizes Option B but **does not implement it**: no rules edit, no engine/service/app change, and no
+  claim that the online pass or multiplier continuity works.
 - It does not renumber the match to 14 or to 18; it records the existing 18 base and the live ceiling.
-- It does not accept S1, S2 or S4; the agent work is uncommitted and the acceptance gaps stand.
-- It does not move the project, delete an archive, or run a test suite.
-- It does not ratify the Git policy or authorize the rules change; O-19 and O-20 are open.
+- It does not accept S1, S2 or S4; the agent work is still uncommitted and the acceptance gaps stand.
+- It does not move the project; the D: migration remains approved-but-not-executed pending dirty-worktree
+  preservation.
+- It does not answer O-12, O-13, O-15, O-16, O-17 or O-18.
+
+---
+
+## 9. O-19 authorized implementation — status
+
+**Status: NOT STARTED.** No `firestore.rules` edit, no match-flow change and no test run has happened in
+this round. The work must run on a dedicated feature branch, and **Agent 4's S2 scope is unchanged**.
+
+| # | Owner-required work item | Status |
+|---|---|---|
+| 1 | `currentMultiplier` allowlists and validation | PLANNED |
+| 2 | Narrow General Pass advance path without the 52-card requirement | PLANNED |
+| 3 | Pass-round archive validation without weakening ordinary rounds | PLANNED |
+| 4 | Classic ×1 / Normal Double preserved after a pass | PLANNED |
+| 5 | Legacy documents without `currentMultiplier` fall back, with tests | PLANNED |
+| 6 | Reload, reconnect, cold start and Sa'ayda continuity proven | PLANNED |
+| 7 | Emulator accepted/rejected tests (invalid values, unauthorized fields, ordinary and pass rounds) | PLANNED |
+
+**Gate:** the work is not accepted until the exact diff, rules-emulator results and engine/service test
+counts (including failures and skipped) are reported and reviewed. No acceptance claim without evidence.

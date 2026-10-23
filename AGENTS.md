@@ -16,6 +16,15 @@ Read `docs/decisions/2026-10-20-profile-story-s75-and-firebase-free-plan.md`: Pr
 
 Read `docs/decisions/2026-10-21-server-authority-and-owner-rulings.md` (server-authoritative Ranked, rule rulings A6, stats, backup, retention) and `docs/decisions/OPEN_QUESTIONS.md` before scoping Ranked, backend, stats, or season work. Items marked proposal or open there are **not** owner-approved.
 
+### Git workflow
+
+Read `docs/agents/git-workflow.md` before creating a branch or worktree, committing, pushing or handing off.
+Ratified 2026-10-23 (O-20): one shared integration branch (`main`), one feature branch/worktree per agent,
+frequent coherent commits pushed promptly, shared files owned one agent at a time, integration only after
+review and green tests. Push, PRs and merges are permitted; there is no owner-imposed ban. Uncommitted
+changes in one machine's worktree are **not** visible on other machines — sharing requires commit + push.
+Never merge unverified work just to make it visible.
+
 ### Issue tracker
 
 Issues live in GitHub Issues via the `gh` CLI. See `docs/agents/issue-tracker.md`.
