@@ -31,6 +31,11 @@ Rank | Name (English) | Common Egyptian/Arabic Name | Symbol | Strength
 5 | Clubs | Trefle | ♣ | Weakest (1)
 
 ✔ CLARIFIED: Spades is called “Asbeed” (or “Beg”). “Trefle” is the name for Clubs (the weakest suit) — the earlier sheet mislabeled Spades as “Trefle”. “Sanz/Sans” means No-Trump.
+
+> **Pointer, 2026-10-23 (owner; table above left verbatim).** The **strength order is unchanged**
+> (Sans > Spades > Hearts > Diamonds > Clubs) and so are the English names and internal identifiers.
+> Arabic **display labels** are standardized by **A8.5 / Q52**: سانز / أسبيد / هارت / كاروه / تريفل.
+> "Sunz" and "Trefle" remain display synonyms only; comparison logic keeps reading the internal suit.
 2. Game Phases
 2.1 Pre-Bidding Phase
 Avoid (Void)
@@ -60,14 +65,14 @@ Super Call
 Definition: bidding 8 tricks or more.
 Normal rounds (1–13): the Super Caller enters the Confirmation Phase and may confirm, raise the number, or change the suit.
 Fast rounds (14–18): instantly overrides the forced trump suit — no Confirmation Phase — and extends the game (see §3).
-If two players Super Call, the higher bid (then stronger suit) wins the right to choose the trump.
+If two players Super Call, the higher bid (then stronger suit) wins the right to choose the trump. *(Reaffirmed 2026-10-22 by A7.2 as the governing fast-round tie-break; seat order plays no part, and Sans beats every suit on a tie.)*
 2.2.1 “With” (Wazz) Rules
 A player becomes “With” the Caller in one of two ways:
 Auction Alignment: during the auction, a player bid the SAME SUIT as the eventual winning Caller — even if their trick number differed.
 Estimation Jump-In: during the Estimation Stage, a player matches BOTH the Caller's number AND suit exactly. This is open to anyone, including players who passed the auction.
 Defeated Suit Rule:
 If a group aligned “With” on a suit that then lost to a stronger winning suit, their alignment is void — they lose “With” and re-enter Estimation as independent players.
-✔ CLARIFIED: In fast rounds, if several players bid the same highest number, the FIRST to bid it is the Caller and EVERY other player who bid that same number becomes “With” (up to three) — not only the last one. **[Superseded 2026-10-21 — With in fast rounds: Current Rules §5]**
+✔ CLARIFIED: In fast rounds, if several players bid the same highest number, the FIRST to bid it is the Caller and EVERY other player who bid that same number becomes “With” (up to three) — not only the last one. **[Superseded 2026-10-21 — With in fast rounds: Current Rules §5]** **[Superseded 2026-10-22 — Caller tie-break: A7.2; the stronger suit wins an equal-number tie and seat order is never a tie-break]**
 2.3 Estimation Stage
 After the Caller is finalized (and Confirmation complete in normal rounds), the remaining players estimate their tricks, subject to:
 The Call Cap: no other player may estimate MORE than the Caller's bid (normal rounds). Example: if the Caller won with 5, the maximum estimate for anyone else is 5. (Fast rounds have no cap.)
@@ -198,24 +203,62 @@ All scoring bonuses/penalties stack unless explicitly forbidden.
 
 ## Current Rules — everything agreed with the owner, 2026-10-21 (CONSOLIDATED; governs where older text differs)
 
-> Source: owner rulings of 2026-10-21 (`docs/decisions/2026-10-21-server-authority-and-owner-rulings.md`, §A–§V). Older sentences that these replace are tagged **[Superseded 2026-10-21]** in place and left readable. **The Kotlin engine does not yet implement most of this section** (see the discrepancy list in the decision record); this is the target rule set, not a statement of current code behaviour. Amendments A6.1–A6.11 below are the dated trail.
+> Source: owner rulings of 2026-10-21 (`docs/decisions/2026-10-21-server-authority-and-owner-rulings.md`, §A–§V) as consolidated that day, then amended in place by the owner rulings of 2026-10-22 (**Amendment A6.12** and **Amendment A7**, recorded in `docs/decisions/OPEN_QUESTIONS.md` as Q14b(1) and Q30–Q34). Older sentences that these replace are tagged **[Superseded 2026-10-21]** in place and left readable. **The Kotlin engine does not yet implement most of this section** (see the discrepancy list in the decision record); this is the target rule set, not a statement of current code behaviour. Amendments A6.1–A6.12, A7.1–A7.5 and A8.1–A8.8 below are the dated trail.
 
 1. **General Pass (all four pass the auction).** The round is consumed (round 6 all pass → round 7 is played). **Normal Calculation:** the next round is multiplied ×2 and feeds the Sa'ayda ladder (a Sa'ayda in round 7 → round 8 ×4, then ×6, ×8). **Classic:** the round is consumed with **no** multiplier. No limit on how often General Pass or Sa'ayda can happen; the multiplier is capped at **×8**. General Pass can occur only in normal rounds (fast rounds have no auction).
+
+   > **Pointer, 2026-10-23 (owner; text above left verbatim — confirmation).** **A8.7 / Q51** confirms this
+   > item and defines the mechanism: the consumed round is replaced by a **new round number** with a fresh
+   > deal; Normal is ×2, Classic has no multiplier. "Consumed" and "redeal" are the same behaviour (C-2
+   > closed).
 2. **Sa'ayda match extension.** (a) Count the rounds in the inclusive window **14–18 (FULL) / 6–10 (MINI)** in which a Sa'ayda occurs; each such **round** (not each player) adds one round after the baseline last round (18 / 10). (b) If a Sa'ayda occurs in the **actual current final round**, add one round, and repeat for each new final round until the final round ends with a winner. A Sa'ayda in a non-final round after the window adds nothing. **No cap** on extensions. A tied top score counts as a winner (shared King).
+
+   > **Pointer, 2026-10-23 (owner; text above left verbatim — confirmation).** **A8.8 / Q48** fixes the
+   > arithmetic: 14→19, 14+15→20, 14+15+16→21, 13→18, generalized to 18 + N on FULL and 6 + N on MINI;
+   > (b) still governs rounds beyond 18. The helper exists but is **not wired** (`computeRoundExtension` has
+   > no production caller).
 3. **Super Call extension.** A fast-round Super Call that overrides the forced trump adds one round **only if the Caller succeeds**; it combines with the Sa'ayda count.
-4. **Normal Dash + Risk.** A Normal Dash player who is also the Risk player receives the Risk value **plus** the Normal Dash points, with neither dropped nor counted twice. **Classic:** add both tables (exact Classic numbers to be confirmed at implementation).
-5. **With/Wazz.** *Ordinary rounds:* With = every other player who bid the final Caller's **winning suit** at any time; their With number is their **latest bid in that suit** (a matching number alone is not enough). *Fast rounds:* any player declaring **8+** may choose any trump (Sans, Spades, Hearts, Clubs, Diamonds); the Super Caller's suit replaces the forced suit and **every other player re-declares** (counter-clockwise); a higher Super Call repeats this. With is only a player whose **final number equals the highest winning number exactly**, and, if the trump changed, whose estimate was made **under the final trump**. Not every 8+ declarer is With.
+4. **Normal Dash + Risk.** A Normal Dash player who is also the Risk player receives the Risk value **plus** the Normal Dash points, with neither dropped nor counted twice. **Classic (owner, 2026-10-22; A7.1 closes the open numbers):** the same component addition — Risk value + Normal Dash points, the miss counted **once**. On the owner's Classic case (total bids 15, Risk value 10, a Normal Dash seat taking 2 against its 0 estimate) the miss is −2 + (−10) = **−12** and a success on that Over round is +13 + 10 = **+23**. The Normal-mode **−22 is not a Classic value**, and a Classic **Wizz-Risk** formula is not this role's rule.
+5. **With/Wazz.** *Ordinary rounds:* With = every other player who bid the final Caller's **winning suit** at any time; their With number is their **latest bid in that suit** (a matching number alone is not enough). *Fast rounds:* any player declaring **8+** may choose any trump (Sans, Spades, Hearts, Clubs, Diamonds); the Super Caller's suit replaces the forced suit and **every other player re-declares** (counter-clockwise); a higher Super Call repeats this. With is only a player whose **final number equals the highest winning number exactly**, and, if the trump changed, whose estimate was made **under the final trump**. Not every 8+ declarer is With. **Equal-highest tie (owner, 2026-10-22; A7.2):** the higher **number** wins whatever the suit; at an equal number the **stronger suit** wins the Call by the official hierarchy (Sans > Spades > Hearts > Diamonds > Clubs, §1), so **8♠ beats 8♥** and **9♥ beats 8♠** — **seat order never breaks a tie**. Fast-round With needs **both** the exact number **and** the matching suit, so a tied declarer whose suit lost the tie is not With. Two seats declaring the same number in the same suit is **not settled** (O-02b).
+
+   > **Pointer, 2026-10-23 (owner; text above left verbatim).** The last sentence is now settled by
+   > **A8.1 / Q35**: an exact number-and-suit duplicate is **legal**; the **first** declarer is Caller and
+   > each later exact duplicate is **With**; declaration order decides only that case. A7.2's suit tie-break
+   > and "seat order never decides" are unchanged.
 6. **Placement and Koz on ties.** Koz = every player tied at the **lowest** score, unless all four are tied (then all four are King). A tie at the top shares King. Shared-Koz players are Koz (not Second/Third) and share the same last placement for RP. **No Vote Kick** when the Koz is shared (a unique Koz is required).
-7. **Vote Kick and departure charges.** A passed Vote Kick records **2 Koz** for the kicked player (RANKED, UNRANKED; **ROOM excluded — no charge in ROOM**). Leaving a match **voluntarily** records **2 Koz in RANKED and UNRANKED** and **1 Koz in ROOM**, applied **when the match finishes** and only if the player did not return; a **disconnect or app close that is not a voluntary departure charges nothing** — this wording is not yet reconciled with the ratified 2-Koz **permanent disconnect replacement** in `UNRANKED`; see A6.12 and O-03c — and a **reconnect within the takeover window is never a departure**. The 7th takeover and the 15-timeout removal are **not departures** — each keeps its own charge (the 15-timeout removal **2 Koz** per A5.1's table, the 7th takeover **2 Koz** per item 8) and is **not additionally** charged as a leave. A match abandoned by everyone (all humans gone, or all disconnected for **one minute**) is cancelled and **every player is Koz** and, in RANKED, **loses RP equal to the engine's last-place loss**; a match stopped by a server or quota failure is **never charged** to players.
-8. **Bot takeover and reconnect.** After the decision timer expires the **MEDIUM** bot plays that decision (+1 timeout, 15th removes). If the player is still disconnected after **10 more seconds** (fixed for all timers) the **creator-selected bot** takes the seat and the takeover counter increments; the **7th** takeover removes the player from the match with **2 Koz** (a match-level removal, not an account ban). Ordinary 50-second inactivity does not increment this counter.
+7. **Vote Kick and departure charges.** A passed Vote Kick records **2 Koz** for the kicked player (RANKED, UNRANKED; **ROOM excluded — no charge in ROOM**). Leaving a match **voluntarily** records **2 Koz in RANKED and UNRANKED** and **1 Koz in ROOM**, applied **when the match finishes** and only if the player did not return; a **disconnect or app close that is not a voluntary departure charges nothing** — meaning no *leave* penalty is added, and this does **not** cancel the separate ratified **permanent disconnect-replacement** consequence, which is **2 Koz in `UNRANKED`** and **no Koz in `ROOM`** (owner, 2026-10-22; A7.4 closes O-03c) — and a **reconnect within the takeover window is never a departure**. The 7th takeover and the 15-timeout removal are **not departures** — each keeps its own charge (the 15-timeout removal **2 Koz** per A5.1's table; the 7th takeover **2 Koz in RANKED and UNRANKED** and **1 Koz in ROOM** per item 8 and A7.3) and is **not additionally** charged as a leave. A human who leaves and does not complete the match is **scored Koz for that match even when a replacement bot finishes it as King**, and the completing humans keep their own normal results (A7.5). A match abandoned by everyone (all humans gone, or all disconnected for **one minute**) is cancelled and **every player is Koz** and, in RANKED, **loses RP equal to the engine's last-place loss**; a match stopped by a server or quota failure is **never charged** to players.
+
+   > **Pointer, 2026-10-23 (owner; text above left verbatim).** The parenthetical "15-timeout removal
+   > **2 Koz** per A5.1's table" is now mode-scoped by **A8.3 / Q37**: **1 Koz in `ROOM`**, 2 Koz in
+   > `RANKED`/`UNRANKED`. The 7th takeover keeps its own A7.3 values; a single removal is charged once.
+8. **Bot takeover and reconnect.** After the decision timer expires the **MEDIUM** bot plays that decision (+1 timeout, 15th removes). If the player is still disconnected after **10 more seconds** (fixed for all timers) the **creator-selected bot** takes the seat and the takeover counter increments; the **7th** takeover removes the player from the match with **2 Koz** (a match-level removal, not an account ban). Ordinary 50-second inactivity does not increment this counter. **Mode scope and timing (owner, 2026-10-22; A7.3 closes O-03):** in **ROOM** the 7th takeover records **1 Koz**, and the removal fires **immediately when the 7th qualifying takeover happens — even if a 30-second disconnect vote is open or a 90-second WAIT is running**; it does not wait for the ballot or the WAIT to end. What the counter is incremented by, and how it is made exactly-once, is engineering (`§5.7.3`), not a new ruling; the unresolved side-effect on an open ballot is **O-03b**.
+
+   > **Pointer, 2026-10-23 (owner; text above left verbatim).** **O-03b is closed by A8.2 / Q36:** the 7th
+   > takeover **cancels** an open 30-second ballot immediately, during **VOTE** or **WAIT**; it never
+   > expires into a verdict, never writes a stale result, and never double-charges.
 9. **Ranked tables and bot-fill.** Every Ranked table is **created by a player** (who chooses timer, game type, bots and their personality); **Auto-Match joins a waiting player-created table** within the RD29 tier band (≤1 tier apart), after showing the table settings; with none waiting the app says so and offers Create Table. **Wait two minutes from the first player entering**; ready = connected and seated; if ready humans are still missing, a **30-second vote** (≥2 waiting players; more than half of waiting humans must approve; non-votes count as rejection) fills with the creator's bots. RP in a table with bots: humans get normal RP, **opponent strength from humans only**.
-10. **ROOM.** No ROOM without a **full table of four** players.
+
+   > **Pointer, 2026-10-23 (owner; text above left verbatim).** The band is **absolute** and never widens
+   > after 180 s (**A8.6 / Q41**). Whether a pair one tier **up** is eligible as well as one tier **down** is
+   > **not** decided: open as **O-15**, and no matchmaking code changes until it is answered.
+10. **ROOM.** No ROOM without a **full table of four** players — a **start** condition; a seat vacated mid-match **may be filled by a bot** and the departed human is scored Koz regardless of how the bot finishes (A7.5, owner 2026-10-22).
+
+   > **Pointer, 2026-10-23 (owner; text above left verbatim).** **A8.4 / Q38** completes the rule: that
+   > match also adds **+1 Games Played** for the departed human (it enters the percentage denominator), the
+   > bot's King is **never** attributed to them, and completing humans keep their own results. ROOM records
+   > no RP.
 11. **Statistics.** Profile shows counts and percentages over Games Played (King, Second, Third, Koz), **aggregated across ROOM, RANKED and UNRANKED**; Ranked RP is separate and Ranked-only; leaderboard deferred from V1.
+
+   > **Pointer, 2026-10-22 (owner; text above left verbatim — confirmation only, no wording change).**
+   > **Q46 / N-1** confirms this aggregation (ROOM + RANKED + UNRANKED in the nine career statistics, RP
+   > Ranked-only). The **code** does not match yet: `accumulateRankedStat` returns early unless `RANKED`
+   > (`RankedStats.kt:109`) and settlement is Ranked-only (`Settlement.kt:340-351`) — an implementation gap
+   > (S3), not a rule question.
 12. **Seasons.** Seasons and the two-step reset stay; fixed 90-day seasons; a match is credited to the season in which it completes.
 
 ## Amendment A1 — Legacy tracker Normal-mode Super Call (owner decision 2026-09-17)
 
-> **Provenance:** NOT from the DOCX extraction above — owner-mandated house rule for the legacy `src/` score tracker only (`src/utils.ts` `SUPER_CALL` role in Normal mode). Classic mode (line 192) and the `design-ui/` multiplayer engine are explicitly unaffected.
+> **Provenance:** NOT from the DOCX extraction above — owner-mandated house rule for the legacy `src/` score tracker only (`src/utils.ts` `SUPER_CALL` role in Normal mode). Classic mode (line 197) and the `design-ui/` multiplayer engine are explicitly unaffected.
 
 - Win: **bid squared** — 8→64, 9→81, 10→100, 11→121, 12→144, 13→169. Sole winner still adds +10 (74/91/110/131/154/179).
 - Loss: **half of that, rounded half-up, flat by bid** — −32/−41/−50/−61/−72/−85 — independent of tricks taken. Sole loser takes 10 extra (−42/−51/−60/−71/−82/−95) instead of any doubling rule.
@@ -449,10 +492,24 @@ Every rule in §§1–5 — the deal, the auction, both Game Types, both Calcula
 - **Vote Kick records 1 Koz, final.** This restores RD18's "recorded as **Koz**" and repeals
   RD31's doubling **for that path only**; RD31 still doubles the departure paths above.
 
-  > **Pointer, 2026-10-22 (owner; text above left verbatim as history).** The **number** was superseded by **Q14d(1)** (2026-10-21): a passed Vote Kick records **2 Koz** in `RANKED` and `UNRANKED`, `ROOM` exempt because no kick is held there. A6.12 reaffirms that and narrows only the *departure* definition — it changes no charge value. The `ROOM` "no Koz" cells above still govern a **disconnect** replacement; a **voluntary** Room leave is charged 1 Koz under Q14b/A6.6.
+  > **Pointer, 2026-10-22 (owner; text above left verbatim as history).** The **number** was superseded by **Q14d(1)** (2026-10-21): a passed Vote Kick records **2 Koz** in `RANKED` and `UNRANKED`, `ROOM` exempt because no kick is held there. A6.12 reaffirms that and narrows only the *departure* definition — it changes no charge value. The `ROOM` "no Koz" cells above still govern a **disconnect** replacement; a **voluntary** Room leave is charged 1 Koz under Q14b/A6.6. Those two cells are now **confirmed, not merely unrepealed**: the owner ratified **`UNRANKED` permanent replacement = 2 Koz, `ROOM` = no Koz** on 2026-10-22 (**A7.4**, closing **O-03c**) — "a disconnect charges nothing" adds no *leave* penalty, while a vote to permanently replace keeps its own charge. The takeover removal is mode-scoped by **A7.3**: `ROOM` **1 Koz**, `RANKED`/`UNRANKED` 2 Koz, fired immediately even during an open ballot or a WAIT.
 - **`ROOM` is out of RD31 entirely.** Neither an explicit leave nor a 15-timeout removal in a
   normal room charges anything under this rule, and a Room disconnect replacement charges
   nothing — see A5.3.1.
+
+  > **Pointer, 2026-10-22 (text above left verbatim as history; plan defect D-17).** This sentence is
+  > **partly superseded and partly confirmed**, and the residue is an open owner question — not a settled
+  > value. Superseded: an explicit **`ROOM` leave is charged 1 Koz** (Q14b / A6.6), and the **7th takeover**
+  > is now charged in `ROOM` too — **1 Koz**, fired immediately even during an open ballot or a WAIT (A7.3)
+  > — so `ROOM` is no longer "out of RD31 entirely". Confirmed: a `ROOM` **disconnect** replacement still
+  > charges nothing, ratified by A7.4 / Q33. Not reached by any of those rulings: the **15-timeout** removal
+  > cell above (`:487`), whose `ROOM` value is neither stated nor repealed — it stays open as **O-03d** and
+  > must not be defaulted to 0 or 1.
+
+  > **Pointer, 2026-10-23 (owner; table and note above left verbatim).** **O-03d is closed by A8.3 / Q37:**
+  > the 15-timeout removal records **1 Koz in `ROOM`** (2 Koz in `RANKED`/`UNRANKED` unchanged). The cell is
+  > superseded by a positive value, not repealed to zero, and it stays distinct from the 7th takeover and
+  > from a permanent replacement.
 
 ### A5.2 OPEN-5 — CLOSED: the disconnect vote's three mechanics
 
@@ -528,15 +585,26 @@ the disconnect table may pause for a bounded 90 seconds.**
   Follow-up (owner): MINI uses the same logic on rounds 6–10; Super Call extensions combine with the count; a tied final round counts as having a winner (shared King, RD17). Extension caps are removed (owner, Q2c). **Koz on ties (owner, Q2d; supersedes RD17's last sentence):** Koz = every player tied at the lowest score unless all four tie (then all King); shared-Koz players are Koz, not Second/Third. Vote Kick/RP effects open (Q2e).
 - **A6.3 Normal Dash + Risk (Normal Calculation):** the Risk player who is a Normal Dash gets the Risk
   value **plus** the Normal Dash points. Example, total bids 15 (Risk 10): 0 tricks → +20 (engine +10);
-  2 tricks → −22 (engine −12). Classic is open (Q4).
+  2 tricks → −22 (engine −12). Classic is open (Q4). *(Classic closed 2026-10-22 by **A7.1**: the same
+  component addition, −12 miss / +23 success on the owner's Classic case; the −22 above is the Normal-mode
+  value and must not be reused as a Classic value.)*
 - **A6.4 (owner, 2026-10-21 later; supersedes A6.1's "redeal" wording where it differs):** a General Pass consumes the round number — round 6 all pass → round 7 is played ×2; a Sa'ayda in round 7 → round 8 ×4. Classic carries no Double (consumption in Classic: Q1b). The engine redeals the same round and differs.
+
+  > **Pointer, 2026-10-23 (owner; bullet above left verbatim).** This bullet is **operative** and resolves
+  > conflict C-2: **Q51 / A8.7** defines "redeal" as a fresh deal into the **next round number** — Normal
+  > multiplied ×2, Classic none. The engine's same-round model is the defect, not this wording.
 - **A6.5 Super Call extension (owner):** only if the Caller succeeds; supersedes the "any Super Call" wording of §3.
 - **A6.6 Departure charges (owner; supersedes A5.1 where it differs):** ROOM leave for any reason = 1 Koz; RANKED/UNRANKED leave for any reason = 2 Koz; charged only when the match finishes and the player did not return. Open: Q14c, Q14d. No Vote Kick against a shared Koz (unique Koz required).
 - **A6.7 (owner, later; supersedes A6.6 and A3.5 where they differ):** UNRANKED computes no RP but enters all profile statistics. A passed Vote Kick = 2 Koz (RANKED, UNRANKED). A match abandoned by everyone: all players Koz and RP deducted (details Q27). No cap on General Passes or Sa'aydas; the multiplier caps at ×8; a Classic General Pass consumes the round with no multiplier. Players tied at the bottom share the last placement for RP.
-- **A6.8 (owner, 2026-10-21 later):** a ROOM needs a full table of four (supersedes A3.1's "may start with 2–3 players"); Classic Normal Dash + Risk adds both components (numbers to be confirmed); profile shows counts and percentages over Games Played.
+
+  > **Pointer, 2026-10-22 (owner; bullet above left verbatim — confirmation only).** The statistics half is
+  > **confirmed by Q46 / N-1**: career results aggregate **ROOM + RANKED + UNRANKED** (item 11, Q17), while
+  > RP stays Ranked-only. No wording changes. The **code** still gates statistics to RANKED
+  > (`RankedStats.kt:109`) — an implementation gap, not a rule question.
+- **A6.8 (owner, 2026-10-21 later):** a ROOM needs a full table of four (supersedes A3.1's "may start with 2–3 players"); Classic Normal Dash + Risk adds both components (numbers to be confirmed); profile shows counts and percentages over Games Played. *(The "numbers to be confirmed" are confirmed 2026-10-22 by **A7.1** — components added, miss counted once. The full-table rule is a **start** condition: a vacated ROOM seat may be bot-filled per **A7.5**.)*
 - **A6.9 With (owner, 2026-10-21 later):** Normal rounds — With = any other player who bid the final Caller's winning suit at any time; their With number is their last bid in that suit. Fast rounds — With only if the suit matches the final suit and the number equals the highest winning number exactly (≥8 alone is not enough). Supersedes the engine's Super Call With set. Fast-round "suit" meaning: Q28.
 - **A6.10 (owner, later; supersedes A6.9's fast-round part):** any fast-round player declaring 8+ may choose any trump; a Super Caller's suit replaces the forced suit and others re-declare (who: Q29); a higher Super Call repeats this. Fast-round With: highest winning number exactly, plus the estimate made under the final trump if the trump changed. Not every 8+ is With.
-- **A6.11 (owner, later; supersedes line 104's "only players who bid before re-estimate"):** after a fast-round Super Call every player except the Super Caller re-declares, counter-clockwise; repeat for each higher Super Call. Engine differs (`Bidding.kt:577-625`).
+- **A6.11 (owner, later; supersedes line 109's "only players who bid before re-estimate"):** after a fast-round Super Call every player except the Super Caller re-declares, counter-clockwise; repeat for each higher Super Call. Engine differs (`Bidding.kt:577-625`).
 - **A6.12 Departure = VOLUNTARY only (owner, 2026-10-22; narrows A6.6/A6.7 and Current Rules item 7).** The one thing this ruling changes is the **definition** of a departure; every charge value is left exactly where Q14b and Q14d(1) put them on 2026-10-21.
   - **"For any reason" is repealed.** Only a **voluntary** leave is a departure. A **disconnect or app close that is not a voluntary departure charges nothing**, and a **reconnect within the takeover window is never a departure** — which is A5.1's "return when allowed = no penalty" bullet applied to the general case, not a new exception.
   - **A takeover-driven removal is not a *departure* — but it is still charged.** The 15-timeout removal keeps its own A5.1 **2 Koz**, and the 7th takeover keeps item 8's **2 Koz**; neither is *additionally* charged as a leave, so a player is never double-charged for one removal event. Their **ROOM** treatment stays **open (O-03)** — this ruling does not close it. (Reading "not a departure" as "charges nothing" would silently delete both charges; it does not.)
@@ -544,4 +612,209 @@ the disconnect table may pause for a bounded 90 seconds.**
   - **Q14c and Q14d are NOT reopened by this ruling.** Q14c (UNRANKED enters all nine profile statistics, no RP) and Q14d(1) were closed on 2026-10-21; Q14d(2) survives as **Q27**, and `docs/decisions/2026-10-16-open4-open5-owner-closure.md` is **not patched** — the pointer above A5.1 and this bullet are the record.
   - **⚠ One consequence is NOT decided — flagged, not resolved (O-03c).** "A disconnect that is not voluntary charges nothing" reaches the **S74 permanent disconnect-replacement** charge, which A5.1's table and the owner's 2026-10-17 clarification put at **2 Koz in UNRANKED** (`DisconnectVote.permanentCharge`, `DisconnectVote.kt:69-73`) — an increment ratified for an event that is, by definition, not a voluntary leave. Either reading is coherent: (i) the new wording controls and a permanent replacement records **nothing** in every mode (repeals A5.1's UNRANKED cell, changes the engine and its tests); or (ii) the S74 replacement charge is its own ratified consequence and survives, so "disconnect charges nothing" means only "no *leave* penalty is added". **A6.12 does not choose between them** — the owner must, and O-03c is where it is tracked.
   - **Consequence for the plan:** the rules side is settled; what remains is an *implementation* gap against a mechanism that already exists — `LeaveMatch.decideLeave` returns `Koz1` for `VOTE_KICK` (rule: 2), treats `FIFTEEN_TIMEOUT` as a leave, and returns `None` for a `ROOM` leave (rule: 1), while `RankedStats.accumulateDepartureCharge` short-circuits `ROOM` entirely, and `LeaveReason` carries **no** voluntary/involuntary discriminator at all. That is a V2 §4 workload item, not a rule decision.
+
+  > **Pointer, 2026-10-22 (owner; bullets above left verbatim).** The ⚠ bullet is **resolved by A7.4**: reading **(ii)** is the rule — a permanent disconnect replacement keeps its own ratified charge (`UNRANKED` 2 Koz, `ROOM` no Koz), and "a disconnect charges nothing" means no *leave* penalty is added on top. The "ROOM treatment stays open (O-03)" clause in the second bullet is **resolved by A7.3**: the 7th takeover in `ROOM` is **1 Koz**.
+
+## Amendment A7 — O-01, O-02, O-03, O-03c and O-04 closed by the owner (owner rulings 2026-10-22)
+
+> Source: the owner's answers of 2026-10-22 to the decisions `docs/NATIVE_V1_IMPLEMENTATION_PLAN_V2.md`
+> §5.7.2 listed as blocking implementation. Registered in `docs/decisions/OPEN_QUESTIONS.md` §D as
+> **Q30–Q34**. A6.12 (the same day) narrowed the *definition* of a departure and changed no number; A7
+> supplies the numbers, the tie-break and the ROOM bot-attribution rule that definition left untouched.
+> Text these answers replace is tagged in place and left readable.
+
+- **A7.1 Classic Normal Dash + Risk = component addition (closes O-01; refines Q4 and A6.8).** A Classic
+  Normal Dash who is also the Risk player is scored exactly like A6.3 does in Normal Calculation: the
+  **Risk value plus the Normal Dash points, with neither dropped nor counted twice**. "Add both tables"
+  (Q4) meant the two *components*, not the two complete role formulas — a miss must not be charged twice,
+  and the sum must have a matching success side. On the owner's worked Classic case (total bids 15, Risk
+  value 10, a Normal Dash seat that takes 2 against its fixed 0 estimate): miss = −2 + (−10) = **−12**;
+  success on that Over round = +13 + 10 = **+23** (on an Under round the same pair is +23 + 10 = +33).
+  **−22 is the Normal-mode owner example (A6.3) and is not a Classic value**; a Classic **Wizz-Risk** seat
+  is a different role and its formula must not be substituted for this one.
+  - **What the Risk term is, derived from the owner's own two numbers.** The seat keeps its **Classic
+    Normal Dash table value** (§176-180: Success Under +23, Success Over +13, Failure Under −10, Failure
+    Over −T) and adds only the flat **Risk value** (±10 here). It does **not** also receive the Classic
+    Risk role formula (`:159-161`, Success `E+13+10`, Failure `−(miss+10)`) — that would re-count the same
+    estimate and the same miss, which is precisely what "counted twice" means. So: miss = −T + (−10) =
+    **−12** at T=2, and success on an Over round = +13 + 10 = **+23**. Adding the full role formulas
+    instead gives −14 / +36 on this case and is **not** the rule.
+  - **Derived, deterministic, and asserted by T-07:** on the same round a **sole winner** adds its +10 bonus
+    on top (§181-182) → +23 + 10 = **+33** (Over) or +33 + 10 = **+43** (Under, where the Dash value is
+    already +23); a **sole loser** doubles the summed base failure and floors it at −22 (§183) →
+    2 × (−12) = −24 → **−22**, the cap binding. **Test-design hazard:** a Classic Dash **alone** succeeding
+    Under is also **+23** (§172), numerically identical to this seat succeeding Over with Risk — every T-07
+    row must therefore assert the round's TotalBids alongside the score, or a wrong implementation passes.
+- **A7.2 Fast-round equal-highest Super Call: the number first, then the official suit hierarchy (closes O-02).**
+  A higher **number** beats a lower number whatever the suits; at an equal number the **stronger suit**
+  wins the Call. **Seat order never breaks a tie** — the code's dealer-order tie-break (`Bidding.kt:710`
+  `.thenBy { order.indexOf(it) }`, and the comment at `:740-741`) is an invention and is superseded.
+  **The full precedence is not missing:** §1's "Official Suit Hierarchy (strongest → weakest)" table
+  (`:27-31`) fixes Sans 5 > Spades 4 > Hearts 3 > Diamonds 2 > Clubs 1, the engine encodes the same
+  strengths (`Cards.kt:10-16`), and §2.2 already states both halves of the rule ("On a tie in number, the
+  stronger trump suit wins (e.g., 5♠ beats 5♥). Sans beats every suit on a tie." `:59`; "If two players
+  Super Call, the higher bid (then stronger suit) wins the right to choose the trump." `:68`). So the
+  owner's confirmations hold: **8♠ beats 8♥**, and **9♥ beats 8♠**. Diamonds and Clubs are settled by
+  those sources, not chosen here.
+  - **Derived, and asserted by T-11:** with A at 8♠ and B at 8♥, A is Caller and ♠ is the final trump;
+    B is **not** With, because fast-round With requires an exact match of **both** the number **and** the
+    suit, and a matching number alone never qualifies (reaffirms A6.9/A6.10 and Current Rules item 5;
+    kills the seat-order-era line at `:75`).
+  - **Not settled by A7.2, flagged rather than invented:** two seats declaring the **same number in the
+    same suit**. The number rule ties, the suit rule ties, and no source orders them. Tracked as
+    **O-02b** — the owner must say whether that is an illegal duplicate declaration or a tie needing a
+    further rule; the engine must not pick silently.
+
+  > **Pointer, 2026-10-23 (owner; bullet above left verbatim).** **O-02b is closed by A8.1 / Q35:** an exact
+  > number-and-suit duplicate is **legal**; the first declarer is Caller and each later exact duplicate is
+  > With; declaration order decides only that case.
+- **A7.3 The 7th takeover in ROOM is 1 Koz, and it fires immediately (closes O-03).**
+  1. **Amount:** the 7th qualifying takeover records **2 Koz in `RANKED` and `UNRANKED`** (item 8, Q11,
+     unchanged) and **1 Koz in `ROOM`**. It is still not a *departure* under A6.12, so no leave penalty is
+     added on top — one charge per removal event.
+  2. **Timing:** the removal is applied **as soon as the 7th qualifying takeover happens, even if a
+     30-second disconnect vote is open or a 90-second WAIT is running.** The ballot and the WAIT do not
+     hold it back and it does not wait for them to close.
+  - **No further timing or reset rule is asserted.** The owner specified an amount and a firing condition
+     only; anything else about counter resets is engineering, recorded in V2 §5.7.3, not a new ruling.
+  - **⚠ Consequence the owner has NOT ruled — flagged, not resolved (O-03b).** Firing a removal *during*
+     a ballot means the vote about that player's seat is still open while the seat is being taken out of
+     the match: does the ballot void, finish and take no effect, or continue because it can also produce a
+     permanent replacement? Today the two flows "deliberately share no state" (`DisconnectVote.kt:19-20`)
+     and, in the current code, a seat held by a ballot **cannot advance the takeover clock at all**
+     (`TimeoutResolution.kt:376-380`, where a seat in `disconnectHeldSeats` counts as bot-held and no
+     bot-held seat may increment the timeout counter; plus `TimeoutResolution.kt:358`
+     `disconnectPauseRemaining` with `TimeoutResolutionDb.kt:212-218` and `:244-250`, which return
+     `NOT_YET_EXPIRED` for the whole table during WAIT). So A7.3's timing rule requires that suppression to
+     change, and the ballot's fate is a decision, not an implementation detail.
+
+  > **Pointer, 2026-10-23 (owner; bullet above left verbatim).** **O-03b is closed by A8.2 / Q36:** an open
+  > ballot is **cancelled** immediately when the 7th takeover fires, during VOTE or WAIT; it never completes
+  > and never writes a stale result.
+- **A7.4 A permanent disconnect replacement keeps its own charge (closes O-03c).** Reading **(ii)** of the
+  A6.12 flag is the rule: **"a disconnect or app close that is not a voluntary departure charges nothing"
+  means no *leave* penalty is added** — it does not cancel the separate consequence a table votes for.
+  Ratified values stand exactly as A5.1's table and the owner's 2026-10-17 clarification put them:
+  **`UNRANKED` permanent replacement = 2 Koz, `ROOM` permanent replacement = no Koz, and `RANKED` holds
+  no disconnect vote at all.** The engine already encodes this (`DisconnectVote.permanentCharge`,
+  `DisconnectVote.kt:69-73`, with `toKozCharge` at `:92-95`), so this is a **wording reconciliation plus
+  wiring**, not a value change: that charge function has **no production caller**, so nothing applies it
+  yet (V2 E3.5).
+- **A7.5 Bots may fill a vacated ROOM seat, and the departed human is scored Koz (closes O-04 / C18).**
+  - A **bot may take a vacated seat in `ROOM`**, so a room that drops below four keeps playing instead of
+    stalling; A6.8's "a ROOM needs a full table of four" continues to govern *starting*, not a mid-match
+    departure.
+  - **A human who leaves and does not complete the match is counted Koz for that match — even if the
+    replacement bot finishes the game as King.** The departure result overrides the seat's played outcome.
+  - **The other humans are not penalised** by a teammate's disconnect or voluntary leave. A player who
+    completes the match receives **their own normal result and normal statistics** for it.
+  - **A bot's result is never attributed to the departed human.** Seat → uid must stay explicit and
+    deterministic end to end: the bot's King, its trick counts and its score must not land in the departed
+    player's profile, and no bot row may enter a human profile at all.
+  - **Derived requirement for V2:** because a departed seat's stored outcome is now wrong on purpose, the
+    ROOM/UNRANKED four-matching-reports recording path (Q15b/Q15c) needs an explicit per-seat
+    "departed → Koz" override, and the nine-statistics aggregation must count bot-filled ROOM matches for
+    the humans who completed them. Current code does neither: ROOM never settles
+    (`Settlement.kt:340-350`), statistics accumulate only for non-placement `RANKED`
+    (`RankedStats.kt:109`, `:157`), and the attribution rule exists **only as a comment**
+    (`RankedStats.kt:144-147`). `accumulateDepartureCharge` additionally returns unchanged for `ROOM`
+    (`:151`, guard `:157`), while a departure charge outside `ROOM` adds its amount to Koz **and one to
+    Games Played** (documented at `:32`) — so whether a bot-filled ROOM match enters the departed human's
+    Games Played is not derivable from the existing convention and is asked as **O-04b**.
+
+  > **Pointer, 2026-10-23 (owner; bullets above left verbatim).** **O-04b is closed by A8.4 / Q38:** the
+  > match **does** add one to the departed human's Games Played, the bot's result is still never attributed,
+  > and ROOM still records no RP.
+- **What A7 does not change.** It decides nothing about the permanent-replacement question A7.4 already
+  closed, does not touch the 15-timeout or Vote-Koz numbers, and does not import a new result enum —
+  "Koz" and "2 Koz"/"1 Koz" stay a counter increment (A5.1's option (c) rejection still holds). **O-05,
+  O-06, O-07, O-08, O-09, O-10 and O-11 remain open:** the owner's answers to those had not arrived when
+  this amendment was written, and their absence is **not** approval.
+
+> **Pointer, 2026-10-23 (text above left verbatim).** The O-05…O-11 answers arrived on 2026-10-22 and are
+> recorded as **Q39–Q45** (`docs/decisions/2026-10-22-final-decision-sync.md`): Platinum/stat labels
+> (**A8.5**), Stage 0 gating, the absolute matchmaking band (**A8.6**), voice and monetization scope (plan
+> V2 §5.6/§5.9, **O-12**/**O-13** still unresolved), deletion deferral, and the final RP values. The A7
+> residuals **O-02b**, **O-03b** and **O-03d** were closed on 2026-10-22 by **A8.1**, **A8.2** and
+> **A8.3**; **O-04b** by **A8.4**.
+
+---
+
+## Amendment A8 — Owner rulings of 2026-10-22 and 2026-10-23 (recorded 2026-10-23)
+
+> **Source:** the owner's answers of 2026-10-22 (Q35–Q50) and 2026-10-23 (Q51–Q52), recorded in
+> `docs/decisions/2026-10-22-final-decision-sync.md` and
+> `docs/decisions/2026-10-23-final-owner-answers.md`. Every item either closes a prior open question or
+> confirms existing text; no earlier body is rewritten. **Status: rules recorded, engine not yet changed**
+> for A8.1–A8.4, A8.6 and A8.7's round progression (the gap is stated inside each item); A8.5's display
+> labels are applied in this round.
+
+- **A8.1 Fast-round exact duplicate declaration (owner, 2026-10-22; closes O-02b; Q35).** Two seats
+  declaring the **same number in the same suit** in a fast round is **legal** — it is not an illegal
+  duplicate declaration and not a void call. The **first** declaration in bidding order is **Caller**; each
+  later exact duplicate is **With**. The rule is symmetric, and declaration order decides **only** for an
+  exact number-and-suit duplicate. A tie at the same number in **different** suits stays with A7.2 — the
+  stronger suit wins the Call and seat order never decides — and a higher number beats a lower one
+  whatever the suit. This completes A7.2, which settled number-then-suit but left this case open.
+- **A8.2 The 7th takeover and an open ballot (owner, 2026-10-22; closes O-03b; Q36).** The 7th qualifying
+  takeover **cancels** an open 30-second disconnect ballot immediately: the ballot does not run to expiry,
+  takes no effect, and cannot complete afterwards (no stale write, no ballot re-open). The removal fires
+  during **VOTE** and during the 90-second **WAIT** alike. It is deterministic and exactly-once: one
+  removal event, one charge, no double charge, and a replay never resurrects a cancelled ballot. A7.3's
+  amount and immediate-fire timing are unchanged; this decides only the ballot's fate.
+- **A8.3 ROOM 15-timeout removal (owner, 2026-10-22; closes O-03d; Q37).** The 15-timeout automatic removal
+  records **1 Koz in ROOM** — the same amount as a voluntary ROOM leave (Q14b / A6.6) — and keeps **2 Koz**
+  in `RANKED` and `UNRANKED` (A5.1). It remains distinct from the 7th takeover (also 1 Koz in ROOM, A7.3)
+  and from a permanent disconnect replacement (no Koz in ROOM, A7.4): one removal event is charged exactly
+  once and the three events never charge for each other. A5.1's `ROOM` "no 2-Koz rule" cell for the
+  15-timeout is therefore **superseded by a positive value**, not repealed to zero.
+- **A8.4 Departed ROOM human: Games Played and attribution (owner, 2026-10-22; closes O-04b; Q38).** A human
+  who leaves a ROOM match and does not complete it is scored **Koz even if the replacement bot finishes as
+  King** (A7.5), and that match **increments their Games Played by one** — it enters the percentage
+  denominator, so every statistic computed over Games Played uses the new denominator. The bot's result is
+  **never** attributed to the human: the bot's King does not increment the departed human's King counter,
+  and no bot ever receives a profile row. Humans who complete the match keep their own normal results and
+  statistics. ROOM still records no RP (item 11; Q17).
+- **A8.5 Terminology and display labels (owner, 2026-10-22 and 2026-10-23; Q39, Q50, Q52).** The suit
+  hierarchy is untouched — **Sans > Spades > Hearts > Diamonds > Clubs** (§1). Arabic **display labels** are
+  standardized: Sans/Sunz **سانز**, Spades **أسبيد**, Hearts **هارت**, Diamonds **كاروه**, Clubs **تريفل**.
+  The rank **Platinum** displays as **بلاتين**, never **وزير**; **وزير** survives only as the Second-place
+  career-statistic label. The nine career statistics read: Games Played **عدد المباريات**; King count **👑**;
+  King % **👑%**; Second count **عدد مرات وزير**; Second % **وزير%**; Third count **عدد مرات كوز صغير**;
+  Third % **كوز صغير%**; Koz count **عدد مرات الكوز**; Koz % **%الكوز**. Keys, internal identifiers,
+  comparison logic and score mathematics are unchanged — this is localization only, and the Arabic label for
+  Clubs (تريفل vs تريفلة) is the owner's given form.
+- **A8.6 Matchmaking band (owner, 2026-10-22; Q41).** One shared general pool. Players more than **one rank
+  tier apart are never paired directly**, and the band is **absolute**: it does not widen after 180 seconds
+  (widening would be a new decision, not a timer tweak). RD9/RD29's ≤1-tier band therefore binds as a
+  pairwise distance constraint. **Directionality is not decided here:** whether "one tier apart" pairs in
+  both directions or only downward (no opt-up) is open as **O-15**, and no matchmaking code changes until
+  the owner answers it.
+- **A8.7 General Pass = a NEW round (owner, 2026-10-23; resolves N-2/R-1, conflict C-2; Q47 / Q51).** When
+  all four pass the auction, the current round is **cancelled**, cards are **dealt fresh**, and a **new
+  round number** starts — it is not a replay of the same round number. **Normal Calculation:** the new round
+  is scored with the **Double** multiplier (×2 → ×4 → ×6 → ×8, capped ×8 per Q1b). **Classic:** the new round
+  is scored with **no multiplier** at all. The two older words describe this one behaviour: A6.4's "consumes
+  the round number — round 6 all pass → round 7 is played ×2" is **operative**, and "redeal" (A6.1) means
+  exactly a fresh deal into the next round number; A6.1 was already superseded by A6.4 for that word, and
+  item 1 / Q1 / Q1b are **confirmed, not rewritten**. **Engine defect (not a rule change):** the engine
+  currently redeals the *same* round number and always applies the Double with no game-type input
+  (`Bidding.kt:493-508`), the same-round model is repeated in settlement and timeout resolution
+  (`Settlement.kt:517-524`, `TimeoutResolution.kt:979-984`), and the online path ignores the pass entirely
+  (`OnlineMatchViewModel.kt:724`). This is recorded as an implementation gap; **nothing here is implemented
+  yet**.
+- **A8.8 Sa'ayda extension count (owner, 2026-10-22; closes N-3; Q48).** Every Sa'ayda occurrence in fast
+  rounds **14–18 inclusive** adds **one round** to the 18-round default, per occurrence: 14 alone → **19**;
+  14+15 → **20**; 14+15+16 → **21**; 13 alone → **18** (no extension). The rule is general, not limited to
+  the examples (N occurrences → 18 + N), and MINI uses the same logic on **6–10** (Q2b). Item 2(b) — a
+  Sa'ayda in the **actual final round** adds one and repeats until a winner — continues to govern rounds
+  beyond 18 and is **not repealed** by these examples. **Engine defect (not a rule change):**
+  `computeRoundExtension` (`RoundScore.kt:222-238`) has **no production caller**, so nothing raises
+  `maxRounds` and `isMatchComplete` still reads the base value (`Session.kt:568`).
+
+**What A8 does not do.** It decides no scope and no engineering process. **O-08** (voice
+provider/protocol/cost) and **O-09** (ads/consent provider) are V1 scope with unresolved suppliers;
+**O-10** (full account deletion) stays deferred from V1; **O-11**'s RP values (+30 / +15 / −8 / −20) are
+recorded as final in plan V2 §5.5.6 and the `RpEngine` KDoc, not restated as a scoring formula here. A8 adds
+no result enum, no charge path and no scoring change; every charge remains a counter increment.
 

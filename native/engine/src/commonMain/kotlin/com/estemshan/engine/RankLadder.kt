@@ -44,7 +44,7 @@ private val LADDER_TABLE: List<Triple<String, String, List<Int>>> = listOf(
   Triple("Bronze", "مبتدئ", listOf(0, 75, 150)),
   Triple("Silver", "لاعب", listOf(250, 350, 450)),
   Triple("Gold", "معلم", listOf(575, 700, 825)),
-  Triple("Platinum", "وزير", listOf(1000, 1200, 1400)),
+  Triple("Platinum", "بلاتين", listOf(1000, 1200, 1400)),
   Triple("Diamond", "أمير", listOf(1600, 1800, 2000)),
   Triple("Royal", "سلطان", listOf(2250, 2500, 2750)),
   Triple("King", "ملك", listOf(3000)),

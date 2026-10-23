@@ -1,6 +1,6 @@
 (function(){
 /* Ladder: real values — RANKING_RULES_AND_VERIFIED_DATA.md §1. No tier colours (OPEN_DECISIONS #1). */
-var TIERS=[['Bronze','مبتدئ'],['Silver','لاعب'],['Gold','معلم'],['Platinum','وزير'],['Diamond','أمير'],['Royal','سلطان']];
+var TIERS=[['Bronze','مبتدئ'],['Silver','لاعب'],['Gold','معلم'],['Platinum','بلاتين'],['Diamond','أمير'],['Royal','سلطان']];
 var RP=[0,75,150,250,350,450,575,700,825,1000,1200,1400,1600,1800,2000,2250,2500,2750,3000];
 var ROM={1:'I',2:'II',3:'III'};
 var fmt=function(n){return n.toLocaleString('en-US')};
