@@ -205,6 +205,10 @@ Count each Sa'ayda occurrence in fast rounds **14–18 inclusive**, one extensio
   is **not repealed**; MINI keeps its 6–10 window (Q2b).
 - No extension cap (Q2c); the ×8 scoring-multiplier cap is a separate rule.
 
+> **Pointer, 2026-10-23 (terminology; section body unchanged).** "14–18" is the **fast window**, not the
+> match length. The base match is **18 rounds** (FULL) / 10 (MINI); 14 is `firstFastRound`. An extended
+> ceiling is **live** (18 + N). See `docs/decisions/2026-10-23-direction-multiplier-rounds-git.md` §2.
+
 **Implementation status [G]:** `computeRoundExtension` (`RoundScore.kt:222-238`) implements the 14–18 window
 but has **no production caller**; nothing raises `maxRounds`. Recorded as sprint S2.
 

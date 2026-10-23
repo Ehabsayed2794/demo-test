@@ -1814,14 +1814,25 @@ S8 Play Billing verification ── BLOCKED on O-06 (no runtime approved)
 | Sprint | Goal | Depends on | Status |
 |---|---|---|---|
 | S0 | Record Q35–Q52; canonical/plan/roadmap; five suit labels; Platinum label | — | **EXECUTED** 2026-10-23 (documentation + labels only; no behavioural code) |
-| S1 | General Pass: new round number, fresh deal, Normal ×2 / Classic none, replay parity | S0 | PLANNED |
-| S2 | Wire Sa'ayda extensions into the production match flow, with tests | S1 | PLANNED |
+| S1 | General Pass: new round number, fresh deal, Normal ×2 / Classic none, replay parity, persisted multiplier (Option B) | S0 | **IN PROGRESS — uncommitted, not accepted**; online half **BLOCKED on O-19** |
+| S2 | Wire Sa'ayda extensions into the production match flow, with tests | S1 | **IN PROGRESS — uncommitted, not accepted** (finality unproven, old-caller compile break) |
 | S3 | ROOM/RANKED/UNRANKED career statistics; RP Ranked-only; nine stat labels | S0 | PLANNED |
-| S4 | O-02b fast-bid duplicate declaration, first-declarer Caller, suit tie-break | S1 | PLANNED |
+| S4 | O-02b fast-bid duplicate declaration, first-declarer Caller, suit tie-break | S1 | **IN PROGRESS — uncommitted, two known reds** |
 | S5 | O-03d ROOM 15-timeout = 1 Koz | S3 | PLANNED |
 | S6 | O-04b ROOM bot fill: departed human Koz + Games Played; no bot attribution | S3 | PLANNED |
 | S7 | O-03b 7th takeover cancels an open ballot; fires during VOTE/WAIT | S5 | PLANNED |
 | S8 | Play Billing verification + entitlement ledger | O-06 approval | **BLOCKED** |
+
+**Execution status at 2026-10-23 (not acceptance).** S1, S2 and S4 have uncommitted agent work in the
+`D:\demo-test-plan-v2-ag*` worktrees; none is committed, merged or accepted. S1's offline half exists but
+its online half is blocked on **O-19** (the persisted multiplier needs a rules change); S2 does not yet
+prove the final-round repeat and breaks old-signature callers; S4 has two genuine reds. An **IN PROGRESS**
+row is not a delivery claim.
+
+**Round-count source of truth [D].** FULL is **18 base rounds** (MINI 10); "14–18" is the **fast window**,
+never the match length. The ceiling is **live**: `maxRounds = base + N`. Any sound, button, series loop or
+completion check that reads the base constant instead of the live ceiling is a defect
+(`docs/decisions/2026-10-23-direction-multiplier-rounds-git.md` §2).
 
 **Estimate treatment.** S4–S7 re-sequence work already inside E2/E3/E4/E5 (T-11, T-15, T-16,
 T-19); their hours are **not double-counted**. S1–S3 are newly ruled behaviour with no dedicated
@@ -1865,6 +1876,12 @@ so a reconnect sees 7).
 4. Client, services and functions replay reproduce the same round number, deal point and multiplier.
 5. The online match advances instead of ignoring the pass.
 6. No unrelated scoring, bid legality or timeout behaviour changes.
+7. **Option B:** the next-round multiplier is persisted on the match document as `currentMultiplier`
+   (`docs/decisions/2026-10-23-direction-multiplier-rounds-git.md` §1) and survives **redeal, reconnect,
+   reload and cold start** in both game types; Classic is always ×1. The field is written with the round
+   advance, never reconstructed from a transient sync message.
+8. **Rules gate:** the pass advance is a rules-authorized transaction. Until **O-19** is answered, the
+   online half stops at the rules gate and returns the proposed diff; it never edits `firestore.rules`.
 
 **Tests:** `:engine:jvmTest` — `BiddingTest:359-379`, `GameSessionTest`, `BotVsBotSmokeTest:128-137`;
 `:app:testDebugUnitTest` — `QuickMatchViewModelTest:110/138/195-196/229/312`,
@@ -1876,8 +1893,9 @@ so a reconnect sees 7).
 
 **Code areas:** `RoundScore.kt:222-238` (`computeRoundExtension`, no production caller);
 `Session.kt:67-76`, `:213`, `:480-495`, `:568`; the app's round-completion and `nextRound()` sites;
-`OnlineMatchViewModel.kt:544`; functions settlement/replay and the match document's planned-last-round
-field; the `GameType` windows (FULL 14–18, MINI 6–10).
+`QuickMatchFlow.kt:152`, `:166`; `QuickMatchViewModel.kt:107`; `OnlineMatchViewModel.kt:544`; functions
+settlement/replay and the match document's planned-last-round field; the `GameType` windows (FULL 14–18,
+MINI 6–10).
 
 **Acceptance criteria:**
 1. FULL: each Sa'ayda in rounds **14–18 inclusive** adds one round — 14→19, 14+15→20, 14+15+16→21,
@@ -1891,6 +1909,13 @@ field; the `GameType` windows (FULL 14–18, MINI 6–10).
    `isMatchComplete` uses it.
 7. Interaction with S1: a pass at 13 moves to 14 without extension; a pass at 14 moves to 15 without
    extension — only a **played** Sa'ayda extends.
+8. `computeRoundExtension`'s signature change is applied **consistently** — either a backward-compatible
+   overload or every old call site updated — so the merged tree compiles and both signatures are tested.
+9. The match-win sound and the standings "next round" button read the **live** `maxRounds`, not
+   `gameType.baseRounds`; an 18→19 extension produces no match-win sound at 18 and keeps the button
+   enabled.
+10. `maxRounds` is **observable Compose state**; a rise from 18 to 19 recomposes the standings screen
+    (a plain `var` is not sufficient).
 
 **Tests:** new `RoundScoreTest` cases 13/14/15/16/19 and multi-occurrence; new `GameSessionTest`
 maxRounds/completion cases; `QuickMatchViewModelTest`, `OnlineMatchViewModelTest`;

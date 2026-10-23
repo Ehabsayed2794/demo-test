@@ -812,6 +812,12 @@ the disconnect table may pause for a bounded 90 seconds.**
   `computeRoundExtension` (`RoundScore.kt:222-238`) has **no production caller**, so nothing raises
   `maxRounds` and `isMatchComplete` still reads the base value (`Session.kt:568`).
 
+> **Terminology pointer, 2026-10-23 (owner clarification; bodies above unchanged).** The **base match
+> length is 18 rounds (FULL) / 10 (MINI)**. Every "14–18" in this document is the **fast/extension
+> window** (`firstFastRound..baseRounds`), never the match length; 14 is the first fast round, not the
+> last normal round. An extended match's ceiling is the **live** `maxRounds` (18 + N), not the base 18 and
+> not 14. Record: `docs/decisions/2026-10-23-direction-multiplier-rounds-git.md` §2.
+
 **What A8 does not do.** It decides no scope and no engineering process. **O-08** (voice
 provider/protocol/cost) and **O-09** (ads/consent provider) are V1 scope with unresolved suppliers;
 **O-10** (full account deletion) stays deferred from V1; **O-11**'s RP values (+30 / +15 / −8 / −20) are

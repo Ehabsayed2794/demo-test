@@ -38,6 +38,11 @@ types; documentation changes alone are not evidence of success.
 Recorded as implementation sprint **S1** in `docs/NATIVE_V1_IMPLEMENTATION_PLAN_V2.md` §5.10. No sprint code
 is written by this record.
 
+> **Pointer, 2026-10-23 (online half; section body unchanged).** The online General Pass is now specified as
+> **Option B** — a persisted `currentMultiplier` on the match document, written with the round advance and
+> read on every cold start — in `docs/decisions/2026-10-23-direction-multiplier-rounds-git.md` §1. The
+> Firestore rules change it requires is **not authorized** (O-19).
+
 ## 2. Sprint scope directive [D]
 
 The owner requires explicit, sequenced implementation sprints in the implementation plan, not a
@@ -49,6 +54,11 @@ documentation-only closure. The scope must cover:
    around an unwired helper.
 3. Tests for the Sa'ayda rule: each occurrence in fast rounds 14–18 inclusive extends the match by one round;
    round 13 does not count.
+
+   > **Pointer, 2026-10-23 (terminology; item above unchanged).** "Fast rounds 14–18" is the **extension
+   > window**, not the match length. The match is **18 rounds** (FULL) / 10 (MINI); 14 is
+   > `firstFastRound`. The live ceiling after extensions is `maxRounds` (18 + N), never 14 and never a
+   > fixed 18. See `docs/decisions/2026-10-23-direction-multiplier-rounds-git.md` §2.
 4. The five previously identified logic gaps: O-02b fast-bid suit/tie handling, O-03b immediate 7th-takeover
    handling with ballot cancellation, O-03d timeout-removal charge, O-04b ROOM bot/player result attribution,
    and N-1 profile statistics eligibility.
@@ -106,6 +116,11 @@ where present, are explicitly **not approved**.
 
 Execution defaults used in this round (not owner decisions): one local commit with the mandated identity;
 no push, PR or merge.
+
+> **Pointer, 2026-10-23 (supersedes the default, not a rule).** "No push, PR or merge" was an execution
+> default, not an owner restriction. The owner's 2026-10-23 direction forbids inventing Git permission
+> limits and asks for a proposed collaboration policy; see
+> `docs/decisions/2026-10-23-direction-multiplier-rounds-git.md` §4 (O-20).
 
 ## 6. What this record does not do
 
