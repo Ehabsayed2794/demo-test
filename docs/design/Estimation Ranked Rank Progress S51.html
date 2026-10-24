@@ -66,7 +66,7 @@ window.rankProgressBinding={source:'bound sample · the client supplies the sett
 {id:'settling',title:'4 · Settling (loading)',rp:null,protection:false},
 {id:'crossing',title:'5 · Tier-crossing step',rp:870,protection:false}]};
 const L=[['Bronze','III',0],['Bronze','II',75],['Bronze','I',150],['Silver','III',250],['Silver','II',350],['Silver','I',450],['Gold','III',575],['Gold','II',700],['Gold','I',825],['Platinum','III',1000],['Platinum','II',1200],['Platinum','I',1400],['Diamond','III',1600],['Diamond','II',1800],['Diamond','I',2000],['Royal','III',2250],['Royal','II',2500],['Royal','I',2750],['King','',3000]];
-const AR={Bronze:'مبتدئ',Silver:'لاعب',Gold:'معلم',Platinum:'وزير',Diamond:'أمير',Royal:'سلطان',King:'ملك'};
+const AR={Bronze:'مبتدئ',Silver:'لاعب',Gold:'معلم',Platinum:'بلاتين',Diamond:'أمير',Royal:'سلطان',King:'ملك'};
 const fmt=x=>x.toLocaleString('en-US'),n=x=>'<i class="n">'+x+'</i>',nm=r=>r[0]+(r[1]?' '+r[1]:'');
 const rungAt=rp=>{let i=0;L.forEach((r,k)=>{if(r[2]<=Math.max(0,rp))i=k});return i};
 const hdr='<div class="top"><div><div class="kick">Ranked · Solo</div><h1>Rank Progress</h1></div><a class="chip" href="#" aria-label="Back to Ranked Home"><i>‹</i><span>RANKED</span></a></div>';

@@ -62,10 +62,10 @@ package com.estemshan.engine
  * (`resolveRanked`). The two constants tables are deliberately separate so
  * a v1.1 balance pass retunes one without touching the other.
  *
- * The owner has closed the rule and its shape; the *numbers* in the default
- * config are placeholders pending a balance pass (RD4: "concept + inputs
- * only; constants not finalized"). They are structured so the owner can
- * change any of them without a redesign.
+ * The four base values are **final** as of 2026-10-22 (O-11 → Q45): King +30,
+ * Second +15, Third −8, Koz −20. The *scaling* inputs — the Mini multiplier and
+ * the tier/strength bands — stay tunable under RD4, and the config is structured
+ * so the owner can retune them without a redesign.
  */
 data class RpEngineConfig(
   /** Base gain for finishing first, before strength/tier scaling (RD4). */
@@ -109,7 +109,8 @@ data class RpEngineConfig(
   // eligibility edge and the cap is a no-op today. The cap is the guardrail
   // that bounds an upward retune, not something the current rates exercise.
   //
-  // All three rates are placeholders pending a balance pass, like RD4's above.
+  // All three rates stay tunable under RD4 — only the four base values are final
+  // (O-11 → Q45); the scaling rates await a balance pass.
 
   /**
    * RD5: reward REDUCTION per ordinal the winner sat ABOVE the table. A

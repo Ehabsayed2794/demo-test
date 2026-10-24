@@ -42,6 +42,7 @@ import com.estemshan.services.MatchAdapter
 import com.estemshan.services.MatchSnapshot
 import com.estemshan.services.MatchSnapshotListener
 import com.estemshan.services.MatchSubscriptionHandle
+import com.estemshan.services.isCanonicalGeneralPassWindow
 import com.estemshan.services.Heartbeat
 import com.estemshan.services.DecisionTimeoutPort
 import com.estemshan.services.DecisionWindow
@@ -52,6 +53,7 @@ import com.estemshan.services.ROUND_CARD_TOTAL
 import com.estemshan.services.model.BiddingActionInput
 import com.estemshan.services.model.BiddingLogEntry
 import com.estemshan.services.model.MatchDoc
+import com.estemshan.services.model.Reasons
 import com.estemshan.services.session.MatchStore
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineDispatcher
@@ -93,15 +95,16 @@ import kotlinx.coroutines.sync.withLock
  * MatchAdapterReloadReplayTest CASE B pins (resetSyncState → clear → reseed
  * → re-init → replay from index 0).
  *
- * COLD-START LIMITATIONS, stated rather than papered over: the match
- * document carries the round, seats, dealer and maxRounds, but NOT the
- * Sa'ayda multiplier or the accumulated totals of rounds scored before this
- * client joined. A client that reconnects mid-escalation therefore resumes
- * the exact trick (the log replays fully) but scores the remaining rounds
- * from a ×1 multiplier and from the totals it witnesses from here on. The
- * authoritative totals at [MatchUiState.MatchComplete] always come from the
- * document's own finalScores, so a completed match is never mis-shown; only
- * the in-flight window can be partial. Restoring the multiplier and prior
+ * COLD-START LIMITATIONS, stated rather than papered over: since O-19 the
+ * match document carries the CURRENT round's multiplier (`currentMultiplier`)
+ * alongside the round, seats, dealer and maxRounds, so a client that
+ * reconnects mid-escalation resumes at the right multiplier. The document
+ * still does NOT carry the accumulated totals of rounds scored before this
+ * client joined: such a client resumes the exact trick (the log replays
+ * fully) but banks the remaining rounds from the totals it witnesses from
+ * here on. The authoritative totals at [MatchUiState.MatchComplete] always
+ * come from the document's own finalScores, so a completed match is never
+ * mis-shown; only the in-flight window can be partial. Restoring prior
  * totals needs a roundArchive read, which is not on [MatchStore] and so is
  * not part of this story.
  */
@@ -215,6 +218,22 @@ class OnlineMatchViewModel(
   /** The round [scoreAndAdvance] has already banked; guards a double score. */
   private var scoredRound: Int? = null
 
+  /**
+   * O-19: the round whose canonical all-pass window this client has already
+   * routed to [MatchStore.advanceAfterGeneralPass] — guards a re-delivery
+   * from re-writing. Like [scoredRound] it is set before the write; the
+   * document moving on is the real authority, and the service is idempotent.
+   */
+  private var passAdvancedRound: Int? = null
+
+  /**
+   * The round whose unprovable pass window this client has already named.
+   * Unlike [passAdvancedRound] it guards a message, not a write: re-delivery
+   * of the same document must not overwrite a newer rejection, and the
+   * message itself lives until the document moves on (see [rejectionVersion]).
+   */
+  private var passRejectionRound: Int? = null
+
   /** currentMatchId cleared once for a completed match. */
   private var clearedMatchId: Boolean = false
 
@@ -281,6 +300,8 @@ class OnlineMatchViewModel(
     lastDoc = null
     lastOutcome = null
     scoredRound = null
+    passAdvancedRound = null
+    passRejectionRound = null
     clearedMatchId = false
     settlementAttempted = false
     settlementJob = null
@@ -482,12 +503,17 @@ class OnlineMatchViewModel(
     // raised against: our retry succeeding, or the table simply moving on.
     if (rejectionVersion != null && doc.version > (rejectionVersion ?: Int.MAX_VALUE)) {
       setRejection(null, null)
+      // The per-round report guard exists only so a re-delivery cannot stomp
+      // a newer rejection. Once the rejection itself is gone the guard must
+      // go with it, or a round still stalled would fall back to silence.
+      passRejectionRound = null
     }
 
     lastDoc = doc
     alignToDoc(doc, seat)
     ensureDealAndHand(doc, seat)
     replayBidding(snapshot, doc)
+    maybeAdvanceGeneralPass(doc)
     ensureTable(doc, seat)
     replayCards(doc)
     maybeCompleteRound(doc)
@@ -543,16 +569,38 @@ class OnlineMatchViewModel(
       adapter.resetSyncState(matchId)
       while (session.getRound().number < doc.currentRound) session.nextRound()
       session.setDealer(dealerSeat)
-      if (current.maxRounds != doc.maxRounds) {
-        session.setRound(session.getRound().copy(maxRounds = doc.maxRounds))
+      // O-19: Session.nextRound() deliberately PRESERVES the multiplier
+      // (escalation is cross-round), so a client that missed one or more
+      // advances — including a General Pass — must overwrite it with the
+      // document's own current-round value. Without this a missed pass
+      // would leave this client one rung behind (or ahead, after its own
+      // local pass hint), and the next auction would be armed wrong.
+      if (current.maxRounds != doc.maxRounds || current.multiplier != doc.currentMultiplier) {
+        session.setRound(session.getRound().copy(
+          maxRounds = doc.maxRounds,
+          multiplier = doc.currentMultiplier,
+        ))
       }
       lastOutcome = null
       scoredRound = null
+      passAdvancedRound = null
+      passRejectionRound = null
       initAuction(doc, dealerSeat, seats)
       return
     }
 
-    if (current.maxRounds != doc.maxRounds) session.setRound(current.copy(maxRounds = doc.maxRounds))
+    // Same round: the document remains the multiplier's source of truth.
+    // The one exception is the echo of the very round this client just
+    // pass-advanced: a delivery still showing that round predates our
+    // successful write (which opened the NEXT round), so letting it roll
+    // the armed value back would arm the next auction one rung too low
+    // until the newer document lands. The live-pass hint in [replayBidding]
+    // is otherwise never allowed to outlive a delivery.
+    if (passAdvancedRound != doc.currentRound &&
+      (current.maxRounds != doc.maxRounds || current.multiplier != doc.currentMultiplier)
+    ) {
+      session.setRound(current.copy(maxRounds = doc.maxRounds, multiplier = doc.currentMultiplier))
+    }
     if (session.getDealer() != dealerSeat) session.setDealer(dealerSeat)
   }
 
@@ -579,11 +627,20 @@ class OnlineMatchViewModel(
       },
     )
     session.setRoom(SessionRoom(code = doc.roomId, host = false, seats = seats))
-    session.setRound(RoundState(number = doc.currentRound, maxRounds = doc.maxRounds))
+    // O-19: the document is the multiplier's authority on a cold start —
+    // a client that joins (or rejoins) mid-escalation arms the exact
+    // current-round value instead of the engine's default x1.
+    session.setRound(RoundState(
+      number = doc.currentRound,
+      maxRounds = doc.maxRounds,
+      multiplier = doc.currentMultiplier,
+    ))
     session.setDealer(dealerSeat)
     session.setMatchScores(seats.associateWith { 0 })
     lastOutcome = null
     scoredRound = null
+    passAdvancedRound = null
+    passRejectionRound = null
     initAuction(doc, dealerSeat, seats)
   }
 
@@ -606,8 +663,11 @@ class OnlineMatchViewModel(
     session.clearBiddingState()
     session.clearPlayState()
     session.initializeBiddingState(
-      if (isFastRound(round, doc.gameType)) initFastRound(round, dealerSeat, seats, multiplier)
-      else initNormalRound(round, dealerSeat, seats, multiplier),
+      if (isFastRound(round, doc.gameType)) {
+        initFastRound(round, dealerSeat, seats, multiplier, scoringMode = doc.scoringMode)
+      } else {
+        initNormalRound(round, dealerSeat, seats, multiplier, scoringMode = doc.scoringMode)
+      },
     )
   }
 
@@ -677,6 +737,91 @@ class OnlineMatchViewModel(
       lastOutcome = outcome
       session.completeBidding(outcome)
     }
+    // S1 (A8.7 / Q51), O-19: the replay crossed a general pass — the hint
+    // arms the LOCAL session round, which keeps the next auction right
+    // before the document echo arrives. It is an optimisation only: the
+    // round number stays document-pinned, and [maybeAdvanceGeneralPass]
+    // persists the advance; [alignToDoc] then takes the multiplier straight
+    // from the document, so a cold start no longer loses it.
+    val passedMultiplier = snapshot.bidSync?.generalPassMultiplier
+      ?: snapshot.biddingActionSync?.generalPassMultiplier
+      ?: reDrive.generalPassMultiplier
+    if (passedMultiplier != null) {
+      session.setRound(session.getRound().copy(multiplier = passedMultiplier))
+    }
+  }
+
+  /**
+   * O-19 (Option B, 2026-10-24): advance a General-Passed round on the
+   * document. The closed round is recognised only by its canonical
+   * all-pass window (no cards, the same N declining dash calls + N passes
+   * [replayBidding] just replayed), and [MatchStore.advanceAfterGeneralPass]
+   * re-proves that window inside its own transaction — this method never
+   * decides the multiplier itself. All clients may race the same write;
+   * the store's ALREADY_ADVANCED/ALREADY_COMPLETE outcomes are no-ops.
+   *
+   * The final-round pass completes the match through the same store path,
+   * carrying this session's running totals — the document stays the
+   * authority for the final result, exactly as the scored endMatch path.
+   */
+  private suspend fun maybeAdvanceGeneralPass(doc: MatchDoc) {
+    val id = matchId ?: return
+    val round = doc.currentRound
+    if (passAdvancedRound == round) return
+    if (!isCanonicalGeneralPassWindow(doc, round)) {
+      reportUnprovableGeneralPass(doc, round)
+      return
+    }
+    passAdvancedRound = round
+    val totals = session.getMatchScores()
+    runCatching { store.advanceAfterGeneralPass(id, round, totals, computeWinner(totals)) }
+      .onFailure {
+        // Clear the guard so the next delivery retries; a denied/transient
+        // write must not leave this client silent on the round forever.
+        passAdvancedRound = null
+        setRejection(it.message, doc.version)
+      }
+  }
+
+  /**
+   * O-19 (A8 F1): the refusal stays, but it is no longer silent.
+   *
+   * A round closed with no cards and no auction contract is a General Pass
+   * only if its window is the canonical all-pass shape; with a declared Dash
+   * Call inside it the pass count no longer proves the round, so the
+   * multiplier has no derivable rung and [MatchStore.advanceAfterGeneralPass]
+   * answers UNSUPPORTED_GENERAL_PASS_SHAPE. Before this method such a
+   * document reached this client as a plain `return`: the round never
+   * advanced and nothing said why. Now the service's own reason names the
+   * rejection, so the table sees the stall instead of waiting.
+   *
+   * The shape is narrowed to windows the rules can never accept, so the
+   * message cannot misfire on an auction that is merely in flight: bidding
+   * closed (the pass/bid write sets `biddingOpen` false only once every seat
+   * has submitted), no cards for the round, at least one pass on record, and
+   * no seat holding a bid or a confirmed call this table could play out.
+   * Whether the mixed Dash+Pass round below is legal or must stop being
+   * emitted at all is an open owner ruling; this reports the deadlock, it
+   * does not decide it.
+   */
+  private fun reportUnprovableGeneralPass(doc: MatchDoc, round: Int) {
+    if (passRejectionRound == round) return
+    if (doc.biddingOpen) return
+    if (doc.roundCardCount(round) != 0) return
+    val log = doc.roundBids(round)
+    if (log.none { it.actionType == BiddingLogEntry.ACTION_AUCTION_BID && it.isPass == true }) return
+    if (log.any {
+        (it.actionType == BiddingLogEntry.ACTION_AUCTION_BID && it.isPass != true) ||
+          it.actionType == BiddingLogEntry.ACTION_CONFIRM_CALL
+      }
+    ) return
+    passRejectionRound = round
+    setRejection(
+      "${Reasons.UNSUPPORTED_GENERAL_PASS_SHAPE}: round $round closed with no cards and " +
+        "no contract on record, but its auction is not a provable all-pass window, so the " +
+        "next multiplier cannot be derived and the round was not advanced.",
+      doc.version,
+    )
   }
 
   /**
@@ -849,7 +994,7 @@ class OnlineMatchViewModel(
     // S69 (E7): the extension window is the match's own type (MINI 6–10,
     // FULL 14–18) — without this a MINI match could never extend online.
     val extension = computeRoundExtension(
-      cfg.round, cfg.callerId, cfg.trump, callerSucceeded, result.isSaayda,
+      cfg.round, doc.maxRounds, cfg.callerId, cfg.trump, callerSucceeded, result.isSaayda,
       gameType = doc.gameType,
     )
 
@@ -877,7 +1022,7 @@ class OnlineMatchViewModel(
       runCatching { store.endMatch(id, cfg.round, totals, computeWinner(totals)) }
         .onFailure { setRejection(it.message, doc.version) }
     } else {
-      runCatching { store.advanceToNextRound(id, cfg.round) }
+      runCatching { store.advanceToNextRound(id, cfg.round, result.nextMultiplier) }
         .onFailure { setRejection(it.message, doc.version) }
     }
   }

@@ -778,12 +778,12 @@ class SeasonLeaderboardTest {
     // cannot claim a (tier, division) pair the ladder does not hold. The list is
     // in board order (highest rung first), and all seven titles are stated as
     // literals, so the two the five-rung fixture above never reaches —
-    // Platinum's وزير and Diamond's أمير — are pinned here.
+    // Platinum's بلاتين and Diamond's أمير — are pinned here.
     val expected = listOf(
       "King" to "ملك",
       "Royal" to "سلطان",
       "Diamond" to "أمير",
-      "Platinum" to "وزير",
+      "Platinum" to "بلاتين",
       "Gold" to "معلم",
       "Silver" to "لاعب",
       "Bronze" to "مبتدئ",

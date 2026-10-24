@@ -14,7 +14,6 @@ import com.estemshan.engine.recordPlacementMatch
 import com.estemshan.game.ui.bot.BotRoster
 import com.estemshan.game.ui.bot.BotSeat
 import com.estemshan.game.ui.quickmatch.QuickMatchViewModel
-import com.estemshan.game.ui.quickmatch.QuickRoundResult
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -80,7 +79,24 @@ class PlacementViewModel(
   /** Which match is running, and its per-round signals while it does. */
   private var matchIndex = 0
   private val roundSignals = mutableListOf<PlacementRoundSignal>()
-  private var observeJob: Job? = null
+
+  /**
+   * The two end-of-match collectors — the scored-round observer and the
+   * pass-completion observer. They are cancelled in pairs at every rebind
+   * ([observeMatchEnd]) and at every [advance], so a finished match's
+   * collectors can never process the next match's emissions.
+   */
+  private var signalsJob: Job? = null
+  private var finalJob: Job? = null
+
+  /**
+   * The once-per-match guard: set when the scored-final roundRecords path
+   * banks the record (and by the pass path when it banks its own), so a
+   * normally scored final round is never recorded a second time through
+   * [QuickMatchViewModel.matchComplete]. Reset with the match in
+   * [startMatch].
+   */
+  private var finalRecorded = false
 
   /**
    * Begin the three scripted matches from [seasonId]. The caller has already
@@ -103,28 +119,44 @@ class PlacementViewModel(
     val config = placementMatch(index)
     matchIndex = index
     roundSignals.clear()
-    // Observe before the match starts: no round is scored until the driver
-    // moves a seat, so collecting first cannot miss the first emission.
-    observeMatchEnd(config)
+    finalRecorded = false
+    // Match state first (matchComplete is a StateFlow: startMatch resets it
+    // to false), then observe — a collector subscribing after the reset can
+    // never see the previous match's completed `true` as its initial value.
+    // Nothing is scored until the driver moves a seat, so observing after
+    // startMatch cannot miss the first emission.
     quickMatch.startMatch(
       roster = scriptedRoster(config),
       matchSeed = seedSource(),
       gameType = config.gameType,
       scoringMode = config.scoringMode,
     )
+    observeMatchEnd(config)
     _state.value = PlacementUiState.MatchInProgress(placementProgress(index))
   }
 
   /**
-   * Collect each scored round, record the player's estimate-vs-actual, and
-   * close the match on its format's last round. Reading the match's end off
-   * the *round result* itself — not a second flow — keeps the final round's
-   * signal and the match-end detection on one emission, so the record can
-   * never be built a round early or a round late.
+   * Collect the end-of-match signals. The scored path stays exactly as the
+   * pre-fix observer was: each [QuickMatchViewModel.roundResults] emission is
+   * its own collector FIFO step, so a final round's signal always lands on
+   * the round the collector sees it on, and a scored ceiling banks + advances
+   * right there (the scored arm sets the guard first, so
+   * [QuickMatchViewModel.matchComplete] turning true — emitted by
+   * [QuickMatchViewModel.onTableDone] immediately AFTER the result — can
+   * never double-bank or double-advance). The separate matchComplete
+   * observer exists ONLY for a final-round pass, which emits no RoundResult
+   * at all; its arm is keyed to the flag's STATE (a StateFlow delivers the
+   * current boolean, once per match generation after [startMatch] resets it),
+   * never to a queued event, so one pass can bank exactly one record. One
+   * record per match either way; the invariant record.rounds.size ==
+   * EFFECTIVE ceiling − (rounds the match's own passes consumed) holds. The
+   * effective ceiling is [QuickMatchViewModel.maxRounds], which Sa'ayda
+   * extensions raise above the format's baseRounds (A8.8/Q48).
    */
   private fun observeMatchEnd(config: PlacementMatchConfig) {
-    observeJob?.cancel()
-    observeJob = viewModelScope.launch {
+    signalsJob?.cancel()
+    finalJob?.cancel()
+    signalsJob = viewModelScope.launch {
       quickMatch.roundResults.collect { result ->
         if (result.round <= roundSignals.size) return@collect
         roundSignals += PlacementRoundSignal(
@@ -132,7 +164,13 @@ class PlacementViewModel(
           estimate = result.estimates[human] ?: 0,
           actual = result.tricksWon[human] ?: 0,
         )
-        if (result.round >= config.gameType.baseRounds) {
+        // S2 (A8.8/Q48): the effective ceiling, not the format's static
+        // baseRounds — a Sa'ayda in the fast window raises it mid-match, and
+        // a scored round at baseRounds on an extended match is NOT the last
+        // round. QuickMatchViewModel applies the extension before emitting
+        // this result, so the value read here is the round's own ceiling.
+        if (result.round >= quickMatch.maxRounds) {
+          finalRecorded = true
           _records += recordPlacementMatch(
             matchIndex = config.index,
             totals = quickMatch.totals.value,
@@ -143,11 +181,31 @@ class PlacementViewModel(
         }
       }
     }
+    // A general pass consumed the planned final round: the round contributes
+    // no signal (nobody bid, no tricks won), so the record carries only the
+    // scored rounds the match had banked. State-keyed (see the KDoc): the
+    // scored-final path has already raised the guard by the time the scored
+    // ceiling's completion flag arrives.
+    finalJob = viewModelScope.launch {
+      quickMatch.matchComplete.collect { completed ->
+        if (!completed) return@collect
+        if (finalRecorded) return@collect
+        finalRecorded = true
+        _records += recordPlacementMatch(
+          matchIndex = config.index,
+          totals = quickMatch.totals.value,
+          seat = human,
+          rounds = roundSignals.toList(),
+        )
+        advance()
+      }
+    }
   }
 
   /** Bank the finished match and either seat the next table or hand off. */
   private fun advance() {
-    observeJob?.cancel()
+    signalsJob?.cancel()
+    finalJob?.cancel()
     if (isLastPlacementMatch(matchIndex)) {
       _state.value = PlacementUiState.Calculating(records)
     } else {
@@ -166,7 +224,8 @@ class PlacementViewModel(
   }
 
   override fun onCleared() {
-    observeJob?.cancel()
+    signalsJob?.cancel()
+    finalJob?.cancel()
     super.onCleared()
   }
 }

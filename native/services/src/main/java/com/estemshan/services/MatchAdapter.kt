@@ -165,9 +165,19 @@ class MatchAdapter(
         session.updateBiddingState(result.state())
         ApplyOutcome(applied = true, reason = REASON_APPLIED, seatId = seatId, version = version, outcome = result.outcome)
       }
-      is EmitResult.Applied, is EmitResult.GeneralPass -> {
+      is EmitResult.Applied -> {
         session.updateBiddingState(result.state())
         ApplyOutcome(applied = true, reason = REASON_APPLIED, seatId = seatId, version = version)
+      }
+      is EmitResult.GeneralPass -> {
+        // S1: the pass is carried through the committed state as before, but
+        // its next-round multiplier is surfaced so the consumer can observe
+        // the cancelled round instead of silently swallowing it.
+        session.updateBiddingState(result.state())
+        ApplyOutcome(
+          applied = true, reason = REASON_APPLIED, seatId = seatId, version = version,
+          generalPassMultiplier = result.doubledMultiplier,
+        )
       }
     }
   }
@@ -210,6 +220,12 @@ class MatchAdapter(
     // leaderId and riskPlayerId are only recoverable from the outcome the
     // engine derived at the completing emit.
     var outcome: BiddingOutcome? = null
+    // S1: the last general pass this replay crossed, if any — its value is
+    // the NEXT round's multiplier. A one-delivery replay that crossed several
+    // passes (consecutive consumed rounds whose entries share the window)
+    // carries the LAST one: the multiplier armed for the round following the
+    // final pass. null when no pass happened on this call.
+    var generalPass: Int? = null
     var i = lastCount
     while (i < matchDoc.biddingLog.size) {
       val entry = matchDoc.biddingLog[i]
@@ -271,6 +287,10 @@ class MatchAdapter(
         return desync(ENGINE_REJECTED, matchId, i, version, results)
       }
       if (result is EmitResult.Completed) outcome = result.outcome
+      // S1: cross-round fact from a cancelled round. A passed round commits
+      // no cards, so its arm fires in the auction phase only, exactly once
+      // per consumed round — the last one in the delivery decides.
+      if (result is EmitResult.GeneralPass) generalPass = result.doubledMultiplier
       session.updateBiddingState(result.state())
       results.add(EntryOutcome(i, true, REASON_APPLIED, entry.seatId))
       i++
@@ -285,6 +305,7 @@ class MatchAdapter(
       version = version,
       results = results,
       outcome = outcome,
+      generalPassMultiplier = generalPass,
     )
   }
 
@@ -860,6 +881,17 @@ data class ApplyOutcome(
    * riskPlayerId survive. null on every non-completing path.
    */
   val outcome: BiddingOutcome? = null,
+  /**
+   * S1 (A8.7 / Q51): the NEXT round's multiplier, present only when an emit
+   * on THIS call produced [EmitResult.GeneralPass] — Normal opens Q51's
+   * ladder at ×2 and escalates per pass (×2 → ×4 → ×6 → ×8 cap), Classic
+   * stays at 1. The replayed BiddingState is the CANCELLED round's own
+   * (engine contract: its roundMultiplier still describes that round), so
+   * the pass's cross-round fact survives only here: a consumer arms it for
+   * the round the document will eventually advance to. The adapter itself
+   * never advances a round.
+   */
+  val generalPassMultiplier: Int? = null,
 ) {
   companion object {
     fun notApplied(reason: String) = ApplyOutcome(applied = false, reason = reason)

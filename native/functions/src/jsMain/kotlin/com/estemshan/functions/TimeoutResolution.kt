@@ -16,9 +16,11 @@ import com.estemshan.engine.PlayCard
 import com.estemshan.engine.PlayEmit
 import com.estemshan.engine.RANKS
 import com.estemshan.engine.RoundCfg
+import com.estemshan.engine.ScoringMode
 import com.estemshan.engine.Suit
 import com.estemshan.engine.TablePhase
 import com.estemshan.engine.TableState
+import com.estemshan.engine.biddingOrder
 import com.estemshan.engine.bot.BotPersonality
 import com.estemshan.engine.bot.BotTier
 import com.estemshan.engine.bot.BidBrain
@@ -98,6 +100,11 @@ object TimeoutResolution {
     /** History needed to reconstruct the engine state is missing or contradicts
      *  the engine (failed-precondition). Fail closed; never invent state. */
     const val HISTORY_UNAVAILABLE = "HISTORY_UNAVAILABLE"
+
+    /** Present history contradicts the document's own persisted shape —
+     *  today an illegal `currentMultiplier` (O-19). Reported, never repaired
+     *  by substituting a default. */
+    const val HISTORY_CORRUPT = "HISTORY_CORRUPT"
   }
 
   /**
@@ -444,7 +451,7 @@ object TimeoutResolution {
    * bidding action is `submitBid`, which writes `bids/{seat}` and no log entry —
    * leaving it out would make an on-time estimate invisible to the cursor and
    * take over a player who was answering every window. It can decrease (round
-   * advance, general-pass redeal), and a change in either direction resets, so
+   * advance, a general pass consuming its round), and a change in either direction resets, so
    * the failure mode of a decrease is a reset the rule would have granted anyway
    * — never a false takeover. Biasing every judgement here toward resetting is
    * the fail-closed direction: a wrong reset delays a takeover, a wrong
@@ -628,6 +635,13 @@ object TimeoutResolution {
   fun parseGameType(value: Any?): GameType =
     (value as? String)?.let { runCatching { GameType.valueOf(it) }.getOrNull() }
       ?: GameType.FULL
+
+  /** Mirrors Settlement.parseScoringMode: absent/unrecognised ⇒ NORMAL. S1
+   *  threads this through the replayed auction's own state — a CLASSIC
+   *  match's all-pass never escalates the engine's next-round multiplier. */
+  fun parseScoringMode(value: Any?): ScoringMode =
+    (value as? String)?.let { runCatching { ScoringMode.valueOf(it) }.getOrNull() }
+      ?: ScoringMode.NORMAL
 
   /** Mirrors RoomDoc.parseDecisionTimerSeconds: absent, non-numeric, or
    *  outside RD21's 5..20 s window ⇒ 15 s — a read can never surface a timer
@@ -874,6 +888,14 @@ object TimeoutResolution {
         Reason.HISTORY_UNAVAILABLE,
         "resolveDecisionTimeout: currentRound is missing.",
       )
+    // O-19: a corrupt persisted multiplier is reported, never replayed at 1.
+    if (storedRoundMultiplier(fields) == null) {
+      return Resolution.NoWrite(
+        Reason.HISTORY_CORRUPT,
+        "resolveDecisionTimeout: currentMultiplier is not an integer in " +
+          "$ROUND_MULTIPLIER_DEFAULT..$MAX_ROUND_MULTIPLIER (or a Classic match does not hold 1).",
+      )
+    }
 
     return when (pending.phase) {
       DecisionPhase.BIDDING -> {
@@ -910,22 +932,39 @@ object TimeoutResolution {
   // ── bidding: replay the auction, then BidBrain ───────────────────────
 
   /**
-   * The match doc carries no round multiplier: MatchService never persists
-   * one, and the clients keep it in their own session. It is not load-bearing
-   * here — it only feeds scoring, which the resolver never does — and the
-   * general-pass redeal's doubled multiplier is produced by the engine itself,
-   * so the replay's turn order and every legality check are unaffected. The
-   * fresh-round default is therefore correct for the decision.
+   * O-19 (Option B): the match doc's `currentMultiplier` is the multiplier
+   * the current round is scored at — and the one its auction replay must be
+   * armed with. It never changes a decision's legality, but replaying a
+   * document that says ×4 at ×1 would be a silent reset, which Option B
+   * forbids: the value is read from the doc, and a present-but-illegal one
+   * fails the replay closed (reported by [resolveExpired]) instead of
+   * falling back to 1. Absent means a document written before the field,
+   * where 1 is the defined legacy reading.
    */
   private const val ROUND_MULTIPLIER_DEFAULT = 1
+
+  private const val MAX_ROUND_MULTIPLIER = 8
+
+  /**
+   * The document's stored multiplier: [ROUND_MULTIPLIER_DEFAULT] when the
+   * field is absent (legacy), the value when it is a legal int 1..8 (Classic
+   * exactly 1), and null — corrupt, fail closed — otherwise.
+   */
+  internal fun storedRoundMultiplier(fields: Map<String, Any?>): Int? {
+    val raw = fields["currentMultiplier"] ?: return ROUND_MULTIPLIER_DEFAULT
+    val value = num(raw) ?: return null
+    if (value < ROUND_MULTIPLIER_DEFAULT || value > MAX_ROUND_MULTIPLIER) return null
+    if (parseScoringMode(fields["scoringMode"]) == ScoringMode.CLASSIC && value != 1) return null
+    return value
+  }
 
   /**
    * Replays the round's biddingLog (and, once the auction closes, the doc's
    * transient `bids` as FinalEstimate intents) through the real engine and
    * returns the resulting state — or null when the history does not replay
-   * legally. Mirrors Settlement.scoreRound's replay, including the
-   * general-pass redeal, which restarts the same round at the engine's own
-   * doubled multiplier without a document write.
+   * legally. Mirrors Settlement.scoreRound's replay, and under S1 terminates
+   * on a general pass at the engine's own cancelled-round state without a
+   * document write or a same-round re-deal.
    */
   fun replayBidding(
     fields: Map<String, Any?>,
@@ -954,18 +993,52 @@ object TimeoutResolution {
     round: Int,
   ): BiddingReplay {
     val gameType = parseGameType(fields["gameType"])
+    val scoringMode = parseScoringMode(fields["scoringMode"])
+    // O-19: the auction replays at the document's own multiplier; an illegal
+    // stored value is corrupt history, not a licence to default to 1.
+    val roundMultiplier = storedRoundMultiplier(fields) ?: return BiddingReplay(null, null)
     val dealerSeat = seatOfUid(fields, fields["dealer"] as? String ?: return BiddingReplay(null, null))
       ?.takeIf { it in order } ?: return BiddingReplay(null, null)
     val fast = gameType.isFastRound(round)
     var state: BiddingState = if (fast) {
-      initFastRound(round, dealerSeat, order, ROUND_MULTIPLIER_DEFAULT, gameType)
+      initFastRound(round, dealerSeat, order, roundMultiplier, gameType, scoringMode)
     } else {
-      initNormalRound(round, dealerSeat, order, ROUND_MULTIPLIER_DEFAULT, gameType)
+      initNormalRound(round, dealerSeat, order, roundMultiplier, gameType, scoringMode)
     }
+
+    val stored = strMap(fields["bids"])?.mapNotNull { (seat, value) ->
+      num(value)?.let { seat to it }
+    }?.toMap().orEmpty()
 
     val logged = loggedIntents(fields) ?: return BiddingReplay(null, null)
     for (entry in logged) {
       if (entry.seat !in order) return BiddingReplay(null, null)
+      if (fast && entry is LoggedIntent.Confirm &&
+        state.subPhase == BiddingPhase.ESTIMATES
+      ) {
+        // Fast Super Call. A live document keeps each WIPED seat's
+        // PRE-confirm estimate in bids/: submitBid is one value per seat and
+        // CONFIRM does not reopen bidding (MatchService.submitBid;
+        // firestore.rules), so there is no authoritative post-confirm value
+        // to feed. Only a caller first in bidding order completes at CONFIRM
+        // without a re-declaration; anything else fails closed rather than
+        // replaying a stale number as if it were final. Archives settle
+        // through Settlement.scoreRound, where the values are final.
+        if (biddingOrder(state).indexOf(entry.seat) > 0) {
+          return BiddingReplay(null, null)
+        }
+        when (val emitted = replayFastSuperConfirm(
+          state, entry.seat, entry.tricks, entry.suit, stored,
+        )) {
+          is EmitResult.Completed -> return BiddingReplay(emitted.state, emitted.outcome)
+          is EmitResult.GeneralPass -> return BiddingReplay(null, null)
+          is EmitResult.Applied -> {
+            state = emitted.state
+            continue
+          }
+          is EmitResult.Rejected -> return BiddingReplay(null, null)
+        }
+      }
       val intent = when (entry) {
         is LoggedIntent.Dash -> BiddingIntent.DashCallDecision(entry.seat, entry.declared)
         is LoggedIntent.AuctionPass -> BiddingIntent.AuctionBid(entry.seat, isPass = true)
@@ -977,10 +1050,15 @@ object TimeoutResolution {
       when (val emitted = emit(state, intent)) {
         is EmitResult.Completed -> return BiddingReplay(emitted.state, emitted.outcome)
         is EmitResult.GeneralPass -> {
+          // S1 (A8.7 / Q51): the pass CANCELS this round — its own log ends
+          // here, nobody waits, and the auction for the NEXT round lives
+          // behind the persisted round transition. Re-initialising the same
+          // round would resurrect a round S1 consumed: the replay keeps the
+          // engine's cancelled-round state as terminal, so detection sees a
+          // decisionless round (negligible: nothing left to decide until the
+          // document advances) instead of an endless re-litigated auction.
           if (fast) return BiddingReplay(null, null)
-          state = initNormalRound(
-            round, dealerSeat, order, emitted.doubledMultiplier, gameType,
-          )
+          state = emitted.state
         }
         is EmitResult.Applied -> state = emitted.state
         is EmitResult.Rejected -> return BiddingReplay(null, null)
@@ -990,9 +1068,6 @@ object TimeoutResolution {
     // The log did not close the auction; continue from the doc's committed
     // estimates in the engine's own turn order until it closes or a seat is
     // waiting on one. This is seedStoredEstimates' own walk.
-    val stored = strMap(fields["bids"])?.mapNotNull { (seat, value) ->
-      num(value)?.let { seat to it }
-    }?.toMap().orEmpty()
     var guard = 0
     while (guard <= order.size) {
       guard++
@@ -1153,6 +1228,8 @@ object TimeoutResolution {
     hands: Map<String, List<Card>>,
   ): TableState? {
     val outcome = replayBiddingOutcome(fields, order, round) ?: return null
+    // O-19: the table carries the document's multiplier, never a default.
+    val roundMultiplier = storedRoundMultiplier(fields) ?: return null
     val resolvedHands = LinkedHashMap<String, List<Card>>()
     for (seat in order) {
       resolvedHands[seat] = hands[seat] ?: return null
@@ -1167,7 +1244,7 @@ object TimeoutResolution {
         dashCallers = outcome.dashCallers,
         leaderId = outcome.leaderId,
         riskId = outcome.riskPlayerId,
-        multiplier = ROUND_MULTIPLIER_DEFAULT,
+        multiplier = roundMultiplier,
         hands = resolvedHands,
       ),
       order,

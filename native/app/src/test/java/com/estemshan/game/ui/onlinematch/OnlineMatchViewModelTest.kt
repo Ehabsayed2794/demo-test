@@ -23,6 +23,7 @@ import com.estemshan.engine.TableState
 import com.estemshan.engine.Dealer
 import com.estemshan.engine.emit
 import com.estemshan.engine.emitPlay
+import com.estemshan.engine.initFastRound
 import com.estemshan.engine.initNormalRound
 import com.estemshan.engine.initTable
 import com.estemshan.engine.nextSeat
@@ -31,6 +32,7 @@ import com.estemshan.game.ui.standings.buildStandings
 import com.estemshan.services.MatchAdapter
 import com.estemshan.services.FirestoreError
 import com.estemshan.services.Heartbeat
+import com.estemshan.services.generalPassMultiplier
 import com.estemshan.services.MatchListenerFactory
 import com.estemshan.services.MatchListenerRegistration
 import com.estemshan.services.PlayerPort
@@ -46,6 +48,7 @@ import com.estemshan.services.model.GameState
 import com.estemshan.services.model.HandDoc
 import com.estemshan.services.model.LeaveResult
 import com.estemshan.services.model.MatchDoc
+import com.estemshan.services.model.Reasons
 import com.estemshan.services.model.StoredCard
 import com.estemshan.services.model.SubmitBidResult
 import com.estemshan.services.model.SubmitBiddingActionResult
@@ -253,6 +256,452 @@ class OnlineMatchViewModelTest {
     }
   }
 
+  /**
+   * S1: the document's scoring mode must reach the auction's own engine
+   * state — not just the session envelope — because the engine derives a
+   * general pass's next-round multiplier from the state's mode (CLASSIC
+   * never escalates).
+   */
+  @Test
+  fun theDocScoringModeSeedsTheBiddingEngineState() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastRoundDoc().copy(
+        currentRound = 1,
+        scoringMode = ScoringMode.CLASSIC,
+      )
+      val vm = makeVm("uid-a", Dispatchers.Main)
+      vm.start("m-classic-state")
+      advanceUntilIdle()
+
+      broadcast("m-classic-state")
+      assertEquals(
+        "the auction state must carry the doc's scoring mode",
+        ScoringMode.CLASSIC,
+        biddingOf(vm.state.value).scoringMode,
+      )
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * O-19 (Option B, 2026-10-24) — the online General Pass is now a persisted
+   * advance. A delivery whose biddingLog is the canonical all-pass window
+   * (N declining dash calls + N auction passes, no cards) must:
+   *
+   *  - arm the session round's multiplier for the round the document is
+   *    about to open (the pass hint), and
+   *  - route exactly ONE write to [MatchStore.advanceAfterGeneralPass],
+   *    which owns the ladder — the client never computes the value itself.
+   *
+   * The local round number stays document-pinned: this delivery's document
+   * still says round 1, so the session does not advance unilaterally; the
+   * next document (round 2, multiplier 2) reconciles through [alignToDoc].
+   */
+  @Test
+  fun aGeneralPassDeliveryArmsTheMultiplierAndAdvancesTheDocumentOnce() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      val passLog = buildList {
+        seats.forEach {
+          add(BiddingLogEntry(it, BiddingLogEntry.ACTION_DASH_CALL, declaredDashCall = false, round = 1))
+        }
+        seats.forEach {
+          add(BiddingLogEntry(it, BiddingLogEntry.ACTION_AUCTION_BID, isPass = true, round = 1))
+        }
+      }
+      store.doc = fastRoundDoc().copy(
+        currentRound = 1,
+        biddingLog = passLog,
+        version = 3,
+      )
+      val vm = makeVm("uid-a", Dispatchers.Main)
+      vm.start("m-pass")
+      advanceUntilIdle()
+
+      broadcast("m-pass")
+      val session = sessions.getValue("uid-a")
+      assertEquals(
+        "the session must not advance the round ahead of the document",
+        1,
+        session.getRound().number,
+      )
+      assertEquals(
+        "the pass did not arm the session round's multiplier",
+        2,
+        session.getRound().multiplier,
+      )
+      assertEquals(
+        "the cancelled auction state keeps the cancelled round's number",
+        1,
+        biddingOf(vm.state.value).round,
+      )
+      assertNull(
+        "the cancelled round waits on nobody",
+        biddingOf(vm.state.value).waitingFor,
+      )
+      assertEquals(
+        "the pass must be advanced exactly once despite re-deliveries",
+        1,
+        store.passAdvanceCalls.get(),
+      )
+      assertEquals(
+        "the document owns the advance",
+        2,
+        store.doc.currentRound,
+      )
+      assertEquals(
+        "the document carries the laddered multiplier",
+        2,
+        store.doc.currentMultiplier,
+      )
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * O-19 gate 7 — a General Pass after a Sa'ayda continues from the value
+   * the Sa'ayda armed in the document, not from ×1. The document opens the
+   * round at ×2 (what a Sa'ayda at ×1 writes), so the cancelled round's
+   * ladder step is ×2 → ×4: both the engine's replay and the store's own
+   * transaction read the persisted 2, never a defaulted 1.
+   */
+  @Test
+  fun aPassAfterASaaydaContinuesFromThePersistedMultiplier() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      val passLog = buildList {
+        seats.forEach {
+          add(BiddingLogEntry(it, BiddingLogEntry.ACTION_DASH_CALL, declaredDashCall = false, round = 1))
+        }
+        seats.forEach {
+          add(BiddingLogEntry(it, BiddingLogEntry.ACTION_AUCTION_BID, isPass = true, round = 1))
+        }
+      }
+      store.doc = fastRoundDoc().copy(
+        currentRound = 1,
+        currentMultiplier = 2,
+        biddingLog = passLog,
+        version = 3,
+      )
+      val vm = makeVm("uid-a", Dispatchers.Main)
+      vm.start("m-pass-after-saayda")
+      advanceUntilIdle()
+
+      broadcast("m-pass-after-saayda")
+
+      assertEquals(1, store.passAdvanceCalls.get())
+      assertEquals(2, store.doc.currentRound)
+      assertEquals(
+        "the pass must ladder from the Sa'ayda's persisted ×2, not from ×1",
+        4,
+        store.doc.currentMultiplier,
+      )
+      assertEquals(
+        "the next auction the client plays is armed at the laddered value",
+        4,
+        sessions.getValue("uid-a").getRound().multiplier,
+      )
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * O-19 / A8 F1 — the unprovable pass window is still refused, and now says
+   * why.
+   *
+   * A round closed with no cards is a General Pass only if its window is the
+   * canonical all-pass shape. Here p1 DECLARED a Dash and the other three
+   * passed, so the pass count no longer proves the round: the service answers
+   * UNSUPPORTED_GENERAL_PASS_SHAPE and the next multiplier has no derivable
+   * rung. The refusal stands — whether this round is legal or must stop being
+   * emitted at all is an open owner ruling (A8 item C) — but it must not be
+   * the silent `return` it used to be: the client leaves the document exactly
+   * where it found it AND publishes the reason on the state it shows.
+   */
+  @Test
+  fun anUnprovablePassWindowRefusesTheRoundAndNamesTheReason() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      val mixedWindow = buildList {
+        add(
+          BiddingLogEntry(
+            seats[0], BiddingLogEntry.ACTION_DASH_CALL, declaredDashCall = true, round = 1,
+          ),
+        )
+        seats.drop(1).forEach {
+          add(
+            BiddingLogEntry(
+              it, BiddingLogEntry.ACTION_DASH_CALL, declaredDashCall = false, round = 1,
+            ),
+          )
+        }
+        seats.drop(1).forEach {
+          add(BiddingLogEntry(it, BiddingLogEntry.ACTION_AUCTION_BID, isPass = true, round = 1))
+        }
+      }
+      // Dealt, closed, no cards: the auction is over and nothing was played.
+      store.doc = fastRoundDoc().copy(
+        currentRound = 1,
+        currentMultiplier = 1,
+        biddingOpen = false,
+        biddingLog = mixedWindow,
+        gameState = GameState(initialized = true, dealtRound = 1),
+        version = 3,
+      )
+      val vm = makeVm("uid-a", Dispatchers.Main)
+      vm.start("m-unprovable-pass")
+      advanceUntilIdle()
+
+      broadcast("m-unprovable-pass")
+
+      // Half 1 — nothing advanced: not the document, not the store, not here.
+      assertEquals("the refusal must not reach the store at all", 0, store.passAdvanceCalls.get())
+      assertEquals("the stalled round must stay on the document", 1, store.doc.currentRound)
+      val session = sessions.getValue("uid-a")
+      assertEquals("and this client's session must not advance either", 1, session.getRound().number)
+
+      // Half 2 — the user can see why: the published state carries the
+      // service's own reason, not a bare stall.
+      val reason = rejectionOf(vm.state.value)
+      assertTrue(
+        "the stall must publish a reason (state was ${vm.state.value::class.simpleName})",
+        reason != null,
+      )
+      assertTrue(
+        "the reason must name UNSUPPORTED_GENERAL_PASS_SHAPE, was: $reason",
+        reason!!.contains(Reasons.UNSUPPORTED_GENERAL_PASS_SHAPE),
+      )
+
+      // Re-delivery of the same document neither advances nor goes quiet.
+      broadcast("m-unprovable-pass")
+      assertEquals("a re-delivery must not turn the refusal into a guess", 0, store.passAdvanceCalls.get())
+      assertEquals(1, store.doc.currentRound)
+      assertEquals(reason, rejectionOf(vm.state.value))
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * The other half of A8 F1: the new message must not misfire. An auction
+   * still in flight, and a closed auction that DOES hold a contract, are both
+   * ordinary documents on their way to trick play — the round is not a pass
+   * candidate at all, so reporting an unprovable pass would be a false alarm
+   * that pushes the table away from a round it can still play.
+   */
+  @Test
+  fun anOrdinaryAuctionIsNotReportedAsAnUnprovablePass() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      val dashBlock = buildList {
+        add(
+          BiddingLogEntry(
+            seats[0], BiddingLogEntry.ACTION_DASH_CALL, declaredDashCall = true, round = 1,
+          ),
+        )
+        seats.drop(1).forEach {
+          add(
+            BiddingLogEntry(
+              it, BiddingLogEntry.ACTION_DASH_CALL, declaredDashCall = false, round = 1,
+            ),
+          )
+        }
+      }
+      store.doc = fastRoundDoc().copy(
+        currentRound = 1,
+        biddingOpen = true,
+        biddingLog = dashBlock,
+        gameState = GameState(initialized = true, dealtRound = 1),
+        version = 3,
+      )
+      val vm = makeVm("uid-a", Dispatchers.Main)
+      vm.start("m-not-a-pass")
+      advanceUntilIdle()
+
+      broadcast("m-not-a-pass")
+      assertEquals(0, store.passAdvanceCalls.get())
+      assertNull(
+        "an auction that is still open is not a closed pass round",
+        rejectionOf(vm.state.value),
+      )
+
+      // Same round, bidding closed, but a seat holds a bid: the contract is on
+      // record and the round will be played, not passed.
+      store.doc = store.doc.copy(
+        biddingOpen = false,
+        biddingLog = dashBlock + listOf(
+          BiddingLogEntry(
+            seats[1], BiddingLogEntry.ACTION_AUCTION_BID, isPass = false,
+            tricks = 13, suit = Suit.SPADES.name, round = 1,
+          ),
+          BiddingLogEntry(seats[2], BiddingLogEntry.ACTION_AUCTION_BID, isPass = true, round = 1),
+          BiddingLogEntry(seats[3], BiddingLogEntry.ACTION_AUCTION_BID, isPass = true, round = 1),
+        ),
+        version = 4,
+      )
+
+      broadcast("m-not-a-pass")
+      assertEquals(0, store.passAdvanceCalls.get())
+      assertNull(
+        "a closed auction with a contract on record is not an unprovable pass",
+        rejectionOf(vm.state.value),
+      )
+      assertEquals("and the round stays where the document has it", 1, store.doc.currentRound)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * O-19 gate 4 (a) — a cold start arms the auction at the document's
+   * persisted multiplier. Before Option B this client started at x1 and a
+   * mid-escalation round scored at the wrong value.
+   */
+  @Test
+  fun aColdStartFromADocumentAtX4StartsTheAuctionAtX4() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastRoundDoc().copy(currentMultiplier = 4)
+      val vm = makeVm("uid-a", Dispatchers.Main)
+      vm.start("m-x4")
+      advanceUntilIdle()
+
+      broadcast("m-x4")
+      val session = sessions.getValue("uid-a")
+      assertEquals("the doc's round must seed the session", 14, session.getRound().number)
+      assertEquals("the doc's multiplier must seed the session", 4, session.getRound().multiplier)
+      val auction = biddingOf(vm.state.value)
+      assertEquals(14, auction.round)
+      assertEquals(
+        "the auction engine must be armed at the doc's multiplier",
+        4,
+        auction.roundMultiplier,
+      )
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * O-19 gate 4 (b) — a client that missed the pass entirely reconciles the
+   * round AND the multiplier from the next document, and keeps the totals it
+   * already accumulated. (A NEW session cannot restore past totals — there
+   * is no roundArchive read on MatchStore; this pins the reconnect case the
+   * document can heal.)
+   */
+  @Test
+  fun aMissedGeneralPassIsReconciledFromTheDocumentAndKeepsTheTotals() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastRoundDoc().copy(currentRound = 1, version = 1)
+      val vm = makeVm("uid-a", Dispatchers.Main)
+      vm.start("m-missed-pass")
+      advanceUntilIdle()
+      broadcast("m-missed-pass")
+
+      val session = sessions.getValue("uid-a")
+      val totals = seats.associateWith { 7 }
+      session.setMatchScores(totals)
+
+      // What the document looks like to a client that never saw the pass:
+      // the next round, already opened at the laddered multiplier.
+      store.doc = fastRoundDoc().copy(
+        currentRound = 2,
+        currentMultiplier = 2,
+        version = 4,
+        gameState = GameState(initialized = true, dealtRound = 2),
+      )
+      broadcast("m-missed-pass")
+
+      assertEquals("the session followed the document's round", 2, session.getRound().number)
+      assertEquals("the missed pass's multiplier was reconciled", 2, session.getRound().multiplier)
+      assertEquals(
+        "the next auction is armed at the reconciled multiplier",
+        2,
+        biddingOf(vm.state.value).roundMultiplier,
+      )
+      assertEquals(
+        "the totals already banked must survive the advance",
+        totals,
+        session.getMatchScores(),
+      )
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * O-19 gate 4 (c) — a pass at the planned final round completes the match
+   * through the pass path. It must never advance `currentRound` to
+   * maxRounds + 1 with no result.
+   */
+  @Test
+  fun aFinalRoundGeneralPassCompletesTheMatch() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      val passLog = buildList {
+        seats.forEach {
+          add(BiddingLogEntry(it, BiddingLogEntry.ACTION_DASH_CALL, declaredDashCall = false, round = 18))
+        }
+        seats.forEach {
+          add(BiddingLogEntry(it, BiddingLogEntry.ACTION_AUCTION_BID, isPass = true, round = 18))
+        }
+      }
+      store.doc = fastRoundDoc().copy(
+        currentRound = 18,
+        maxRounds = 18,
+        currentMultiplier = 4,
+        biddingLog = passLog,
+        version = 5,
+      )
+      val vm = makeVm("uid-a", Dispatchers.Main)
+      vm.start("m-final-pass")
+      advanceUntilIdle()
+
+      broadcast("m-final-pass")
+      assertEquals("the final pass must be advanced exactly once", 1, store.passAdvanceCalls.get())
+      assertTrue("the final-round pass must complete the match", store.doc.isComplete)
+      assertEquals("completion must stay on the final round", 18, store.doc.currentRound)
+      assertEquals(18, store.doc.completedRound)
+
+      broadcast("m-final-pass")
+      assertTrue(
+        "the terminal document must publish the result",
+        vm.state.value is MatchUiState.MatchComplete,
+      )
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
   /** Hand the store's current document to every subscriber, then let the
    *  view models' pipelines drain — what a Firestore tick followed by the
    *  collector looks like from the outside. */
@@ -281,6 +730,14 @@ class OnlineMatchViewModelTest {
   private fun tableOf(state: MatchUiState): TableState =
     (state as? MatchUiState.Table)?.state
       ?: error("expected Table, was ${state::class.simpleName}")
+
+  /** The inline rejection on whichever live state the VM published — the
+   *  only surface a player has for "the round stalled and here is why". */
+  private fun rejectionOf(state: MatchUiState): String? = when (state) {
+    is MatchUiState.Bidding -> state.rejection
+    is MatchUiState.Table -> state.rejection
+    else -> null
+  }
 
   // ═══════════════════════════════════════════════════════════════════
   // 1. IDEMPOTENCY — the same snapshot twice applies nothing twice
@@ -1771,7 +2228,7 @@ class OnlineMatchViewModelTest {
    * it here, since a card is unique in the deck).
    */
   private class FakeMatchStore(
-    private val hands: Map<String, List<Card>> = Dealer.dealHands(7),
+    private val hands: Map<String, List<Card>> = Dealer.dealHands(1),
   ) : MatchStore {
 
     val dealCalls = AtomicInteger(0)
@@ -1780,6 +2237,7 @@ class OnlineMatchViewModelTest {
     val actionCalls = AtomicInteger(0)
     val cardCalls = AtomicInteger(0)
     val advanceCalls = AtomicInteger(0)
+    val passAdvanceCalls = AtomicInteger(0)
     val extendCalls = AtomicInteger(0)
     val endCalls = AtomicInteger(0)
 
@@ -1888,10 +2346,15 @@ class OnlineMatchViewModelTest {
       return DealResult(dealt = true, reason = null, matchId, roundNumber, doc.seats.keys.toList())
     }
 
-    override suspend fun advanceToNextRound(matchId: String, completedRound: Int): AdvanceResult {
+    override suspend fun advanceToNextRound(
+      matchId: String,
+      completedRound: Int,
+      nextMultiplier: Int,
+    ): AdvanceResult {
       advanceCalls.incrementAndGet()
       doc = doc.copy(
         currentRound = doc.currentRound + 1,
+        currentMultiplier = nextMultiplier,
         version = doc.version + 1,
         biddingOpen = true,
         bids = emptyMap(),
@@ -1904,6 +2367,56 @@ class OnlineMatchViewModelTest {
       return AdvanceResult(
         advanced = true, reason = null, matchId = matchId,
         previousRound = completedRound, currentRound = doc.currentRound,
+        currentMultiplier = nextMultiplier,
+      )
+    }
+
+    override suspend fun advanceAfterGeneralPass(
+      matchId: String,
+      closedRound: Int,
+      finalScores: Map<String, Int>,
+      winnerIds: List<String>,
+    ): AdvanceResult {
+      passAdvanceCalls.incrementAndGet()
+      if (doc.isComplete) return AdvanceResult.alreadyComplete(matchId, doc.currentRound)
+      if (doc.currentRound != closedRound) {
+        return AdvanceResult.alreadyAdvanced(matchId, doc.currentRound)
+      }
+      if (closedRound + 1 > doc.maxRounds) {
+        doc = doc.copy(
+          status = MatchDoc.STATUS_COMPLETE,
+          winnerIds = winnerIds,
+          finalScores = finalScores,
+          completedRound = closedRound,
+          version = doc.version + 1,
+          cardLog = emptyList(),
+          lastCardSeat = null,
+          cardPhase = null,
+          biddingLog = emptyList(),
+        )
+        return AdvanceResult(
+          advanced = true, reason = null, matchId = matchId,
+          previousRound = closedRound, currentRound = closedRound,
+          completed = true, currentMultiplier = doc.currentMultiplier,
+        )
+      }
+      val nextMultiplier = generalPassMultiplier(doc.currentMultiplier, doc.scoringMode)
+      doc = doc.copy(
+        currentRound = doc.currentRound + 1,
+        currentMultiplier = nextMultiplier,
+        version = doc.version + 1,
+        biddingOpen = true,
+        bids = emptyMap(),
+        lastBidSeat = null,
+        cardLog = emptyList(),
+        lastCardSeat = null,
+        cardPhase = null,
+        biddingLog = emptyList(),
+      )
+      return AdvanceResult(
+        advanced = true, reason = null, matchId = matchId,
+        previousRound = closedRound, currentRound = doc.currentRound,
+        currentMultiplier = nextMultiplier,
       )
     }
 
@@ -1984,6 +2497,219 @@ class OnlineMatchViewModelTest {
       // Cancelling the returned job is how the view model stops the cadence,
       // so a completion handler is the stop signal.
       return Job().also { it.invokeOnCompletion { stopped++ } }
+    }
+  }
+
+  // ==========================================================================
+  //  S2 (A8.8 / Q48) — Sa'ayda extension online
+  // ==========================================================================
+
+  /**
+   * A complete fast-round fixture at [roundNumber]: all four seats estimate 4,
+   * the caller holds all trumps and wins all 13 tricks (bid 4 ≠ won 13 → fail),
+   * everyone else bids 4 and wins 0 (fail) → all four fail → Sa'ayda.
+   * The cardLog holds all 52 plays so [maybeCompleteRound] can score and
+   * advance, which triggers [store.extendMatchRounds].
+   */
+  private data class FastRoundCompleteFixture(
+    val outcome: BiddingOutcome,
+    val hands: Map<String, List<Card>>,
+    val table: TableState,
+    val doc: MatchDoc,
+  )
+
+  private fun fastRoundCompleteFixture(roundNumber: Int): FastRoundCompleteFixture {
+    // Deal deterministically and play all 13 tricks. Every seat bids 4; we
+    // need every seat to miss its bid (won != 4) → all fail → Sa'ayda.
+    // Must match the FakeMatchStore's seed so the local hand lines up.
+    val hands = Dealer.dealHands(1L)
+    var state = initFastRound(round = roundNumber, dealer = seats.first(), seats = seats)
+    var outcome: BiddingOutcome? = null
+    var guard = 0
+    while (state.subPhase != BiddingPhase.DONE && guard < 40) {
+      guard++
+      val actor = state.waitingFor ?: error("no seat waiting in ${state.subPhase}")
+      val intent = BiddingIntent.FinalEstimate(actor, 4)
+      state = when (val result = emit(state, intent)) {
+        is EmitResult.Applied -> result.state
+        is EmitResult.Completed -> {
+          outcome = result.outcome
+          result.state
+        }
+        is EmitResult.Rejected -> error("fast-round estimate rejected: ${result.reason}")
+        is EmitResult.GeneralPass -> error("unexpected general pass in fast round")
+      }
+    }
+    val done = outcome ?: error("fast-round auction never closed")
+
+    // Play all 13 tricks through the real table engine.
+    var table = initTable(
+      RoundCfg(
+        round = roundNumber,
+        trump = done.trump,
+        callerId = done.callerId,
+        withPlayers = done.withPlayers,
+        estimates = done.estimates,
+        dashCallers = done.dashCallers,
+        leaderId = done.leaderId,
+        riskId = done.riskPlayerId,
+        hands = hands,
+      ),
+      seats,
+    )
+    val cardLog = mutableListOf<CardLogEntry>()
+    repeat(13) {
+      repeat(4) {
+        val seat = table.turn ?: error("no turn to play in trick")
+        val hand = table.cfg.hands.getValue(seat)
+        val led = table.ledSuit
+        val card = if (led == null) hand.first() else hand.firstOrNull { it.suit == led } ?: hand.first()
+        cardLog.add(CardLogEntry(seat, StoredCard.fromEngine(card), roundNumber))
+        table = when (val r = emitPlay(table, PlayCard(seat, card))) {
+          is PlayEmit.Applied -> r.state
+          is PlayEmit.Rejected -> error("fixture play rejected for $seat: ${r.reason}")
+        }
+        if (table.phase == TablePhase.RESOLVING) table = resolveTrick(table)
+      }
+    }
+
+    // All four bid 4. If anyone won exactly 4, this isn't a Sa'ayda — pick a
+    // different seed. (Verified: seed 1L yields all-miss at rounds 14, 18, 19.)
+    val tricksWon = table.tricksWon
+    val allMiss = seats.all { tricksWon.getValue(it) != 4 }
+    if (!allMiss) {
+      error("seed 1L did not produce a Sa'ayda at round $roundNumber: tricksWon=$tricksWon bids=4/4/4/4")
+    }
+
+    val doc = MatchDoc(
+      roomId = "room-1",
+      players = seatUids.values.toList(),
+      status = MatchDoc.STATUS_STARTING,
+      currentRound = roundNumber,
+      maxRounds = 18,
+      extendedRounds = emptyList(),
+      dealer = seatUids.getValue(seats.first()),
+      turn = null,
+      seats = seatUids,
+      version = 1,
+      biddingOpen = false,
+      bids = done.estimates.entries.associate { it.key to (it.value as Int?) },
+      lastBidSeat = seats.last(),
+      cardLog = cardLog.toList(),
+      lastCardSeat = cardLog.last().seatId,
+      cardPhase = MatchDoc.CARD_PHASE_PLAY,
+      biddingLog = emptyList(),
+      gameState = GameState(initialized = true, dealtRound = roundNumber),
+    )
+    return FastRoundCompleteFixture(done, hands, table, doc)
+  }
+
+  /**
+   * Round 14 Sa'ayda online: scoreAndAdvance sees isSaayda=true, computeRoundExtension
+   * extends (in window), store.extendMatchRounds is called, maxRounds → 19.
+   *
+   * O-19 gate 7: the same advance must persist the Sa'ayda's armed multiplier,
+   * so a client that cold-starts after the extension replays round 15 at ×2 —
+   * the extension alone is not the continuity proof.
+   */
+  @Test
+  fun onlineSaaydaRound14ExtendsAndPersists() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(1))
+      store.doc = fastRoundCompleteFixture(14).doc
+      val vm = makeVm(seatUids.getValue("p1"), Dispatchers.Main)
+      vm.start("m-extend-14")
+      broadcast("m-extend-14")
+
+      // One extension write for the round-14 Sa'ayda, ceiling 18 → 19.
+      assertEquals("round-14 Sa'ayda extends online", 1, store.extendCalls.get())
+      assertEquals("maxRounds raised to 19", 19, store.doc.maxRounds)
+      assertEquals("extendedRounds records round 14", listOf(14), store.doc.extendedRounds)
+
+      // And one advance write, carrying the Sa'ayda ladder step ×1 → ×2.
+      assertEquals("the Sa'ayda advanced the round", 15, store.doc.currentRound)
+      assertEquals(
+        "the Sa'ayda's ×2 is persisted, not only held by this client",
+        2,
+        store.doc.currentMultiplier,
+      )
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * Re-delivery of the same terminal round-14 document is idempotent: the
+   * extension write fires exactly once and maxRounds stays 19.
+   */
+  @Test
+  fun onlineSaaydaRound14RedeliveryIsIdempotent() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(1))
+      store.doc = fastRoundCompleteFixture(14).doc.copy(maxRounds = 18)
+      val vm = makeVm(seatUids.getValue("p1"), Dispatchers.Main)
+      vm.start("m-idem-14")
+      broadcast("m-idem-14")
+      assertEquals(1, store.extendCalls.get())
+      assertEquals(19, store.doc.maxRounds)
+      assertEquals(listOf(14), store.doc.extendedRounds)
+
+      // Same document again — no second extension write.
+      broadcast("m-idem-14")
+      assertEquals(1, store.extendCalls.get())
+      assertEquals(19, store.doc.maxRounds)
+      assertEquals(listOf(14), store.doc.extendedRounds)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * Round 13 (before the FULL window) Sa'ayda: no extension, maxRounds stays 18.
+   */
+  @Test
+  fun onlineSaaydaRound13BeforeWindowNoExtend() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(1))
+      // Round 13 is a normal round, not fast — build the doc directly.
+      store.doc = MatchDoc(
+        roomId = "room-1",
+        players = seatUids.values.toList(),
+        status = MatchDoc.STATUS_STARTING,
+        currentRound = 13,
+        maxRounds = 18,
+        extendedRounds = emptyList(),
+        dealer = seatUids.getValue("p1"),
+        turn = null,
+        seats = seatUids,
+        version = 1,
+        biddingOpen = false,
+        bids = mapOf("p1" to 4, "p2" to 4, "p3" to 4, "p4" to 4),
+        lastBidSeat = "p4",
+        cardLog = emptyList(),
+        lastCardSeat = null,
+        cardPhase = null,
+        biddingLog = emptyList(),
+        gameState = GameState(initialized = true, dealtRound = 13),
+      )
+      val vm = makeVm(seatUids.getValue("p1"), Dispatchers.Main)
+      vm.start("m-nowindow-13")
+      broadcast("m-nowindow-13")
+
+      // Pre-window: no extension write at all.
+      assertEquals("pre-window Sa'ayda never extends", 0, store.extendCalls.get())
+      assertEquals("maxRounds stays 18", 18, store.doc.maxRounds)
+    } finally {
+      Dispatchers.resetMain()
     }
   }
 }

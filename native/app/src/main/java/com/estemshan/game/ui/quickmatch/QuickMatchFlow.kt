@@ -63,7 +63,10 @@ fun NavGraphBuilder.quickMatchGraph(nav: NavController, qvm: QuickMatchViewModel
       val rejection by bvm.rejection.collectAsStateWithLifecycle()
 
       LaunchedEffect(key) {
-        bvm.startNormalRound(round, dealer, qvm.seats, mult)
+        // S1: the pass continues across rounds, so the auction state must
+        // carry the match's own scoring mode — CLASSIC passes never
+        // escalate the engine's doubled value.
+        bvm.startNormalRound(round, dealer, qvm.seats, mult, qvm.scoringMode.value)
       }
       // Arm the bot driver for this match: it moves only for seats the roster
       // marks as bots, and re-arms from the current state when the Table
@@ -72,7 +75,19 @@ fun NavGraphBuilder.quickMatchGraph(nav: NavController, qvm: QuickMatchViewModel
       DisposableEffect(Unit) { onDispose { qvm.detachBots() } }
       LaunchedEffect(generalPass) {
         val doubled = generalPass
-        if (doubled != null) qvm.applyGeneralPass(doubled)
+        if (doubled != null) {
+          // S1 (A8.7 / Q51): the pass is a production transition — it starts
+          // the NEXT round (fresh deal, rotated dealer, doubled multiplier)
+          // via the bidding key. If pass consumed the planned final round,
+          // the match is already complete on return and the flow retires to
+          // standings exactly as a scored final round does.
+          qvm.applyGeneralPass(doubled)
+          if (qvm.standings.value != null) {
+            nav.navigate(QUICK_STANDINGS) {
+              popUpTo(Routes.BIDDING) { inclusive = true }
+            }
+          }
+        }
       }
       LaunchedEffect(outcome) {
         val o = outcome
@@ -139,17 +154,20 @@ fun NavGraphBuilder.quickMatchGraph(nav: NavController, qvm: QuickMatchViewModel
 
     composable(QUICK_STANDINGS) {
       val standings by qvm.standings.collectAsStateWithLifecycle()
-      // S69 (E7): at the ceiling (FULL 18, MINI 10) the match is over —
-      // the button retires instead of looping into an 11th/19th round.
+      // S69 (E7): at the ceiling (FULL 18, MINI 10, or an A8.8/Q48
+      // extension beyond it) the match is over — the button retires instead
+      // of looping into another round. The ceiling is the EFFECTIVE one:
+      // Sa'ayda extensions raise it mid-match, so the format's baseRounds
+      // would both retire the button and fire the fanfare one round early.
       val round by qvm.round.collectAsStateWithLifecycle()
-      val gameType by qvm.gameType.collectAsStateWithLifecycle()
+      val maxRounds by qvm.maxRoundsFlow.collectAsStateWithLifecycle()
       // S27: the round-score chime on every scored round's arrival, and the
       // win fanfare on the ceiling round only — the same standings hook the
       // online flow uses, so the chime means "a round just scored" in both.
       // roundScoredOrMatchWon keeps the two mutually exclusive.
       val sfx = LocalSfx.current
       LaunchedEffect(standings) {
-        if (standings != null) sfx.roundScoredOrMatchWon(round, gameType.baseRounds)
+        if (standings != null) sfx.roundScoredOrMatchWon(round, maxRounds)
       }
       EstemshanTheme {
         Column(Modifier.fillMaxSize()) {
@@ -163,7 +181,7 @@ fun NavGraphBuilder.quickMatchGraph(nav: NavController, qvm: QuickMatchViewModel
                 popUpTo(QUICK_STANDINGS) { inclusive = true }
               }
             },
-            enabled = round < gameType.baseRounds,
+            enabled = round < maxRounds,
             modifier = Modifier.fillMaxWidth().padding(16.dp),
           ) {
             Text(stringResource(R.string.quickmatch_next_round))

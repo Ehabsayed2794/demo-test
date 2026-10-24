@@ -140,7 +140,7 @@ class LeaderboardResponseTest {
     )
     val second = row(
       position = 2, displayName = "Mariam", avatarInitial = "M",
-      tier = "Platinum", tierArabic = "وزير", division = "I", rp = 1_400,
+      tier = "Platinum", tierArabic = "بلاتين", division = "I", rp = 1_400,
       isCurrentPlayer = true,
     )
     val third = row(
@@ -159,10 +159,10 @@ class LeaderboardResponseTest {
         seasonId = "s2",
         rows = listOf(
           LeaderboardPort.Row(1, "Nour", "N", "Gold", "معلم", "II", 700, "s2", false),
-          LeaderboardPort.Row(2, "Mariam", "M", "Platinum", "وزير", "I", 1_400, "s2", true),
+          LeaderboardPort.Row(2, "Mariam", "M", "Platinum", "بلاتين", "I", 1_400, "s2", true),
           LeaderboardPort.Row(3, "Youssef", "Y", "Silver", "لاعب", "III", 250, "s2", false),
         ),
-        you = LeaderboardPort.Row(2, "Mariam", "M", "Platinum", "وزير", "I", 1_400, "s2", true),
+        you = LeaderboardPort.Row(2, "Mariam", "M", "Platinum", "بلاتين", "I", 1_400, "s2", true),
         total = 3,
         skipped = 0,
       ),

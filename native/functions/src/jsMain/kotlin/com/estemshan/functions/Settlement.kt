@@ -4,6 +4,8 @@ import com.estemshan.engine.Bid
 import com.estemshan.engine.BidType
 import com.estemshan.engine.BiddingIntent
 import com.estemshan.engine.BiddingOutcome
+import com.estemshan.engine.BiddingPhase
+import com.estemshan.engine.BiddingState
 import com.estemshan.engine.Card
 import com.estemshan.engine.DEFAULT_SEATS
 import com.estemshan.engine.GameType
@@ -14,10 +16,12 @@ import com.estemshan.engine.RoundScoreInput
 import com.estemshan.engine.ScoringMode
 import com.estemshan.engine.Suit
 import com.estemshan.engine.accumulateMatchScores
+import com.estemshan.engine.biddingOrder
 import com.estemshan.engine.calculateRoundScore
 import com.estemshan.engine.computeWinner
 import com.estemshan.engine.emit
 import com.estemshan.engine.EmitResult
+import com.estemshan.engine.fixedTrumpFor
 import com.estemshan.engine.initFastRound
 import com.estemshan.engine.initNormalRound
 import com.estemshan.engine.isFastRound
@@ -63,6 +67,97 @@ import com.estemshan.engine.trickWinner
  * round. Archives predating that field fail closed as HISTORY_INCOMPLETE
  * rather than settling on fabricated numbers.
  */
+
+/** Minimum number that opens a fast-round Super Call (A6.10/A7.2). */
+private const val FAST_SUPER_CALL_MIN = 8
+
+/**
+ * Replays a fast-round Super Call CONFIRM that was logged after the estimates
+ * which triggered it.
+ *
+ * The archive keeps only the FINAL estimates: seats wiped by the Super Call
+ * re-declared, so their pre-confirm numbers are gone. The logged CONFIRM is
+ * the authoritative record of the final number and trump, so this rebuilds the
+ * state the confirm requires from the archived final estimates of the caller
+ * and every seat after them. Seats before the caller are left out — they were
+ * wiped and will re-declare from the same final values through the normal
+ * estimate loop. The engine then performs the wipe, With recomputation and
+ * completion exactly as live play did.
+ *
+ * This deliberately does not re-derive the Super Call from the pre-confirm
+ * estimates (they are not in the archive). [state] must be a fast round still
+ * in ESTIMATES and must not already have a resolved Super Call.
+ *
+ * CONFIRM appends to biddingLog and never rewrites bids/, so the caller's
+ * archived value is still its pre-confirm declaration. The logged CONFIRM is
+ * trusted for the final number/trump, but not unconditionally: the caller's
+ * value must be a real 8+ declaration and cannot exceed the confirmed number,
+ * and no seat after the caller may exceed the caller's value either. The caller
+ * won the pre-confirm auction, so every later declaration was at most theirs;
+ * a higher value means the log names a seat that was not the winner (or a
+ * forged CONFIRM) and is refused.
+ */
+internal fun replayFastSuperConfirm(
+  state: BiddingState,
+  seat: String,
+  tricks: Int,
+  suit: Suit,
+  estimates: Map<String, Int>,
+): EmitResult {
+  if (!state.fastRound || state.subPhase != BiddingPhase.ESTIMATES ||
+    state.fastSuperResolved || state.callerId != null
+  ) {
+    return EmitResult.Rejected("No pending fast Super Call")
+  }
+  if (tricks < FAST_SUPER_CALL_MIN) {
+    return EmitResult.Rejected("Super Call needs $FAST_SUPER_CALL_MIN+ tricks")
+  }
+  val order = biddingOrder(state)
+  val callerIndex = order.indexOf(seat)
+  if (callerIndex < 0) return EmitResult.Rejected("Seat is not in bidding order")
+
+  val callerEstimate = estimates[seat]
+    ?: return EmitResult.Rejected("Missing caller estimate")
+  if (callerEstimate < FAST_SUPER_CALL_MIN || callerEstimate > tricks) {
+    return EmitResult.Rejected("Logged CONFIRM does not match the caller's Super Call")
+  }
+
+  val fixedTrump = state.declaredTrump ?: fixedTrumpFor(state.round, state.gameType)
+  val bids = LinkedHashMap<String, Bid>()
+  for (index in callerIndex until order.size) {
+    val declaredSeat = order[index]
+    val value = estimates[declaredSeat]
+      ?: return EmitResult.Rejected("Missing final estimate for $declaredSeat")
+    if (value > callerEstimate) {
+      return EmitResult.Rejected(
+        "Later declaration $value exceeds the Super Caller's $callerEstimate",
+      )
+    }
+    bids[declaredSeat] = if (value == 0) {
+      Bid(BidType.DASH, 0, fixedTrump)
+    } else {
+      Bid(BidType.TRICKS, value, fixedTrump)
+    }
+  }
+
+  val preConfirm = state.copy(
+    bids = bids,
+    callerId = seat,
+    auctionTop = tricks,
+    auctionSuit = fixedTrump,
+    declaredTrump = fixedTrump,
+    withPlayers = emptyList(),
+    noSuitConstraint = true,
+    fastSuperResolved = false,
+    subPhase = BiddingPhase.CONFIRM,
+    waitingFor = seat,
+    // The last estimate before the Super Call is the last seat in bidding
+    // order. With pre-Super seats this is overwritten by their re-declaration.
+    lastBidderId = order.last(),
+  )
+  return emit(preConfirm, BiddingIntent.ConfirmCall(seat, tricks, suit))
+}
+
 object Settlement {
 
   /** Canonical failure reasons. The seam maps these to HttpsError codes. */
@@ -112,7 +207,11 @@ object Settlement {
   /**
    * The converged match document, parsed. [order] is canonical seat order;
    * [dealerSeatFinal] is the seat holding the dealer marker at completion
-   * (the round-N dealer — the walk-back anchor).
+   * (the round-N dealer — the walk-back anchor). [currentMultiplier] is the
+   * O-19 persisted multiplier of the FINAL round (the current round at
+   * completion); null means the document predates the field, and the
+   * replayed chain is then the only authority — the compatible legacy
+   * fallback, never a silent reset.
    */
   data class ConvergedMatch(
     val matchId: String,
@@ -128,6 +227,7 @@ object Settlement {
     val claimedScores: Map<String, Int>?,
     val claimedWinners: List<String>?,
     val archives: List<ArchivedRound>,
+    val currentMultiplier: Int? = null,
   )
 
   // ── outcomes ──────────────────────────────────────────────────────
@@ -268,6 +368,20 @@ object Settlement {
     }
     val claimedWinners = (fields["winnerIds"] as? List<*>)
       ?.map { it as? String ?: return null }
+    val classic = parseScoringMode(fields["scoringMode"]) == ScoringMode.CLASSIC
+    // O-19: absent = a document written before the field (legacy fallback:
+    // the replayed chain decides). Present must be a legal stored value —
+    // an out-of-range integer or a Classic match above 1 is a corrupt
+    // document, never silently re-read as 1.
+    val currentMultiplier = when (val raw = fields["currentMultiplier"]) {
+      null -> null
+      else -> {
+        val value = num(raw) ?: return null
+        if (value < 1 || value > 8) return null
+        if (classic && value != 1) return null
+        value
+      }
+    }
     return ConvergedMatch(
       matchId = matchId,
       mode = parseMatchMode(fields["mode"]),
@@ -276,12 +390,13 @@ object Settlement {
       players = players,
       dealerSeatFinal = dealerSeatFinal,
       gameType = parseGameType(fields["gameType"]),
-      classic = parseScoringMode(fields["scoringMode"]) == ScoringMode.CLASSIC,
+      classic = classic,
       completedRound = completedRound,
       maxRounds = maxRounds,
       claimedScores = claimedScores,
       claimedWinners = claimedWinners,
       archives = emptyList(),
+      currentMultiplier = currentMultiplier,
     )
   }
 
@@ -399,6 +514,7 @@ object Settlement {
     }
 
     var multiplier = 1
+    var finalRoundMultiplier: Int? = null
     val escalationCap = if (match.classic) 2 else 8
     var totals: Map<String, Int> = match.order.associateWith { 0 }
     for (round in 1..match.completedRound) {
@@ -408,6 +524,7 @@ object Settlement {
           Reason.HISTORY_INCOMPLETE,
           "settleMatch: round $round dealer is not resolvable from the match seats.",
         )
+      finalRoundMultiplier = multiplier
       val scored = scoreRound(match, archived, dealer, multiplier, escalationCap)
         ?: return if (archived.estimates == null) {
           SettleDecision.Failed(
@@ -423,6 +540,19 @@ object Settlement {
         }
       totals = accumulateMatchScores(totals, scored.deltas)
       multiplier = scored.nextMultiplier
+    }
+
+    // O-19: the persisted value is the multiplier of the round current at
+    // completion — the same value the replayed chain entered its final
+    // round at. A disagreement means the document and the archives tell
+    // different stories: report it, never settle on a silent ×1.
+    val documented = match.currentMultiplier
+    if (documented != null && finalRoundMultiplier != null && documented != finalRoundMultiplier) {
+      return SettleDecision.Failed(
+        Reason.HISTORY_CORRUPT,
+        "settleMatch: currentMultiplier $documented does not match the replayed " +
+          "ladder value $finalRoundMultiplier for round ${match.completedRound}.",
+      )
     }
 
     val winners = computeWinner(totals)
@@ -461,11 +591,19 @@ object Settlement {
   }
 
   /**
-   * Replays one round's converged auction (logged intents) plus its
-   * archived estimates (fed as FinalEstimate intents in engine turn
-   * order) through the real bidding engine, then scores the replayed
-   * cardLog through the real scoring engine. Any engine rejection, any
-   * unconsumed archive value, or any malformed trick fails closed (null).
+   * Replays one round's converged history (logged intents, then its archived
+   * estimates fed as FinalEstimate intents in engine turn order) through the
+   * real bidding engine and, when the round actually produced play, through
+   * the real scoring engine. Any engine rejection, any unconsumed archive
+   * value, or any malformed trick fails closed (null).
+   *
+   * S1 (A8.7 / Q51): a round whose auction ALL passed is a pure pass archive
+   * — no cards, no estimates, and its only log ends in the pass. The island
+   * round is NOT scored (deltas all zero) and returns the doubled multiplier
+   * the engine derived for the round following it, so recompute's chain
+   * scores that round at ×2 → ×4 → … under Normal and ×1 under Classic. The
+   * same-round re-redeal this function performed before S1 is gone: entries
+   * beyond the pass in this round's own log belong to no S1 round and fail.
    */
   fun scoreRound(
     match: ConvergedMatch,
@@ -476,18 +614,53 @@ object Settlement {
   ): ScoredRound? {
     val order = match.order
     val fast = isFastRound(archived.round, match.gameType)
+    // The engine derives a pass's next-multiplier from the mode (CLASSIC
+    // never escalates) — thread the match's own mode, never the default.
+    val scoringMode = if (match.classic) ScoringMode.CLASSIC else ScoringMode.NORMAL
     var state = if (fast) {
-      initFastRound(archived.round, dealerSeat, order, multiplier, match.gameType)
+      initFastRound(archived.round, dealerSeat, order, multiplier, match.gameType, scoringMode)
     } else {
-      initNormalRound(archived.round, dealerSeat, order, multiplier, match.gameType)
+      initNormalRound(archived.round, dealerSeat, order, multiplier, match.gameType, scoringMode)
     }
 
     var outcome: BiddingOutcome? = null
     var confirmTricks: Int? = null
+    val fed = mutableSetOf<String>()
     var index = 0
     while (index < archived.actions.size) {
       val entry = archived.actions[index]
       if (entry.seat !in order) return null
+      if (fast && entry.kind == ActionKind.CONFIRM &&
+        state.subPhase == BiddingPhase.ESTIMATES
+      ) {
+        // A fast Super Call is confirmed AFTER the estimates that triggered
+        // it, but only the final estimates survive in the archive. Rebuild
+        // the confirm's pre-state from the caller onward; seats before the
+        // caller are wiped and re-declared by the estimate loop below.
+        val tricks = entry.tricks ?: return null
+        val suit = entry.suit ?: return null
+        val estimates = archived.estimates ?: return null
+        val biddingSeats = biddingOrder(state)
+        val callerIndex = biddingSeats.indexOf(entry.seat)
+        if (callerIndex < 0) return null
+        confirmTricks = tricks
+        when (val emitted = replayFastSuperConfirm(state, entry.seat, tricks, suit, estimates)) {
+          is EmitResult.Completed -> {
+            outcome = emitted.outcome
+            fed.addAll(biddingSeats.subList(callerIndex, biddingSeats.size))
+            index++
+            break
+          }
+          is EmitResult.Applied -> {
+            state = emitted.state
+            fed.addAll(biddingSeats.subList(callerIndex, biddingSeats.size))
+            index++
+            continue
+          }
+          is EmitResult.GeneralPass -> return null
+          is EmitResult.Rejected -> return null
+        }
+      }
       val intent = when (entry.kind) {
         ActionKind.DASH -> BiddingIntent.DashCallDecision(
           entry.seat, entry.declaredDashCall ?: return null,
@@ -515,12 +688,17 @@ object Settlement {
           break
         }
         is EmitResult.GeneralPass -> {
-          // Redeal: the same round restarts carrying the doubled
-          // multiplier the engine computed. General passes only leave
-          // the auction phase, which fast rounds never enter.
+          // S1 (A8.7 / Q51): the pass CANCELS this round — its archive may
+          // carry no cards, no estimates, and nothing after the pass. The
+          // round itself is unscored; the next round starts at the doubled
+          // multiplier the engine derived (Classic: 1). General passes only
+          // leave the auction phase, which fast rounds never enter.
           if (fast) return null
-          state = initNormalRound(archived.round, dealerSeat, order, emitted.doubledMultiplier, match.gameType)
-          index++
+          if (archived.plays.isNotEmpty()) return null
+          if (index != archived.actions.size - 1) return null
+          if (archived.estimates == null) return null
+          if (archived.estimates.isNotEmpty()) return null
+          return ScoredRound(order.associateWith { 0 }, emitted.doubledMultiplier)
         }
         is EmitResult.Applied -> {
           state = emitted.state
@@ -537,13 +715,12 @@ object Settlement {
     var completed = outcome
     if (completed == null) {
       if (estimates == null) return null
-      val fed = mutableSetOf<String>()
       var guard = 0
       while (guard < order.size + 1) {
         val waiting = state.waitingFor ?: break
         if (waiting !in order) return null
         val estimate = estimates[waiting] ?: return null
-        fed.add(waiting)
+        if (!fed.add(waiting)) return null
         when (val emitted = emit(state, BiddingIntent.FinalEstimate(waiting, estimate))) {
           is EmitResult.Completed -> {
             completed = emitted.outcome
@@ -555,15 +732,12 @@ object Settlement {
         }
         guard++
       }
-      val done = completed ?: return null
-      if (fed.size != estimates.size) return null
-      completed = done
-    } else if (estimates != null && estimates.isNotEmpty()) {
-      // Bidding completed inside the log (all-dash / fast-super-confirm):
-      // no seat could legally estimate afterwards, so any archived value
-      // contradicts the converged flow.
-      return null
+      completed = completed ?: return null
     }
+    // Every archived estimate must be consumed exactly once. This covers
+    // normal rounds, fast rounds resolved entirely from estimates, and fast
+    // Super Calls whose caller-side estimates were materialized before CONFIRM.
+    if (estimates != null && fed != estimates.keys) return null
 
     val final = completed ?: return null
     val bids = scoringBids(match, final, confirmTricks) ?: return null

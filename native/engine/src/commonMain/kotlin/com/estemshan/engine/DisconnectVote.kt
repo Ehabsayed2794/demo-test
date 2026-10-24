@@ -16,12 +16,17 @@ package com.estemshan.engine
  *
  * Reconnect while the table waits restores the seat (S74). Nothing here models seat control:
  * in every outcome of [DisconnectVote.decideVote] the seat stays with the configured bot
- * until the player reclaims it. The flow deliberately shares no state with Vote Kick (S60)
+ * until the player reclaims it. The flow deliberately shares no counter with Vote Kick (S60)
  * or the RD19 inactivity takeover (S73) — DEC-DISC-01 keeps the three paths separate.
+ * A8.2 / Q36 (2026-10-23) adds one interaction the caller must apply: the **7th inactivity
+ * takeover fires immediately even while this ballot is open**, removes the seat, and leaves
+ * the ballot terminal **CANCELLED** — no expiry verdict, no stale completion, no second charge.
  *
  * Permanent replacement — the seat stops being reclaimable — is a caller-side transition;
- * the charge it records is fixed here per the same closure §1: UNRANKED → 2 Koz, ROOM → none,
- * and RANKED has no entry — the disconnect vote does not exist in Ranked. Per option (a) the
+ * the charge it records is fixed here per the same closure §1: UNRANKED → 2 Koz, ROOM → none
+ * (reaffirmed by A7.4 / O-03c, 2026-10-22: the replacement keeps its ratified charge, and
+ * "no ROOM charge" means no charge for this path, not a blanket zero), and RANKED has no
+ * entry — the disconnect vote does not exist in Ranked. Per option (a) the
  * charge is a career Koz-count increment only: no forced placement, no new result value.
  *
  * Layering: pure Kotlin over caller-supplied ballots — no Firestore, no clock, no GameSession.

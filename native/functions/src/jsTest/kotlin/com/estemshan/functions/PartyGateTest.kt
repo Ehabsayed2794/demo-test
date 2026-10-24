@@ -77,7 +77,7 @@ class PartyGateTest {
       ).containsMatchIn(message),
       "message must not spell out an RP value: $message",
     )
-    for (title in listOf("مبتدئ", "لاعب", "معلم", "وزير", "أمير", "سلطان", "ملك")) {
+    for (title in listOf("مبتدئ", "لاعب", "معلم", "بلاتين", "أمير", "سلطان", "ملك")) {
       assertFalse(lower.contains(title), "message must not name the Arabic tier '$title': $message")
     }
   }

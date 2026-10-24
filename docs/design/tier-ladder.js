@@ -1,5 +1,5 @@
 (function(){
-var TIERS=[{k:'bronze',en:'Bronze',ar:'مبتدئ',c:'#D79369'},{k:'silver',en:'Silver',ar:'لاعب',c:'#C3CBD4'},{k:'gold',en:'Gold',ar:'معلم',c:'#E6D585'},{k:'platinum',en:'Platinum',ar:'وزير',c:'#9AE0DF'},{k:'diamond',en:'Diamond',ar:'أمير',c:'#71BFFF'},{k:'royal',en:'Royal',ar:'سلطان',c:'#D27DE6'},{k:'king',en:'King',ar:'ملك',c:'#FF8296'}];
+var TIERS=[{k:'bronze',en:'Bronze',ar:'مبتدئ',c:'#D79369'},{k:'silver',en:'Silver',ar:'لاعب',c:'#C3CBD4'},{k:'gold',en:'Gold',ar:'معلم',c:'#E6D585'},{k:'platinum',en:'Platinum',ar:'بلاتين',c:'#9AE0DF'},{k:'diamond',en:'Diamond',ar:'أمير',c:'#71BFFF'},{k:'royal',en:'Royal',ar:'سلطان',c:'#D27DE6'},{k:'king',en:'King',ar:'ملك',c:'#FF8296'}];
 var RP=[0,75,150,250,350,450,575,700,825,1000,1200,1400,1600,1800,2000,2250,2500,2750,3000];
 var ROM={1:'I',2:'II',3:'III'};
 function fmt(n){return n.toLocaleString('en-US')}

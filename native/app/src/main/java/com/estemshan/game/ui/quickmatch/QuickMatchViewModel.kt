@@ -13,8 +13,10 @@ import com.estemshan.engine.GameType
 import com.estemshan.engine.RoundCfg
 import com.estemshan.engine.RoundScoreInput
 import com.estemshan.engine.ScoringMode
+import com.estemshan.engine.ExtensionReason
 import com.estemshan.engine.accumulateMatchScores
 import com.estemshan.engine.calculateRoundScore
+import com.estemshan.engine.computeRoundExtension
 import com.estemshan.engine.nextSeat
 import com.estemshan.game.ui.bot.BotDriver
 import com.estemshan.game.ui.bot.BotRoster
@@ -47,7 +49,8 @@ class QuickMatchViewModel : ViewModel() {
   private val _dealer = MutableStateFlow(DEFAULT_SEATS[0])
   val dealer: StateFlow<String> = _dealer.asStateFlow()
 
-  /** Bidding multiplier (redeals double it); reset once the round scores. */
+  /** The next round's multiplier, armed by the engine's general-pass value;
+   *  reset once the round scores. */
   private val _biddingMultiplier = MutableStateFlow(1)
   val biddingMultiplier: StateFlow<Int> = _biddingMultiplier.asStateFlow()
 
@@ -103,21 +106,39 @@ class QuickMatchViewModel : ViewModel() {
   private val _scoringMode = MutableStateFlow(ScoringMode.NORMAL)
   val scoringMode: StateFlow<ScoringMode> = _scoringMode.asStateFlow()
 
-  /** The round ceiling: FULL 18, MINI 10. */
-  val maxRounds: Int get() = _gameType.value.baseRounds
-
-  /** How many times the current round has been re-dealt (a general pass). */
-  private var redealCount: Int = 0
+  /**
+   * The round ceiling: FULL 18, MINI 10 — raised by Sa'ayda extension.
+   * Observable because the ceiling moves DURING a match (A8.8/Q48): the
+   * standings screen's chime, the placement coordinator's end-of-match
+   * predicate and any test oracle must read the effective value, never the
+   * format's static [GameType.baseRounds].
+   */
+  private val _maxRounds = MutableStateFlow(18)
+  val maxRoundsFlow: StateFlow<Int> = _maxRounds.asStateFlow()
+  val maxRounds: Int get() = _maxRounds.value
 
   /**
-   * The seed for the deal in hand: the match seed offset by the round, plus
-   * 500 per redeal. Both offsets are reproducible, and 500 clears the round
-   * stride — a match caps at 18 rounds, so a redeal can never land on another
-   * round's seed. (The bot smoke test uses this same round/+500 shape; the
-   * match seed is *added* rather than scaled so a full-range seed can't
-   * overflow the deal seed.)
+   * S1 fix round (2026-10-23): TRUE for the whole post-match window — set
+   * both when a SCORED round reaches the planned ceiling ([onTableDone]) and
+   * when a general pass CONSUMES the planned final round
+   * ([applyGeneralPass]); [startMatch] clears it. It is the additive
+   * end-of-match signal for placement-style observers: a final-round pass
+   * emits no RoundResult, so an observer keyed to roundResults alone would
+   * see it as a silent stall. Consumers own a once-per-match guard — for a
+   * scored final, the RoundResult and this flag both arrive, exactly in
+   * that order ([onTableDone] emits the result first).
    */
-  private fun dealSeed(): Long = _matchSeed.value + _round.value + redealCount * 500L
+  private val _matchComplete = MutableStateFlow(false)
+  val matchComplete: StateFlow<Boolean> = _matchComplete.asStateFlow()
+
+  /**
+   * The seed for the deal in hand: the match seed offset by the round.
+   * S1 (A8.7 / Q51): a pass no longer re-deals the SAME round — it starts
+   * the next round number — so a round's deal happens exactly once at
+   * matchSeed + that round, and the old redeal stride has nothing left to
+   * collide with a round seed for.
+   */
+  private fun dealSeed(): Long = _matchSeed.value + _round.value
 
   private var hands: Map<String, List<Card>> = Dealer.dealHands(dealSeed())
   private var scoreMultiplier: Int = 1
@@ -137,39 +158,58 @@ class QuickMatchViewModel : ViewModel() {
     scoringMode: ScoringMode = ScoringMode.NORMAL,
   ) {
     _matchSeed.value = matchSeed
-    redealCount = 0
     _round.value = 1
     _dealer.value = DEFAULT_SEATS[0]
     _biddingMultiplier.value = 1
     scoreMultiplier = 1
     _totals.value = DEFAULT_SEATS.associateWith { 0 }
     _standings.value = null
+    _matchComplete.value = false
     _roster.value = roster
     _gameType.value = gameType
     _scoringMode.value = scoringMode
+    _maxRounds.value = gameType.baseRounds
     hands = Dealer.dealHands(dealSeed())
     _biddingKey.value++
   }
 
+  /**
+   * S1 (A8.7 / Q51): a general pass is a production transition, not a
+   * same-round redeal. The cancelled round's deal/table/bidding are
+   * invalidated (the new bidding key re-initializes the auction), the dealer
+   * rotates, a fresh hand is dealt for the NEW round number, and the next
+   * round is armed with [doubled] — the multiplier the engine derived for it
+   * (×2 → ×4 → ×6 → ×8 cap under Normal, always 1 under Classic).
+   *
+   * When the pass consumes the PLANNED final round the match completes
+   * instead: standings bank the running totals unchanged (a cancelled round
+   * scores nothing for everyone), no further deal happens, and the round
+   * number stays at its ceiling so the standings screen's end-of-match state
+   * (disabled continue button, match-win chime) applies as at the ceiling.
+   */
   fun applyGeneralPass(doubled: Int) {
-    // A general pass re-deals — "nobody bid, cards are redealt at the doubled
-    // multiplier" — so the restarted auction sees a fresh hand at every seat.
-    // Without this a pass-happy deal replays identical hands forever, which
-    // soft-locks a table the moment Choose Level can seat four bots. The seed
-    // advances so the redeal is still a *different* hand, reproducibly.
-    redealCount++
-    hands = Dealer.dealHands(dealSeed())
-    // The restarted round scores doubled: arm scoring now; the bidding UI
-    // restarts separately from biddingMultiplier below.
+    if (_round.value >= maxRounds) {
+      _standings.value = buildStandings(_totals.value)
+      // The pass consumed the planned final round: the match is over — the
+      // end-of-match signal for the coordinator (PlacementViewModel's series
+      // advance; see the matchComplete KDoc).
+      _matchComplete.value = true
+      return
+    }
+    _round.value = _round.value + 1
+    _dealer.value = nextSeat(seats, _dealer.value)
+    // The next round scores at the engine's doubled multiplier: arm scoring
+    // now; the bidding UI restarts separately from biddingMultiplier below.
     scoreMultiplier = doubled
     _biddingMultiplier.value = doubled
+    hands = Dealer.dealHands(dealSeed())
     _biddingKey.value++
   }
 
   /**
    * Bidding completed: builds the table config from the outcome plus the
    * dealt hands. Caller leads trick 1 (or the dealer, when callerless).
-   * Scoring still uses the armed scoreMultiplier (redeals/saayda), which
+   * Scoring still uses the armed scoreMultiplier (general passes/saayda), which
    * only onTableDone may re-arm.
    */
   fun onBiddingComplete(outcome: BiddingOutcome): RoundCfg {
@@ -213,15 +253,34 @@ class QuickMatchViewModel : ViewModel() {
     _totals.value = accumulateMatchScores(_totals.value, result.deltas)
     val saaydaSeats = if (result.isSaayda) seats.toSet() else emptySet()
     _standings.value = buildStandings(_totals.value, result.deltas, saaydaSeats)
+    // S2 (A8.8 / Q48): Sa'ayda and Super Call extension — extend maxRounds
+    // by exactly +1 when this round qualifies. The engine already knows
+    // callerSucceeded from the breakdown; a pass is never isSaayda=true.
+    // The ceiling moves BEFORE the result emission: every observer of this
+    // round — the placement coordinator, a test oracle, any synchronous
+    // collector — must see the extended ceiling when it sees the round.
+    val callerSucceeded = cfg.callerId?.let { result.breakdown[it]?.succeeded } ?: false
+    val extension = computeRoundExtension(
+      cfg.round, maxRounds, cfg.callerId, cfg.trump, callerSucceeded,
+      result.isSaayda, gameType = _gameType.value,
+    )
+    if (extension.extend) _maxRounds.value = maxRounds + 1
     _roundResults.tryEmit(QuickRoundResult(cfg.round, cfg.estimates, tricksWon))
+
+    // A scored round at the ceiling completes the match. flag AFTER the
+    // result emission so the coordinator's single merged observer always
+    // sees the scored final's signal before this completion (its
+    // once-per-match guard makes the completion a no-op for it). S2: the
+    // extension above raises the ceiling first, so an extending round is
+    // never the last.
+    if (cfg.round >= maxRounds) _matchComplete.value = true
   }
 
   fun nextRound() {
-    // S69 (E7): the match ends at its ceiling (FULL 18, MINI 10) — past it
-    // there is no next round, only the final standings.
+    // S69 (E7): the match ends at its ceiling (FULL 18, MINI 10, or
+    // extended past it by Sa'ayda) — past it there is no next round.
     if (_round.value >= maxRounds) return
     _round.value = _round.value + 1
-    redealCount = 0
     _dealer.value = nextSeat(seats, _dealer.value)
     _biddingMultiplier.value = 1
     _standings.value = null

@@ -2,10 +2,11 @@
 
 ### Native v1 plan + estimates
 
-Before scoping or estimating native work, read `docs/NATIVE_V1_PLAN_AND_ESTIMATE.md` (2026-09-21): the
-hour-level breakdown of remaining work to release, the critical path, owner decisions D1–D4, and the
-toolchain/API-36 blockers. It is the project's only plan document — the older migration/master/architecture
-plans were superseded and removed (recoverable from git history if needed).
+Before scoping or estimating native work, read `docs/NATIVE_V1_IMPLEMENTATION_PLAN_V2.md`
+(2026-10-22, baseline `7a7e65c`): the current plan for native V1, covering rules completion,
+Ranked runtime and settlement, work breakdown, estimates, open decisions and release gates.
+`docs/NATIVE_V1_PLAN_AND_ESTIMATE.md` (2026-09-21) is retained as historical context only — do
+not use it for scope, sequencing or estimates.
 
 ### Owner rulings of record (2026-10-20)
 

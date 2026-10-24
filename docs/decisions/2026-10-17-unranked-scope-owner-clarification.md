@@ -37,6 +37,14 @@ everything is exactly like Ranked apart from RP.” — “Only the Rooms have n
    'no progression of any kind'”) with the charge standing as written; A3.5 carries a matching
    pointer (added 2026-10-17).
 
+> **Pointer (2026-10-23) — aligned with Q46 / N-1, nothing here is rewritten.** The nine career
+> statistics accumulate in **`UNRANKED` as in `ROOM` and `RANKED`**; only **RP, tier and
+> division** stay Ranked-only. That is the same reading §1.1 already gives ("everything is
+> exactly like Ranked apart from RP") and it is the scope **Q46 / N-1** confirms. Also settled
+> since: the **7th takeover fires immediately and cancels an open ballot** (**A8.2 / Q36**), the
+> **ROOM 15-timeout removal records 1 Koz** (**A8.3 / Q37**), and a **departed non-completing
+> ROOM human is scored Koz even if the bot wins King, with +1 Games Played** (**A8.4 / Q38**).
+
 ## 2. What this ruling does not change
 
 - Unranked charges (the entry/stake model) are unchanged.

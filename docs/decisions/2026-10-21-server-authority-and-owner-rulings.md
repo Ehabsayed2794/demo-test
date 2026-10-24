@@ -217,6 +217,14 @@ is deferred to a later, explicitly approved environment.
 - **Q4 [D].** Normal Dash + Risk in **Classic: add both tables** (Classic Normal Dash fixed table plus the Classic Risk component), the same principle as Normal. Exact Classic numbers to be worked out at implementation with the owner's table (`CANONICAL_RULES.md:171-192`).
 - **Q16 [D; supersedes A3.1 "ROOM may start with 2–3 players"].** **No ROOM without a full table of four players.** (Rules `isValidNewMatch` still accept 1–4 players, `firestore.rules:521-528`; not changed here.) This makes the ROOM statistics definitions (King/Second/Third/Koz) the same four-player ones.
 - **Q17 [D].** Profile shows **counts and percentages** over Games Played, aggregated across ROOM, RANKED and UNRANKED. Percentage = outcome count ÷ games. Example: 100 King, 100 Second, 100 Third, 100 Koz → 25% each. (The owner's example used "وزير" for Second and "كوز صغير" for Third; Arabic names to be confirmed against the UI strings.)
+
+> **Pointer (2026-10-23).** The Arabic names are now confirmed — **Q39 / O-05** fixes the nine
+> stat labels (`عدد المباريات`, `👑`, `👑%`, `عدد مرات وزير`, `وزير%`, `عدد مرات كوز صغير`,
+> `كوز صغير%`, `عدد مرات الكوز`, `%الكوز`) and **Q52 / O-14** fixes the five suit labels. The
+> **aggregation across ROOM, RANKED and UNRANKED** stated above is **confirmed unchanged** for
+> match results by **Q46 / N-1**; it remains the operative wording and is not rewritten here.
+> See `docs/rules/CANONICAL_RULES.md` A8.5 and `2026-10-23-final-owner-answers.md`.
+
 - **Q18 [D].** After the result is confirmed, keep the **final result, the RP ledger and the idempotency keys only**; delete the action history. Deletion cost is measured in Stage 0 (T2).
 - **Q6 [D — risk accepted].** The owner chose to **accept the store-policy risk** of deferring account deletion and wait for the store's response. This is **not** a compliance claim; the Play policy remains unverified.
 - **Q20 [D].** If the internet or server stops during a match (not a player leaving), **timers freeze and resume after recovery with no timeout charged to anyone.**

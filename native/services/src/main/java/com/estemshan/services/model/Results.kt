@@ -62,6 +62,10 @@ object Reasons {
   // Round / match lifecycle (thrown)
   const val ROUND_NOT_COMPLETE = "ROUND_NOT_COMPLETE"
   const val INVALID_RESULT = "INVALID_RESULT"
+  /** O-19: a General-Pass advance was asked for a window that is not the
+   *  provable N-declines + N-passes shape (e.g. a seat declared a Dash
+   *  call). Refused rather than advanced on a guess. */
+  const val UNSUPPORTED_GENERAL_PASS_SHAPE = "UNSUPPORTED_GENERAL_PASS_SHAPE"
 
   // Idempotent no-op reasons (RETURNED, never thrown)
   const val ALREADY_ADVANCED = "ALREADY_ADVANCED"
@@ -170,8 +174,11 @@ data class SubmitCardResult(
   val cardPhase: String?,
 )
 
-/** advanceToNextRound — [advanced] false means an idempotent no-op with
- *  [reason] (ALREADY_ADVANCED / MATCH_ALREADY_COMPLETE). */
+/** advanceToNextRound / advanceAfterGeneralPass — [advanced] false means an
+ *  idempotent no-op with [reason] (ALREADY_ADVANCED / MATCH_ALREADY_COMPLETE).
+ *  O-19: [completed] marks a General-Pass round that consumed the planned
+ *  final round and ended the match; [currentMultiplier] is the value the
+ *  document now carries for [currentRound] (null on idempotent no-ops). */
 data class AdvanceResult(
   val advanced: Boolean,
   val reason: String?,
@@ -180,6 +187,8 @@ data class AdvanceResult(
   val currentRound: Int,
   val archivedRound: Int? = null,
   val version: Int? = null,
+  val completed: Boolean = false,
+  val currentMultiplier: Int? = null,
 ) {
   companion object {
     fun alreadyAdvanced(matchId: String, currentRound: Int) =

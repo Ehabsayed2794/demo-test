@@ -141,21 +141,22 @@ class GameTypeTest {
   @Test
   fun full_computeRoundExtensionKeepsTheLegacyWindowAndReasons() {
     // The pre-GameType RoundScoreTest roundExtensionWindow cases, unaltered.
+    // maxRounds = 18 = FULL base; round 19 is post-window and not final.
     assertEquals(
       RoundExtension(true, ExtensionReason.SUPER_CALL),
-      computeRoundExtension(15, "p3", Suit.HEARTS, callerSucceeded = true, isSaayda = false),
+      computeRoundExtension(15, 18, "p3", Suit.HEARTS, callerSucceeded = true, isSaayda = false),
     )
     assertEquals(
       RoundExtension(false),
-      computeRoundExtension(13, "p1", Suit.HEARTS, callerSucceeded = true, isSaayda = false),
+      computeRoundExtension(13, 18, "p1", Suit.HEARTS, callerSucceeded = true, isSaayda = false),
     )
     assertEquals(
       RoundExtension(false),
-      computeRoundExtension(19, "p3", Suit.HEARTS, callerSucceeded = true, isSaayda = false),
+      computeRoundExtension(19, 18, "p3", Suit.HEARTS, callerSucceeded = true, isSaayda = false),
     )
     assertEquals(
       RoundExtension(true, ExtensionReason.SAAYDA),
-      computeRoundExtension(16, null, Suit.HEARTS, callerSucceeded = false, isSaayda = true),
+      computeRoundExtension(16, 18, null, Suit.HEARTS, callerSucceeded = false, isSaayda = true),
     )
   }
 
@@ -166,17 +167,17 @@ class GameTypeTest {
     // (ladder 6→Sans, 7→Spades, 8→Hearts), so SPADES is the override here.
     assertEquals(
       RoundExtension(true, ExtensionReason.SUPER_CALL),
-      computeRoundExtension(8, "p3", Suit.SPADES, callerSucceeded = true, isSaayda = false, gameType = GameType.MINI),
+      computeRoundExtension(8, 10, "p3", Suit.SPADES, callerSucceeded = true, isSaayda = false, gameType = GameType.MINI),
     )
     // Sa'ayda inside the window extends, same reason as FULL.
     assertEquals(
       RoundExtension(true, ExtensionReason.SAAYDA),
-      computeRoundExtension(7, null, Suit.HEARTS, callerSucceeded = false, isSaayda = true, gameType = GameType.MINI),
+      computeRoundExtension(7, 10, null, Suit.HEARTS, callerSucceeded = false, isSaayda = true, gameType = GameType.MINI),
     )
     // The forced trump standing (round 8 = HEARTS) means no Super override.
     assertEquals(
       RoundExtension(false),
-      computeRoundExtension(8, "p3", Suit.HEARTS, callerSucceeded = true, isSaayda = false, gameType = GameType.MINI),
+      computeRoundExtension(8, 10, "p3", Suit.HEARTS, callerSucceeded = true, isSaayda = false, gameType = GameType.MINI),
     )
   }
 
@@ -185,32 +186,59 @@ class GameTypeTest {
     // Round 5 is a normal MINI round — no extension even on a Super Call.
     assertEquals(
       RoundExtension(false),
-      computeRoundExtension(5, "p3", Suit.HEARTS, callerSucceeded = true, isSaayda = false, gameType = GameType.MINI),
+      computeRoundExtension(5, 10, "p3", Suit.HEARTS, callerSucceeded = true, isSaayda = false, gameType = GameType.MINI),
     )
-    // Round 11 is MINI's one extension already consumed: no further extension.
+    // Round 11 post-window, not final (maxRounds 10) → no extend.
     assertEquals(
       RoundExtension(false),
-      computeRoundExtension(11, "p3", Suit.HEARTS, callerSucceeded = true, isSaayda = false, gameType = GameType.MINI),
+      computeRoundExtension(11, 10, "p3", Suit.HEARTS, callerSucceeded = true, isSaayda = false, gameType = GameType.MINI),
     )
     // The FULL path is untouched when FULL is passed explicitly.
     assertEquals(
       RoundExtension(false),
-      computeRoundExtension(11, "p3", Suit.HEARTS, callerSucceeded = true, isSaayda = false),
+      computeRoundExtension(11, 18, "p3", Suit.HEARTS, callerSucceeded = true, isSaayda = false),
     )
   }
 
   @Test
-  fun mini_extensionWindowIsNarrowerButTheCapIsEnforcedAboveThisLayer() {
-    // The engine answers "does THIS round qualify"; the count cap
-    // (MINI 1, FULL 5) is a MatchService guard (S66), not an engine one.
-    // The constants it will read are pinned here so the contract is explicit.
+  fun mini_computeRoundExtensionFinalRoundSaaydaRepeatsPastTen() {
+    // Round 10 in-window → extends to 11.
+    assertEquals(
+      RoundExtension(true, ExtensionReason.SAAYDA),
+      computeRoundExtension(10, 10, null, Suit.CLUBS, callerSucceeded = false, isSaayda = true, gameType = GameType.MINI),
+    )
+    // Round 11 post-window but IS the final round (maxRounds 11) → repeats to 12.
+    assertEquals(
+      RoundExtension(true, ExtensionReason.SAAYDA),
+      computeRoundExtension(11, 11, null, Suit.SANS, callerSucceeded = false, isSaayda = true, gameType = GameType.MINI),
+    )
+  }
+
+  @Test
+  fun extensionCapIsNoLongerEngineEnforced() {
+    // Q2c: the engine answers "does THIS round qualify" and never reads
+    // maxExtensions. Five Sa'aydas in 14–18 all extend, 18+N with no cap.
+    for (round in 14..18) {
+      val currentMax = 18 + (round - 14)
+      assertEquals(
+        "round $round extends",
+        RoundExtension(true, ExtensionReason.SAAYDA),
+        computeRoundExtension(round, currentMax, null, GameType.FULL.fixedTrumpFor(round),
+          callerSucceeded = false, isSaayda = true),
+      )
+    }
+    // MINI also has no engine-side cap: round 10 extends, then 11 repeats.
+    assertEquals(
+      RoundExtension(true, ExtensionReason.SAAYDA),
+      computeRoundExtension(10, 10, null, Suit.CLUBS, callerSucceeded = false, isSaayda = true, gameType = GameType.MINI),
+    )
+    assertEquals(
+      RoundExtension(true, ExtensionReason.SAAYDA),
+      computeRoundExtension(11, 11, null, Suit.SANS, callerSucceeded = false, isSaayda = true, gameType = GameType.MINI),
+    )
+    // The field values are unchanged as data; the cap is simply not enforced.
     assertEquals(1, GameType.MINI.maxExtensions)
     assertEquals(5, GameType.FULL.maxExtensions)
-    // FULL's window still yields exactly the 5 rounds the cap allows.
-    val fullWindow = (1..30).filter { GameType.FULL.isExtensionRound(it) }
-    assertEquals(listOf(14, 15, 16, 17, 18), fullWindow)
-    val miniWindow = (1..30).filter { GameType.MINI.isExtensionRound(it) }
-    assertEquals(listOf(6, 7, 8, 9, 10), miniWindow)
   }
 
   private companion object {

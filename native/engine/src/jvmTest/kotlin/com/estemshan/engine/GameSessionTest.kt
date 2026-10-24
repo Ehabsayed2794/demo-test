@@ -241,6 +241,80 @@ class GameSessionTest {
     assertNull(session.getBiddingState())
   }
 
+  /**
+   * Drives a real all-pass auction on the session's current round — the
+   * production path a GeneralPass takes before [GameSession.nextRound].
+   */
+  private fun generalPassOn(session: GameSession): EmitResult.GeneralPass {
+    val round = session.getRound()
+    var s = session.initializeBiddingState(
+      initNormalRound(
+        round = round.number,
+        dealer = session.getDealer() ?: error("no dealer"),
+        seats = seats,
+        multiplier = round.multiplier,
+        scoringMode = session.getScoringMode(),
+      ),
+    )
+    repeat(seats.size) {
+      val seat = s.waitingFor ?: error("waitingFor is null mid-DASH")
+      s = (emit(s, BiddingIntent.DashCallDecision(seat, false)) as EmitResult.Applied).state
+    }
+    for (seat in biddingOrder(s)) {
+      when (val r = emit(s, BiddingIntent.AuctionBid(seat, isPass = true))) {
+        is EmitResult.Applied -> {
+          s = r.state
+          session.updateBiddingState(s)
+        }
+        is EmitResult.GeneralPass -> return r
+        is EmitResult.Rejected -> error("pass rejected for ${seat}: ${r.reason}")
+        is EmitResult.Completed -> error("a caller emerged despite all four passing")
+      }
+    }
+    error("the auction never general-passed")
+  }
+
+  @Test
+  fun round_generalPassTransitionBumpsTheRoundRotatesTheDealerAndInvalidatesTheDeal() {
+    val session = newSession()
+    session.setRound(session.getRound().copy(multiplier = 2))
+    assertEquals("p1", session.getDealer())
+    session.dealNewHands()
+    assertTrue(session.hasDealtHands())
+
+    val pass = generalPassOn(session)
+    assertEquals("Normal ladder 2 -> 4", 4, pass.doubledMultiplier)
+    assertEquals("the emission still describes the cancelled round", 1, pass.state.round)
+
+    val next = session.nextRound()
+    assertEquals(2, next)
+    assertEquals(2, session.getRound().number)
+    assertEquals("dealer rotates one seat", "p2", session.getDealer())
+    assertFalse(session.hasDealtHands())
+    assertTrue(session.getHands().isEmpty())
+    assertNull(session.getBiddingState())
+    assertNull(session.getPlayState())
+    assertTrue(session.getRound().estimates.isEmpty())
+    assertTrue(session.getRound().withPlayers.isEmpty())
+  }
+
+  @Test
+  fun hands_dealNewHandsAfterNextRoundStampsTheNewRound() {
+    val session = newSession()
+    session.dealNewHands()
+    assertEquals(1, session.snapshot().dealState.roundNumber)
+    assertTrue(session.hasDealtHands())
+
+    session.nextRound()
+    assertFalse("the old deal belongs to the previous round", session.hasDealtHands())
+
+    val hands = session.dealNewHands()
+    assertEquals(4, hands.size)
+    assertTrue(hands.values.all { it.size == 13 })
+    assertTrue(session.hasDealtHands())
+    assertEquals(2, session.snapshot().dealState.roundNumber)
+  }
+
   @Test
   fun round_setRoundReplacesWholesale() {
     val session = newSession()
@@ -505,6 +579,22 @@ class GameSessionTest {
 
     // A Super Call / Sa'ayda extension past 18 is still complete.
     session.setRound(session.getRound().copy(number = 19))
+    assertTrue(session.isMatchComplete())
+  }
+
+  @Test
+  fun matchComplete_generalPassConsumesThePlannedFinalRound() {
+    val session = newSession()
+    session.setRound(session.getRound().copy(number = 17))
+    assertFalse(session.isMatchComplete())
+
+    assertEquals(17, generalPassOn(session).state.round)
+    assertEquals("the pass consumes 17; 18 is the planned final round", 18, session.nextRound())
+    assertTrue(session.isMatchComplete())
+
+    // A pass on the planned final round number itself consumes it too.
+    assertEquals(18, generalPassOn(session).state.round)
+    assertEquals(19, session.nextRound())
     assertTrue(session.isMatchComplete())
   }
 

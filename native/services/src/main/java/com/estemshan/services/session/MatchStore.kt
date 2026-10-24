@@ -55,7 +55,31 @@ interface MatchStore {
 
   suspend fun dealRound(matchId: String, roundNumber: Int): DealResult
 
-  suspend fun advanceToNextRound(matchId: String, completedRound: Int): AdvanceResult
+  /**
+   * The scored-round advance. O-19: [nextMultiplier] is the engine's
+   * `RoundScoreResult.nextMultiplier` for the closed round; the service
+   * persists it as the document's `currentMultiplier` in the same
+   * transaction, bounded 1..8 and pinned to 1 under Classic.
+   */
+  suspend fun advanceToNextRound(
+    matchId: String,
+    completedRound: Int,
+    nextMultiplier: Int,
+  ): AdvanceResult
+
+  /**
+   * O-19's General-Pass transition: the closed round has zero card plays
+   * and a complete all-pass auction. The service derives the next-round
+   * multiplier from the document (Classic 1; Normal 1→2, +2 cap 8) and —
+   * when [closedRound] is the planned final round — completes the match
+   * with the caller's running [finalScores]/[winnerIds].
+   */
+  suspend fun advanceAfterGeneralPass(
+    matchId: String,
+    closedRound: Int,
+    finalScores: Map<String, Int>,
+    winnerIds: List<String>,
+  ): AdvanceResult
 
   suspend fun extendMatchRounds(matchId: String, completedRound: Int, reason: String): ExtendResult
 
