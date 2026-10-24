@@ -533,7 +533,7 @@ class ScriptedMatch(
     } else {
       val raced = raceAll { client ->
         retryEmulatorTx("advanceToNextRound round $round") {
-          client.store.advanceToNextRound(matchId, round)
+          client.store.advanceToNextRound(matchId, round, first.nextMultiplier)
         }
       }
       // A race loser gets ALREADY_ADVANCED with the committed currentRound
@@ -603,7 +603,9 @@ class ScriptedMatch(
     client.engine.setMatchScores(totals)
     client.engine.setWinnerIds(computeWinner(totals))
     client.engine.completeRound(table.tricksWon, result.nextMultiplier)
-    val scored = Scored(cfg.round, cfg.trump, cfg.callerId, totals, computeWinner(totals))
+    val scored = Scored(
+      cfg.round, cfg.trump, cfg.callerId, totals, computeWinner(totals), result.nextMultiplier,
+    )
     client.scored = scored
     return scored
   }
@@ -614,6 +616,7 @@ class ScriptedMatch(
     val callerId: String?,
     val totals: Map<String, Int>,
     val winners: List<String>,
+    val nextMultiplier: Int,
   )
 
   /**

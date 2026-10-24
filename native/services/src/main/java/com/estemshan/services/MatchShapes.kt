@@ -101,6 +101,9 @@ private fun buildMatchFields(
   // S66 (E7): the ceiling is type-derived (FULL 18, MINI 10); the type and
   // mode ride the doc so every reader (and S67's rules) sees them.
   put("maxRounds", gameType.baseRounds)
+  // O-19 (Option B): the current round's multiplier lives on the document
+  // from creation. Round 1 always scores at x1.
+  put("currentMultiplier", 1)
   put("gameType", gameType.name)
   put("scoringMode", scoringMode.name)
   // S43 (E6b): the authority key rides every match doc (rematches inherit
@@ -260,6 +263,103 @@ val VALID_EXTENSION_REASONS: List<String> = listOf("SUPER_CALL", "SAAYDA")
 
 /** Round-completion threshold: 13 tricks * 4 seats. */
 const val ROUND_CARD_TOTAL = 52
+
+// ── O-19 (Option B): the persisted round multiplier ────────────────────
+
+/** The stored multiplier bounds — byte-identical to firestore.rules'
+ *  isValidStoredMultiplier() and to the engine's escalation cap. */
+const val MIN_ROUND_MULTIPLIER = 1
+const val MAX_ROUND_MULTIPLIER = 8
+
+fun isValidRoundMultiplier(value: Int): Boolean =
+  value in MIN_ROUND_MULTIPLIER..MAX_ROUND_MULTIPLIER
+
+/**
+ * The owner-fixed General-Pass ladder (direction record §1.1): Classic
+ * carries no multiplier; Normal opens at ×2 and adds 2 per pass, capped at
+ * ×8. Mirrors firestore.rules' expectedMultiplierAfterGeneralPass().
+ */
+fun generalPassMultiplier(currentMultiplier: Int, scoringMode: ScoringMode): Int =
+  if (scoringMode == ScoringMode.CLASSIC) 1
+  else when {
+    currentMultiplier == 1 -> 2
+    currentMultiplier >= 6 -> 8
+    else -> currentMultiplier + 2
+  }
+
+/**
+ * S1's actual General-Pass window, proven structurally — the exact shape
+ * firestore.rules' isAllPassBiddingLog() accepts: N declining Dash
+ * decisions followed by N auction passes for an N-seat table (2N entries),
+ * each seat exactly once in each block, every entry tagged with [round].
+ * A seat that DECLARED a Dash call leaves fewer than N passes, so that
+ * shape is not provable from the log and is deliberately refused
+ * (UNSUPPORTED_GENERAL_PASS_SHAPE) rather than advanced on a guess.
+ */
+fun isCanonicalGeneralPassWindow(match: MatchDoc, round: Int): Boolean {
+  // A pass round commits no cards — the same discriminator the rules use
+  // to select their pass branch. Without this a canonical-looking window
+  // riding alongside played cards could be mistaken for a pass.
+  if (match.roundCardCount(round) != 0) return false
+  val seats = match.seats.keys
+  val n = seats.size
+  val log = match.roundBids(round)
+  if (n < 1 || log.size != n * 2) return false
+  val dashBlock = log.subList(0, n)
+  val passBlock = log.subList(n, log.size)
+  val dashOk = dashBlock.all {
+    it.actionType == BiddingLogEntry.ACTION_DASH_CALL &&
+      it.declaredDashCall == false && it.seatId in seats && it.round == round
+  }
+  val passOk = passBlock.all {
+    it.actionType == BiddingLogEntry.ACTION_AUCTION_BID &&
+      it.isPass == true && it.seatId in seats && it.round == round
+  }
+  return dashOk && passOk &&
+    dashBlock.map { it.seatId }.toSet().size == n &&
+    passBlock.map { it.seatId }.toSet().size == n
+}
+
+/**
+ * The pure decision behind [MatchService.advanceAfterGeneralPass] — every
+ * idempotency branch and both terminal shapes, testable without Firestore.
+ * The service transaction applies exactly one of these to the fresh
+ * document it read.
+ */
+sealed interface GeneralPassAdvance {
+  data class Advance(val nextRound: Int, val nextMultiplier: Int) : GeneralPassAdvance
+  data class Complete(val finalScores: Map<String, Int>, val winnerIds: List<String>) : GeneralPassAdvance
+  data object AlreadyComplete : GeneralPassAdvance
+  data class AlreadyAdvanced(val currentRound: Int) : GeneralPassAdvance
+  data object UnsupportedShape : GeneralPassAdvance
+  data object InvalidResult : GeneralPassAdvance
+}
+
+fun decideGeneralPassAdvance(
+  match: MatchDoc,
+  closedRound: Int,
+  finalScores: Map<String, Int>,
+  winnerIds: List<String>,
+): GeneralPassAdvance {
+  if (match.isComplete) return GeneralPassAdvance.AlreadyComplete
+  if (match.currentRound != closedRound) {
+    return GeneralPassAdvance.AlreadyAdvanced(match.currentRound)
+  }
+  if (!isCanonicalGeneralPassWindow(match, closedRound)) {
+    return GeneralPassAdvance.UnsupportedShape
+  }
+  if (closedRound + 1 > match.maxRounds) {
+    return if (winnerIdsMatchFinalScores(finalScores, winnerIds, match.seats)) {
+      GeneralPassAdvance.Complete(finalScores.toMap(), winnerIds.toList())
+    } else {
+      GeneralPassAdvance.InvalidResult
+    }
+  }
+  return GeneralPassAdvance.Advance(
+    nextRound = closedRound + 1,
+    nextMultiplier = generalPassMultiplier(match.currentMultiplier, match.scoringMode),
+  )
+}
 
 /** Reads a server-round-tripped numeric field, or null. */
 internal fun numericField(value: Any?): Int? = roundOf(value)

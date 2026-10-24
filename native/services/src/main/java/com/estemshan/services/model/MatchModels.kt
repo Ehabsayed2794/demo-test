@@ -333,6 +333,15 @@ data class MatchDoc(
    * slot by spec. Absent ⇒ no live cooldown (no migration).
    */
   val failedVoteKickCooldown: VoteKickCooldownData? = null,
+  /**
+   * O-19 (Option B, 2026-10-24): the multiplier the CURRENT round is scored
+   * at. Written 1 at creation, replaced by the scored round's
+   * [com.estemshan.engine.RoundScoreResult.nextMultiplier] in the SAME
+   * advance transaction, and bumped by the General-Pass ladder. Absent in a
+   * doc written before this field ⇒ 1 (legacy default; no migration), the
+   * same reading firestore.rules' isValidStoredMultiplier applies.
+   */
+  val currentMultiplier: Int = 1,
 ) {
 
   /** The match is over, terminal: status never moves complete → anything. */
@@ -504,6 +513,7 @@ data class MatchDoc(
         disconnectReplacedUids = (fields["disconnectReplacedUids"] as? List<*>)
           ?.mapNotNull { it as? String } ?: emptyList(),
         failedVoteKickCooldown = VoteKickCooldownData.fromFields(fields["failedVoteKickCooldown"]),
+        currentMultiplier = (fields["currentMultiplier"] as? Long)?.toInt() ?: 1,
       )
     }
   }
@@ -553,15 +563,23 @@ data class RoundArchiveDoc(
    * existed — those matches fail closed at settlement (HISTORY_INCOMPLETE).
    */
   val estimates: Map<String, Int> = emptyMap(),
+  /**
+   * O-19: true ONLY for a General-Pass round — the cancelled round that
+   * carries zero card plays and its complete all-pass window. Emitted as
+   * `passRound: true`; ordinary archives omit the field entirely (the
+   * rules allow the marker to be absent, never false-on-an-ordinary-round).
+   */
+  val passRound: Boolean = false,
 ) {
 
-  fun toFields(): Map<String, Any?> = mapOf(
-    "round" to round,
-    "matchId" to matchId,
-    "cardLog" to cardLog.map { it.toFields() },
-    "biddingLog" to biddingLog.map { it.toFields() },
-    "estimates" to estimates.toMap(),
-  )
+  fun toFields(): Map<String, Any?> = buildMap {
+    put("round", round)
+    put("matchId", matchId)
+    put("cardLog", cardLog.map { it.toFields() })
+    put("biddingLog", biddingLog.map { it.toFields() })
+    put("estimates", estimates.toMap())
+    if (passRound) put("passRound", true)
+  }
 }
 
 /** matches/{id}/hands/{seatId} — current hand only, overwritten per round. */

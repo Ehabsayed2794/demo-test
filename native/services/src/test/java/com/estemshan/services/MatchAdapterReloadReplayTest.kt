@@ -142,11 +142,9 @@ class MatchAdapterReloadReplayTest {
    * four dash declines) is a general pass. The adapter must apply it to the
    * local engine, surface the NEXT round's multiplier on the outcome (the
    * replayed BiddingState still describes the CANCELLED round — the engine's
-   * own contract), and advance no round itself: arming the round the
-   * document will eventually open is the consumer's job, and today NO host
-   * advance exists at all — the online round transition is blocked on the
-   * rules decision (Task A, fix round 2026-10-23), so "no advance" is the
-   * whole truth.
+   * own contract), and advance no round itself: persisting the advance is
+   * the consumer's job ([com.estemshan.services.MatchService.advanceAfterGeneralPass]
+   * through the online view model, O-19).
    */
   @Test
   fun generalPassReplaySurfacesTheNextMultiplierAndKeepsTheCancelledRound() {
@@ -193,8 +191,60 @@ class MatchAdapterReloadReplayTest {
     )
     assertNull("a general pass closes no auction", outcome.outcome)
     val replayed = session.bidding!!
-    assertEquals("the adapter must not advance the round — no host advance exists yet", 1, replayed.round)
+    assertEquals("the adapter never advances a round itself", 1, replayed.round)
     assertNull("the cancelled round waits on nobody", replayed.waitingFor)
+  }
+
+  /**
+   * O-19 gate 6 — the surfaced pass value is the ladder applied to the
+   * round's PERSISTED multiplier, not a default ×1: a document whose
+   * `currentMultiplier` is 4 (a Sa'ayda or a second pass) and whose round is
+   * then General-Passed surfaces 6. A reload/replay therefore can never
+   * re-ladder from the wrong base.
+   */
+  @Test
+  fun generalPassReplayLaddersFromThePersistedRoundMultiplier() {
+    val session = FakeGameSession()
+    session.bidding = initNormalRound(1, seats.first(), seats, multiplier = 4)
+    val adapter = MatchAdapter(session)
+
+    val log = buildList {
+      seats.forEach {
+        add(BiddingLogEntry(it, BiddingLogEntry.ACTION_DASH_CALL, declaredDashCall = false, round = 1))
+      }
+      seats.forEach {
+        add(BiddingLogEntry(it, BiddingLogEntry.ACTION_AUCTION_BID, isPass = true, round = 1))
+      }
+    }
+    val doc = MatchDoc(
+      roomId = "room-pass-x4",
+      players = seatUids.values.toList(),
+      status = MatchDoc.STATUS_STARTING,
+      currentRound = 1,
+      maxRounds = 18,
+      extendedRounds = emptyList(),
+      dealer = seatUids.getValue(seats.first()),
+      turn = null,
+      seats = seatUids,
+      version = 9,
+      biddingOpen = true,
+      bids = emptyMap(),
+      lastBidSeat = null,
+      cardLog = emptyList(),
+      lastCardSeat = null,
+      cardPhase = null,
+      biddingLog = log,
+      gameState = GameState(initialized = true, dealtRound = 1),
+    )
+
+    val outcome = adapter.applyRemoteBiddingAction("match-pass-x4", doc)
+
+    assertTrue("the pass was not applied to the engine", outcome.applied)
+    assertEquals(
+      "the pass must ladder from the persisted x4, not from x1",
+      6,
+      outcome.generalPassMultiplier,
+    )
   }
 
   // ── rigged determinism ─────────────────────────────────────────────
