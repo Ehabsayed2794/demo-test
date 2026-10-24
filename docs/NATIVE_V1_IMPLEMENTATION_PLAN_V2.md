@@ -1814,7 +1814,7 @@ S8 Play Billing verification ── BLOCKED on O-06 (no runtime approved)
 | Sprint | Goal | Depends on | Status |
 |---|---|---|---|
 | S0 | Record Q35–Q52; canonical/plan/roadmap; five suit labels; Platinum label | — | **EXECUTED** 2026-10-23 (documentation + labels only; no behavioural code) |
-| S1 | General Pass: new round number, fresh deal, Normal ×2 / Classic none, replay parity | S0 | PLANNED |
+| S1 | General Pass: new round number, fresh deal, Normal ×2 / Classic none, replay parity | S0 | **O-19 Option B IMPLEMENTED 2026-10-24** on `agent/s1b-option-b-impl` — `currentMultiplier` persisted and read by rules, services, app and functions; engine 507 / services 213 / app 205 / functions 544 unit tests green, rules 29 of 29 on the live emulator. NOT accepted, no PR. |
 | S2 | Wire Sa'ayda extensions into the production match flow, with tests | S1 | PLANNED |
 | S3 | ROOM/RANKED/UNRANKED career statistics; RP Ranked-only; nine stat labels | S0 | PLANNED |
 | S4 | O-02b fast-bid duplicate declaration, first-declarer Caller, suit tie-break | S1 | PLANNED |
