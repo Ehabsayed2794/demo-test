@@ -100,6 +100,11 @@ object TimeoutResolution {
     /** History needed to reconstruct the engine state is missing or contradicts
      *  the engine (failed-precondition). Fail closed; never invent state. */
     const val HISTORY_UNAVAILABLE = "HISTORY_UNAVAILABLE"
+
+    /** Present history contradicts the document's own persisted shape —
+     *  today an illegal `currentMultiplier` (O-19). Reported, never repaired
+     *  by substituting a default. */
+    const val HISTORY_CORRUPT = "HISTORY_CORRUPT"
   }
 
   /**
@@ -883,6 +888,14 @@ object TimeoutResolution {
         Reason.HISTORY_UNAVAILABLE,
         "resolveDecisionTimeout: currentRound is missing.",
       )
+    // O-19: a corrupt persisted multiplier is reported, never replayed at 1.
+    if (storedRoundMultiplier(fields) == null) {
+      return Resolution.NoWrite(
+        Reason.HISTORY_CORRUPT,
+        "resolveDecisionTimeout: currentMultiplier is not an integer in " +
+          "$ROUND_MULTIPLIER_DEFAULT..$MAX_ROUND_MULTIPLIER (or a Classic match does not hold 1).",
+      )
+    }
 
     return when (pending.phase) {
       DecisionPhase.BIDDING -> {
@@ -919,16 +932,31 @@ object TimeoutResolution {
   // ── bidding: replay the auction, then BidBrain ───────────────────────
 
   /**
-   * The match doc carries no round multiplier: MatchService never persists
-   * one, and the clients keep it in their own session. It is not load-bearing
-   * here — it only feeds scoring, which the resolver never does — and an
-   * S1 (A8.7/Q51) general pass now terminal-replays at the cancelled round's
-   * own multiplier (the value [doubledMultiplier] would feed scoring with is
-   * not part of any decision), so the replay's turn order and every legality
-   * check are unaffected. The fresh-round default is therefore correct for
-   * the decision.
+   * O-19 (Option B): the match doc's `currentMultiplier` is the multiplier
+   * the current round is scored at — and the one its auction replay must be
+   * armed with. It never changes a decision's legality, but replaying a
+   * document that says ×4 at ×1 would be a silent reset, which Option B
+   * forbids: the value is read from the doc, and a present-but-illegal one
+   * fails the replay closed (reported by [resolveExpired]) instead of
+   * falling back to 1. Absent means a document written before the field,
+   * where 1 is the defined legacy reading.
    */
   private const val ROUND_MULTIPLIER_DEFAULT = 1
+
+  private const val MAX_ROUND_MULTIPLIER = 8
+
+  /**
+   * The document's stored multiplier: [ROUND_MULTIPLIER_DEFAULT] when the
+   * field is absent (legacy), the value when it is a legal int 1..8 (Classic
+   * exactly 1), and null — corrupt, fail closed — otherwise.
+   */
+  internal fun storedRoundMultiplier(fields: Map<String, Any?>): Int? {
+    val raw = fields["currentMultiplier"] ?: return ROUND_MULTIPLIER_DEFAULT
+    val value = num(raw) ?: return null
+    if (value < ROUND_MULTIPLIER_DEFAULT || value > MAX_ROUND_MULTIPLIER) return null
+    if (parseScoringMode(fields["scoringMode"]) == ScoringMode.CLASSIC && value != 1) return null
+    return value
+  }
 
   /**
    * Replays the round's biddingLog (and, once the auction closes, the doc's
@@ -966,13 +994,16 @@ object TimeoutResolution {
   ): BiddingReplay {
     val gameType = parseGameType(fields["gameType"])
     val scoringMode = parseScoringMode(fields["scoringMode"])
+    // O-19: the auction replays at the document's own multiplier; an illegal
+    // stored value is corrupt history, not a licence to default to 1.
+    val roundMultiplier = storedRoundMultiplier(fields) ?: return BiddingReplay(null, null)
     val dealerSeat = seatOfUid(fields, fields["dealer"] as? String ?: return BiddingReplay(null, null))
       ?.takeIf { it in order } ?: return BiddingReplay(null, null)
     val fast = gameType.isFastRound(round)
     var state: BiddingState = if (fast) {
-      initFastRound(round, dealerSeat, order, ROUND_MULTIPLIER_DEFAULT, gameType, scoringMode)
+      initFastRound(round, dealerSeat, order, roundMultiplier, gameType, scoringMode)
     } else {
-      initNormalRound(round, dealerSeat, order, ROUND_MULTIPLIER_DEFAULT, gameType, scoringMode)
+      initNormalRound(round, dealerSeat, order, roundMultiplier, gameType, scoringMode)
     }
 
     val stored = strMap(fields["bids"])?.mapNotNull { (seat, value) ->
@@ -1197,6 +1228,8 @@ object TimeoutResolution {
     hands: Map<String, List<Card>>,
   ): TableState? {
     val outcome = replayBiddingOutcome(fields, order, round) ?: return null
+    // O-19: the table carries the document's multiplier, never a default.
+    val roundMultiplier = storedRoundMultiplier(fields) ?: return null
     val resolvedHands = LinkedHashMap<String, List<Card>>()
     for (seat in order) {
       resolvedHands[seat] = hands[seat] ?: return null
@@ -1211,7 +1244,7 @@ object TimeoutResolution {
         dashCallers = outcome.dashCallers,
         leaderId = outcome.leaderId,
         riskId = outcome.riskPlayerId,
-        multiplier = ROUND_MULTIPLIER_DEFAULT,
+        multiplier = roundMultiplier,
         hands = resolvedHands,
       ),
       order,

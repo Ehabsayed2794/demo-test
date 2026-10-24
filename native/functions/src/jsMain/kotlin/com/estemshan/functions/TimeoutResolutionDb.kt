@@ -198,10 +198,13 @@ suspend fun resolveTimeoutOnce(
   }
 
   val pending = TimeoutResolution.pendingDecision(fields)
-    ?: return noWriteResponse(
-      Reason.NOT_ACTIVE,
-      "resolveDecisionTimeout: match '$matchId' is not waiting on a decision.",
-    )
+    ?: run {
+      requireReadableRoundMultiplier(fields, matchId)
+      return noWriteResponse(
+        Reason.NOT_ACTIVE,
+        "resolveDecisionTimeout: match '$matchId' is not waiting on a decision.",
+      )
+    }
   // S74 (DEC-DISC-01): a granted disconnect-vote WAIT pauses the table — no
   // decision resolves while the pause is live, and the caller re-arms on the
   // pause's own remaining millis. The gate sits BEFORE the expiry check on
@@ -233,10 +236,13 @@ suspend fun resolveTimeoutOnce(
     val fresh = tx.readMatch(matchId)
       ?: throw HttpsError("not-found", "resolveDecisionTimeout: match '$matchId' was not found.")
     val freshPending = TimeoutResolution.pendingDecision(fresh)
-      ?: return@transact noWriteResponse(
-        Reason.NOT_ACTIVE,
-        "resolveDecisionTimeout: match '$matchId' is not waiting on a decision.",
-      )
+      ?: run {
+        requireReadableRoundMultiplier(fresh, matchId)
+        return@transact noWriteResponse(
+          Reason.NOT_ACTIVE,
+          "resolveDecisionTimeout: match '$matchId' is not waiting on a decision.",
+        )
+      }
     // S74: the same pause gate on the committed document — a pause that went
     // live between the pre-check and this transaction stops the expiry here,
     // and one that ENDED makes `updatedAt` newer, so this re-anchors the
@@ -379,6 +385,25 @@ private fun extractRound(fields: Map<String, Any?>): Int =
 
 private fun extractSeats(fields: Map<String, Any?>): List<String> =
   TimeoutResolution.parseOrder(fields) ?: emptyList()
+
+/**
+ * O-19 (Option B) — a document whose persisted `currentMultiplier` cannot be
+ * read has unreplayable history, and an unreplayable history is a CORRUPT
+ * match, not an idle table. [TimeoutResolution.pendingDecision] necessarily
+ * returns null for it (the replay fails closed instead of resetting the round
+ * to ×1), so both detection sites name the cause here rather than answering
+ * NOT_ACTIVE and leaving the decision machine silent on a broken document.
+ * Unreachable for a document the rules can produce: those pin 1..8 and pin
+ * Classic to 1.
+ */
+private fun requireReadableRoundMultiplier(fields: Map<String, Any?>, matchId: String) {
+  if (TimeoutResolution.storedRoundMultiplier(fields) == null) {
+    throw HttpsError(
+      "failed-precondition",
+      "resolveDecisionTimeout: match '$matchId' holds no readable currentMultiplier.",
+    )
+  }
+}
 
 /**
  * S73 Stage 2, C4 — a reclaim outcome. `reclaimed`, not `resolved`: the two

@@ -207,7 +207,11 @@ object Settlement {
   /**
    * The converged match document, parsed. [order] is canonical seat order;
    * [dealerSeatFinal] is the seat holding the dealer marker at completion
-   * (the round-N dealer — the walk-back anchor).
+   * (the round-N dealer — the walk-back anchor). [currentMultiplier] is the
+   * O-19 persisted multiplier of the FINAL round (the current round at
+   * completion); null means the document predates the field, and the
+   * replayed chain is then the only authority — the compatible legacy
+   * fallback, never a silent reset.
    */
   data class ConvergedMatch(
     val matchId: String,
@@ -223,6 +227,7 @@ object Settlement {
     val claimedScores: Map<String, Int>?,
     val claimedWinners: List<String>?,
     val archives: List<ArchivedRound>,
+    val currentMultiplier: Int? = null,
   )
 
   // ── outcomes ──────────────────────────────────────────────────────
@@ -363,6 +368,20 @@ object Settlement {
     }
     val claimedWinners = (fields["winnerIds"] as? List<*>)
       ?.map { it as? String ?: return null }
+    val classic = parseScoringMode(fields["scoringMode"]) == ScoringMode.CLASSIC
+    // O-19: absent = a document written before the field (legacy fallback:
+    // the replayed chain decides). Present must be a legal stored value —
+    // an out-of-range integer or a Classic match above 1 is a corrupt
+    // document, never silently re-read as 1.
+    val currentMultiplier = when (val raw = fields["currentMultiplier"]) {
+      null -> null
+      else -> {
+        val value = num(raw) ?: return null
+        if (value < 1 || value > 8) return null
+        if (classic && value != 1) return null
+        value
+      }
+    }
     return ConvergedMatch(
       matchId = matchId,
       mode = parseMatchMode(fields["mode"]),
@@ -371,12 +390,13 @@ object Settlement {
       players = players,
       dealerSeatFinal = dealerSeatFinal,
       gameType = parseGameType(fields["gameType"]),
-      classic = parseScoringMode(fields["scoringMode"]) == ScoringMode.CLASSIC,
+      classic = classic,
       completedRound = completedRound,
       maxRounds = maxRounds,
       claimedScores = claimedScores,
       claimedWinners = claimedWinners,
       archives = emptyList(),
+      currentMultiplier = currentMultiplier,
     )
   }
 
@@ -494,6 +514,7 @@ object Settlement {
     }
 
     var multiplier = 1
+    var finalRoundMultiplier: Int? = null
     val escalationCap = if (match.classic) 2 else 8
     var totals: Map<String, Int> = match.order.associateWith { 0 }
     for (round in 1..match.completedRound) {
@@ -503,6 +524,7 @@ object Settlement {
           Reason.HISTORY_INCOMPLETE,
           "settleMatch: round $round dealer is not resolvable from the match seats.",
         )
+      finalRoundMultiplier = multiplier
       val scored = scoreRound(match, archived, dealer, multiplier, escalationCap)
         ?: return if (archived.estimates == null) {
           SettleDecision.Failed(
@@ -518,6 +540,19 @@ object Settlement {
         }
       totals = accumulateMatchScores(totals, scored.deltas)
       multiplier = scored.nextMultiplier
+    }
+
+    // O-19: the persisted value is the multiplier of the round current at
+    // completion — the same value the replayed chain entered its final
+    // round at. A disagreement means the document and the archives tell
+    // different stories: report it, never settle on a silent ×1.
+    val documented = match.currentMultiplier
+    if (documented != null && finalRoundMultiplier != null && documented != finalRoundMultiplier) {
+      return SettleDecision.Failed(
+        Reason.HISTORY_CORRUPT,
+        "settleMatch: currentMultiplier $documented does not match the replayed " +
+          "ladder value $finalRoundMultiplier for round ${match.completedRound}.",
+      )
     }
 
     val winners = computeWinner(totals)
