@@ -217,7 +217,8 @@ class PlacementViewModel(
   }
 
   override fun onCleared() {
-    observeJob?.cancel()
+    signalsJob?.cancel()
+    finalJob?.cancel()
     super.onCleared()
   }
 }
