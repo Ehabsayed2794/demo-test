@@ -79,20 +79,25 @@ function baseMatch(players, seats, overrides) {
 
 // S1's canonical general-pass window: one declining Dash decision per seat,
 // then one auction PASS per seat, every entry tagged with the round.
+// F1 (owner ruling 2026-10-24, Option A): dashCallSeats generalises it to
+// the MIXED window — of the N Dash decisions exactly k are DECLARED
+// (0 <= k <= min(2, N-1)), and the auction holds exactly N-k passes from
+// the remaining seats (total 2N-k entries).
 function passWindow(seats, round, opts) {
   const options = opts || {};
+  const dashers = options.dashCallSeats || [];
   const seatIds = Object.keys(seats);
   const log = [];
-  seatIds.forEach((seat, index) => {
+  seatIds.forEach((seat) => {
     log.push({
       seatId: seat,
       actionType: "SubmitDashCallDecision",
-      declaredDashCall: options.dashCallSeat === seat,
+      declaredDashCall: dashers.includes(seat),
       round
     });
   });
   seatIds.forEach((seat) => {
-    if (options.dashCallSeat === seat) return;
+    if (dashers.includes(seat)) return;
     log.push({ seatId: seat, actionType: "SubmitAuctionBid", isPass: true, round });
   });
   return log;
@@ -297,18 +302,84 @@ async function main() {
       await assertFails(ref(A, id).update(passPatch(1, B, 2)))
         .then(() => true).catch(() => false));
 
-    // The unprovable Dash-call variant: one seat DECLARED, so the auction
-    // holds N-1 passes. Refused explicitly rather than advanced on a guess.
-    // dashCallSeat takes a SEAT id (passWindow iterates seat keys).
+    // ── 3b. F1 (owner ruling 2026-10-24, Option A): the MIXED window ───
+    // Two effective Dashes + a pass from every remaining active seat IS a
+    // valid General Pass: N Dash decisions of which exactly k are DECLARED
+    // (k <= min(2, N-1)), then N-k auction passes. Total 2N-k entries
+    // (four seats: 8/7/6 at k = 0/1/2). The ladder applies unchanged.
     id = await seed({
       currentRound: 1, dealer: A, version: 5, currentMultiplier: 1,
-      biddingLog: passWindow(seats4, 1, { dashCallSeat: "p3" })
+      biddingLog: passWindow(seats4, 1, { dashCallSeats: ["p3"] })
     });
-    check("General Pass with a declared Dash call (unprovable window) -> DENY",
+    check("F1 k=1 window (7 entries, p3 declared) advancing 1 -> 2 -> ALLOW",
+      await assertSucceeds(ref(A, id).update(passPatch(1, B, 2)))
+        .then(() => true).catch(() => false));
+
+    id = await seed({
+      currentRound: 1, dealer: A, version: 5, currentMultiplier: 2,
+      biddingLog: passWindow(seats4, 1, { dashCallSeats: ["p1", "p4"] })
+    });
+    check("F1 k=2 window (6 entries) advancing 2 -> 4 -> ALLOW",
+      await assertSucceeds(ref(A, id).update(passPatch(1, B, 4)))
+        .then(() => true).catch(() => false));
+
+    id = await seed({
+      currentRound: 1, dealer: A, version: 5, currentMultiplier: 1,
+      biddingLog: passWindow(seats4, 1, { dashCallSeats: ["p2", "p3"] })
+    });
+    check("F1 k=2 window claiming a ladder jump (1 -> 4) -> DENY",
+      await assertFails(ref(A, id).update(passPatch(1, B, 4)))
+        .then(() => true).catch(() => false));
+
+    // The strict two-Dash maximum: a window claiming THREE declared Dashes
+    // is refused by name in the service proof (TOO_MANY_DASH_CALLS) and
+    // denied here — never silently clamped to two.
+    id = await seed({
+      currentRound: 1, dealer: A, version: 5, currentMultiplier: 1,
+      biddingLog: passWindow(seats4, 1, { dashCallSeats: ["p1", "p2", "p3"] })
+    });
+    check("F1 k=3 window (three declared Dashes) -> DENY",
       await assertFails(ref(A, id).update(passPatch(1, B, 2)))
         .then(() => true).catch(() => false));
 
-    // Duplicate seat in the pass block / missing pass.
+    // A pass entry from a seat that already declared an effective Dash —
+    // an engine-impossible history the window proof refuses.
+    id = await seed({
+      currentRound: 1, dealer: A, version: 5, currentMultiplier: 1,
+      biddingLog: passWindow(seats4, 1, { dashCallSeats: ["p1"] })
+        .map((entry, index, all) => index === all.length - 1
+          ? { seatId: "p1", actionType: "SubmitAuctionBid", isPass: true, round: 1 }
+          : entry)
+    });
+    check("F1 pass block containing a declared dasher's seat -> DENY",
+      await assertFails(ref(A, id).update(passPatch(1, B, 2)))
+        .then(() => true).catch(() => false));
+
+    // Duplicate seat inside the Dash block.
+    const dupDash = passWindow(seats4, 1, { dashCallSeats: ["p1", "p2"] });
+    dupDash[1] = { seatId: "p1", actionType: "SubmitDashCallDecision", declaredDashCall: true, round: 1 };
+    id = await seed({
+      currentRound: 1, dealer: A, version: 5, currentMultiplier: 1,
+      biddingLog: dupDash
+    });
+    check("F1 duplicate seat in the Dash block -> DENY",
+      await assertFails(ref(A, id).update(passPatch(1, B, 2)))
+        .then(() => true).catch(() => false));
+
+    // The pass archive accepts the mixed window too (same proof).
+    id = await seed({
+      currentRound: 1, dealer: A, version: 5, currentMultiplier: 1,
+      biddingLog: passWindow(seats4, 1, { dashCallSeats: ["p2", "p4"] })
+    });
+    check("pass archive with an F1 k=2 window -> ALLOW",
+      await assertSucceeds(ctx(A).collection("matches").doc(id)
+        .collection("roundArchive").doc("1").set({
+          round: 1, matchId: id, cardLog: [],
+          biddingLog: passWindow(seats4, 1, { dashCallSeats: ["p2", "p4"] }),
+          estimates: {}, passRound: true
+        })).then(() => true).catch(() => false));
+
+    // ── 3c. Duplicate seat in the pass block / missing pass ────────────
     const dup = passWindow(seats4, 1);
     dup[7].seatId = dup[6].seatId;
     id = await seed({
@@ -356,6 +427,50 @@ async function main() {
     });
     check("three-seat General Pass 1 -> 2 -> ALLOW",
       await assertSucceeds(ref(A, "o19-three").update({
+        currentRound: 2, dealer: B, version: 6, biddingOpen: true,
+        bids: { p1: null, p2: null, p3: null }, lastBidSeat: null,
+        cardPhase: null, turn: null, cardLog: [], biddingLog: [],
+        currentMultiplier: 2, updatedAt: new Date()
+      })).then(() => true).catch(() => false));
+
+    // F1 at under-four tables: N=2 admits k<=1, N=3 k<=2 — and an
+    // ALL-dashing table (k = N) is SANS, never a General Pass.
+    await env.withSecurityRulesDisabled(async (admin) => {
+      await admin.firestore().collection("matches").doc("o19-two-mixed").set(
+        baseMatch(players2, seats2, {
+          currentRound: 1, dealer: A, version: 5, currentMultiplier: 1,
+          biddingLog: passWindow(seats2, 1, { dashCallSeats: ["p2"] })
+        })
+      );
+      await admin.firestore().collection("matches").doc("o19-two-alldash").set(
+        baseMatch(players2, seats2, {
+          currentRound: 1, dealer: A, version: 5, currentMultiplier: 1,
+          biddingLog: passWindow(seats2, 1, { dashCallSeats: ["p1", "p2"] })
+        })
+      );
+      await admin.firestore().collection("matches").doc("o19-three-mixed").set(
+        baseMatch(players3, seats3, {
+          currentRound: 1, dealer: A, version: 5, currentMultiplier: 1,
+          biddingLog: passWindow(seats3, 1, { dashCallSeats: ["p1", "p3"] })
+        })
+      );
+    });
+    check("two-seat F1 k=1 window -> ALLOW",
+      await assertSucceeds(ref(A, "o19-two-mixed").update({
+        currentRound: 2, dealer: B, version: 6, biddingOpen: true,
+        bids: { p1: null, p2: null }, lastBidSeat: null, cardPhase: null,
+        turn: null, cardLog: [], biddingLog: [], currentMultiplier: 2, updatedAt: new Date()
+      })).then(() => true).catch(() => false));
+
+    check("two-seat ALL-dash window (k = N) -> DENY",
+      await assertFails(ref(A, "o19-two-alldash").update({
+        currentRound: 2, dealer: B, version: 6, biddingOpen: true,
+        bids: { p1: null, p2: null }, lastBidSeat: null, cardPhase: null,
+        turn: null, cardLog: [], biddingLog: [], currentMultiplier: 2, updatedAt: new Date()
+      })).then(() => true).catch(() => false));
+
+    check("three-seat F1 k=2 window -> ALLOW",
+      await assertSucceeds(ref(A, "o19-three-mixed").update({
         currentRound: 2, dealer: B, version: 6, biddingOpen: true,
         bids: { p1: null, p2: null, p3: null }, lastBidSeat: null,
         cardPhase: null, turn: null, cardLog: [], biddingLog: [],
