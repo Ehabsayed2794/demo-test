@@ -16,6 +16,7 @@ import com.estemshan.engine.PlayCard
 import com.estemshan.engine.PlayEmit
 import com.estemshan.engine.RANKS
 import com.estemshan.engine.RoundCfg
+import com.estemshan.engine.ScoringMode
 import com.estemshan.engine.Suit
 import com.estemshan.engine.TablePhase
 import com.estemshan.engine.TableState
@@ -445,7 +446,7 @@ object TimeoutResolution {
    * bidding action is `submitBid`, which writes `bids/{seat}` and no log entry —
    * leaving it out would make an on-time estimate invisible to the cursor and
    * take over a player who was answering every window. It can decrease (round
-   * advance, general-pass redeal), and a change in either direction resets, so
+   * advance, a general pass consuming its round), and a change in either direction resets, so
    * the failure mode of a decrease is a reset the rule would have granted anyway
    * — never a false takeover. Biasing every judgement here toward resetting is
    * the fail-closed direction: a wrong reset delays a takeover, a wrong
@@ -629,6 +630,13 @@ object TimeoutResolution {
   fun parseGameType(value: Any?): GameType =
     (value as? String)?.let { runCatching { GameType.valueOf(it) }.getOrNull() }
       ?: GameType.FULL
+
+  /** Mirrors Settlement.parseScoringMode: absent/unrecognised ⇒ NORMAL. S1
+   *  threads this through the replayed auction's own state — a CLASSIC
+   *  match's all-pass never escalates the engine's next-round multiplier. */
+  fun parseScoringMode(value: Any?): ScoringMode =
+    (value as? String)?.let { runCatching { ScoringMode.valueOf(it) }.getOrNull() }
+      ?: ScoringMode.NORMAL
 
   /** Mirrors RoomDoc.parseDecisionTimerSeconds: absent, non-numeric, or
    *  outside RD21's 5..20 s window ⇒ 15 s — a read can never surface a timer
@@ -913,10 +921,12 @@ object TimeoutResolution {
   /**
    * The match doc carries no round multiplier: MatchService never persists
    * one, and the clients keep it in their own session. It is not load-bearing
-   * here — it only feeds scoring, which the resolver never does — and the
-   * general-pass redeal's doubled multiplier is produced by the engine itself,
-   * so the replay's turn order and every legality check are unaffected. The
-   * fresh-round default is therefore correct for the decision.
+   * here — it only feeds scoring, which the resolver never does — and an
+   * S1 (A8.7/Q51) general pass now terminal-replays at the cancelled round's
+   * own multiplier (the value [doubledMultiplier] would feed scoring with is
+   * not part of any decision), so the replay's turn order and every legality
+   * check are unaffected. The fresh-round default is therefore correct for
+   * the decision.
    */
   private const val ROUND_MULTIPLIER_DEFAULT = 1
 
@@ -924,9 +934,9 @@ object TimeoutResolution {
    * Replays the round's biddingLog (and, once the auction closes, the doc's
    * transient `bids` as FinalEstimate intents) through the real engine and
    * returns the resulting state — or null when the history does not replay
-   * legally. Mirrors Settlement.scoreRound's replay, including the
-   * general-pass redeal, which restarts the same round at the engine's own
-   * doubled multiplier without a document write.
+   * legally. Mirrors Settlement.scoreRound's replay, and under S1 terminates
+   * on a general pass at the engine's own cancelled-round state without a
+   * document write or a same-round re-deal.
    */
   fun replayBidding(
     fields: Map<String, Any?>,
@@ -955,13 +965,14 @@ object TimeoutResolution {
     round: Int,
   ): BiddingReplay {
     val gameType = parseGameType(fields["gameType"])
+    val scoringMode = parseScoringMode(fields["scoringMode"])
     val dealerSeat = seatOfUid(fields, fields["dealer"] as? String ?: return BiddingReplay(null, null))
       ?.takeIf { it in order } ?: return BiddingReplay(null, null)
     val fast = gameType.isFastRound(round)
     var state: BiddingState = if (fast) {
-      initFastRound(round, dealerSeat, order, ROUND_MULTIPLIER_DEFAULT, gameType)
+      initFastRound(round, dealerSeat, order, ROUND_MULTIPLIER_DEFAULT, gameType, scoringMode)
     } else {
-      initNormalRound(round, dealerSeat, order, ROUND_MULTIPLIER_DEFAULT, gameType)
+      initNormalRound(round, dealerSeat, order, ROUND_MULTIPLIER_DEFAULT, gameType, scoringMode)
     }
 
     val stored = strMap(fields["bids"])?.mapNotNull { (seat, value) ->
@@ -1008,10 +1019,15 @@ object TimeoutResolution {
       when (val emitted = emit(state, intent)) {
         is EmitResult.Completed -> return BiddingReplay(emitted.state, emitted.outcome)
         is EmitResult.GeneralPass -> {
+          // S1 (A8.7 / Q51): the pass CANCELS this round — its own log ends
+          // here, nobody waits, and the auction for the NEXT round lives
+          // behind the persisted round transition. Re-initialising the same
+          // round would resurrect a round S1 consumed: the replay keeps the
+          // engine's cancelled-round state as terminal, so detection sees a
+          // decisionless round (negligible: nothing left to decide until the
+          // document advances) instead of an endless re-litigated auction.
           if (fast) return BiddingReplay(null, null)
-          state = initNormalRound(
-            round, dealerSeat, order, emitted.doubledMultiplier, gameType,
-          )
+          state = emitted.state
         }
         is EmitResult.Applied -> state = emitted.state
         is EmitResult.Rejected -> return BiddingReplay(null, null)

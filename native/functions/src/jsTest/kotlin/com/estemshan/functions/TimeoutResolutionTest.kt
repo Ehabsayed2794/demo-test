@@ -259,6 +259,43 @@ class TimeoutResolutionTest {
     assertNull(TimeoutResolution.pendingDecision(doc))
   }
 
+  /**
+   * S1 (A8.7 / Q51): a general pass CANCELS the round instead of re-dealing
+   * it. The round's own log ends in the pass, so the resolver's replay keeps
+   * the engine's cancelled-round state: nobody waits on anything, so no
+   * decision exists to resolve until the document advances to the round the
+   * host arms next. The old replay re-initialised the same round at the
+   * doubled multiplier, which re-litigated a round S1 had already consumed.
+   */
+  @Test
+  fun aPassedRoundReplaysToADecisionlessCancelledRound() {
+    val log = buildList {
+      order.forEach { seat ->
+        add(mapOf(
+          "seatId" to seat,
+          "actionType" to "SubmitDashCallDecision",
+          "declaredDashCall" to false,
+          "round" to 1,
+        ))
+      }
+      order.forEach { seat ->
+        add(mapOf(
+          "seatId" to seat,
+          "actionType" to "SubmitAuctionBid",
+          "isPass" to true,
+          "round" to 1,
+        ))
+      }
+    }
+    val doc = normalRoundDoc(biddingLog = log, version = 2)
+
+    // An all-pass round has no seat waiting to decide.
+    assertNull(TimeoutResolution.pendingDecision(doc))
+    val state = TimeoutResolution.replayBidding(doc, order, 1)!!
+    assertEquals(1, state.round)
+    assertNull(state.waitingFor)
+  }
+
   // ── the MEDIUM bot's decision, in the human path's own write shape ──
 
   @Test

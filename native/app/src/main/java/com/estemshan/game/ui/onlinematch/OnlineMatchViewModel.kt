@@ -606,8 +606,11 @@ class OnlineMatchViewModel(
     session.clearBiddingState()
     session.clearPlayState()
     session.initializeBiddingState(
-      if (isFastRound(round, doc.gameType)) initFastRound(round, dealerSeat, seats, multiplier)
-      else initNormalRound(round, dealerSeat, seats, multiplier),
+      if (isFastRound(round, doc.gameType)) {
+        initFastRound(round, dealerSeat, seats, multiplier, scoringMode = doc.scoringMode)
+      } else {
+        initNormalRound(round, dealerSeat, seats, multiplier, scoringMode = doc.scoringMode)
+      },
     )
   }
 
@@ -676,6 +679,21 @@ class OnlineMatchViewModel(
     if (outcome != null) {
       lastOutcome = outcome
       session.completeBidding(outcome)
+    }
+    // S1 (A8.7 / Q51): the replay crossed a general pass — the cancelled
+    // round's next-round multiplier survives only on the ApplyOutcome, and
+    // it is armed on the LOCAL session round alone: the round number stays
+    // document-pinned (no unilateral local advance), nothing is written,
+    // and [alignToDoc]'s later nextRound() carries the armed multiplier into
+    // the auction the document eventually opens. Clients that cold-start
+    // after the pass still see the document round without it — the
+    // multiplier-restore limitation documented in the class header, exactly
+    // as before this change.
+    val passedMultiplier = snapshot.bidSync?.generalPassMultiplier
+      ?: snapshot.biddingActionSync?.generalPassMultiplier
+      ?: reDrive.generalPassMultiplier
+    if (passedMultiplier != null) {
+      session.setRound(session.getRound().copy(multiplier = passedMultiplier))
     }
   }
 

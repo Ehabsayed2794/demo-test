@@ -215,22 +215,29 @@ class QuickMatchBotIntegrationTest {
 
   /**
    * Advance until the auction closes, applying the quick-match flow's general
-   * pass handling (the Bidding screen does this in a `LaunchedEffect`): the
-   * round restarts at the doubled multiplier with a fresh deal. When the turn
+   * pass handling (the Bidding screen does this in a `LaunchedEffect`): S1 —
+   * the pass starts a NEW round (next round number, rotated dealer, fresh
+   * deal) at the doubled multiplier, not a same-round redeal. When the turn
    * rests on a human seat the harness plays it with an EXPERT stand-in, as the
    * Bidding screen would surface a tap — a bot seat holding the turn is the
    * one stall this treats as a failure. Bounded, so a pathological deal fails
    * the test instead of hanging it.
    */
   private suspend fun TestScope.closeAuction(): BiddingOutcome {
-    var redeals = 0
+    var passes = 0
     while (bvm.outcome.value == null) {
       advanceUntilIdle()
       val doubled = bvm.generalPass.value
       if (doubled != null) {
-        check(++redeals < 40) { "auction general-passed 40 times without closing" }
+        check(++passes < 40) { "auction general-passed 40 times without closing" }
         qvm.applyGeneralPass(doubled)
-        bvm.startNormalRound(qvm.round.value, qvm.dealer.value, qvm.seats, qvm.biddingMultiplier.value)
+        bvm.startNormalRound(
+          qvm.round.value,
+          qvm.dealer.value,
+          qvm.seats,
+          qvm.biddingMultiplier.value,
+          qvm.scoringMode.value,
+        )
       } else {
         // advanceUntilIdle may just have closed the auction: a DONE state has
         // no waiting seat, so return the outcome before trying to read one.
@@ -241,8 +248,8 @@ class QuickMatchBotIntegrationTest {
           error("auction stalled waiting on $seat (a bot seat should not stall)")
         }
         // A human seat holding the turn is expected — the auction opens on the
-        // dealer, and a redeal restarts the dash round there too — so the
-        // harness plays the human's part, exactly as the test body does for
+        // dealer, and the pass's next round opens the dash chain there too — so
+        // the harness plays the human's part, exactly as the test body does for
         // the opening decision.
         val held = bvm.state.value!!
         bvm.submit(BidBrain.decide(held, qvm.handFor(seat)!!, seat, BotTier.EXPERT))

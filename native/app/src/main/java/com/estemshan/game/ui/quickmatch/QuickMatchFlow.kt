@@ -63,7 +63,10 @@ fun NavGraphBuilder.quickMatchGraph(nav: NavController, qvm: QuickMatchViewModel
       val rejection by bvm.rejection.collectAsStateWithLifecycle()
 
       LaunchedEffect(key) {
-        bvm.startNormalRound(round, dealer, qvm.seats, mult)
+        // S1: the pass continues across rounds, so the auction state must
+        // carry the match's own scoring mode — CLASSIC passes never
+        // escalate the engine's doubled value.
+        bvm.startNormalRound(round, dealer, qvm.seats, mult, qvm.scoringMode.value)
       }
       // Arm the bot driver for this match: it moves only for seats the roster
       // marks as bots, and re-arms from the current state when the Table
@@ -72,7 +75,19 @@ fun NavGraphBuilder.quickMatchGraph(nav: NavController, qvm: QuickMatchViewModel
       DisposableEffect(Unit) { onDispose { qvm.detachBots() } }
       LaunchedEffect(generalPass) {
         val doubled = generalPass
-        if (doubled != null) qvm.applyGeneralPass(doubled)
+        if (doubled != null) {
+          // S1 (A8.7 / Q51): the pass is a production transition — it starts
+          // the NEXT round (fresh deal, rotated dealer, doubled multiplier)
+          // via the bidding key. If pass consumed the planned final round,
+          // the match is already complete on return and the flow retires to
+          // standings exactly as a scored final round does.
+          qvm.applyGeneralPass(doubled)
+          if (qvm.standings.value != null) {
+            nav.navigate(QUICK_STANDINGS) {
+              popUpTo(Routes.BIDDING) { inclusive = true }
+            }
+          }
+        }
       }
       LaunchedEffect(outcome) {
         val o = outcome

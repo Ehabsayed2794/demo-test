@@ -127,19 +127,23 @@ class QuickMatchViewModelTest {
   }
 
   @Test
-  fun generalPassRedealsTheHands() {
+  fun generalPassStartsTheNextRoundWithFreshHands() {
     val qvm = QuickMatchViewModel()
     qvm.startMatch()
     val before = seats.associateWith { qvm.handFor(it)!! }
 
-    // A general pass re-deals: the restarted auction must see fresh hands, not
-    // the same deal again — a pass-happy table otherwise replays one hand
-    // forever, and soft-locks once Choose Level can seat four bots.
+    // S1: a general pass starts the NEXT round — a new round number, a
+    // rotated dealer, and a fresh deal. A pass-happy table must never replay
+    // one hand forever (which soft-locks once Choose Level can seat four
+    // bots), and the restarted auction must open the new round, not the old.
     qvm.applyGeneralPass(2)
 
     val after = seats.associateWith { qvm.handFor(it)!! }
-    assertEquals("every seat still has a full hand after the redeal", 52, after.values.sumOf { it.size })
-    assertNotEquals("the general pass did not redeal the hands", before, after)
+    assertEquals("every seat still has a full hand after the pass", 52, after.values.sumOf { it.size })
+    assertNotEquals("the general pass did not deal the next round's fresh hands", before, after)
+    assertEquals("the pass did not move to the next round", 2, qvm.round.value)
+    assertEquals("the dealer did not rotate on the pass", "p2", qvm.dealer.value)
+    assertEquals("the pass did not arm the next round's multiplier", 2, qvm.biddingMultiplier.value)
   }
 
   @Test
@@ -183,22 +187,24 @@ class QuickMatchViewModelTest {
   private fun dealSnapshot(qvm: QuickMatchViewModel) = seats.associateWith { qvm.handFor(it)!! }
 
   @Test
-  fun theSameSeedDealsTheSameMatchAcrossRoundsAndRedeals() {
+  fun theSameSeedDealsTheSameMatchAcrossRoundsAndPasses() {
     val a = QuickMatchViewModel()
     val b = QuickMatchViewModel()
     a.startMatch(matchSeed = 111L)
     b.startMatch(matchSeed = 111L)
     assertEquals("round 1 deals match", dealSnapshot(a), dealSnapshot(b))
 
-    // A redeal at the same position must reproduce too — the deal seed
-    // advances per pass, it does not reset.
+    // A pass at the same position must reproduce too — the deal seed derives
+    // from the NEW round number, it neither resets nor re-deals the old one.
     a.applyGeneralPass(2)
     b.applyGeneralPass(2)
-    assertEquals("the redeal reproduces at both tables", dealSnapshot(a), dealSnapshot(b))
+    assertEquals("the pass round reproduces at both tables", dealSnapshot(a), dealSnapshot(b))
+    assertEquals("the pass advanced the two tables identically",
+      a.round.value to a.dealer.value, b.round.value to b.dealer.value)
 
     a.nextRound()
     b.nextRound()
-    assertEquals("round 2 deals match", dealSnapshot(a), dealSnapshot(b))
+    assertEquals("round 3 deals match", dealSnapshot(a), dealSnapshot(b))
   }
 
   @Test
@@ -223,8 +229,8 @@ class QuickMatchViewModelTest {
     val seed = qvm.matchSeed.value
     assertEquals(4242L, seed)
 
-    // Rounds and redeals advance the *deal* seed, not the match seed — a
-    // replay is one number for the whole match.
+    // Rounds (and a general pass consuming one) advance the *deal* seed, not
+    // the match seed — a replay is one number for the whole match.
     qvm.nextRound()
     qvm.applyGeneralPass(2)
     assertEquals("the match seed moved mid-match", seed, qvm.matchSeed.value)
@@ -304,17 +310,159 @@ class QuickMatchViewModelTest {
   }
 
   @Test
-  fun aRedealNeverLandsOnAnotherRoundsDeal() {    // The redeal stride (500) must clear the round stride: round 1's first
-    // redeal has to be a different hand from round 2's opening deal. A bug
-    // that collides them would silently re-deal a hand the table has seen.
-    val redeal = QuickMatchViewModel().apply {
+  fun aPassDealsTheNextRoundsSharedDealNotADuplicate() {
+    // S1: the deal seed is the match seed offset by the round number, and a
+    // pass consumes the round — so round 1's pass deals exactly round 2's
+    // opening deal. (The old constraint — redeal ≠ next round's deal — is
+    // gone because the same-round redeal no longer exists.)
+    val passed = QuickMatchViewModel().apply {
       startMatch(matchSeed = 111L)
-      applyGeneralPass(2) // round 1, redeal 1
+      applyGeneralPass(2) // round 1 consumed → round 2, first deal
     }
     val nextRound = QuickMatchViewModel().apply {
       startMatch(matchSeed = 111L)
       nextRound() // round 2, first deal
     }
-    assertNotEquals("a redeal collided with the next round's deal", dealSnapshot(redeal), dealSnapshot(nextRound))
+    assertEquals(
+      "a passed round's deal is not the next round's opening deal",
+      dealSnapshot(passed),
+      dealSnapshot(nextRound),
+    )
+  }
+
+  // ==========================================================================
+  //  S1 (A8.7 / Q51) — the engine's own pass ladder, driven end to end
+  // ==========================================================================
+
+  /**
+   * Decline every decision in a real auction: all four seats decline the
+   * Dash Call, then all four pass — the general pass script. The turn walk
+   * reads the engine's own `waitingFor` (never a fixed seat order — the
+   * dealer-first order matters) and the general-pass emit is expected to be
+   * the fourth pass's result.
+   */
+  private fun BiddingViewModel.allPass() {
+    repeat(4) { declineDash() }
+    repeat(4) {
+      val seat = state.value?.waitingFor ?: error("the auction is idle before all seats passed")
+      submit(BiddingIntent.AuctionBid(seat, isPass = true))
+    }
+  }
+
+  /**
+   * Five passes driven through a REAL BiddingViewModel — not a hand-typed
+   * doubled value — walking the Normal ladder ×2 → ×4 → ×6 → ×8 → cap ×8.
+   * Each pass starts the next round number with a rotated dealer, arms that
+   * round's multiplier for scoring, and deals a fresh hand.
+   */
+  @Test
+  fun normalPassStartsTheNextNumberedRoundAtTheEngineDoubledMultiplier() {
+    val qvm = QuickMatchViewModel()
+    qvm.startMatch(matchSeed = 9L)
+    repeat(5) { qvm.nextRound() }
+    assertEquals(6, qvm.round.value)
+    assertEquals("p2", qvm.dealer.value)
+    assertEquals("round 6 opens at the plain multiplier", 1, qvm.biddingMultiplier.value)
+
+    val bvm = BiddingViewModel()
+    val ladder = listOf(2, 4, 6, 8, 8) // NORMAL 1→2→4→6→8, capped at 8
+    val dealers = listOf("p3", "p4", "p1", "p2", "p3")
+    for ((step, doubled) in ladder.withIndex()) {
+      val beforeHands = dealSnapshot(qvm)
+      bvm.startNormalRound(
+        qvm.round.value,
+        qvm.dealer.value,
+        seats,
+        qvm.biddingMultiplier.value,
+        qvm.scoringMode.value,
+      )
+      bvm.allPass()
+      assertEquals(
+        "the engine derived the wrong next multiplier on pass ${step + 1}",
+        doubled,
+        bvm.generalPass.value,
+      )
+      qvm.applyGeneralPass(doubled)
+
+      assertEquals("the pass did not start the next numbered round", 7 + step, qvm.round.value)
+      assertEquals("the dealer did not rotate on the pass", dealers[step], qvm.dealer.value)
+      assertEquals(
+        "the pass did not arm the next round's multiplier",
+        doubled,
+        qvm.biddingMultiplier.value,
+      )
+      assertNotEquals(
+        "pass ${step + 1} replayed the round's own deal",
+        beforeHands,
+        dealSnapshot(qvm),
+      )
+    }
+    assertEquals("the ladder walked 11 rounds worth of passes", 11, qvm.round.value)
+    assertEquals("the ceiling round still scores ×8", 8, qvm.biddingMultiplier.value)
+  }
+
+  /**
+   * Under CLASSIC the engine's pass leaves the multiplier at 1 — but the pass
+   * itself still does everything S1 requires: next round number, rotated
+   * dealer, and a fresh deal.
+   */
+  @Test
+  fun classicPassNeverCarriesAMultiplier() {
+    val qvm = QuickMatchViewModel()
+    qvm.startMatch(matchSeed = 9L, scoringMode = ScoringMode.CLASSIC)
+
+    val bvm = BiddingViewModel()
+    repeat(2) { nth ->
+      val beforeHands = dealSnapshot(qvm)
+      val round = qvm.round.value
+      bvm.startNormalRound(
+        round,
+        qvm.dealer.value,
+        seats,
+        qvm.biddingMultiplier.value,
+        qvm.scoringMode.value,
+      )
+      bvm.allPass()
+      assertEquals("a Classic pass never escalates on pass ${nth + 1}", 1, bvm.generalPass.value)
+      qvm.applyGeneralPass(1)
+
+      assertEquals("the pass did not consume the round", round + 1, qvm.round.value)
+      assertEquals("the multiplier must stay 1 under CLASSIC", 1, qvm.biddingMultiplier.value)
+      assertNotEquals("the pass replayed the round's own deal", beforeHands, dealSnapshot(qvm))
+    }
+    assertEquals("two passes advanced two rounds", 3, qvm.round.value)
+    assertEquals("the dealer rotated twice", "p3", qvm.dealer.value)
+  }
+
+  /**
+   * A pass that consumes the PLANNED final round completes the match instead
+   * of re-dealing into a phantom round: standings bank the running totals (a
+   * cancelled round scores nothing for anyone), the round number stays at its
+   * ceiling so the standings screen's end-of-match state holds, further rounds
+   * are refused, and no new deal happens.
+   */
+  @Test
+  fun aPassAtThePlannedFinalRoundCompletesTheMatch() {
+    val qvm = QuickMatchViewModel()
+    qvm.startMatch(matchSeed = 9L, gameType = GameType.MINI) // baseRounds 10
+    repeat(9) { qvm.nextRound() }
+    assertEquals(10, qvm.round.value)
+
+    val beforeHands = dealSnapshot(qvm)
+    qvm.applyGeneralPass(2)
+
+    val standings = qvm.standings.value
+      ?: error("the final-round pass did not complete the match")
+    assertEquals("the cancelled final round left the match's own totals banked",
+      mapOf("p1" to 0, "p2" to 0, "p3" to 0, "p4" to 0), qvm.totals.value)
+    assertEquals("every seat's last delta is a cancelled round's zero",
+      listOf(0, 0, 0, 0), standings.rows.map { it.lastDelta })
+    assertTrue("a cancelled round is not a sa'ayda", standings.rows.none { it.saaydaBadge })
+
+    assertEquals("the round number must stay at its ceiling", 10, qvm.round.value)
+    assertEquals("the completed match must not deal a fresh hand", beforeHands, dealSnapshot(qvm))
+    qvm.nextRound()
+    assertEquals("rounds are refused after the pass completes the match", 10, qvm.round.value)
+    assertEquals("the dealer must not rotate after the match is complete", "p2", qvm.dealer.value)
   }
 }

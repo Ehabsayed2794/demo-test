@@ -253,6 +253,107 @@ class OnlineMatchViewModelTest {
     }
   }
 
+  /**
+   * S1: the document's scoring mode must reach the auction's own engine
+   * state — not just the session envelope — because the engine derives a
+   * general pass's next-round multiplier from the state's mode (CLASSIC
+   * never escalates).
+   */
+  @Test
+  fun theDocScoringModeSeedsTheBiddingEngineState() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastRoundDoc().copy(
+        currentRound = 1,
+        scoringMode = ScoringMode.CLASSIC,
+      )
+      val vm = makeVm("uid-a", Dispatchers.Main)
+      vm.start("m-classic-state")
+      advanceUntilIdle()
+
+      broadcast("m-classic-state")
+      assertEquals(
+        "the auction state must carry the doc's scoring mode",
+        ScoringMode.CLASSIC,
+        biddingOf(vm.state.value).scoringMode,
+      )
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * BLOCKED (Task A, fix round 2026-10-23) — this test characterizes what
+   * ONLINE CAN DO TODAY, and today no persisted advance exists: a general
+   * pass cannot advance the online match at all, because the pass round's
+   * 0-card archive is denied by firestore.rules (`roundArchive` requires
+   * `cardLog.size() == 52`) and the advance's field allowlist has no key
+   * that could carry the next multiplier (and requires `biddingLog == []`
+   * on the parent doc). Criterion 4 therefore stays blocked on that rules
+   * decision.
+   *
+   * What a delivery CAN testify: a round's biddingLog ending in a general
+   * pass arms the SESSION round's multiplier, in memory, for the round the
+   * document would eventually open — WITHOUT advancing the local round
+   * number and without writing anywhere. A cold start cannot see this armed
+   * value (initAuction seeds from the session round, which no document
+   * field persists — the pre-documented multiplier-restore limitation).
+   * The round stays document-pinned (1); the cancelled bidding state rounds
+   * to match.
+   */
+  @Test
+  fun theGeneralPassDeliveryArmsOnlyTheLocalSessionMultiplierWhileTheOnlineAdvanceStaysBlocked() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      val passLog = buildList {
+        seats.forEach {
+          add(BiddingLogEntry(it, BiddingLogEntry.ACTION_DASH_CALL, declaredDashCall = false, round = 1))
+        }
+        seats.forEach {
+          add(BiddingLogEntry(it, BiddingLogEntry.ACTION_AUCTION_BID, isPass = true, round = 1))
+        }
+      }
+      store.doc = fastRoundDoc().copy(
+        currentRound = 1,
+        biddingLog = passLog,
+        version = 3,
+      )
+      val vm = makeVm("uid-a", Dispatchers.Main)
+      vm.start("m-pass")
+      advanceUntilIdle()
+
+      broadcast("m-pass")
+      val session = sessions.getValue("uid-a")
+      assertEquals(
+        "the session must not advance the round on a pass",
+        1,
+        session.getRound().number,
+      )
+      assertEquals(
+        "the pass did not arm the session round's multiplier",
+        2,
+        session.getRound().multiplier,
+      )
+      assertEquals(
+        "the cancelled auction state keeps the cancelled round's number",
+        1,
+        biddingOf(vm.state.value).round,
+      )
+      assertNull(
+        "the cancelled round waits on nobody",
+        biddingOf(vm.state.value).waitingFor,
+      )
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
   /** Hand the store's current document to every subscriber, then let the
    *  view models' pipelines drain — what a Firestore tick followed by the
    *  collector looks like from the outside. */

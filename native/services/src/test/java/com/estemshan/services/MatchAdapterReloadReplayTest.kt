@@ -15,6 +15,7 @@ import com.estemshan.engine.TableState
 import com.estemshan.engine.emit
 import com.estemshan.engine.initNormalRound
 import com.estemshan.engine.initTable
+import com.estemshan.services.model.BiddingLogEntry
 import com.estemshan.services.model.CardLogEntry
 import com.estemshan.services.model.GameState
 import com.estemshan.services.model.MatchDoc
@@ -24,6 +25,7 @@ import com.estemshan.services.model.StoredCard
 import com.estemshan.services.session.GameSessionPort
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -131,6 +133,68 @@ class MatchAdapterReloadReplayTest {
   ) {
     val callerSeat: String get() = outcome.callerId!!
     val trump: Suit get() = outcome.trump
+  }
+
+  // ── general pass (S1: a8.7 / q51) ─────────────────────────────────
+
+  /**
+   * A delivery whose round's biddingLog ends in four auction passes (after
+   * four dash declines) is a general pass. The adapter must apply it to the
+   * local engine, surface the NEXT round's multiplier on the outcome (the
+   * replayed BiddingState still describes the CANCELLED round — the engine's
+   * own contract), and advance no round itself: arming the round the
+   * document will eventually open is the consumer's job, and today NO host
+   * advance exists at all — the online round transition is blocked on the
+   * rules decision (Task A, fix round 2026-10-23), so "no advance" is the
+   * whole truth.
+   */
+  @Test
+  fun generalPassReplaySurfacesTheNextMultiplierAndKeepsTheCancelledRound() {
+    val session = FakeGameSession()
+    session.bidding = initNormalRound(1, seats.first(), seats)
+    val adapter = MatchAdapter(session)
+
+    val log = buildList {
+      seats.forEach {
+        add(BiddingLogEntry(it, BiddingLogEntry.ACTION_DASH_CALL, declaredDashCall = false, round = 1))
+      }
+      seats.forEach {
+        add(BiddingLogEntry(it, BiddingLogEntry.ACTION_AUCTION_BID, isPass = true, round = 1))
+      }
+    }
+    val doc = MatchDoc(
+      roomId = "room-pass",
+      players = seatUids.values.toList(),
+      status = MatchDoc.STATUS_STARTING,
+      currentRound = 1,
+      maxRounds = 18,
+      extendedRounds = emptyList(),
+      dealer = seatUids.getValue(seats.first()),
+      turn = null,
+      seats = seatUids,
+      version = 7,
+      biddingOpen = true,
+      bids = emptyMap(),
+      lastBidSeat = null,
+      cardLog = emptyList(),
+      lastCardSeat = null,
+      cardPhase = null,
+      biddingLog = log,
+      gameState = GameState(initialized = true, dealtRound = 1),
+    )
+
+    val outcome = adapter.applyRemoteBiddingAction("match-pass", doc)
+
+    assertTrue("the pass's fourth auction pass was not applied to the engine", outcome.applied)
+    assertEquals(
+      "the pass did not surface the next round's multiplier",
+      2,
+      outcome.generalPassMultiplier,
+    )
+    assertNull("a general pass closes no auction", outcome.outcome)
+    val replayed = session.bidding!!
+    assertEquals("the adapter must not advance the round — no host advance exists yet", 1, replayed.round)
+    assertNull("the cancelled round waits on nobody", replayed.waitingFor)
   }
 
   // ── rigged determinism ─────────────────────────────────────────────

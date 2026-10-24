@@ -556,11 +556,19 @@ object Settlement {
   }
 
   /**
-   * Replays one round's converged auction (logged intents) plus its
-   * archived estimates (fed as FinalEstimate intents in engine turn
-   * order) through the real bidding engine, then scores the replayed
-   * cardLog through the real scoring engine. Any engine rejection, any
-   * unconsumed archive value, or any malformed trick fails closed (null).
+   * Replays one round's converged history (logged intents, then its archived
+   * estimates fed as FinalEstimate intents in engine turn order) through the
+   * real bidding engine and, when the round actually produced play, through
+   * the real scoring engine. Any engine rejection, any unconsumed archive
+   * value, or any malformed trick fails closed (null).
+   *
+   * S1 (A8.7 / Q51): a round whose auction ALL passed is a pure pass archive
+   * — no cards, no estimates, and its only log ends in the pass. The island
+   * round is NOT scored (deltas all zero) and returns the doubled multiplier
+   * the engine derived for the round following it, so recompute's chain
+   * scores that round at ×2 → ×4 → … under Normal and ×1 under Classic. The
+   * same-round re-redeal this function performed before S1 is gone: entries
+   * beyond the pass in this round's own log belong to no S1 round and fail.
    */
   fun scoreRound(
     match: ConvergedMatch,
@@ -571,10 +579,13 @@ object Settlement {
   ): ScoredRound? {
     val order = match.order
     val fast = isFastRound(archived.round, match.gameType)
+    // The engine derives a pass's next-multiplier from the mode (CLASSIC
+    // never escalates) — thread the match's own mode, never the default.
+    val scoringMode = if (match.classic) ScoringMode.CLASSIC else ScoringMode.NORMAL
     var state = if (fast) {
-      initFastRound(archived.round, dealerSeat, order, multiplier, match.gameType)
+      initFastRound(archived.round, dealerSeat, order, multiplier, match.gameType, scoringMode)
     } else {
-      initNormalRound(archived.round, dealerSeat, order, multiplier, match.gameType)
+      initNormalRound(archived.round, dealerSeat, order, multiplier, match.gameType, scoringMode)
     }
 
     var outcome: BiddingOutcome? = null
@@ -642,12 +653,17 @@ object Settlement {
           break
         }
         is EmitResult.GeneralPass -> {
-          // Redeal: the same round restarts carrying the doubled
-          // multiplier the engine computed. General passes only leave
-          // the auction phase, which fast rounds never enter.
+          // S1 (A8.7 / Q51): the pass CANCELS this round — its archive may
+          // carry no cards, no estimates, and nothing after the pass. The
+          // round itself is unscored; the next round starts at the doubled
+          // multiplier the engine derived (Classic: 1). General passes only
+          // leave the auction phase, which fast rounds never enter.
           if (fast) return null
-          state = initNormalRound(archived.round, dealerSeat, order, emitted.doubledMultiplier, match.gameType)
-          index++
+          if (archived.plays.isNotEmpty()) return null
+          if (index != archived.actions.size - 1) return null
+          if (archived.estimates == null) return null
+          if (archived.estimates.isNotEmpty()) return null
+          return ScoredRound(order.associateWith { 0 }, emitted.doubledMultiplier)
         }
         is EmitResult.Applied -> {
           state = emitted.state

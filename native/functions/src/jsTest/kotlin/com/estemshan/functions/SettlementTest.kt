@@ -623,6 +623,87 @@ class SettlementTest {
     assertEquals(listOf("p2", "p3"), decision.recomputed.winnerIds)
   }
 
+  // ── general pass (S1: a8.7 / q51) ─────────────────────────────────
+
+  @Test
+  fun generalPassArchiveIsUnscoredAndArmsTheNextMultiplier() {
+    // All four seats decline the Dash Call and pass the auction: the round
+    // is cancelled, its archive holds no cards and no estimates, and it
+    // banks nothing while arming the engine's doubled multiplier for the
+    // round after it.
+    val actions = listOf(
+      dash("p1", false, 1), dash("p2", false, 1), dash("p3", false, 1), dash("p4", false, 1),
+      auctionPass("p1", 1), auctionPass("p2", 1), auctionPass("p3", 1), auctionPass("p4", 1),
+    )
+    val parsed = Settlement.parseArchive("1", archiveFields(1, emptyList(), actions, emptyMap<String, Int>()))
+      ?: throw AssertionError("the pass archive did not parse")
+    val scored = Settlement.scoreRound(shellMatch(), parsed, "p1", 1, 8)
+      ?: error("a pass archive must settle as an unscored round")
+
+    assertEquals(mapOf("p1" to 0, "p2" to 0, "p3" to 0, "p4" to 0), scored.deltas)
+    assertEquals(2, scored.nextMultiplier)
+  }
+
+  @Test
+  fun classicGeneralPassArchivesUnscoredAtMultiplier1() {
+    val actions = listOf(
+      dash("p1", false, 1), dash("p2", false, 1), dash("p3", false, 1), dash("p4", false, 1),
+      auctionPass("p1", 1), auctionPass("p2", 1), auctionPass("p3", 1), auctionPass("p4", 1),
+    )
+    val parsed = Settlement.parseArchive("1", archiveFields(1, emptyList(), actions, emptyMap<String, Int>()))
+      ?: throw AssertionError("the pass archive did not parse")
+    val scored = Settlement.scoreRound(shellMatch().copy(classic = true), parsed, "p1", 1, 8)
+      ?: error("a pass archive must settle as an unscored round")
+
+    assertEquals(mapOf("p1" to 0, "p2" to 0, "p3" to 0, "p4" to 0), scored.deltas)
+    assertEquals(1, scored.nextMultiplier)
+  }
+
+  @Test
+  fun aPassedRoundThenAPlayedRoundChainsTheMultiplier() {
+    // A two-round NORMAL match. Round 1: everybody passes — the archive is
+    // empty, settles to zero deltas, and recompute's chain carries the
+    // doubled multiplier into round 2. Round 2: the round-1 golden auction
+    // (caller p1 5♠, p2 sole miss) — at ×2 instead of ×1, so every delta
+    // doubles: 50/−22/24/28.
+    val r1Actions = listOf(
+      dash("p4", false, 1), dash("p1", false, 1), dash("p2", false, 1), dash("p3", false, 1),
+      auctionPass("p4", 1), auctionPass("p1", 1), auctionPass("p2", 1), auctionPass("p3", 1),
+    )
+    val r1 = Settlement.parseArchive("1", archiveFields(1, emptyList(), r1Actions, emptyMap<String, Int>()))
+      ?: throw AssertionError("the pass archive did not parse")
+
+    val parts = round1Parts()
+    val r2Actions = listOf(
+      dash("p1", false, 2), dash("p2", false, 2), dash("p3", false, 2), dash("p4", false, 2),
+      auctionBid("p1", 5, "SPADES", 2),
+      auctionPass("p2", 2), auctionPass("p3", 2), auctionPass("p4", 2),
+      confirm("p1", 5, "SPADES", 2),
+    )
+    val r2 = Settlement.parseArchive(
+      "2",
+      archiveFields(2, playsFor(parts.winners, "SPADES", 2, "p1"), r2Actions, parts.estimates),
+    ) ?: throw AssertionError("the round-2 archive did not parse")
+    // Self-validating fixture: the round-2 cards must replay to the golden wins.
+    assertEquals(
+      parts.winners.groupingBy { it }.eachCount(),
+      Settlement.replayTricks(shellMatch(), r2, Suit.SPADES)!!.filterValues { it > 0 },
+    )
+
+    // dealerSeatFinal u1 (p1) walks back one step for round 1: the pass
+    // archive's dash order must start at p4, the round's real dealer.
+    val fields = matchFields(
+      completedRound = 2,
+      maxRounds = 2,
+      finalScores = mapOf("p1" to 50, "p2" to -22, "p3" to 24, "p4" to 28),
+      winnerIds = listOf("p1"),
+    )
+    val decision = Settlement.recompute(converged(listOf(r1, r2), fields))
+    assertTrue(decision is SettleDecision.Agreed, "expected Agreed but was $decision")
+    assertEquals(mapOf("p1" to 50, "p2" to -22, "p3" to 24, "p4" to 28), decision.recomputed.finalScores)
+    assertEquals(listOf("p1"), decision.recomputed.winnerIds)
+  }
+
   // ── fail-closed ───────────────────────────────────────────────────
 
   @Test
