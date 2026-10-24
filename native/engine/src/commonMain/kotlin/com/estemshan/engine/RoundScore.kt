@@ -68,6 +68,8 @@ data class RoundExtension(val extend: Boolean, val reason: ExtensionReason? = nu
  * alone. Only the Caller themselves holds this role; a matching With
  * player stays WIZZ/WIZZ_RISK regardless of the Caller's Super status.
  */
+const val SUPER_CALL_MIN_BID = 8
+
 fun normalRoleFor(
   bidType: BidType,
   bidAmount: Int,
@@ -77,7 +79,7 @@ fun normalRoleFor(
 ): Role {
   if (bidType == BidType.DASHCALL) return Role.DASH_CALL
   if (bidType == BidType.DASH) return Role.REG_DASH
-  if (isCaller && bidAmount >= 8) return Role.SUPER_CALL
+  if (isCaller && bidAmount >= SUPER_CALL_MIN_BID) return Role.SUPER_CALL
   if (isWith && isRisk) return Role.WIZZ_RISK
   if (isCaller) return Role.CALLER
   if (isWith) return Role.WIZZ
@@ -213,7 +215,18 @@ fun calculateRoundScore(input: RoundScoreInput): RoundScoreResult {
  * ALREADY-COMPUTED facts, never re-deriving Super legality or success.
  *
  * In-window ([firstFastRound]..[baseRounds]): a Sa'ayda always extends;
- * a Super Call extends only when the Caller succeeded.
+ * a Super Call extends only when the Caller succeeded. A Super Call is
+ * the engine's amount rule alone ([SUPER_CALL_MIN_BID]+ locked tricks,
+ * the same rule as [normalRoleFor]) — NOT the round number. Offline every
+ * in-window round is a NORMAL auction round whose callerId is the ordinary
+ * auction winner (typically 4–7 locked tricks), so the caller's locked
+ * number is the only honest discriminator; a caller below [SUPER_CALL_MIN_BID]
+ * never extends, whatever the round and trump.
+ *
+ * [callerBidAmount] carries that number. `null` (the default) means "not
+ * supplied" and keeps the legacy fast-round reading that a non-null caller
+ * already IS the Super signal — the contract the online caller, which does
+ * not pass one yet, still compiles against byte-identically.
  *
  * Post-window (past [baseRounds]): a Sa'ayda in the ACTUAL current final
  * round ([round] == [maxRounds]) extends and repeats until a final round
@@ -237,13 +250,16 @@ fun computeRoundExtension(
   callerSucceeded: Boolean,
   isSaayda: Boolean,
   gameType: GameType = GameType.FULL,
+  callerBidAmount: Int? = null,
 ): RoundExtension {
   // In-window: Sa'ayda always extends; Super Call only if the Caller succeeded.
   if (round in gameType.firstFastRound..gameType.baseRounds) {
     if (isSaayda) return RoundExtension(true, ExtensionReason.SAAYDA)
-    // In a fast round callerId is ONLY populated by the Super Call path —
-    // a non-null caller here already IS the Super signal, not a re-derivation.
-    if (callerId != null && callerSucceeded && trump != fixedTrumpFor(round, gameType)) {
+    // The Super Call is decided by the locked number (the amount rule above),
+    // never by the round number: offline, an in-window caller is just the
+    // auction winner. An unknown amount (null) keeps the legacy assumption.
+    val isSuperCall = callerBidAmount?.let { it >= SUPER_CALL_MIN_BID } ?: true
+    if (callerId != null && callerSucceeded && trump != fixedTrumpFor(round, gameType) && isSuperCall) {
       return RoundExtension(true, ExtensionReason.SUPER_CALL)
     }
     return RoundExtension(false)

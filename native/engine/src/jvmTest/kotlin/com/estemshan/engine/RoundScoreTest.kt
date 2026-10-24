@@ -414,6 +414,82 @@ class RoundScoreTest {
     )
   }
 
+  // ── D1: the Super Call extension is decided by the LOCKED NUMBER, not the round number ──
+
+  @Test
+  fun normalInWindowCallerBelowSuperBidNeverExtends() {
+    // THE D1 pin: an ordinary auction winner — locked 7, under a trump they
+    // chose themselves, succeeding — inside the window. Keying on the round
+    // number alone scored exactly this as a Super Call and extended.
+    assertEquals(
+      RoundExtension(false),
+      computeRoundExtension(15, 18, "p3", Suit.HEARTS, callerSucceeded = true, isSaayda = false, callerBidAmount = 7),
+    )
+    // Both window edges behave the same (14 fixed SANS, 18 fixed CLUBS).
+    assertEquals(
+      RoundExtension(false),
+      computeRoundExtension(14, 18, "p1", Suit.SPADES, callerSucceeded = true, isSaayda = false, callerBidAmount = 4),
+    )
+    assertEquals(
+      RoundExtension(false),
+      computeRoundExtension(18, 18, "p1", Suit.HEARTS, callerSucceeded = true, isSaayda = false, callerBidAmount = 7),
+    )
+    // MINI's window too (round 8 fixed HEARTS, override SPADES).
+    assertEquals(
+      RoundExtension(false),
+      computeRoundExtension(8, 10, "p3", Suit.SPADES, callerSucceeded = true, isSaayda = false, gameType = GameType.MINI, callerBidAmount = 5),
+    )
+  }
+
+  @Test
+  fun genuineSuperCallByBidAmountExtendsOnlyOnSuccess() {
+    // Locked 8 under a replacement trump, caller made it → extends.
+    assertEquals(
+      RoundExtension(true, ExtensionReason.SUPER_CALL),
+      computeRoundExtension(15, 18, "p3", Suit.HEARTS, callerSucceeded = true, isSaayda = false, callerBidAmount = 8),
+    )
+    // The same call with the Caller failing extends nothing (Q3).
+    assertEquals(
+      RoundExtension(false),
+      computeRoundExtension(15, 18, "p3", Suit.HEARTS, callerSucceeded = false, isSaayda = false, callerBidAmount = 8),
+    )
+    // A locked 8 at the round's FIXED trump is no trump override → no extend.
+    assertEquals(
+      RoundExtension(false),
+      computeRoundExtension(15, 18, "p3", Suit.SPADES, callerSucceeded = true, isSaayda = false, callerBidAmount = 8),
+    )
+    // MINI: a locked 9 in round 8 (fixed HEARTS) under SPADES → extends.
+    assertEquals(
+      RoundExtension(true, ExtensionReason.SUPER_CALL),
+      computeRoundExtension(8, 10, "p3", Suit.SPADES, callerSucceeded = true, isSaayda = false, gameType = GameType.MINI, callerBidAmount = 9),
+    )
+  }
+
+  @Test
+  fun unknownBidAmountKeepsTheLegacyAssumptionForTheOnlineCaller() {
+    // The online call site passes no amount yet (a known gap, later lane):
+    // a non-null caller at an overridden trump keeps the legacy reading.
+    assertEquals(
+      RoundExtension(true, ExtensionReason.SUPER_CALL),
+      computeRoundExtension(15, 18, "p3", Suit.HEARTS, callerSucceeded = true, isSaayda = false),
+    )
+  }
+
+  @Test
+  fun superBidOutsideTheWindowNeverExtends() {
+    // Before MINI's window (round 5) and past FULL's (round 19, fixed SANS,
+    // override HEARTS isolates the window guard) — even a genuine 8+ Caller
+    // success at an overridden trump adds nothing.
+    assertEquals(
+      RoundExtension(false),
+      computeRoundExtension(5, 10, "p3", Suit.HEARTS, callerSucceeded = true, isSaayda = false, gameType = GameType.MINI, callerBidAmount = 8),
+    )
+    assertEquals(
+      RoundExtension(false),
+      computeRoundExtension(19, 19, "p3", Suit.HEARTS, callerSucceeded = true, isSaayda = false, callerBidAmount = 8),
+    )
+  }
+
   // ── Role mapping pins ──
   @Test
   fun roleMapping() {
