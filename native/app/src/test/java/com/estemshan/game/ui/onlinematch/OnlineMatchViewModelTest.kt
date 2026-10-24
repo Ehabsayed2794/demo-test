@@ -367,6 +367,57 @@ class OnlineMatchViewModelTest {
   }
 
   /**
+   * O-19 gate 7 — a General Pass after a Sa'ayda continues from the value
+   * the Sa'ayda armed in the document, not from ×1. The document opens the
+   * round at ×2 (what a Sa'ayda at ×1 writes), so the cancelled round's
+   * ladder step is ×2 → ×4: both the engine's replay and the store's own
+   * transaction read the persisted 2, never a defaulted 1.
+   */
+  @Test
+  fun aPassAfterASaaydaContinuesFromThePersistedMultiplier() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      val passLog = buildList {
+        seats.forEach {
+          add(BiddingLogEntry(it, BiddingLogEntry.ACTION_DASH_CALL, declaredDashCall = false, round = 1))
+        }
+        seats.forEach {
+          add(BiddingLogEntry(it, BiddingLogEntry.ACTION_AUCTION_BID, isPass = true, round = 1))
+        }
+      }
+      store.doc = fastRoundDoc().copy(
+        currentRound = 1,
+        currentMultiplier = 2,
+        biddingLog = passLog,
+        version = 3,
+      )
+      val vm = makeVm("uid-a", Dispatchers.Main)
+      vm.start("m-pass-after-saayda")
+      advanceUntilIdle()
+
+      broadcast("m-pass-after-saayda")
+
+      assertEquals(1, store.passAdvanceCalls.get())
+      assertEquals(2, store.doc.currentRound)
+      assertEquals(
+        "the pass must ladder from the Sa'ayda's persisted ×2, not from ×1",
+        4,
+        store.doc.currentMultiplier,
+      )
+      assertEquals(
+        "the next auction the client plays is armed at the laddered value",
+        4,
+        sessions.getValue("uid-a").getRound().multiplier,
+      )
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
    * O-19 gate 4 (a) — a cold start arms the auction at the document's
    * persisted multiplier. Before Option B this client started at x1 and a
    * mid-escalation round scored at the wrong value.
@@ -2394,6 +2445,10 @@ class OnlineMatchViewModelTest {
   /**
    * Round 14 Sa'ayda online: scoreAndAdvance sees isSaayda=true, computeRoundExtension
    * extends (in window), store.extendMatchRounds is called, maxRounds → 19.
+   *
+   * O-19 gate 7: the same advance must persist the Sa'ayda's armed multiplier,
+   * so a client that cold-starts after the extension replays round 15 at ×2 —
+   * the extension alone is not the continuity proof.
    */
   @Test
   fun onlineSaaydaRound14ExtendsAndPersists() = runTest {
@@ -2411,6 +2466,14 @@ class OnlineMatchViewModelTest {
       assertEquals("round-14 Sa'ayda extends online", 1, store.extendCalls.get())
       assertEquals("maxRounds raised to 19", 19, store.doc.maxRounds)
       assertEquals("extendedRounds records round 14", listOf(14), store.doc.extendedRounds)
+
+      // And one advance write, carrying the Sa'ayda ladder step ×1 → ×2.
+      assertEquals("the Sa'ayda advanced the round", 15, store.doc.currentRound)
+      assertEquals(
+        "the Sa'ayda's ×2 is persisted, not only held by this client",
+        2,
+        store.doc.currentMultiplier,
+      )
     } finally {
       Dispatchers.resetMain()
     }

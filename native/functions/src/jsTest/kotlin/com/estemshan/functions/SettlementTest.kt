@@ -852,6 +852,78 @@ class SettlementTest {
     assertEquals(Settlement.Reason.HISTORY_CORRUPT, stale.reason)
   }
 
+  /**
+   * O-19 gate 7 — a Sa'ayda after a General Pass ladders from the passed
+   * round's armed value, and the document carries the value the Sa'ayda then
+   * armed. Round 1 all-passes at ×1 → ×2; round 2 is a Sa'ayda entered at ×2,
+   * so it zeroes the round but escalates ×2 → ×4 (Sa'ayda's own ladder adds 2
+   * to the value it was entered at, and ×1→×2 is the first step); round 3 is
+   * the golden round played at ×4 — 100/−44/48/56, four times the ×1 golden.
+   * Had the Sa'ayda restarted from a defaulted ×1, round 3 would settle at
+   * ×2 and the claimed totals could not be Agreed.
+   */
+  @Test
+  fun aSaaydaAfterAGeneralPassLaddersFromThePersistedValue() {
+    val r1Actions = listOf(
+      dash("p3", false, 1), dash("p4", false, 1), dash("p1", false, 1), dash("p2", false, 1),
+      auctionPass("p3", 1), auctionPass("p4", 1), auctionPass("p1", 1), auctionPass("p2", 1),
+    )
+    val r1 = Settlement.parseArchive("1", archiveFields(1, emptyList(), r1Actions, emptyMap<String, Int>()))
+      ?: throw AssertionError("the round-1 pass archive did not parse")
+
+    // Round 2, dealer p4: caller p4 4♠, every seat misses → Sa'ayda. Walk-back
+    // from the marker (p1 at round 3) makes p4 the round-2 dealer, so its dash
+    // window and its first trick both open on p4.
+    val r2Winners = listOf("p4", "p4", "p1", "p2", "p2", "p2", "p2", "p3", "p3", "p3", "p3", "p3", "p3")
+    val r2Actions = listOf(
+      dash("p4", false, 2), dash("p1", false, 2), dash("p2", false, 2), dash("p3", false, 2),
+      auctionBid("p4", 4, "SPADES", 2),
+      auctionPass("p1", 2), auctionPass("p2", 2), auctionPass("p3", 2),
+      confirm("p4", 4, "SPADES", 2),
+    )
+    val r2 = archived(
+      2, r2Winners, "SPADES", r2Actions, mapOf("p1" to 2, "p2" to 2, "p3" to 3), leaderId = "p4",
+    )
+
+    // Round 3, dealer p1: the round-1 golden auction, replayed at ×4.
+    val parts = round1Parts()
+    val r3Actions = listOf(
+      dash("p1", false, 3), dash("p2", false, 3), dash("p3", false, 3), dash("p4", false, 3),
+      auctionBid("p1", 5, "SPADES", 3),
+      auctionPass("p2", 3), auctionPass("p3", 3), auctionPass("p4", 3),
+      confirm("p1", 5, "SPADES", 3),
+    )
+    val r3 = archived(3, parts.winners, "SPADES", r3Actions, parts.estimates)
+
+    val fields = matchFields(
+      completedRound = 3,
+      maxRounds = 3,
+      finalScores = mapOf("p1" to 100, "p2" to -44, "p3" to 48, "p4" to 56),
+      winnerIds = listOf("p1"),
+      currentMultiplier = 4,
+    )
+    val decision = Settlement.recompute(converged(listOf(r1, r2, r3), fields))
+    assertTrue(decision is SettleDecision.Agreed, "expected Agreed but was $decision")
+    assertEquals(mapOf("p1" to 100, "p2" to -44, "p3" to 48, "p4" to 56), decision.recomputed.finalScores)
+
+    // A document that kept only the pass's ×2 — the Sa'ayda's step missing —
+    // contradicts its own archives. Reported, never replayed from either side.
+    val stale = Settlement.recompute(
+      converged(
+        listOf(r1, r2, r3),
+        matchFields(
+          completedRound = 3,
+          maxRounds = 3,
+          finalScores = mapOf("p1" to 100, "p2" to -44, "p3" to 48, "p4" to 56),
+          winnerIds = listOf("p1"),
+          currentMultiplier = 2,
+        ),
+      ),
+    )
+    assertIs<SettleDecision.Failed>(stale)
+    assertEquals(Settlement.Reason.HISTORY_CORRUPT, stale.reason)
+  }
+
   @Test
   fun anIllegalDocumentedMultiplierRefusesTheMatchDocument() {
     // Out of the stored range, below it, or not a number: the document shape
