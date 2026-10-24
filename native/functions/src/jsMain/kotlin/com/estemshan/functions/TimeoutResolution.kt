@@ -19,6 +19,7 @@ import com.estemshan.engine.RoundCfg
 import com.estemshan.engine.Suit
 import com.estemshan.engine.TablePhase
 import com.estemshan.engine.TableState
+import com.estemshan.engine.biddingOrder
 import com.estemshan.engine.bot.BotPersonality
 import com.estemshan.engine.bot.BotTier
 import com.estemshan.engine.bot.BidBrain
@@ -963,9 +964,39 @@ object TimeoutResolution {
       initNormalRound(round, dealerSeat, order, ROUND_MULTIPLIER_DEFAULT, gameType)
     }
 
+    val stored = strMap(fields["bids"])?.mapNotNull { (seat, value) ->
+      num(value)?.let { seat to it }
+    }?.toMap().orEmpty()
+
     val logged = loggedIntents(fields) ?: return BiddingReplay(null, null)
     for (entry in logged) {
       if (entry.seat !in order) return BiddingReplay(null, null)
+      if (fast && entry is LoggedIntent.Confirm &&
+        state.subPhase == BiddingPhase.ESTIMATES
+      ) {
+        // Fast Super Call. A live document keeps each WIPED seat's
+        // PRE-confirm estimate in bids/: submitBid is one value per seat and
+        // CONFIRM does not reopen bidding (MatchService.submitBid;
+        // firestore.rules), so there is no authoritative post-confirm value
+        // to feed. Only a caller first in bidding order completes at CONFIRM
+        // without a re-declaration; anything else fails closed rather than
+        // replaying a stale number as if it were final. Archives settle
+        // through Settlement.scoreRound, where the values are final.
+        if (biddingOrder(state).indexOf(entry.seat) > 0) {
+          return BiddingReplay(null, null)
+        }
+        when (val emitted = replayFastSuperConfirm(
+          state, entry.seat, entry.tricks, entry.suit, stored,
+        )) {
+          is EmitResult.Completed -> return BiddingReplay(emitted.state, emitted.outcome)
+          is EmitResult.GeneralPass -> return BiddingReplay(null, null)
+          is EmitResult.Applied -> {
+            state = emitted.state
+            continue
+          }
+          is EmitResult.Rejected -> return BiddingReplay(null, null)
+        }
+      }
       val intent = when (entry) {
         is LoggedIntent.Dash -> BiddingIntent.DashCallDecision(entry.seat, entry.declared)
         is LoggedIntent.AuctionPass -> BiddingIntent.AuctionBid(entry.seat, isPass = true)
@@ -990,9 +1021,6 @@ object TimeoutResolution {
     // The log did not close the auction; continue from the doc's committed
     // estimates in the engine's own turn order until it closes or a seat is
     // waiting on one. This is seedStoredEstimates' own walk.
-    val stored = strMap(fields["bids"])?.mapNotNull { (seat, value) ->
-      num(value)?.let { seat to it }
-    }?.toMap().orEmpty()
     var guard = 0
     while (guard <= order.size) {
       guard++

@@ -71,6 +71,21 @@ class BiddingTest {
     return emit(s, intent)
   }
 
+  /** Drives a fast round whose estimates never trigger a Super Call (<8). */
+  private fun completeFastEstimates(s: BiddingState, values: Map<String, Int>): BiddingState {
+    var cur = s
+    repeat(s.seats.size) {
+      assertEquals(BiddingPhase.ESTIMATES, cur.subPhase)
+      val seat = cur.waitingFor ?: throw AssertionError("waitingFor null mid-ESTIMATES")
+      when (val r = estimate(cur, seat, values.getValue(seat))) {
+        is EmitResult.Applied -> cur = r.state
+        is EmitResult.Completed -> cur = r.state
+        else -> throw AssertionError("unexpected result")
+      }
+    }
+    return cur
+  }
+
   // ── The auction opens on the dealer, even when the dealer isn't seats[0] ──
   @Test
   fun auctionOpensOnTheDealerNotOnSeatsZero() {
@@ -217,9 +232,9 @@ class BiddingTest {
     assertEquals(Suit.SPADES, outcome.trump)
   }
 
-  // ── A2: fast-round tie breaks to the earliest bidder in dealer order ──
+  // ── A8.1: fast-round exact duplicate — first declarer Caller, later With ──
   @Test
-  fun fastTieBreaksToEarliestBidder() {
+  fun fastExactDuplicateTieGoesToFirstDeclarer() {
     var s = fast(16, "p3")
     val vals = mapOf("p3" to 7, "p4" to 5, "p1" to 7, "p2" to 7)
     for (seat in listOf("p3", "p4", "p1", "p2")) {
@@ -231,8 +246,228 @@ class BiddingTest {
       }
     }
     assertEquals(BiddingPhase.DONE, s.subPhase)
+    // All three 7s were declared under the round's fixed trump (HEARTS), so
+    // they are exact number-and-suit duplicates. The first declarer (p3, in
+    // dealer order) is Caller; p1 and p2 are With. p4's 5 is not With.
     assertEquals("p3", s.callerId)
     assertEquals(listOf("p1", "p2"), s.withPlayers)
+    assertEquals(Suit.HEARTS, s.bids.getValue("p3").suit)
+    assertEquals(Suit.HEARTS, s.bids.getValue("p1").suit)
+    assertEquals(Suit.HEARTS, s.bids.getValue("p2").suit)
+  }
+
+  // ── A8.1 symmetry: the first declarer follows the rotated bidding order ──
+  @Test
+  fun fastExactDuplicateIsSymmetricUnderReseating() {
+    // Same two seats and the same numbers; only the dealer (and therefore the
+    // declaration order) changes. The first declarer is Caller each time.
+    val values = mapOf("p1" to 5, "p2" to 2, "p3" to 5, "p4" to 0)
+
+    val dealerP1 = completeFastEstimates(fast(15, "p1"), values)
+    assertEquals(listOf("p1", "p2", "p3", "p4"), biddingOrder(fast(15, "p1")))
+    assertEquals("p1", dealerP1.callerId)
+    assertEquals(listOf("p3"), dealerP1.withPlayers)
+
+    val dealerP3 = completeFastEstimates(fast(15, "p3"), values)
+    assertEquals(listOf("p3", "p4", "p1", "p2"), biddingOrder(fast(15, "p3")))
+    assertEquals("p3", dealerP3.callerId)
+    assertEquals(listOf("p1"), dealerP3.withPlayers)
+  }
+
+  // ── A6.10/A8.1: final With is recomputed from number + FINAL trump ──
+  @Test
+  fun fastSuperCallRecomputesWithFromFinalNumberAndTrump() {
+    var s = fast(15, "p1") // fixed SPADES
+    // p3 and p4 both declare 8 under the fixed trump: p3 is the first
+    // declarer, so p3 is the provisional Caller and p4 the provisional With.
+    for ((seat, v) in listOf("p1" to 4, "p2" to 5, "p3" to 8, "p4" to 8)) {
+      assertEquals(seat, s.waitingFor)
+      when (val r = estimate(s, seat, v)) {
+        is EmitResult.Applied -> s = r.state
+        is EmitResult.Completed -> throw AssertionError("should route to CONFIRM")
+        else -> throw AssertionError("unexpected result")
+      }
+    }
+    assertEquals(BiddingPhase.CONFIRM, s.subPhase)
+    assertEquals("p3", s.callerId)
+    assertEquals(listOf("p4"), s.withPlayers)
+
+    // The Super Call replaces SPADES with HEARTS.
+    s = confirm(s, "p3", 8, Suit.HEARTS)
+    assertEquals(BiddingPhase.ESTIMATES, s.subPhase)
+    assertEquals("p1", s.waitingFor)
+    assertEquals(Bid(BidType.TRICKS, 8, Suit.HEARTS), s.bids.getValue("p3"))
+    // p4 declared before the Super Call and is not wiped by the engine's
+    // A6.11 partial reset, so its 8 stays under the old trump.
+    assertEquals(Bid(BidType.TRICKS, 8, Suit.SPADES), s.bids.getValue("p4"))
+    assertTrue("pre-super 8♠ is not With under ♥", s.withPlayers.isEmpty())
+
+    // p1 re-declares 8 under the final trump: an exact duplicate of the
+    // Super Caller's number+suit, therefore With. p2 stays low.
+    s = applied(estimate(s, "p1", 8))
+    var outcome: BiddingOutcome? = null
+    when (val r = estimate(s, "p2", 2)) {
+      is EmitResult.Completed -> {
+        s = r.state
+        outcome = r.outcome
+      }
+      else -> throw AssertionError("p2 should complete the round")
+    }
+    assertEquals(BiddingPhase.DONE, s.subPhase)
+    assertEquals("p3", s.callerId)
+    // p1 (8♥) is With. p4's 8♠ has the right number but the replaced suit,
+    // so it is NOT With (A6.10/A7.2).
+    assertEquals(listOf("p1"), s.withPlayers)
+    val o = outcome ?: throw AssertionError("never completed")
+    assertEquals("p3", o.callerId)
+    assertEquals(listOf("p1"), o.withPlayers)
+    assertEquals(Suit.HEARTS, o.trump)
+    assertEquals(mapOf("p1" to 8, "p2" to 2, "p3" to 8, "p4" to 8), o.estimates)
+  }
+
+  // ── A6.10: confirm with no pre-super seats must not reuse the 8+ set ──
+  @Test
+  fun fastSuperCallConfirmRecomputesWithWhenNoSeatsAreWiped() {
+    var s = fast(15, "p1") // dealer p1, so the Super Caller is first in order
+    for ((seat, v) in listOf("p1" to 8, "p2" to 8, "p3" to 4, "p4" to 5)) {
+      assertEquals(seat, s.waitingFor)
+      when (val r = estimate(s, seat, v)) {
+        is EmitResult.Applied -> s = r.state
+        is EmitResult.Completed -> throw AssertionError("should route to CONFIRM")
+        else -> throw AssertionError("unexpected result")
+      }
+    }
+    // Both 8s are 8♠ exact duplicates, so p1 is Caller and p2 is With
+    // provisionally. p1 then confirms the same number under HEARTS.
+    assertEquals("p1", s.callerId)
+    assertEquals(listOf("p2"), s.withPlayers)
+
+    val result = emit(s, BiddingIntent.ConfirmCall("p1", 8, Suit.HEARTS))
+    val completed = result as? EmitResult.Completed
+      ?: throw AssertionError("confirm with no pre-super seats should complete, got $result")
+    s = completed.state
+    assertEquals(BiddingPhase.DONE, s.subPhase)
+    assertEquals("p1", s.callerId)
+    // p2's 8 was declared under SPADES, not the final HEARTS: not With.
+    assertTrue("8♠ must not be With under the final ♥ trump", s.withPlayers.isEmpty())
+    assertTrue(completed.outcome.withPlayers.isEmpty())
+    assertEquals(Suit.HEARTS, completed.outcome.trump)
+    assertEquals(mapOf("p1" to 8, "p2" to 8, "p3" to 4, "p4" to 5), completed.outcome.estimates)
+  }
+
+  // ── A6.10: higher number wins the Super Call, lower number is not With ──
+  @Test
+  fun fastSuperCallHigherNumberWinsWhateverTheSuit() {
+    var s = fast(15, "p1")
+    for ((seat, v) in listOf("p1" to 8, "p2" to 9, "p3" to 4, "p4" to 5)) {
+      assertEquals(seat, s.waitingFor)
+      when (val r = estimate(s, seat, v)) {
+        is EmitResult.Applied -> s = r.state
+        is EmitResult.Completed -> throw AssertionError("should route to CONFIRM")
+        else -> throw AssertionError("unexpected result")
+      }
+    }
+    assertEquals(BiddingPhase.CONFIRM, s.subPhase)
+    assertEquals("p2", s.callerId)
+    // With needs the exact winning number: p1's 8 is not With at 9.
+    assertTrue(s.withPlayers.isEmpty())
+  }
+
+  // ── A7.2/A8.1 helper: number > suit > declaration order ──
+  @Test
+  fun fastCallHigherNumberBeatsStrongerSuit() {
+    val call = resolveFastCall(
+      listOf(
+        FastDeclaration("p1", 8, Suit.HEARTS),
+        FastDeclaration("p2", 9, Suit.CLUBS),
+      ),
+    )
+    assertEquals("p2", call.callerId)
+    assertTrue(call.withPlayers.isEmpty())
+  }
+
+  @Test
+  fun fastCallEqualNumberUsesSuitHierarchyNotSeatOrder() {
+    // A7.2's worked example: 8♠ beats 8♥ even though the ♥ seat declared
+    // first. The losing equal-number seat is NOT With (different suit).
+    val call = resolveFastCall(
+      listOf(
+        FastDeclaration("p1", 8, Suit.HEARTS),
+        FastDeclaration("p2", 8, Suit.SPADES),
+      ),
+    )
+    assertEquals("p2", call.callerId)
+    assertTrue(call.withPlayers.isEmpty())
+  }
+
+  @Test
+  fun fastCallSuitHierarchyIsSansSpadesHeartsDiamondsClubs() {
+    val hierarchy = listOf(Suit.CLUBS, Suit.DIAMONDS, Suit.HEARTS, Suit.SPADES, Suit.SANS)
+    for (i in 1 until hierarchy.size) {
+      val call = resolveFastCall(
+        listOf(
+          FastDeclaration("lower", 7, hierarchy[i - 1]),
+          FastDeclaration("higher", 7, hierarchy[i]),
+        ),
+      )
+      assertEquals(
+        "${hierarchy[i]} must beat ${hierarchy[i - 1]}",
+        "higher",
+        call.callerId,
+      )
+      assertTrue(call.withPlayers.isEmpty())
+    }
+  }
+
+  @Test
+  fun fastCallDeclarationOrderBreaksOnlyExactDuplicates() {
+    // p1 and p2 are exact 9♣ duplicates, but p3's 9♠ is stronger: the suit
+    // hierarchy decides and declaration order never promotes p1.
+    val call = resolveFastCall(
+      listOf(
+        FastDeclaration("p1", 9, Suit.CLUBS),
+        FastDeclaration("p2", 9, Suit.CLUBS),
+        FastDeclaration("p3", 9, Suit.SPADES),
+      ),
+    )
+    assertEquals("p3", call.callerId)
+    assertTrue(call.withPlayers.isEmpty())
+  }
+
+  @Test
+  fun fastCallThreeWayOnOneNumberUsesSuitThenExactDuplicates() {
+    // T-11's three-way row (A7.2 + A8.1): A 8♠, B 8♠, C 8♥. The two ♠ beat
+    // ♥; between the two ♠ declarations the first declarer is Caller and the
+    // other is With. The ♥ seat is neither.
+    val call = resolveFastCall(
+      listOf(
+        FastDeclaration("C", 8, Suit.HEARTS),
+        FastDeclaration("B", 8, Suit.SPADES),
+        FastDeclaration("A", 8, Suit.SPADES),
+      ),
+    )
+    assertEquals("B", call.callerId)
+    assertEquals(listOf("A"), call.withPlayers)
+  }
+
+  @Test
+  fun fastCallExactDuplicatesFollowDeclarationOrder() {
+    val call = resolveFastCall(
+      listOf(
+        FastDeclaration("p2", 8, Suit.SPADES),
+        FastDeclaration("p4", 8, Suit.SPADES),
+        FastDeclaration("p1", 8, Suit.SPADES),
+      ),
+    )
+    assertEquals("p2", call.callerId)
+    assertEquals(listOf("p4", "p1"), call.withPlayers)
+  }
+
+  @Test
+  fun fastCallWithNoDeclarationsHasNoCaller() {
+    val call = resolveFastCall(emptyList())
+    assertNull(call.callerId)
+    assertTrue(call.withPlayers.isEmpty())
   }
 
   // ── A3: all-zero fast round — no Caller, no With ──
@@ -280,8 +515,8 @@ class BiddingTest {
     assertEquals("p1", s.waitingFor)
     assertNull(s.bids["p1"])
     assertNull(s.bids["p2"])
-    assertEquals(Bid(BidType.TRICKS, 8), s.bids["p3"])
-    assertEquals(Bid(BidType.TRICKS, 3), s.bids["p4"])
+    assertEquals(Bid(BidType.TRICKS, 8, Suit.HEARTS), s.bids["p3"])
+    assertEquals(Bid(BidType.TRICKS, 3, Suit.SPADES), s.bids["p4"])
     assertEquals(Suit.HEARTS, s.declaredTrump)
 
     // S3: re-estimation completes with the Super Caller locked.

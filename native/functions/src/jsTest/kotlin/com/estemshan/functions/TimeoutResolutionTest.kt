@@ -6,6 +6,7 @@ import com.estemshan.engine.Card
 import com.estemshan.engine.Dealer
 import com.estemshan.engine.EmitResult
 import com.estemshan.engine.InactivityClock
+import com.estemshan.engine.Suit
 import com.estemshan.engine.emit
 import kotlinx.coroutines.test.runTest
 import kotlin.js.json
@@ -64,6 +65,15 @@ class TimeoutResolutionTest {
     "card" to mapOf("suit" to card.suit.name, "rank" to mapOf("v" to card.rank.v, "s" to card.rank.s)),
     "round" to round,
   )
+
+  private fun confirmEntry(seat: String, tricks: Int, suit: String, round: Int): Map<String, Any?> =
+    mapOf(
+      "seatId" to seat,
+      "actionType" to "SubmitConfirmCall",
+      "tricks" to tricks,
+      "suit" to suit,
+      "round" to round,
+    )
 
   /**
    * A round-14 fast round (FULL), dealt, mid-estimate: the dealer is the seat
@@ -275,6 +285,42 @@ class TimeoutResolutionTest {
     val state = TimeoutResolution.replayBidding(doc, order, 14)!!
     val reemit = emit(state, BiddingIntent.FinalEstimate("p1", estimate))
     assertTrue(reemit is EmitResult.Applied || reemit is EmitResult.Completed)
+  }
+
+  @Test
+  fun aFirstSeatFastSuperCallIsReplayable() {
+    // Caller p1 is first in bidding order, so CONFIRM completes the auction
+    // with no wiped seat and the document's bids are the final values. p2's
+    // matching 8 SANS is With.
+    val doc = fastRoundDoc(
+      bidsOverride = mapOf("p1" to 8, "p2" to 8, "p3" to 3, "p4" to 2),
+      biddingOpen = false,
+      biddingLog = listOf(confirmEntry("p1", 8, "SANS", 14)),
+    )
+    val state = TimeoutResolution.replayBidding(doc, order, 14)!!
+    assertEquals(BiddingPhase.DONE, state.subPhase)
+    assertEquals("p1", state.callerId)
+    assertEquals(listOf("p2"), state.withPlayers)
+    assertEquals(Suit.SANS, state.declaredTrump)
+    assertEquals(8, state.bids["p1"]?.amount)
+    assertEquals(Suit.SANS, state.bids["p1"]?.suit)
+  }
+
+  @Test
+  fun aFastSuperCallWithWipedSeatsFailsClosedOnTheLiveDocument() {
+    // p2's confirm wipes p1. The document's bids/p1 still holds p1's
+    // PRE-confirm value: submitBid is one value per seat and CONFIRM does not
+    // reopen bidding (MatchService.submitBid; firestore.rules), so there is
+    // no authoritative post-confirm value to replay. Fabricating one would
+    // score a stale estimate and could start card play on a wrong auction;
+    // fail closed instead. Archives take the Settlement path, where the
+    // values are final.
+    val doc = fastRoundDoc(
+      bidsOverride = mapOf("p1" to 2, "p2" to 8, "p3" to 3, "p4" to 2),
+      biddingOpen = false,
+      biddingLog = listOf(confirmEntry("p2", 8, "SANS", 14)),
+    )
+    assertNull(TimeoutResolution.replayBidding(doc, order, 14))
   }
 
   /**
