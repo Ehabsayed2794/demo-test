@@ -604,7 +604,7 @@ service cloud.firestore {
       return hasRematchField
               && data.keys().hasOnly(['roomId', 'players', 'status', 'createdAt', 'currentRound', 'dealer', 'turn', 'gameState',
                                     'seats', 'version', 'biddingOpen', 'bids', 'lastBidSeat', 'cardLog', 'lastCardSeat', 'cardPhase',
-                                    'biddingLog', 'maxRounds', 'extendedRounds', 'rematchOfMatchId', 'gameType', 'scoringMode', 'mode', 'botTier', 'botPersonality', 'decisionTimerSeconds'])
+                                    'biddingLog', 'maxRounds', 'extendedRounds', 'rematchOfMatchId', 'gameType', 'scoringMode', 'currentMultiplier', 'mode', 'botTier', 'botPersonality', 'decisionTimerSeconds'])
              && request.auth.uid in data.players
              && data.status == 'starting'
              && data.currentRound == 1
@@ -633,6 +633,9 @@ service cloud.firestore {
               && effectiveGameType(oldMatch) == effectiveGameType(data)
               && isValidGameType(data)
               && isValidScoringMode(data)
+              // O-19: a rematch seeds the persisted multiplier like any fresh
+              // match (Classic must be exactly 1).
+              && isValidCreatedMultiplier(data)
               // S43: a rematch inherits the OLD match's authority mode —
               // never a client-supplied value. effectiveMode on both
               // sides so a pre-S43 old match (no field ⇒ ROOM) still
@@ -1148,9 +1151,132 @@ service cloud.firestore {
               : null;
     }
 
+    // ── O-19 (Option B, 2026-10-24): persisted multiplier ─────────────
+    // `currentMultiplier` is the multiplier the CURRENT round is scored at:
+    // written once at creation (1), carried by an ordinary scored advance,
+    // and carried across a General Pass by the pass branch below. The
+    // existing `RoundState.multiplier` remains the engine's scoring mirror.
+    //
+    // TRUST BOUNDARY (owner-authorized, direction record §1.6): a scored
+    // round's nextMultiplier cannot be re-derived here without replaying 52
+    // cards, so the ordinary branch bounds the value to 1..8 and pins Classic
+    // to 1 — it cannot prove a normal round's Sa'ayda ladder. The pass branch
+    // below CAN prove its ladder exactly, because a general-pass window is a
+    // complete, closed auction (see isAllPassBiddingLog()).
+    function isValidStoredMultiplier(data) {
+      let value = data.get('currentMultiplier', 1);
+      return value is int && value >= 1 && value <= 8;
+    }
+
+    function isClassicMatch(data) {
+      return data.get('scoringMode', null) == 'CLASSIC';
+    }
+
+    // Creation: a new match seeds the field. Absent is tolerated only for a
+    // NORMAL match (a legacy client); a Classic match must store exactly 1.
+    function isValidCreatedMultiplier(data) {
+      let classic = isClassicMatch(data);
+      return 'currentMultiplier' in data
+        ? isValidStoredMultiplier(data) && (classic ? data.currentMultiplier == 1 : true)
+        : (classic ? false : true);
+    }
+
+    // Ordinary scored advance: the value may ride the same update. Absent is
+    // tolerated for a legacy client (the document then reads as 1), and any
+    // present value is bounded; Classic may never move above 1.
+    function isValidAdvancedMultiplier(oldData, newData) {
+      let classic = isClassicMatch(oldData);
+      return 'currentMultiplier' in newData
+        ? newData.currentMultiplier is int
+          && newData.currentMultiplier >= 1
+          && newData.currentMultiplier <= 8
+          && (classic ? newData.currentMultiplier == 1 : true)
+        : true;
+    }
+
+    // A declining Dash-Call decision, tagged with the round being closed.
+    function isDecliningDashEntry(entry, round, seats) {
+      return entry.get('actionType', null) == 'SubmitDashCallDecision'
+             && entry.get('declaredDashCall', true) == false
+             && entry.get('seatId', null) in seats
+             && entry.get('round', null) == round;
+    }
+
+    // An auction PASS, tagged with the round being closed.
+    function isAuctionPassEntry(entry, round, seats) {
+      return entry.get('actionType', null) == 'SubmitAuctionBid'
+             && entry.get('isPass', false) == true
+             && entry.get('seatId', null) in seats
+             && entry.get('round', null) == round;
+    }
+
+    // S1's actual General-Pass window, proven structurally. A normal round
+    // always logs one Dash decision per seat first, then the auction; when
+    // every seat declines the Dash call and every seat then passes, the log
+    // is exactly N declining Dash entries followed by N auction passes
+    // (2N entries for N seats) — the shape MatchAdapterReloadReplayTest and
+    // the online pass fixture write. Distinctness within each block, with
+    // every seat drawn from the N-key seat map, makes each block a bijection
+    // onto the seats: no seat can decide/pass twice and every seat appears
+    // exactly once in each block.
+    //
+    // KNOWN LIMITATION (reported, not silently widened): if any seat
+    // DECLARED a Dash call, the auction holds fewer than N passes, so the
+    // ladder cannot be proven from this log alone; that shape is refused
+    // here and by MatchService.advanceAfterGeneralPass() with an explicit
+    // UNSUPPORTED_GENERAL_PASS_SHAPE error, never advanced on a guess.
+    function isAllPassBiddingLog(log, round, seats) {
+      let n = seats.keys().size();
+      return n >= 1
+        && log.size() == n * 2
+        && (n >= 1 ? isDecliningDashEntry(log[0], round, seats) : true)
+        && (n >= 2 ? isDecliningDashEntry(log[1], round, seats) : true)
+        && (n >= 3 ? isDecliningDashEntry(log[2], round, seats) : true)
+        && (n >= 4 ? isDecliningDashEntry(log[3], round, seats) : true)
+        && (n >= 1 ? isAuctionPassEntry(log[n], round, seats) : true)
+        && (n >= 2 ? isAuctionPassEntry(log[n + 1], round, seats) : true)
+        && (n >= 3 ? isAuctionPassEntry(log[n + 2], round, seats) : true)
+        && (n >= 4 ? isAuctionPassEntry(log[n + 3], round, seats) : true)
+        // Distinctness inside the Dash block.
+        && (n >= 2 ? log[0].get('seatId', null) != log[1].get('seatId', null) : true)
+        && (n >= 3 ? log[0].get('seatId', null) != log[2].get('seatId', null) : true)
+        && (n >= 4 ? log[0].get('seatId', null) != log[3].get('seatId', null) : true)
+        && (n >= 3 ? log[1].get('seatId', null) != log[2].get('seatId', null) : true)
+        && (n >= 4 ? log[1].get('seatId', null) != log[3].get('seatId', null) : true)
+        && (n >= 4 ? log[2].get('seatId', null) != log[3].get('seatId', null) : true)
+        // Distinctness inside the auction-PASS block (offset by n).
+        && (n >= 2 ? log[n].get('seatId', null) != log[n + 1].get('seatId', null) : true)
+        && (n >= 3 ? log[n].get('seatId', null) != log[n + 2].get('seatId', null) : true)
+        && (n >= 4 ? log[n].get('seatId', null) != log[n + 3].get('seatId', null) : true)
+        && (n >= 3 ? log[n + 1].get('seatId', null) != log[n + 2].get('seatId', null) : true)
+        && (n >= 4 ? log[n + 1].get('seatId', null) != log[n + 3].get('seatId', null) : true)
+        && (n >= 4 ? log[n + 2].get('seatId', null) != log[n + 3].get('seatId', null) : true);
+    }
+
+    // The owner-fixed pass ladder: Classic stays 1; Normal 1 -> 2, then
+    // min(old + 2, 8).
+    function expectedMultiplierAfterGeneralPass(oldData) {
+      let old = oldData.get('currentMultiplier', 1);
+      return isClassicMatch(oldData)
+        ? 1
+        : (old == 1 ? 2 : (old >= 6 ? 8 : old + 2));
+    }
+
     function isValidRoundAdvance() {
       let oldData = resource.data;
       let newData = request.resource.data;
+      // O-19 branch selection: "an auction happened but zero cards were
+      // played" is EXACTLY the General-Pass shape (and an incomplete
+      // ordinary round, which must not advance anyway). Selecting the
+      // strict branch on that shape — rather than on isAllPassBiddingLog()
+      // itself — is what makes a malformed pass window DENY instead of
+      // falling through to the permissive ordinary branch. A round with
+      // 52 plays takes the ordinary branch; a legacy both-empty advance
+      // (already covered by the existing dealer-rotation and hand-sync
+      // suites) also stays on the ordinary branch.
+      let isPassCandidate =
+        oldData.get('cardLog', []).size() == 0
+        && oldData.get('biddingLog', []).size() > 0;
       return
              request.auth != null
              && request.auth.uid in oldData.players
@@ -1178,11 +1304,27 @@ service cloud.firestore {
               // (both already []) still passes, while any non-empty log
               // content on an advance is denied.
               && newData.diff(oldData).affectedKeys().hasOnly(
-                   ['currentRound', 'dealer', 'version', 'biddingOpen', 'bids', 'lastBidSeat', 'cardPhase', 'turn', 'cardLog', 'biddingLog', 'updatedAt'])
+                   ['currentRound', 'dealer', 'version', 'biddingOpen', 'bids', 'lastBidSeat', 'cardPhase', 'turn', 'cardLog', 'biddingLog', 'currentMultiplier', 'updatedAt'])
               && newData.version == oldData.version + 1
               && newData.currentRound == oldData.currentRound + 1
               && newData.cardLog == []
               && newData.biddingLog == []
+              // O-19: an ordinary advance carries the engine's nextMultiplier
+              // and only BOUNDS it (see the trust boundary above). A pass
+              // round has zero card plays and its complete Dash+auction
+              // window proves the ladder, so the value must be exactly the
+              // computed one, never merely bounded. The ordinary branch
+              // deliberately does not add a 52-card check here: the rules
+              // never enforced one, and two existing emulator suites
+              // (dealer rotation, hand-sync dispatch) advance with empty
+              // windows; the archive rule and MatchService keep their own
+              // 52-card gates.
+              && (isPassCandidate
+                   ? isAllPassBiddingLog(
+                       oldData.get('biddingLog', []), oldData.currentRound, oldData.seats)
+                     && isValidStoredMultiplier(oldData)
+                     && newData.get('currentMultiplier', null) == expectedMultiplierAfterGeneralPass(oldData)
+                   : isValidAdvancedMultiplier(oldData, newData))
               // Dealer rotates to the exact next active seat in the
              // immutable positional seat map, including wraparound and
              // supported under-four-player shapes.
@@ -1572,7 +1714,7 @@ service cloud.firestore {
         let room = get(/databases/$(database)/documents/rooms/$(data.roomId)).data;
         return data.keys().hasOnly(['roomId', 'players', 'status', 'createdAt', 'currentRound', 'dealer', 'turn', 'gameState',
                                      'seats', 'version', 'biddingOpen', 'bids', 'lastBidSeat', 'cardLog', 'lastCardSeat', 'cardPhase',
-                                     'biddingLog', 'maxRounds', 'extendedRounds', 'gameType', 'scoringMode', 'mode', 'botTier', 'botPersonality', 'decisionTimerSeconds'])
+                                     'biddingLog', 'maxRounds', 'extendedRounds', 'gameType', 'scoringMode', 'currentMultiplier', 'mode', 'botTier', 'botPersonality', 'decisionTimerSeconds'])
                && data.roomId is string
                && data.players is list
                && data.players.size() > 0
@@ -1589,6 +1731,8 @@ service cloud.firestore {
                 && data.extendedRounds == []
                 && isValidGameType(data)
                 && isValidScoringMode(data)
+                // O-19: every fresh match seeds the persisted multiplier.
+                && isValidCreatedMultiplier(data)
                 // S43: the authority key rides every match create (absent
                 // ⇒ ROOM, back-compat for pre-S43 docs).
                 && isValidMode(data)
@@ -1827,7 +1971,16 @@ service cloud.firestore {
       //   { round: int, matchId: string,
       //     cardLog: [exactly the round's 52 {seatId,card,round} plays],
       //     biddingLog: [that round's {seatId,actionType,...,round} actions],
-      //     estimates: {seat: int 0..13 Final Estimates snapshot} }
+      //     estimates: {seat: int 0..13 Final Estimates snapshot},
+      //     passRound: true (ONLY on a General Pass round) }
+      //
+      // O-19 (Option B): a General Pass round has ZERO card plays and its
+      // complete window is N declining Dash decisions followed by N auction
+      // passes (see isAllPassBiddingLog() above), so it archives on its own
+      // narrow branch below — `passRound: true`, empty cardLog, that exact
+      // window tagged with the closed round. An ordinary archive still
+      // requires all 52 cards and must not carry the marker; neither branch
+      // relaxes anything besides the marker field itself.
       // `estimates` is ALLOWED, never required: archives written before
       // S50's archive fix (and any old client still writing the 4-key
       // shape) stay valid; matches without per-round estimates simply
@@ -1866,21 +2019,26 @@ service cloud.firestore {
         function isValidRoundArchiveCreate() {
           let parent = parentMatch();
           let data = request.resource.data;
+          let isPassArchive = data.get('passRound', false) == true;
           return request.auth != null
                  && request.auth.uid in parent.players
                  && ('status' in parent ? parent.status != 'complete' : true)
-                  && data.keys().hasOnly(['round', 'matchId', 'cardLog', 'biddingLog', 'estimates'])
+                  && data.keys().hasOnly(['round', 'matchId', 'cardLog', 'biddingLog', 'estimates', 'passRound'])
+                  && (!('passRound' in data) || data.passRound is bool)
                   && data.round is int
                   && data.round >= 1
                   && data.matchId == matchId
                   && data.cardLog is list
-                  && data.cardLog.size() == 52
                   && data.biddingLog is list
                   // S50 archive fix: `estimates` is allowed but never
                   // required — pre-fix archives and old clients writing the
                   // 4-key shape stay valid. Present values must be a map.
                   && (data.get('estimates', null) == null || data.estimates is map)
-                  && data.round == parent.currentRound;
+                  && data.round == parent.currentRound
+                  && (isPassArchive
+                       ? data.cardLog.size() == 0
+                         && isAllPassBiddingLog(data.biddingLog, data.round, parent.seats)
+                       : data.cardLog.size() == 52);
         }
 
         allow get: if request.auth != null && request.auth.uid in parentMatch().players;
