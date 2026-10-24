@@ -55,6 +55,23 @@ import org.junit.Test
  * retired: the `UNRANKED` cells stand ratified and A3.5 carries its own
  * pointer (:312-318). A5.4 (:480-489) confirms none of this changes a
  * gameplay rule — it is a recording contract only.
+ *
+ * AMENDED 2026-10-24 (pointer; the provenance above is left unchanged, and
+ * the doc's A5 table text itself stays verbatim as history under its own
+ * 2026-10-22 pointer at `CANONICAL_RULES.md:506`). The governing authority
+ * is now the ratified register `docs/decisions/OPEN_QUESTIONS.md` (as of
+ * 2026-10-23): the Vote Kick row's charge is **2 Koz** in `RANKED` +
+ * `UNRANKED`, never held in `ROOM` (**Q14d(1)**, 2026-10-22 — supersedes
+ * A5.1's "1 Koz, final" and the repealed 2026-10-16 C1 closure), an explicit
+ * leave charges **1 Koz in `ROOM`** and 2 Koz in `RANKED`/`UNRANKED`
+ * (**Q14b**, confirmed by the **A6.12** / **Q14b(1)** record), the
+ * permanent-disconnect row is **confirmed, not superseded** (**Q33** /
+ * **A7.4**: `UNRANKED` 2 Koz, `ROOM` no Koz, `RANKED` no vote), and the
+ * 15-timeout ROOM cell is NOT re-pinned here: the register carries both
+ * Q37 ("1 Koz", closes O-03d) and Q14b(1)'s "ROOM amount open per O-03d" —
+ * that conflict is reported to the owner (2026-10-24) and the row keeps its
+ * A5 cell until they rule. The `docs/rules` files are another actor's
+ * territory this round, so the doc-side cells are flagged, not edited.
  */
 class DepartureContractTest {
 
@@ -63,18 +80,22 @@ class DepartureContractTest {
     val MODES = listOf("RANKED", "UNRANKED", "ROOM")
 
     /** Row labels, verbatim from :423-427 (bold markers are styling, not
-     *  part of the label). Order matters: it is the table's own order. */
+     *  part of the label). Order matters: it is the table's own order.
+     *  Amended 2026-10-24: the Vote Kick row's charge citation is re-pointed
+     *  from RD18 to Q14d(1) — RD18's 1-Koz reading is superseded; the vote
+     *  mechanics (S60/S63) are not. */
     val EXPLICIT_LEAVE = "Explicit Leave Match (S72)"
     val FIFTEEN_TIMEOUT = "15-timeout automatic removal (RD20, OPEN-1)"
-    val VOTE_KICK = "Vote Kick passed (RD18, S63)"
+    val VOTE_KICK = "Vote Kick passed (Q14d(1), S63)"
     val DISCONNECT = "Disconnect permanently replaced (S74)"
     val RECLAIM_RETURN = "Reclaim / return while the table waits"
 
     /**
-     * The charge table (:421-427), verbatim. Rows in table order, columns
-     * in [MODES] order. No cell is paraphrased and none is missing; the
-     * `UNRANKED` Vote Kick cell carries the 2026-10-17 amendment note
-     * exactly as the table spells it.
+     * The charge table (:421-427), verbatim as amended. Rows in table order,
+     * columns in [MODES] order. No cell is paraphrased and none is missing.
+     * Amended 2026-10-24: the Vote Kick row's two Koz cells carry the
+     * Q14d(1) citation ("2 Koz (Q14d(1))") — the 2026-10-17 amendment note
+     * ("1 Koz (amended 2026-10-17)") is superseded, not paraphrased away.
      */
     val CHARGE_TABLE: Map<String, Map<String, String>> = linkedMapOf(
       EXPLICIT_LEAVE to linkedMapOf(
@@ -88,8 +109,8 @@ class DepartureContractTest {
         "ROOM" to "no 2-Koz rule",
       ),
       VOTE_KICK to linkedMapOf(
-        "RANKED" to "1 Koz",
-        "UNRANKED" to "1 Koz (amended 2026-10-17)",
+        "RANKED" to "2 Koz (Q14d(1))",
+        "UNRANKED" to "2 Koz (Q14d(1))",
         "ROOM" to "n/a — not held in ROOM",
       ),
       DISCONNECT to linkedMapOf(
@@ -143,22 +164,27 @@ class DepartureContractTest {
   }
 
   @Test
-  fun voteKickRecordsOneKozFinalInBothVotableModesAndIsNotHeldInRoom() {
-    // (:425, :429-430): Vote Kick records 1 Koz, FINAL — RD18's own
-    // wording restored, the RD31 doubling repealed **for that path only** —
-    // so no cell of the row may carry a 2-Koz reading. Since the
-    // 2026-10-17 owner clarification the vote also holds in UNRANKED
-    // (A3.5's pointer :312-318; the ruling record's §1.2), so the row's
-    // Koz cells are exactly the two votable modes and the ROOM cell is the
-    // amended verdict "n/a — not held in ROOM" (:425).
-    assertEquals("1 Koz", charge(VOTE_KICK, "RANKED"))
-    assertEquals("1 Koz (amended 2026-10-17)", charge(VOTE_KICK, "UNRANKED"))
+  fun voteKickRecordsTwoKozInBothVotableModesAndIsNotHeldInRoom() {
+    // Amended 2026-10-24 (Q14d(1), register of 2026-10-23): Vote Kick
+    // records **2 Koz** in RANKED and UNRANKED — superseding A5.1's "1 Koz,
+    // final" (:429-430), whose table text above is left verbatim as history
+    // under the doc's own 2026-10-22 pointer. The vote holds in UNRANKED
+    // since the 2026-10-17 owner clarification (A3.5's pointer :312-318) and
+    // is never held in ROOM, so the row's Koz cells are exactly the two
+    // votable modes and the ROOM cell stays "n/a — not held in ROOM" (:425).
+    // No cell of the row may carry the superseded 1-Koz reading.
+    assertEquals("2 Koz (Q14d(1))", charge(VOTE_KICK, "RANKED"))
+    assertEquals("2 Koz (Q14d(1))", charge(VOTE_KICK, "UNRANKED"))
     assertEquals("n/a — not held in ROOM", charge(VOTE_KICK, "ROOM"))
     val kozCells = CHARGE_TABLE.getValue(VOTE_KICK).values.filter { it.contains(" Koz") }
     assertEquals(
-      "the row carries exactly the two votable-mode 1-Koz cells",
+      "the row carries exactly the two votable-mode 2-Koz cells",
       2,
       kozCells.size,
+    )
+    assertTrue(
+      "no cell of the row may carry the superseded 1-Koz reading (Q14d(1))",
+      kozCells.all { it.startsWith("2 Koz") },
     )
   }
 
@@ -208,16 +234,21 @@ class DepartureContractTest {
     // either a charged increment or one of the five non-charge verdicts.
     val cells = CHARGE_TABLE.values.flatMap { it.values }
     assertEquals("15 cells: 5 rows × 3 modes", 15, cells.size)
-    val charged = cells.filter { it == "2 Koz" || it.startsWith("1 Koz") }
+    val charged = cells.filter { it.startsWith("2 Koz") }
     assertEquals(
-      "charged cells in table order: 4 × 2-Koz, Vote Kick's 1 Koz, its " +
-        "amended UNRANKED 1 Koz (2026-10-17), and the disconnect's 2 Koz",
-      listOf("2 Koz", "2 Koz", "2 Koz", "2 Koz", "1 Koz", "1 Koz (amended 2026-10-17)", "2 Koz"),
+      "charged cells in table order: 4 × plain 2-Koz (the RD31 rows' " +
+        "RANKED/UNRANKED cells per Q14b), Vote Kick's two 2-Koz cells " +
+        "(Q14d(1)), and the disconnect's 2 Koz (A7.4)",
+      listOf(
+        "2 Koz", "2 Koz", "2 Koz", "2 Koz",
+        "2 Koz (Q14d(1))", "2 Koz (Q14d(1))",
+        "2 Koz",
+      ),
       charged,
     )
     assertEquals(
       "the increments are the whole charged vocabulary",
-      setOf("2 Koz", "1 Koz", "1 Koz (amended 2026-10-17)"),
+      setOf("2 Koz", "2 Koz (Q14d(1))"),
       charged.toSet(),
     )
     val nonCharges = cells - charged.toSet()
