@@ -367,6 +367,206 @@ class SettlementTest {
   }
 
   @Test
+  fun fastRoundExactDuplicateDeclarerIsWithOnReplay() {
+    // A8.1/A7.2: FULL round 14 is fixed SANS. p1 and p3 both declare 4 under
+    // that trump — an exact duplicate, which is legal. p1 declares first, so
+    // p1 is Caller and p3 is With; declaration order (not seat strength)
+    // decides only the exact duplicate. p2 3, p4 3. Won 4/3/2/4 (total 13):
+    // caller p1 24, p2 13, With p3 misses by 2 → −(2+10) = −12, Risk p4
+    // misses by 1 with a zero ladder → −1. If p3 had been treated as an
+    // ordinary seat the replay would score −2, so the With set is load-
+    // bearing on the settlement result.
+    val winners = listOf(
+      "p1", "p1", "p1", "p1",
+      "p2", "p2", "p2",
+      "p3", "p3",
+      "p4", "p4", "p4", "p4",
+    )
+    val round = archived(
+      14, winners, "SANS", emptyList(),
+      mapOf("p1" to 4, "p2" to 3, "p3" to 4, "p4" to 3),
+    )
+    val scored = Settlement.scoreRound(shellMatch(), round, "p1", 1, 8)
+    assertTrue(scored != null, "fast duplicate round did not score")
+    assertEquals(mapOf("p1" to 24, "p2" to 13, "p3" to -12, "p4" to -1), scored.deltas)
+  }
+
+  @Test
+  fun fastSuperCallReplaysAfterPreSuperSeatRedeclares() {
+    // p2's 8 triggers the Super Call and confirms SANS at 8. p1 (before p2)
+    // is wiped and re-declares 8 under the final trump, so the authoritative
+    // With set is [p1]. The archive only keeps the FINAL estimates — p1's
+    // original number is gone — so this exercises the rebuild from the
+    // logged CONFIRM rather than a straight estimate replay.
+    // Bids 8/8/3/2 total 21 → Risk ladder 30, Risk player p1 (the last
+    // re-declaration). Won 4/3/3/3: p1 WIZZ_RISK misses 4 → −44; p2
+    // SUPER_CALL misses 5 → −32; p3 sole winner 13+10 = 23; p4 misses 1
+    // → −1. If p1 were not With, its With bonus would vanish (−34).
+    val winners = listOf(
+      "p1", "p1", "p1", "p1",
+      "p2", "p2", "p2",
+      "p3", "p3", "p3",
+      "p4", "p4", "p4",
+    )
+    val round = archived(
+      14, winners, "SANS",
+      listOf(confirm("p2", 8, "SANS", 14)),
+      mapOf("p1" to 8, "p2" to 8, "p3" to 3, "p4" to 2),
+      leaderId = "p2",
+    )
+    val scored = Settlement.scoreRound(shellMatch(), round, "p1", 1, 8)
+    assertTrue(scored != null, "fast Super Call replay must settle")
+    assertEquals(mapOf("p1" to -44, "p2" to -32, "p3" to 23, "p4" to -1), scored.deltas)
+  }
+
+  @Test
+  fun fastSuperCallWithNoPreSuperSeatsCompletesAtConfirm() {
+    // The Super Caller is first in bidding order, so no seat is wiped: the
+    // CONFIRM completes the auction and every archived estimate has already
+    // been materialized. p2's matching 8 SANS is With (p1 Caller). Bids
+    // 8/8/3/2 total 21 → Risk ladder 30, Risk player p4 (last estimate).
+    // Won 4/3/3/3: p1 SUPER_CALL misses 4 → −32; p2 WIZZ misses 5 → −15;
+    // p3 sole winner 23; p4 RISK misses 1 → −31.
+    val winners = listOf(
+      "p1", "p1", "p1", "p1",
+      "p2", "p2", "p2",
+      "p3", "p3", "p3",
+      "p4", "p4", "p4",
+    )
+    val round = archived(
+      14, winners, "SANS",
+      listOf(confirm("p1", 8, "SANS", 14)),
+      mapOf("p1" to 8, "p2" to 8, "p3" to 3, "p4" to 2),
+    )
+    val scored = Settlement.scoreRound(shellMatch(), round, "p1", 1, 8)
+    assertTrue(scored != null, "fast Super Call with no wipe must settle")
+    assertEquals(mapOf("p1" to -32, "p2" to -15, "p3" to 23, "p4" to -31), scored.deltas)
+  }
+
+  @Test
+  fun fastSuperCallConfirmMayRaiseAboveTheCallerEstimate() {
+    // The engine allows the Super Caller to confirm ABOVE their winning
+    // number (only lowering is illegal). p2 declared 8, then confirms 9 SANS;
+    // p1 (before p2) is wiped and re-declares 8. Bids 8/9/3/2 total 22 →
+    // Risk ladder 30, Risk player p1 (last re-declaration). Won 4/3/3/3:
+    // p1 RISK misses 4 → −34; p2 SUPER_CALL 9 misses 6 → −41 (raising the
+    // call from 8 would have scored −32, so the confirmed number is load-
+    // bearing); p3 sole winner 23; p4 misses 1 → −1.
+    val winners = listOf(
+      "p1", "p1", "p1", "p1",
+      "p2", "p2", "p2",
+      "p3", "p3", "p3",
+      "p4", "p4", "p4",
+    )
+    val round = archived(
+      14, winners, "SANS",
+      listOf(confirm("p2", 9, "SANS", 14)),
+      mapOf("p1" to 8, "p2" to 8, "p3" to 3, "p4" to 2),
+      leaderId = "p2",
+    )
+    val scored = Settlement.scoreRound(shellMatch(), round, "p1", 1, 8)
+    assertTrue(scored != null, "a raising fast Super Call must settle")
+    assertEquals(mapOf("p1" to -34, "p2" to -41, "p3" to 23, "p4" to -1), scored.deltas)
+  }
+
+  @Test
+  fun fastSuperCallConfirmBelowTheCallerEstimateFailsClosed() {
+    // Impossible archive: p2's estimate is 9 (the winning declaration), but
+    // the logged CONFIRM says 8. The live engine rejects "can't lower your
+    // winning call", so settlement must refuse rather than replay a lower
+    // number the caller never confirmed.
+    val winners = listOf(
+      "p1", "p1", "p1", "p1",
+      "p2", "p2", "p2",
+      "p3", "p3", "p3",
+      "p4", "p4", "p4",
+    )
+    val round = archived(
+      14, winners, "SANS",
+      listOf(confirm("p2", 8, "SANS", 14)),
+      mapOf("p1" to 8, "p2" to 9, "p3" to 3, "p4" to 2),
+      leaderId = "p2",
+    )
+    assertNull(
+      Settlement.scoreRound(shellMatch(), round, "p1", 1, 8),
+      "a lowering fast Super Call CONFIRM must fail closed",
+    )
+  }
+
+  @Test
+  fun fastSuperCallWithSubEightCallerEstimateFailsClosed() {
+    // Impossible archive: p2 is named as the CONFIRM's caller but their
+    // archived estimate is 7, below the >=8 Super Call trigger. A seat that
+    // never declared 8+ cannot have triggered the call, so fail closed.
+    val winners = listOf(
+      "p1", "p1", "p1", "p1",
+      "p2", "p2", "p2",
+      "p3", "p3", "p3",
+      "p4", "p4", "p4",
+    )
+    val round = archived(
+      14, winners, "SANS",
+      listOf(confirm("p2", 8, "SANS", 14)),
+      mapOf("p1" to 8, "p2" to 7, "p3" to 3, "p4" to 2),
+      leaderId = "p2",
+    )
+    assertNull(
+      Settlement.scoreRound(shellMatch(), round, "p1", 1, 8),
+      "a sub-8 fast Super Call CONFIRM caller must fail closed",
+    )
+  }
+
+  @Test
+  fun fastSuperCallConfirmWithHigherLaterDeclarationFailsClosed() {
+    // Impossible/forged archive: p3 declared 13, so p2's 8 cannot have been
+    // the winning pre-confirm declaration. The caller won the auction, so no
+    // seat after them can hold a higher number; accepting this would replay
+    // p3's 13 as an ordinary bid under a caller who never won.
+    val winners = listOf(
+      "p1", "p1", "p1", "p1",
+      "p2", "p2", "p2",
+      "p3", "p3", "p3",
+      "p4", "p4", "p4",
+    )
+    val round = archived(
+      14, winners, "SANS",
+      listOf(confirm("p2", 8, "SANS", 14)),
+      mapOf("p1" to 8, "p2" to 8, "p3" to 13, "p4" to 2),
+      leaderId = "p2",
+    )
+    assertNull(
+      Settlement.scoreRound(shellMatch(), round, "p1", 1, 8),
+      "a CONFIRM naming a caller who did not win the auction must fail closed",
+    )
+  }
+
+  @Test
+  fun fastSuperCallTrumpChangeKeepsOldTrumpSeatOutOfWith() {
+    // Round 14's fixed trump is SANS. p2's 8 triggers the call and confirms
+    // SPADES; p1 (before p2) re-declares 8 under the new trump and is With.
+    // p3's 8 was declared under SANS and is KEPT, so it is not With even at
+    // the final number. Bids 8/8/8/3 total 27 → Risk ladder 30; risk is p1
+    // (last re-declaration). Won 4/3/3/3: p1 WIZZ_RISK misses 4 → −44;
+    // p2 SUPER_CALL misses 5 → −32; p3 misses 5 → −5; p4 sole winner 23.
+    // If the trump change were ignored, p3 would be With and score −15.
+    val winners = listOf(
+      "p1", "p1", "p1", "p1",
+      "p2", "p2", "p2",
+      "p3", "p3", "p3",
+      "p4", "p4", "p4",
+    )
+    val round = archived(
+      14, winners, "SPADES",
+      listOf(confirm("p2", 8, "SPADES", 14)),
+      mapOf("p1" to 8, "p2" to 8, "p3" to 8, "p4" to 3),
+      leaderId = "p2",
+    )
+    val scored = Settlement.scoreRound(shellMatch(), round, "p1", 1, 8)
+    assertTrue(scored != null, "a changed-trump fast Super Call must settle")
+    assertEquals(mapOf("p1" to -44, "p2" to -32, "p3" to -5, "p4" to 23), scored.deltas)
+  }
+
+  @Test
   fun saaydaChainDoublesThroughNextMultiplier() {
     // Round 1: everybody misses (Saayda) → zeros, multiplier → 2.
     // Round 2 (×2, total 16): p2 CALLER 24×2=48; p3/p4 WIZZ (triple
