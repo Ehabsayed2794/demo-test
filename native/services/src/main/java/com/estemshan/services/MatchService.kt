@@ -3,6 +3,7 @@ package com.estemshan.services
 import com.estemshan.engine.BiddingIntent
 import com.estemshan.engine.Card
 import com.estemshan.engine.Deck
+import com.estemshan.engine.ExtensionReason
 import com.estemshan.engine.GameType
 import com.estemshan.engine.Play
 import com.estemshan.engine.Suit
@@ -682,12 +683,25 @@ class MatchService(
     val matchRef = matches.document(matchId)
     return runTx(db) { tx ->
       val match = readMatch(tx, matchRef) ?: return@runTx noMatchTx("extendMatchRounds")
-      // S66 (E7): type-aware window. For FULL this is exactly the pre-tx
-      // check above (same bounds, same message) — byte-identical.
-      if (!isRapidRound(completedRound, match.gameType)) {
-        return@runTx TxOutcome.Err(ServiceException(INVALID_ARGUMENT,
-          "extendMatchRounds: completedRound must be an integer between " +
-            "${match.gameType.firstFastRound} and ${match.gameType.baseRounds}."))
+      // S66 (E7): type-aware window. A Super Call stays in-window only;
+      // a Sa'ayda also extends from the ACTUAL final round (round == maxRounds)
+      // so final-round repeats can walk past baseRounds (Q2c, A8.8).
+      val inWindow = isRapidRound(completedRound, match.gameType)
+      val isFinalRound = completedRound == match.maxRounds
+      if (reason == ExtensionReason.SAAYDA.name) {
+        if (!inWindow && !isFinalRound) {
+          return@runTx TxOutcome.Err(ServiceException(INVALID_ARGUMENT,
+            "extendMatchRounds: completedRound must be an integer between " +
+              "${match.gameType.firstFastRound} and ${match.gameType.baseRounds}, " +
+              "or the actual final round (maxRounds)."))
+        }
+      } else {
+        // SUPER_CALL: window-only, never past baseRounds.
+        if (!inWindow) {
+          return@runTx TxOutcome.Err(ServiceException(INVALID_ARGUMENT,
+            "extendMatchRounds: completedRound must be an integer between " +
+              "${match.gameType.firstFastRound} and ${match.gameType.baseRounds}."))
+        }
       }
       if (!match.isPlayer(callingUid)) {
         return@runTx TxOutcome.Err(ServiceException(PERMISSION_DENIED,
@@ -703,13 +717,10 @@ class MatchService(
       if (completedRound in match.extendedRounds) {
         return@runTx TxOutcome.Ok(ExtendResult.alreadyExtended(matchId, match.maxRounds))
       }
-      // S66 (GM3): the extension COUNT cap — MINI allows exactly ONE
-      // extension (10 → 11 max); FULL's 14–18 window already implies five,
-      // so FULL is unchanged. Reuses the EXISTING ALREADY_EXTENDED surface,
-      // never a new reason code.
-      if (match.extendedRounds.size >= match.gameType.maxExtensions) {
-        return@runTx TxOutcome.Ok(ExtendResult.alreadyExtended(matchId, match.maxRounds))
-      }
+      // Q2c: the extension COUNT cap (MINI 1, FULL 5) is REMOVED — no
+      // maxExtensions enforcement. The per-round idempotency guard above
+      // (completedRound in match.extendedRounds) still prevents double
+      // extension of the same round.
       val nextVersion = match.version + 1
       tx.update(matchRef, mapOf(
         "maxRounds" to match.maxRounds + 1,

@@ -23,6 +23,7 @@ import com.estemshan.engine.TableState
 import com.estemshan.engine.Dealer
 import com.estemshan.engine.emit
 import com.estemshan.engine.emitPlay
+import com.estemshan.engine.initFastRound
 import com.estemshan.engine.initNormalRound
 import com.estemshan.engine.initTable
 import com.estemshan.engine.nextSeat
@@ -1872,7 +1873,7 @@ class OnlineMatchViewModelTest {
    * it here, since a card is unique in the deck).
    */
   private class FakeMatchStore(
-    private val hands: Map<String, List<Card>> = Dealer.dealHands(7),
+    private val hands: Map<String, List<Card>> = Dealer.dealHands(1),
   ) : MatchStore {
 
     val dealCalls = AtomicInteger(0)
@@ -2085,6 +2086,207 @@ class OnlineMatchViewModelTest {
       // Cancelling the returned job is how the view model stops the cadence,
       // so a completion handler is the stop signal.
       return Job().also { it.invokeOnCompletion { stopped++ } }
+    }
+  }
+
+  // ==========================================================================
+  //  S2 (A8.8 / Q48) — Sa'ayda extension online
+  // ==========================================================================
+
+  /**
+   * A complete fast-round fixture at [roundNumber]: all four seats estimate 4,
+   * the caller holds all trumps and wins all 13 tricks (bid 4 ≠ won 13 → fail),
+   * everyone else bids 4 and wins 0 (fail) → all four fail → Sa'ayda.
+   * The cardLog holds all 52 plays so [maybeCompleteRound] can score and
+   * advance, which triggers [store.extendMatchRounds].
+   */
+  private data class FastRoundCompleteFixture(
+    val outcome: BiddingOutcome,
+    val hands: Map<String, List<Card>>,
+    val table: TableState,
+    val doc: MatchDoc,
+  )
+
+  private fun fastRoundCompleteFixture(roundNumber: Int): FastRoundCompleteFixture {
+    // Deal deterministically and play all 13 tricks. Every seat bids 4; we
+    // need every seat to miss its bid (won != 4) → all fail → Sa'ayda.
+    // Must match the FakeMatchStore's seed so the local hand lines up.
+    val hands = Dealer.dealHands(1L)
+    var state = initFastRound(round = roundNumber, dealer = seats.first(), seats = seats)
+    var outcome: BiddingOutcome? = null
+    var guard = 0
+    while (state.subPhase != BiddingPhase.DONE && guard < 40) {
+      guard++
+      val actor = state.waitingFor ?: error("no seat waiting in ${state.subPhase}")
+      val intent = BiddingIntent.FinalEstimate(actor, 4)
+      state = when (val result = emit(state, intent)) {
+        is EmitResult.Applied -> result.state
+        is EmitResult.Completed -> {
+          outcome = result.outcome
+          result.state
+        }
+        is EmitResult.Rejected -> error("fast-round estimate rejected: ${result.reason}")
+        is EmitResult.GeneralPass -> error("unexpected general pass in fast round")
+      }
+    }
+    val done = outcome ?: error("fast-round auction never closed")
+
+    // Play all 13 tricks through the real table engine.
+    var table = initTable(
+      RoundCfg(
+        round = roundNumber,
+        trump = done.trump,
+        callerId = done.callerId,
+        withPlayers = done.withPlayers,
+        estimates = done.estimates,
+        dashCallers = done.dashCallers,
+        leaderId = done.leaderId,
+        riskId = done.riskPlayerId,
+        hands = hands,
+      ),
+      seats,
+    )
+    val cardLog = mutableListOf<CardLogEntry>()
+    repeat(13) {
+      repeat(4) {
+        val seat = table.turn ?: error("no turn to play in trick")
+        val hand = table.cfg.hands.getValue(seat)
+        val led = table.ledSuit
+        val card = if (led == null) hand.first() else hand.firstOrNull { it.suit == led } ?: hand.first()
+        cardLog.add(CardLogEntry(seat, StoredCard.fromEngine(card), roundNumber))
+        table = when (val r = emitPlay(table, PlayCard(seat, card))) {
+          is PlayEmit.Applied -> r.state
+          is PlayEmit.Rejected -> error("fixture play rejected for $seat: ${r.reason}")
+        }
+        if (table.phase == TablePhase.RESOLVING) table = resolveTrick(table)
+      }
+    }
+
+    // All four bid 4. If anyone won exactly 4, this isn't a Sa'ayda — pick a
+    // different seed. (Verified: seed 1L yields all-miss at rounds 14, 18, 19.)
+    val tricksWon = table.tricksWon
+    val allMiss = seats.all { tricksWon.getValue(it) != 4 }
+    if (!allMiss) {
+      error("seed 1L did not produce a Sa'ayda at round $roundNumber: tricksWon=$tricksWon bids=4/4/4/4")
+    }
+
+    val doc = MatchDoc(
+      roomId = "room-1",
+      players = seatUids.values.toList(),
+      status = MatchDoc.STATUS_STARTING,
+      currentRound = roundNumber,
+      maxRounds = 18,
+      extendedRounds = emptyList(),
+      dealer = seatUids.getValue(seats.first()),
+      turn = null,
+      seats = seatUids,
+      version = 1,
+      biddingOpen = false,
+      bids = done.estimates.entries.associate { it.key to (it.value as Int?) },
+      lastBidSeat = seats.last(),
+      cardLog = cardLog.toList(),
+      lastCardSeat = cardLog.last().seatId,
+      cardPhase = MatchDoc.CARD_PHASE_PLAY,
+      biddingLog = emptyList(),
+      gameState = GameState(initialized = true, dealtRound = roundNumber),
+    )
+    return FastRoundCompleteFixture(done, hands, table, doc)
+  }
+
+  /**
+   * Round 14 Sa'ayda online: scoreAndAdvance sees isSaayda=true, computeRoundExtension
+   * extends (in window), store.extendMatchRounds is called, maxRounds → 19.
+   */
+  @Test
+  fun onlineSaaydaRound14ExtendsAndPersists() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(1))
+      store.doc = fastRoundCompleteFixture(14).doc
+      val vm = makeVm(seatUids.getValue("p1"), Dispatchers.Main)
+      vm.start("m-extend-14")
+      broadcast("m-extend-14")
+
+      // One extension write for the round-14 Sa'ayda, ceiling 18 → 19.
+      assertEquals("round-14 Sa'ayda extends online", 1, store.extendCalls.get())
+      assertEquals("maxRounds raised to 19", 19, store.doc.maxRounds)
+      assertEquals("extendedRounds records round 14", listOf(14), store.doc.extendedRounds)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * Re-delivery of the same terminal round-14 document is idempotent: the
+   * extension write fires exactly once and maxRounds stays 19.
+   */
+  @Test
+  fun onlineSaaydaRound14RedeliveryIsIdempotent() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(1))
+      store.doc = fastRoundCompleteFixture(14).doc.copy(maxRounds = 18)
+      val vm = makeVm(seatUids.getValue("p1"), Dispatchers.Main)
+      vm.start("m-idem-14")
+      broadcast("m-idem-14")
+      assertEquals(1, store.extendCalls.get())
+      assertEquals(19, store.doc.maxRounds)
+      assertEquals(listOf(14), store.doc.extendedRounds)
+
+      // Same document again — no second extension write.
+      broadcast("m-idem-14")
+      assertEquals(1, store.extendCalls.get())
+      assertEquals(19, store.doc.maxRounds)
+      assertEquals(listOf(14), store.doc.extendedRounds)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * Round 13 (before the FULL window) Sa'ayda: no extension, maxRounds stays 18.
+   */
+  @Test
+  fun onlineSaaydaRound13BeforeWindowNoExtend() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(1))
+      // Round 13 is a normal round, not fast — build the doc directly.
+      store.doc = MatchDoc(
+        roomId = "room-1",
+        players = seatUids.values.toList(),
+        status = MatchDoc.STATUS_STARTING,
+        currentRound = 13,
+        maxRounds = 18,
+        extendedRounds = emptyList(),
+        dealer = seatUids.getValue("p1"),
+        turn = null,
+        seats = seatUids,
+        version = 1,
+        biddingOpen = false,
+        bids = mapOf("p1" to 4, "p2" to 4, "p3" to 4, "p4" to 4),
+        lastBidSeat = "p4",
+        cardLog = emptyList(),
+        lastCardSeat = null,
+        cardPhase = null,
+        biddingLog = emptyList(),
+        gameState = GameState(initialized = true, dealtRound = 13),
+      )
+      val vm = makeVm(seatUids.getValue("p1"), Dispatchers.Main)
+      vm.start("m-nowindow-13")
+      broadcast("m-nowindow-13")
+
+      // Pre-window: no extension write at all.
+      assertEquals("pre-window Sa'ayda never extends", 0, store.extendCalls.get())
+      assertEquals("maxRounds stays 18", 18, store.doc.maxRounds)
+    } finally {
+      Dispatchers.resetMain()
     }
   }
 }

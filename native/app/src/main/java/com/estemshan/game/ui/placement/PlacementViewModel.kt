@@ -149,7 +149,9 @@ class PlacementViewModel(
    * current boolean, once per match generation after [startMatch] resets it),
    * never to a queued event, so one pass can bank exactly one record. One
    * record per match either way; the invariant record.rounds.size ==
-   * baseRounds − (rounds the match's own passes consumed) holds.
+   * EFFECTIVE ceiling − (rounds the match's own passes consumed) holds. The
+   * effective ceiling is [QuickMatchViewModel.maxRounds], which Sa'ayda
+   * extensions raise above the format's baseRounds (A8.8/Q48).
    */
   private fun observeMatchEnd(config: PlacementMatchConfig) {
     signalsJob?.cancel()
@@ -162,7 +164,12 @@ class PlacementViewModel(
           estimate = result.estimates[human] ?: 0,
           actual = result.tricksWon[human] ?: 0,
         )
-        if (result.round >= config.gameType.baseRounds) {
+        // S2 (A8.8/Q48): the effective ceiling, not the format's static
+        // baseRounds — a Sa'ayda in the fast window raises it mid-match, and
+        // a scored round at baseRounds on an extended match is NOT the last
+        // round. QuickMatchViewModel applies the extension before emitting
+        // this result, so the value read here is the round's own ceiling.
+        if (result.round >= quickMatch.maxRounds) {
           finalRecorded = true
           _records += recordPlacementMatch(
             matchIndex = config.index,

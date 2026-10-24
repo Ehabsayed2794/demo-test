@@ -5,7 +5,9 @@ import com.estemshan.engine.BiddingPhase
 import com.estemshan.engine.DEFAULT_SEATS
 import com.estemshan.engine.GameType
 import com.estemshan.engine.PlacementState
+import com.estemshan.engine.RoundCfg
 import com.estemshan.engine.ScoringMode
+import com.estemshan.engine.Suit
 import com.estemshan.engine.TablePhase
 import com.estemshan.engine.TableState
 import com.estemshan.engine.bot.BidBrain
@@ -188,17 +190,19 @@ class PlacementViewModelTest {
       val run = matchRuns[i]
       val totals = run.totals
       // S1 (A8.7 / Q51): a general pass consumes the round it sits on, so the
-      // record carries one signal per SCORED round — the format's round count
-      // minus the rounds the match's own passes consumed — in played order,
-      // exactly the format's numbers minus its passed ones.
+      // record carries one signal per SCORED round — the match's EFFECTIVE
+      // round count minus the rounds the match's own passes consumed — in
+      // played order. S2 (A8.8 / Q48): Sa'ayda extensions raise that count
+      // above the format's baseRounds, so the oracle uses the ceiling the
+      // match actually played to.
       assertEquals(
         "a ${config.gameType} match records one signal per scored round",
-        config.gameType.baseRounds - run.passedRounds.size,
+        run.ceiling - run.passedRounds.size,
         record.rounds.size,
       )
       assertEquals(
-        "recorded rounds are exactly the format's numbers minus its passed ones",
-        (1..config.gameType.baseRounds).filter { it !in run.passedRounds },
+        "recorded rounds are exactly the match's numbers minus its passed ones",
+        (1..run.ceiling).filter { it !in run.passedRounds },
         record.rounds.map { it.round },
       )
       // Every signal the record derives is consistent with the totals the
@@ -243,25 +247,30 @@ class PlacementViewModelTest {
     val record1 = pvm.records[0]
     // A pass consumes its own round and contributes NO placement signal
     // (nobody bid, no tricks fell), so the record carries exactly the
-    // format's numbers minus EVERY pass the match consumed — including any
+    // match's numbers minus EVERY pass the match consumed — including any
     // legitimate below-ceiling all-pass the deterministic deal produced.
+    // S2 (A8.8 / Q48): the ceiling is the EFFECTIVE one — a Sa'ayda in the
+    // MINI fast window raises it to 11, so the planned final round may be
+    // round 11, not the format's baseRounds 10.
     assertEquals(
-      "a passed planned final round records exactly the format's scored rounds",
-      (1..GameType.MINI.baseRounds).filter { it !in run1.passedRounds },
+      "a passed planned final round records exactly the match's scored rounds",
+      (1..run1.ceiling).filter { it !in run1.passedRounds },
       record1.rounds.map { it.round },
     )
     assertEquals(
-      "the match consumed every format round exactly once — scored or passed",
-      (1..GameType.MINI.baseRounds).toSet(),
+      "the match consumed every round exactly once — scored or passed",
+      (1..run1.ceiling).toSet(),
       record1.rounds.map { it.round }.toSet() + run1.passedRounds,
     )
     assertTrue(
-      "the fixture consumed the planned final round by a pass",
-      GameType.MINI.baseRounds in run1.passedRounds,
+      "the fixture consumed the match's effective final round by a pass" +
+        " (passed=${run1.passedRounds}, ceiling=${run1.ceiling}," +
+        " scored=${record1.rounds.map { it.round }})",
+      run1.ceiling in run1.passedRounds,
     )
     assertEquals(
-      "the pass banked no delta (GameType.MINI minus its passed rounds)",
-      GameType.MINI.baseRounds - run1.passedRounds.size,
+      "the pass banked no delta (the match's ceiling minus its passed rounds)",
+      run1.ceiling - run1.passedRounds.size,
       record1.rounds.size,
     )
     assertEquals(placementRank(run1.totals, human), record1.placement)
@@ -289,16 +298,115 @@ class PlacementViewModelTest {
       val run = matchRuns[i]
       assertEquals(
         "a ${config.gameType} match records one signal per scored round",
-        config.gameType.baseRounds - run.passedRounds.size,
+        run.ceiling - run.passedRounds.size,
         record.rounds.size,
       )
       assertEquals(
-        "recorded rounds are the format's numbers minus its passed ones",
-        (1..config.gameType.baseRounds).filter { it !in run.passedRounds },
+        "recorded rounds are exactly the match's numbers minus its passed ones",
+        (1..run.ceiling).filter { it !in run.passedRounds },
         record.rounds.map { it.round },
       )
     }
   }
+
+  // ==========================================================================
+  //  The extended ceiling (S2 / A8.8) and the coordinator
+  // ==========================================================================
+
+  /**
+   * S2 integration pin: a scored round at the format's `baseRounds` is NOT the
+   * match's last round when a fast-window Sa'ayda has extended the ceiling.
+   * The coordinator used to compare against `config.gameType.baseRounds` and
+   * banked + advanced the match a round early, truncating the match's totals;
+   * the effective ceiling is [QuickMatchViewModel.maxRounds].
+   *
+   * Driven through the view models directly (no auction/table): the scored
+   * round emits the same `roundResults` signal the real fixture emits, which
+   * is the only production input the coordinator reads.
+   */
+  @Test
+  fun aScoredBaseRoundsRoundOnAnExtendedMatchDoesNotAdvanceTheSeries() = runTest {
+    armDriver()
+    pvm.startPlacement(season) // match 1 is MINI, base ceiling 10
+    advanceUntilIdle()
+    assertEquals(10, qvm.maxRounds)
+
+    // Rounds 1-5 are ordinary: one seat fulfils its bid exactly, so the round
+    // is not a Sa'ayda.
+    for (round in 1..5) {
+      qvm.onTableDone(neutralCfg(round), neutralTricks())
+      advanceUntilIdle()
+      qvm.nextRound()
+    }
+    assertEquals(6, qvm.round.value)
+
+    // Round 6 is in MINI's fast window and every bid fails: a Sa'ayda, which
+    // adds one round. The extending round is never the last one.
+    qvm.onTableDone(saaydaCfg(6), saaydaTricks())
+    advanceUntilIdle()
+    assertEquals("the fast-window Sa'ayda raises the effective ceiling", 11, qvm.maxRounds)
+    assertFalse("the extending round is not the final round", qvm.matchComplete.value)
+
+    // Score rounds 7-10. Round 10 IS baseRounds but NOT the ceiling: the
+    // series must stay on match 1 and bank no record yet.
+    for (round in 7..10) {
+      qvm.nextRound()
+      qvm.onTableDone(neutralCfg(round), neutralTricks())
+      advanceUntilIdle()
+    }
+    assertEquals(
+      "a scored round at baseRounds on an extended match must not end it" +
+        " (state=${pvm.state.value}, maxRounds=${qvm.maxRounds})",
+      1,
+      (pvm.state.value as? PlacementUiState.MatchInProgress)?.progress,
+    )
+    assertTrue("no record was banked early", pvm.records.isEmpty())
+    assertFalse("the match is not complete at baseRounds", qvm.matchComplete.value)
+
+    // The extended final round ends the match and hands the series on.
+    qvm.nextRound()
+    assertEquals("the match plays the extension round", 11, qvm.round.value)
+    qvm.onTableDone(neutralCfg(11), neutralTricks())
+    advanceUntilIdle()
+    assertEquals("the extended ceiling banks the match", 1, pvm.records.size)
+    assertEquals(
+      "every round of the extended match is recorded",
+      (1..11).toList(),
+      pvm.records[0].rounds.map { it.round },
+    )
+    assertEquals(
+      "the series advances only after the extended final round",
+      2,
+      (pvm.state.value as PlacementUiState.MatchInProgress).progress,
+    )
+  }
+
+  /**
+   * A non-Sa'ayda round: all four bid 4, only p1 fulfils it exactly.
+   * Callerless on purpose — a non-null caller in a fast window is the Super
+   * Call signal, which would extend the match for an unrelated reason.
+   */
+  private fun neutralCfg(round: Int): RoundCfg = RoundCfg(
+    round = round,
+    trump = Suit.SANS,
+    callerId = null,
+    withPlayers = emptyList(),
+    estimates = mapOf("p1" to 4, "p2" to 4, "p3" to 4, "p4" to 4),
+    dashCallers = emptyList(),
+    leaderId = "p1",
+    riskId = "p4",
+    multiplier = 1,
+    hands = emptyMap(),
+  )
+
+  private fun neutralTricks(): Map<String, Int> =
+    mapOf("p1" to 4, "p2" to 3, "p3" to 3, "p4" to 3)
+
+  /** A Sa'ayda round: all four bid 4 and none fulfils it. */
+  private fun saaydaCfg(round: Int): RoundCfg = neutralCfg(round)
+
+  private fun saaydaTricks(): Map<String, Int> =
+    mapOf("p1" to 2, "p2" to 1, "p3" to 5, "p4" to 0)
 
   // ==========================================================================
   //  Assertions
@@ -353,8 +461,16 @@ class PlacementViewModelTest {
     val matchProgress = (pvm.state.value as PlacementUiState.MatchInProgress).progress
     var totals = qvm.totals.value
     val passedRounds = mutableSetOf<Int>()
+    // The match's EFFECTIVE ceiling (S2 / A8.8): a Sa'ayda in the fast window
+    // raises it above the format's baseRounds, so every oracle below uses
+    // this value rather than a static GameType count. Captured at each loop
+    // top (a pass never moves the ceiling) and again right after a scored
+    // round — before advanceUntilIdle, because the coordinator's advance
+    // seats the next match and resets the QVM's ceiling.
+    var ceiling = qvm.maxRounds
 
     while (stillInMatch(matchProgress)) {
+      ceiling = qvm.maxRounds
       // Fix-round fixture (2026-10-24): the planned final round is
       // general-passed, even when a legitimate below-ceiling all-pass already
       // consumed its round first (closeAuction applies that second pass).
@@ -383,13 +499,14 @@ class PlacementViewModelTest {
         // A general pass consumed the planned final round: the coordinator
         // (through matchComplete) banked the record and advanced the series
         // — the cancelled round is already accounted for in passedRounds.
-        return MatchRun(totals, passedRounds)
+        return MatchRun(totals, passedRounds, ceiling)
       }
       val cfg = qvm.onBiddingComplete(outcome)
       tvm.startRound(cfg, qvm.seats)
       val table = playOutRound()
       qvm.onTableDone(cfg, table.tricksWon)
       totals = qvm.totals.value
+      ceiling = qvm.maxRounds
       advanceUntilIdle()
       // The coordinator advances the series on the last round; only then does
       // this round's `nextRound` become the next match's, so it is skipped
@@ -399,10 +516,14 @@ class PlacementViewModelTest {
         advanceUntilIdle()
       }
     }
-    return MatchRun(totals, passedRounds)
+    return MatchRun(totals, passedRounds, ceiling)
   }
 
-  private data class MatchRun(val totals: Map<String, Int>, val passedRounds: Set<Int>)
+  private data class MatchRun(
+    val totals: Map<String, Int>,
+    val passedRounds: Set<Int>,
+    val ceiling: Int,
+  )
 
   /** True while the coordinator is still on the match this harness started in. */
   private fun stillInMatch(matchProgress: Int): Boolean {

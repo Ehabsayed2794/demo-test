@@ -216,34 +216,201 @@ class RoundScoreTest {
   // ── Round extension: Rapid Rounds 14-18 only ──
   @Test
   fun roundExtensionWindow() {
-    // Successful Super Call with an overriding trump extends.
+    // Successful Super Call with an overriding trump extends (maxRounds = base 18).
     assertEquals(
       RoundExtension(true, ExtensionReason.SUPER_CALL),
-      computeRoundExtension(15, "p3", Suit.HEARTS, callerSucceeded = true, isSaayda = false),
+      computeRoundExtension(15, 18, "p3", Suit.HEARTS, callerSucceeded = true, isSaayda = false),
     )
     // Same facts outside the window never extend.
     assertEquals(
       RoundExtension(false),
-      computeRoundExtension(13, "p1", Suit.HEARTS, callerSucceeded = true, isSaayda = false),
+      computeRoundExtension(13, 18, "p1", Suit.HEARTS, callerSucceeded = true, isSaayda = false),
     )
     assertEquals(
       RoundExtension(false),
-      computeRoundExtension(19, "p3", Suit.HEARTS, callerSucceeded = true, isSaayda = false),
+      computeRoundExtension(19, 18, "p3", Suit.HEARTS, callerSucceeded = true, isSaayda = false),
     )
     // Sa'ayda inside the window extends (reason SAAYDA).
     assertEquals(
       RoundExtension(true, ExtensionReason.SAAYDA),
-      computeRoundExtension(16, null, Suit.HEARTS, callerSucceeded = false, isSaayda = true),
+      computeRoundExtension(16, 18, null, Suit.HEARTS, callerSucceeded = false, isSaayda = true),
     )
     // Failed caller extends nothing, even on an overriding trump.
     assertEquals(
       RoundExtension(false),
-      computeRoundExtension(15, "p3", Suit.HEARTS, callerSucceeded = false, isSaayda = false),
+      computeRoundExtension(15, 18, "p3", Suit.HEARTS, callerSucceeded = false, isSaayda = false),
     )
     // Forced trump standing means no Super override happened.
     assertEquals(
       RoundExtension(false),
-      computeRoundExtension(15, "p3", Suit.SPADES, callerSucceeded = true, isSaayda = false),
+      computeRoundExtension(15, 18, "p3", Suit.SPADES, callerSucceeded = true, isSaayda = false),
+    )
+  }
+
+  // ── A8.8 / Q48 — Sa'ayda count, generalised to 18+N ──
+  @Test
+  fun saaydaCountFull14To19() {
+    assertEquals(
+      RoundExtension(true, ExtensionReason.SAAYDA),
+      computeRoundExtension(14, 18, null, Suit.SANS, callerSucceeded = false, isSaayda = true),
+    )
+  }
+
+  @Test
+  fun saaydaCountFull14Plus15To20() {
+    assertEquals(
+      RoundExtension(true, ExtensionReason.SAAYDA),
+      computeRoundExtension(15, 19, null, Suit.SPADES, callerSucceeded = false, isSaayda = true),
+    )
+  }
+
+  @Test
+  fun saaydaCountFull14Plus15Plus16To21() {
+    assertEquals(
+      RoundExtension(true, ExtensionReason.SAAYDA),
+      computeRoundExtension(16, 20, null, Suit.HEARTS, callerSucceeded = false, isSaayda = true),
+    )
+  }
+
+  @Test
+  fun saaydaCountRound13BeforeWindowNoExtend() {
+    assertEquals(
+      RoundExtension(false),
+      computeRoundExtension(13, 18, null, Suit.CLUBS, callerSucceeded = false, isSaayda = true),
+    )
+  }
+
+  @Test
+  fun saaydaCountFullEighteenN() {
+    // Round 18 is in-window → extends to 19.
+    assertEquals(
+      RoundExtension(true, ExtensionReason.SAAYDA),
+      computeRoundExtension(18, 18, null, Suit.CLUBS, callerSucceeded = false, isSaayda = true),
+    )
+    // Round 19 is post-window but IS the final round → repeats to 20.
+    assertEquals(
+      RoundExtension(true, ExtensionReason.SAAYDA),
+      computeRoundExtension(19, 19, null, Suit.SANS, callerSucceeded = false, isSaayda = true),
+    )
+    // Round 20 is post-window and IS the final round → repeats to 21.
+    assertEquals(
+      RoundExtension(true, ExtensionReason.SAAYDA),
+      computeRoundExtension(20, 20, null, Suit.SPADES, callerSucceeded = false, isSaayda = true),
+    )
+  }
+
+  @Test
+  fun saaydaCountNonFinalPostWindowAddsNothing() {
+    // Round 19 past the window, but maxRounds is 21 so round 19 is NOT final.
+    assertEquals(
+      RoundExtension(false),
+      computeRoundExtension(19, 21, null, Suit.SANS, callerSucceeded = false, isSaayda = true),
+    )
+    // Round 20 past the window, maxRounds 21 → not final.
+    assertEquals(
+      RoundExtension(false),
+      computeRoundExtension(20, 21, null, Suit.SPADES, callerSucceeded = false, isSaayda = true),
+    )
+  }
+
+  @Test
+  fun saaydaCountMini6To11() {
+    assertEquals(
+      RoundExtension(true, ExtensionReason.SAAYDA),
+      computeRoundExtension(6, 10, null, Suit.SANS, callerSucceeded = false, isSaayda = true, gameType = GameType.MINI),
+    )
+  }
+
+  @Test
+  fun saaydaCountMini6Plus7To12() {
+    assertEquals(
+      RoundExtension(true, ExtensionReason.SAAYDA),
+      computeRoundExtension(7, 11, null, Suit.SPADES, callerSucceeded = false, isSaayda = true, gameType = GameType.MINI),
+    )
+  }
+
+  @Test
+  fun saaydaCountMiniRound5BeforeWindowNoExtend() {
+    assertEquals(
+      RoundExtension(false),
+      computeRoundExtension(5, 10, null, Suit.CLUBS, callerSucceeded = false, isSaayda = true, gameType = GameType.MINI),
+    )
+  }
+
+  @Test
+  fun saaydaCountMiniTenToEleven() {
+    assertEquals(
+      RoundExtension(true, ExtensionReason.SAAYDA),
+      computeRoundExtension(10, 10, null, Suit.CLUBS, callerSucceeded = false, isSaayda = true, gameType = GameType.MINI),
+    )
+  }
+
+  @Test
+  fun saaydaCountFiveSaaydas14To18To23NoRejection() {
+    // FULL: five Sa'aydas in 14, 15, 16, 17, 18 → 18 + 5 = 23.
+    for (round in 14..18) {
+      val currentMax = 18 + (round - 14)
+      assertEquals(
+        "round $round extends to maxRounds $currentMax",
+        RoundExtension(true, ExtensionReason.SAAYDA),
+        computeRoundExtension(round, currentMax, null, GameType.FULL.fixedTrumpFor(round),
+          callerSucceeded = false, isSaayda = true),
+      )
+    }
+  }
+
+  @Test
+  fun superCallOnlyIfCallerSucceeded() {
+    // Overriding trump, caller succeeded → extends.
+    assertEquals(
+      RoundExtension(true, ExtensionReason.SUPER_CALL),
+      computeRoundExtension(15, 18, "p3", Suit.HEARTS, callerSucceeded = true, isSaayda = false),
+    )
+    // Overriding trump, caller failed → no extend.
+    assertEquals(
+      RoundExtension(false),
+      computeRoundExtension(15, 18, "p3", Suit.HEARTS, callerSucceeded = false, isSaayda = false),
+    )
+    // No callerId (not a Super Call) → no extend even with overriding trump.
+    assertEquals(
+      RoundExtension(false),
+      computeRoundExtension(15, 18, null, Suit.HEARTS, callerSucceeded = false, isSaayda = false),
+    )
+  }
+
+  @Test
+  fun superCallCombinesWithSaaydaCount() {
+    // Round 15 Super Call extends (in window). Round 16 Sa'ayda also extends.
+    assertEquals(
+      RoundExtension(true, ExtensionReason.SUPER_CALL),
+      computeRoundExtension(15, 18, "p3", Suit.HEARTS, callerSucceeded = true, isSaayda = false),
+    )
+    assertEquals(
+      RoundExtension(true, ExtensionReason.SAAYDA),
+      computeRoundExtension(16, 19, null, Suit.HEARTS, callerSucceeded = false, isSaayda = true),
+    )
+  }
+
+  @Test
+  fun passIsNotASaaydaNeverExtends() {
+    // A pass never reaches this helper as isSaayda=true, but defensively:
+    // isSaayda=false means no extension regardless of other facts.
+    assertEquals(
+      RoundExtension(false),
+      computeRoundExtension(15, 18, null, Suit.HEARTS, callerSucceeded = false, isSaayda = false),
+    )
+    assertEquals(
+      RoundExtension(false),
+      computeRoundExtension(14, 18, null, Suit.SANS, callerSucceeded = false, isSaayda = false),
+    )
+  }
+
+  @Test
+  fun superCallStaysInWindowNoPostWindowExtend() {
+    // Round 19 post-window Super Call never extends, even if caller succeeded.
+    assertEquals(
+      RoundExtension(false),
+      computeRoundExtension(19, 19, "p3", Suit.SANS, callerSucceeded = true, isSaayda = false),
     )
   }
 
