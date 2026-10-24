@@ -202,10 +202,10 @@ class RankedStatsTest {
   @Test
   fun roomDeparturesRecordNothing() {
     // A5.1's scope correction as it lands at THIS surface: the fold's ROOM
-    // gate records nothing. (The domain charge for a ROOM explicit leave is
-    // now Koz1 per Q14b; the ROOM 15-timeout row is the O-03d question
-    // reported 2026-10-24.) The removal still fires in a Room; the record
-    // does not.
+    // gate records nothing. (The domain charges for ROOM departures are now
+    // Koz1 — Q14b for the explicit leave, Q37 for the 15-timeout removal,
+    // whose O-03d amount CANONICAL_RULES.md's "Pointer, 2026-10-23" closes
+    // at 1 Koz.) The removal still fires in a Room; the record does not.
     for (reason in listOf(LeaveReason.EXPLICIT_LEAVE, LeaveReason.FIFTEEN_TIMEOUT)) {
       val before = RankedStats(gamesPlayed = 5, kozCount = 2)
       val after = accumulateDepartureCharge(
@@ -217,12 +217,13 @@ class RankedStatsTest {
 
   @Test
   fun aChargedDepartureForRoomRecordsNothingEvenWhenFedDirectly() {
-    // A second line of defense at the stats surface: since Q14b (2026-10-22)
-    // decideLeave does produce a Koz1 for a ROOM explicit leave, and
-    // permanentCharge still reads NONE for ROOM — so the fold's ROOM gate is
-    // what keeps every ROOM departure at zero here, including a caller that
-    // bypasses the cores. Feed it the exact state such a caller would — a
-    // 2-Koz departure charged against a Room — and the fold must refuse.
+    // A second line of defense at the stats surface: since Q14b / Q37
+    // (2026-10-22) decideLeave produces a Koz1 for a ROOM explicit leave and
+    // for the ROOM 15-timeout removal, while permanentCharge still reads
+    // NONE for ROOM — so the fold's ROOM gate is what keeps every ROOM
+    // departure at zero here, including a caller that bypasses the cores.
+    // Feed it the exact state such a caller would — a 2-Koz departure
+    // charged against a Room — and the fold must refuse.
     val before = RankedStats(gamesPlayed = 6, kingCount = 3, kozCount = 2)
     val after = accumulateDepartureCharge(before, settled, MatchMode.ROOM, KozCharge.Koz2)
     assertEquals("a caller-fed charge for a ROOM match records nothing", before, after)

@@ -10,9 +10,9 @@ import org.junit.Test
  * (Q14b, confirmed by the A6.12 / Q14b(1) record), Vote Kick records 2 Koz in
  * both votable modes (Q14d(1) — supersedes A5.1's 1 Koz and the repealed
  * 2026-10-16 OPEN-4 option (a) / C1 closure), the 15-timeout rows keep their
- * own charge (Q14b(1)) — the ROOM row stays at the pre-existing None pending
- * the owner's word on the register's Q37-vs-O-03d conflict, reported
- * 2026-10-24 — and a reclaimable return records none.
+ * own charge (Q14b(1)) — 2 Koz in RANKED/UNRANKED and, since Q37 closed
+ * O-03d (CANONICAL_RULES.md's "Pointer, 2026-10-23" on the O-03d cell), 1 Koz
+ * in ROOM — and a reclaimable return records none.
  */
 class LeaveMatchTest {
 
@@ -47,9 +47,9 @@ class LeaveMatchTest {
   }
 
   @Test
-  fun fifteenTimeoutInRoomRecordsNone() {
-    assertEquals("15-timeout ROOM = None",
-      KozCharge.None, LeaveMatch.decideLeave(MatchMode.ROOM, LeaveReason.FIFTEEN_TIMEOUT))
+  fun fifteenTimeoutInRoomRecordsKoz1() {
+    assertEquals("15-timeout ROOM = Koz1 (Q37 closes O-03d: 1 Koz, not repealed to zero)",
+      KozCharge.Koz1, LeaveMatch.decideLeave(MatchMode.ROOM, LeaveReason.FIFTEEN_TIMEOUT))
   }
 
   @Test

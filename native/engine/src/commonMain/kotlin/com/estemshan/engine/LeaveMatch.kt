@@ -7,8 +7,9 @@ package com.estemshan.engine
  *
  * Charge table as ruled by the ratified register
  * (docs/decisions/OPEN_QUESTIONS.md as of 2026-10-23; owner rulings of
- * 2026-10-22 — Q14b / Q14b(1) / Q14d(1) / A6.12 / A7.4 — which supersede the
- * repealed 2026-10-16 OPEN-4 option (a) / C1 closure this file cited before):
+ * 2026-10-22 — Q14b / Q14b(1) / Q14d(1) / Q37 (A8.3) / A6.12 / A7.4 — which
+ * supersede the repealed 2026-10-16 OPEN-4 option (a) / C1 closure this file
+ * cited before):
  * - Explicit Leave Match → +2 Koz in RANKED and UNRANKED, +1 Koz in ROOM
  *   (Q14b, confirmed by the A6.12 / Q14b(1) record).
  * - Vote Kick → +2 Koz (Q14d(1), supersedes A5.1's "1 Koz, final"). The vote
@@ -16,11 +17,12 @@ package com.estemshan.engine
  *   is never held in ROOM, so the charge stays deliberately
  *   mode-independent.
  * - The 15-timeout automatic removal is NOT a departure (Q14b(1), A6.12): it
- *   keeps its own charge — 2 Koz in RANKED and UNRANKED. Its ROOM row below
- *   stays at the pre-existing None because the register carries both Q37
- *   ("1 Koz", closes O-03d) and Q14b(1)'s "ROOM amount open per O-03d"; the
- *   conflict is reported to the owner (2026-10-24) and that row changes only
- *   on their ruling.
+ *   keeps its own charge — 2 Koz in RANKED and UNRANKED, 1 Koz in ROOM.
+ *   The ROOM amount is closed: CANONICAL_RULES.md's "Pointer, 2026-10-23"
+ *   on the O-03d cell rules "the 15-timeout removal records 1 Koz in ROOM
+ *   (2 Koz in RANKED/UNRANKED unchanged)" — closed by A8.3 / Q37,
+ *   superseding Q14b(1)'s historical "open per O-03d" wording (the register
+ *   leaves those rows verbatim under the pointer convention).
  * - A non-voluntary disconnect or app close is not a departure and charges
  *   nothing (Q14b(1)); the permanent disconnect-replacement charge is
  *   DisconnectVote's own (Q33 / A7.4: UNRANKED 2 Koz, ROOM none, RANKED has
@@ -66,12 +68,11 @@ object LeaveMatch {
         MatchMode.RANKED, MatchMode.UNRANKED -> KozCharge.Koz2
         MatchMode.ROOM -> KozCharge.Koz1
       }
-      // ROOM stays None: the register carries both Q37 ("1 Koz", closes
-      // O-03d) and Q14b(1)'s "ROOM amount open per O-03d" — reported to the
-      // owner 2026-10-24; changes only on their ruling.
+      // ROOM = 1 Koz (Q37): "O-03d is closed by A8.3 / Q37" — the doc's
+      // "Pointer, 2026-10-23" on the O-03d cell; a positive value, not zero.
       LeaveReason.FIFTEEN_TIMEOUT -> when (mode) {
         MatchMode.RANKED, MatchMode.UNRANKED -> KozCharge.Koz2
-        MatchMode.ROOM -> KozCharge.None
+        MatchMode.ROOM -> KozCharge.Koz1
       }
     }
   }
