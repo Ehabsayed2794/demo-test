@@ -48,6 +48,7 @@ import com.estemshan.services.model.GameState
 import com.estemshan.services.model.HandDoc
 import com.estemshan.services.model.LeaveResult
 import com.estemshan.services.model.MatchDoc
+import com.estemshan.services.model.Reasons
 import com.estemshan.services.model.StoredCard
 import com.estemshan.services.model.SubmitBidResult
 import com.estemshan.services.model.SubmitBiddingActionResult
@@ -418,6 +419,159 @@ class OnlineMatchViewModelTest {
   }
 
   /**
+   * O-19 / A8 F1 — the unprovable pass window is still refused, and now says
+   * why.
+   *
+   * A round closed with no cards is a General Pass only if its window is the
+   * canonical all-pass shape. Here p1 DECLARED a Dash and the other three
+   * passed, so the pass count no longer proves the round: the service answers
+   * UNSUPPORTED_GENERAL_PASS_SHAPE and the next multiplier has no derivable
+   * rung. The refusal stands — whether this round is legal or must stop being
+   * emitted at all is an open owner ruling (A8 item C) — but it must not be
+   * the silent `return` it used to be: the client leaves the document exactly
+   * where it found it AND publishes the reason on the state it shows.
+   */
+  @Test
+  fun anUnprovablePassWindowRefusesTheRoundAndNamesTheReason() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      val mixedWindow = buildList {
+        add(
+          BiddingLogEntry(
+            seats[0], BiddingLogEntry.ACTION_DASH_CALL, declaredDashCall = true, round = 1,
+          ),
+        )
+        seats.drop(1).forEach {
+          add(
+            BiddingLogEntry(
+              it, BiddingLogEntry.ACTION_DASH_CALL, declaredDashCall = false, round = 1,
+            ),
+          )
+        }
+        seats.drop(1).forEach {
+          add(BiddingLogEntry(it, BiddingLogEntry.ACTION_AUCTION_BID, isPass = true, round = 1))
+        }
+      }
+      // Dealt, closed, no cards: the auction is over and nothing was played.
+      store.doc = fastRoundDoc().copy(
+        currentRound = 1,
+        currentMultiplier = 1,
+        biddingOpen = false,
+        biddingLog = mixedWindow,
+        gameState = GameState(initialized = true, dealtRound = 1),
+        version = 3,
+      )
+      val vm = makeVm("uid-a", Dispatchers.Main)
+      vm.start("m-unprovable-pass")
+      advanceUntilIdle()
+
+      broadcast("m-unprovable-pass")
+
+      // Half 1 — nothing advanced: not the document, not the store, not here.
+      assertEquals("the refusal must not reach the store at all", 0, store.passAdvanceCalls.get())
+      assertEquals("the stalled round must stay on the document", 1, store.doc.currentRound)
+      val session = sessions.getValue("uid-a")
+      assertEquals("and this client's session must not advance either", 1, session.getRound().number)
+
+      // Half 2 — the user can see why: the published state carries the
+      // service's own reason, not a bare stall.
+      val reason = rejectionOf(vm.state.value)
+      assertTrue(
+        "the stall must publish a reason (state was ${vm.state.value::class.simpleName})",
+        reason != null,
+      )
+      assertTrue(
+        "the reason must name UNSUPPORTED_GENERAL_PASS_SHAPE, was: $reason",
+        reason!!.contains(Reasons.UNSUPPORTED_GENERAL_PASS_SHAPE),
+      )
+
+      // Re-delivery of the same document neither advances nor goes quiet.
+      broadcast("m-unprovable-pass")
+      assertEquals("a re-delivery must not turn the refusal into a guess", 0, store.passAdvanceCalls.get())
+      assertEquals(1, store.doc.currentRound)
+      assertEquals(reason, rejectionOf(vm.state.value))
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * The other half of A8 F1: the new message must not misfire. An auction
+   * still in flight, and a closed auction that DOES hold a contract, are both
+   * ordinary documents on their way to trick play — the round is not a pass
+   * candidate at all, so reporting an unprovable pass would be a false alarm
+   * that pushes the table away from a round it can still play.
+   */
+  @Test
+  fun anOrdinaryAuctionIsNotReportedAsAnUnprovablePass() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      val dashBlock = buildList {
+        add(
+          BiddingLogEntry(
+            seats[0], BiddingLogEntry.ACTION_DASH_CALL, declaredDashCall = true, round = 1,
+          ),
+        )
+        seats.drop(1).forEach {
+          add(
+            BiddingLogEntry(
+              it, BiddingLogEntry.ACTION_DASH_CALL, declaredDashCall = false, round = 1,
+            ),
+          )
+        }
+      }
+      store.doc = fastRoundDoc().copy(
+        currentRound = 1,
+        biddingOpen = true,
+        biddingLog = dashBlock,
+        gameState = GameState(initialized = true, dealtRound = 1),
+        version = 3,
+      )
+      val vm = makeVm("uid-a", Dispatchers.Main)
+      vm.start("m-not-a-pass")
+      advanceUntilIdle()
+
+      broadcast("m-not-a-pass")
+      assertEquals(0, store.passAdvanceCalls.get())
+      assertNull(
+        "an auction that is still open is not a closed pass round",
+        rejectionOf(vm.state.value),
+      )
+
+      // Same round, bidding closed, but a seat holds a bid: the contract is on
+      // record and the round will be played, not passed.
+      store.doc = store.doc.copy(
+        biddingOpen = false,
+        biddingLog = dashBlock + listOf(
+          BiddingLogEntry(
+            seats[1], BiddingLogEntry.ACTION_AUCTION_BID, isPass = false,
+            tricks = 13, suit = Suit.SPADES.name, round = 1,
+          ),
+          BiddingLogEntry(seats[2], BiddingLogEntry.ACTION_AUCTION_BID, isPass = true, round = 1),
+          BiddingLogEntry(seats[3], BiddingLogEntry.ACTION_AUCTION_BID, isPass = true, round = 1),
+        ),
+        version = 4,
+      )
+
+      broadcast("m-not-a-pass")
+      assertEquals(0, store.passAdvanceCalls.get())
+      assertNull(
+        "a closed auction with a contract on record is not an unprovable pass",
+        rejectionOf(vm.state.value),
+      )
+      assertEquals("and the round stays where the document has it", 1, store.doc.currentRound)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
    * O-19 gate 4 (a) — a cold start arms the auction at the document's
    * persisted multiplier. Before Option B this client started at x1 and a
    * mid-escalation round scored at the wrong value.
@@ -576,6 +730,14 @@ class OnlineMatchViewModelTest {
   private fun tableOf(state: MatchUiState): TableState =
     (state as? MatchUiState.Table)?.state
       ?: error("expected Table, was ${state::class.simpleName}")
+
+  /** The inline rejection on whichever live state the VM published — the
+   *  only surface a player has for "the round stalled and here is why". */
+  private fun rejectionOf(state: MatchUiState): String? = when (state) {
+    is MatchUiState.Bidding -> state.rejection
+    is MatchUiState.Table -> state.rejection
+    else -> null
+  }
 
   // ═══════════════════════════════════════════════════════════════════
   // 1. IDEMPOTENCY — the same snapshot twice applies nothing twice

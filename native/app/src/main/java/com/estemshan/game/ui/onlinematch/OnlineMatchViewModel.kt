@@ -53,6 +53,7 @@ import com.estemshan.services.ROUND_CARD_TOTAL
 import com.estemshan.services.model.BiddingActionInput
 import com.estemshan.services.model.BiddingLogEntry
 import com.estemshan.services.model.MatchDoc
+import com.estemshan.services.model.Reasons
 import com.estemshan.services.session.MatchStore
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineDispatcher
@@ -225,6 +226,14 @@ class OnlineMatchViewModel(
    */
   private var passAdvancedRound: Int? = null
 
+  /**
+   * The round whose unprovable pass window this client has already named.
+   * Unlike [passAdvancedRound] it guards a message, not a write: re-delivery
+   * of the same document must not overwrite a newer rejection, and the
+   * message itself lives until the document moves on (see [rejectionVersion]).
+   */
+  private var passRejectionRound: Int? = null
+
   /** currentMatchId cleared once for a completed match. */
   private var clearedMatchId: Boolean = false
 
@@ -292,6 +301,7 @@ class OnlineMatchViewModel(
     lastOutcome = null
     scoredRound = null
     passAdvancedRound = null
+    passRejectionRound = null
     clearedMatchId = false
     settlementAttempted = false
     settlementJob = null
@@ -493,6 +503,10 @@ class OnlineMatchViewModel(
     // raised against: our retry succeeding, or the table simply moving on.
     if (rejectionVersion != null && doc.version > (rejectionVersion ?: Int.MAX_VALUE)) {
       setRejection(null, null)
+      // The per-round report guard exists only so a re-delivery cannot stomp
+      // a newer rejection. Once the rejection itself is gone the guard must
+      // go with it, or a round still stalled would fall back to silence.
+      passRejectionRound = null
     }
 
     lastDoc = doc
@@ -570,6 +584,7 @@ class OnlineMatchViewModel(
       lastOutcome = null
       scoredRound = null
       passAdvancedRound = null
+      passRejectionRound = null
       initAuction(doc, dealerSeat, seats)
       return
     }
@@ -625,6 +640,7 @@ class OnlineMatchViewModel(
     lastOutcome = null
     scoredRound = null
     passAdvancedRound = null
+    passRejectionRound = null
     initAuction(doc, dealerSeat, seats)
   }
 
@@ -752,7 +768,10 @@ class OnlineMatchViewModel(
     val id = matchId ?: return
     val round = doc.currentRound
     if (passAdvancedRound == round) return
-    if (!isCanonicalGeneralPassWindow(doc, round)) return
+    if (!isCanonicalGeneralPassWindow(doc, round)) {
+      reportUnprovableGeneralPass(doc, round)
+      return
+    }
     passAdvancedRound = round
     val totals = session.getMatchScores()
     runCatching { store.advanceAfterGeneralPass(id, round, totals, computeWinner(totals)) }
@@ -762,6 +781,47 @@ class OnlineMatchViewModel(
         passAdvancedRound = null
         setRejection(it.message, doc.version)
       }
+  }
+
+  /**
+   * O-19 (A8 F1): the refusal stays, but it is no longer silent.
+   *
+   * A round closed with no cards and no auction contract is a General Pass
+   * only if its window is the canonical all-pass shape; with a declared Dash
+   * Call inside it the pass count no longer proves the round, so the
+   * multiplier has no derivable rung and [MatchStore.advanceAfterGeneralPass]
+   * answers UNSUPPORTED_GENERAL_PASS_SHAPE. Before this method such a
+   * document reached this client as a plain `return`: the round never
+   * advanced and nothing said why. Now the service's own reason names the
+   * rejection, so the table sees the stall instead of waiting.
+   *
+   * The shape is narrowed to windows the rules can never accept, so the
+   * message cannot misfire on an auction that is merely in flight: bidding
+   * closed (the pass/bid write sets `biddingOpen` false only once every seat
+   * has submitted), no cards for the round, at least one pass on record, and
+   * no seat holding a bid or a confirmed call this table could play out.
+   * Whether the mixed Dash+Pass round below is legal or must stop being
+   * emitted at all is an open owner ruling; this reports the deadlock, it
+   * does not decide it.
+   */
+  private fun reportUnprovableGeneralPass(doc: MatchDoc, round: Int) {
+    if (passRejectionRound == round) return
+    if (doc.biddingOpen) return
+    if (doc.roundCardCount(round) != 0) return
+    val log = doc.roundBids(round)
+    if (log.none { it.actionType == BiddingLogEntry.ACTION_AUCTION_BID && it.isPass == true }) return
+    if (log.any {
+        (it.actionType == BiddingLogEntry.ACTION_AUCTION_BID && it.isPass != true) ||
+          it.actionType == BiddingLogEntry.ACTION_CONFIRM_CALL
+      }
+    ) return
+    passRejectionRound = round
+    setRejection(
+      "${Reasons.UNSUPPORTED_GENERAL_PASS_SHAPE}: round $round closed with no cards and " +
+        "no contract on record, but its auction is not a provable all-pass window, so the " +
+        "next multiplier cannot be derived and the round was not advanced.",
+      doc.version,
+    )
   }
 
   /**
