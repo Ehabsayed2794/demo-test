@@ -8,7 +8,8 @@ package com.estemshan.engine
  * A mid-match vote that permanently removes a griefer. Seven gates, an
  * immutable once-vote, majority over eligible HUMANS, a frozen target, a
  * 5-round same-target cooldown on failure, and terminal removal recorded as
- * the Vote Kick departure (D10 / A5.1: 1 Koz, final).
+ * the Vote Kick departure (D10; charge 2 Koz per Q14d(1), 2026-10-22 —
+ * supersedes A5.1's "1 Koz, final").
  *
  * Layering: everything here is pure Kotlin over caller-supplied inputs —
  * no Firestore, no clock, no GameSession. The standings this reasons
@@ -242,14 +243,15 @@ fun resolveVoteKick(
 /**
  * The removal a PASSED vote resolves to, for services to execute: the
  * seat goes bot-held, the uid is banned from rejoin, and the removal is
- * recorded as the Vote Kick departure (D10) — **1 Koz, final** (A5.1; the
- * RD31 doubling is repealed for this path). Wherever the 9 statistics
- * settle, the record rides [LeaveMatch.decideLeave]([MatchMode],
- * [LeaveReason.VOTE_KICK]) — [KozCharge.Koz1] — consumed through
- * [accumulateDepartureCharge], which records in both votable modes. Feeding
- * [MatchOutcome.KOZ] through [accumulateRankedStat] computes the same +1
- * Koz / +1 Games Played in `RANKED`; in `UNRANKED` the charge fold is the
- * only route, because that natural-outcome fold stays RANKED-only (A3.5).
+ * recorded as the Vote Kick departure (D10) — **2 Koz** (Q14d(1), 2026-10-22;
+ * supersedes A5.1's "1 Koz, final" and the repealed 2026-10-16 C1 closure).
+ * Wherever the 9 statistics settle, the record rides
+ * [LeaveMatch.decideLeave]([MatchMode], [LeaveReason.VOTE_KICK]) —
+ * [KozCharge.Koz2] — consumed through [accumulateDepartureCharge], which
+ * records in both votable modes. Feeding [MatchOutcome.KOZ] through
+ * [accumulateRankedStat] computes the same +2 Koz / +1 Games Played in
+ * `RANKED`; in `UNRANKED` the charge fold is the only route, because that
+ * natural-outcome fold stays RANKED-only (A3.5).
  */
 fun removalForVoteKick(
   vote: VoteKickVote,

@@ -1,19 +1,30 @@
 package com.estemshan.engine
 
 /**
- * S72 — explicit leave / domain-level Koz charge (roadmap closure 2026-10-16,
- * OPEN-4 option (a)): what the career Koz count records when a seat leaves a
- * match, pure over the match mode and the leave reason.
+ * S72 — explicit leave / domain-level Koz charge: what the career Koz count
+ * records when a seat leaves a match, pure over the match mode and the leave
+ * reason.
  *
- * Charge scope as ruled:
- * - Explicit Leave Match → +2 Koz in RANKED and UNRANKED; ROOM records none.
- * - The 15-timeout automatic removal → same scope as explicit leave (RD20:
- *   the timeout counter is S61's; this file shares nothing with it).
- * - Vote Kick → +1 Koz final (restores RD18's original "recorded as Koz";
- *   the RD31 doubling is repealed for this path — conflict C1). The vote
- *   holds in RANKED + UNRANKED since the 2026-10-17 owner clarification —
- *   ROOM is the only mode without it — so this charge is deliberately
+ * Charge table as ruled by the ratified register
+ * (docs/decisions/OPEN_QUESTIONS.md as of 2026-10-23; owner rulings of
+ * 2026-10-22 — Q14b / Q14b(1) / Q14d(1) / A6.12 / A7.4 — which supersede the
+ * repealed 2026-10-16 OPEN-4 option (a) / C1 closure this file cited before):
+ * - Explicit Leave Match → +2 Koz in RANKED and UNRANKED, +1 Koz in ROOM
+ *   (Q14b, confirmed by the A6.12 / Q14b(1) record).
+ * - Vote Kick → +2 Koz (Q14d(1), supersedes A5.1's "1 Koz, final"). The vote
+ *   holds in RANKED + UNRANKED since the 2026-10-17 owner clarification and
+ *   is never held in ROOM, so the charge stays deliberately
  *   mode-independent.
+ * - The 15-timeout automatic removal is NOT a departure (Q14b(1), A6.12): it
+ *   keeps its own charge — 2 Koz in RANKED and UNRANKED. Its ROOM row below
+ *   stays at the pre-existing None because the register carries both Q37
+ *   ("1 Koz", closes O-03d) and Q14b(1)'s "ROOM amount open per O-03d"; the
+ *   conflict is reported to the owner (2026-10-24) and that row changes only
+ *   on their ruling.
+ * - A non-voluntary disconnect or app close is not a departure and charges
+ *   nothing (Q14b(1)); the permanent disconnect-replacement charge is
+ *   DisconnectVote's own (Q33 / A7.4: UNRANKED 2 Koz, ROOM none, RANKED has
+ *   no vote) and no leave penalty is added on top.
  * - Seat still reclaimable and the human returns → no departure, no Koz.
  *
  * Layering: everything here is pure Kotlin over caller-supplied inputs — no
@@ -50,8 +61,15 @@ object LeaveMatch {
   fun decideLeave(mode: MatchMode, reason: LeaveReason): KozCharge {
     return when (reason) {
       LeaveReason.RETURNED_ALLOWED -> KozCharge.None
-      LeaveReason.VOTE_KICK -> KozCharge.Koz1
-      LeaveReason.EXPLICIT_LEAVE, LeaveReason.FIFTEEN_TIMEOUT -> when (mode) {
+      LeaveReason.VOTE_KICK -> KozCharge.Koz2
+      LeaveReason.EXPLICIT_LEAVE -> when (mode) {
+        MatchMode.RANKED, MatchMode.UNRANKED -> KozCharge.Koz2
+        MatchMode.ROOM -> KozCharge.Koz1
+      }
+      // ROOM stays None: the register carries both Q37 ("1 Koz", closes
+      // O-03d) and Q14b(1)'s "ROOM amount open per O-03d" — reported to the
+      // owner 2026-10-24; changes only on their ruling.
+      LeaveReason.FIFTEEN_TIMEOUT -> when (mode) {
         MatchMode.RANKED, MatchMode.UNRANKED -> KozCharge.Koz2
         MatchMode.ROOM -> KozCharge.None
       }
