@@ -849,7 +849,7 @@ class OnlineMatchViewModel(
     // S69 (E7): the extension window is the match's own type (MINI 6–10,
     // FULL 14–18) — without this a MINI match could never extend online.
     val extension = computeRoundExtension(
-      cfg.round, cfg.callerId, cfg.trump, callerSucceeded, result.isSaayda,
+      cfg.round, doc.maxRounds, cfg.callerId, cfg.trump, callerSucceeded, result.isSaayda,
       gameType = doc.gameType,
     )
 

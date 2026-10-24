@@ -283,14 +283,25 @@ Two Game Types are selectable on every match, in every mode (casual rooms, Ranke
 | Forced Fast Rounds (§3) | **14–18** | **6–10** |
 | Extensions | **up to 5** (18 → 23 maximum) | **exactly 1** (10 → 11 maximum) |
 
+  > **Pointer, 2026-10-23 (owner; Q2c / Q48).** The extension **caps** in this cell
+  > are **superseded**: Q2c removes all extension caps, so FULL and MINI have no
+  > count cap. A8.8/Q48 governs: each Sa'ayda in the type's fast window adds one
+  > round, a final-round Sa'ayda repeats until a winner, and there is no cap on
+  > extensions. This cell is left verbatim; the pointer note is the correction.
+
 - **The trump ladder starts Sans on the first Forced Fast Round of either type** and repeats from Sans on every extension round. Full: 14 Sans, 15 Spades, 16 Hearts, 17 Diamonds, 18 Clubs, then 19 Sans, 20 Spades, … Mini: 6 Sans, 7 Spades, 8 Hearts, 9 Diamonds, 10 Clubs, then 11 Sans — **and Mini stops there** (A2.2).
 - **Unchanged by Game Type, in both types:** 4 players, individual play, 52 cards, 13 each, 13 tricks, counter-clockwise play, dealer rotation, the minimum auction bid of 4, Super Call ≥ 8, Dash Call (max 2 players), the 13 Rule, Call Cap, Risk, With/Wazz, Sa'ayda, every scoring row, and every win condition. **MINI inherits all of it verbatim — there is no Mini-specific rule anywhere.**
 
 ### A2.2 Extensions under MINI (the only structural difference)
 
 - §3's extension triggers — a fast-round Golden Super Call, and a Sa'ayda on the final round — operate exactly as written in both types, within the type's own fast window (Full 14–18, Mini 6–10).
-- **MINI permits exactly ONE extension (10 → 11 maximum).** A second extension is **rejected**; the rejection uses the existing `ALREADY_EXTENDED` outcome, so no new rule surface is introduced. **FULL is unaffected: it keeps up to 5 extensions exactly as §3 describes.**
-- Rounds past a type's ceiling cannot trigger an extension (Full 19+, Mini 11+), but are still dealt and played if an extension occurred.
+  > **Pointer, 2026-10-23 (owner; Q2c / Q48).** The **one-extension cap for MINI** and the
+  > **five-extension cap for FULL** in this paragraph are **superseded by Q2c**: no extension
+  > cap exists for either type. A8.8/Q48 governs: each Sa'ayda in the type's fast window adds
+  > one round, a final-round Sa'ayda repeats until a winner, and there is no cap on extensions.
+  > Rounds past a type's ceiling **can** trigger an extension if they are the actual final round
+  > and end in a Sa'ayda (the repeat-until-winner rule). This text is left verbatim; the pointer
+  > note is the correction.
 
 ### A2.3 Calculation Mode — NORMAL and CLASSIC
 
@@ -809,8 +820,8 @@ the disconnect table may pause for a bounded 90 seconds.**
   the examples (N occurrences → 18 + N), and MINI uses the same logic on **6–10** (Q2b). Item 2(b) — a
   Sa'ayda in the **actual final round** adds one and repeats until a winner — continues to govern rounds
   beyond 18 and is **not repealed** by these examples. **Engine defect (not a rule change):**
-  `computeRoundExtension` (`RoundScore.kt:222-238`) has **no production caller**, so nothing raises
-  `maxRounds` and `isMatchComplete` still reads the base value (`Session.kt:568`).
+  `computeRoundExtension` (`RoundScore.kt:222-238`) **is wired** at `OnlineMatchViewModel.kt:851`,
+  so it raises `maxRounds` and `isMatchComplete` reads it (`Session.kt:568`).
 
 **What A8 does not do.** It decides no scope and no engineering process. **O-08** (voice
 provider/protocol/cost) and **O-09** (ads/consent provider) are V1 scope with unresolved suppliers;

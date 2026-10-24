@@ -13,8 +13,10 @@ import com.estemshan.engine.GameType
 import com.estemshan.engine.RoundCfg
 import com.estemshan.engine.RoundScoreInput
 import com.estemshan.engine.ScoringMode
+import com.estemshan.engine.ExtensionReason
 import com.estemshan.engine.accumulateMatchScores
 import com.estemshan.engine.calculateRoundScore
+import com.estemshan.engine.computeRoundExtension
 import com.estemshan.engine.nextSeat
 import com.estemshan.game.ui.bot.BotDriver
 import com.estemshan.game.ui.bot.BotRoster
@@ -103,8 +105,9 @@ class QuickMatchViewModel : ViewModel() {
   private val _scoringMode = MutableStateFlow(ScoringMode.NORMAL)
   val scoringMode: StateFlow<ScoringMode> = _scoringMode.asStateFlow()
 
-  /** The round ceiling: FULL 18, MINI 10. */
-  val maxRounds: Int get() = _gameType.value.baseRounds
+  /** The round ceiling: FULL 18, MINI 10 — raised by Sa'ayda extension. */
+  private var _maxRounds: Int = 18
+  val maxRounds: Int get() = _maxRounds
 
   /** How many times the current round has been re-dealt (a general pass). */
   private var redealCount: Int = 0
@@ -147,6 +150,7 @@ class QuickMatchViewModel : ViewModel() {
     _roster.value = roster
     _gameType.value = gameType
     _scoringMode.value = scoringMode
+    _maxRounds = gameType.baseRounds
     hands = Dealer.dealHands(dealSeed())
     _biddingKey.value++
   }
@@ -214,11 +218,21 @@ class QuickMatchViewModel : ViewModel() {
     val saaydaSeats = if (result.isSaayda) seats.toSet() else emptySet()
     _standings.value = buildStandings(_totals.value, result.deltas, saaydaSeats)
     _roundResults.tryEmit(QuickRoundResult(cfg.round, cfg.estimates, tricksWon))
+
+    // S2 (A8.8 / Q48): Sa'ayda and Super Call extension — extend maxRounds
+    // by exactly +1 when this round qualifies. The engine already knows
+    // callerSucceeded from the breakdown; a pass is never isSaayda=true.
+    val callerSucceeded = cfg.callerId?.let { result.breakdown[it]?.succeeded } ?: false
+    val extension = computeRoundExtension(
+      cfg.round, _maxRounds, cfg.callerId, cfg.trump, callerSucceeded,
+      result.isSaayda, gameType = _gameType.value,
+    )
+    if (extension.extend) _maxRounds = _maxRounds + 1
   }
 
   fun nextRound() {
-    // S69 (E7): the match ends at its ceiling (FULL 18, MINI 10) — past it
-    // there is no next round, only the final standings.
+    // S69 (E7): the match ends at its ceiling (FULL 18, MINI 10, or
+    // extended past it by Sa'ayda) — past it there is no next round.
     if (_round.value >= maxRounds) return
     _round.value = _round.value + 1
     redealCount = 0

@@ -211,28 +211,46 @@ fun calculateRoundScore(input: RoundScoreInput): RoundScoreResult {
 /**
  * Whether the completed round extends maxRounds by exactly +1 — reusing
  * ALREADY-COMPUTED facts, never re-deriving Super legality or success.
- * Only Quick rounds in the type's extension window are eligible (FULL
- * 14-18, MINI 6-10); an already-extended round past [GameType.baseRounds]
- * never extends further. The two reasons are mutually exclusive
- * (Sa'ayda means the caller failed too), so at most +1 per round.
- * The per-type extension COUNT cap (GM3: MINI 1, FULL 5) is enforced at
- * the services layer, not here — this function answers "does THIS round
- * qualify", which is all the I/O-free engine can know.
+ *
+ * In-window ([firstFastRound]..[baseRounds]): a Sa'ayda always extends;
+ * a Super Call extends only when the Caller succeeded.
+ *
+ * Post-window (past [baseRounds]): a Sa'ayda in the ACTUAL current final
+ * round ([round] == [maxRounds]) extends and repeats until a final round
+ * ends with a winner — including past 18 (18→19→20). A non-final
+ * post-window Sa'ayda adds nothing; a Super Call never extends past the
+ * window.
+ *
+ * The two reasons are mutually exclusive (Sa'ayda means the caller failed
+ * too), so at most +1 per round. [maxRounds] is the match's current
+ * ceiling — already extended by earlier Sa'aydas — passed in by the
+ * caller so post-window repeats can see it.
+ *
+ * No extension cap: the count cap (GM3: MINI 1, FULL 5) is removed by
+ * Q2c and is not enforced here or by any caller.
  */
 fun computeRoundExtension(
   round: Int,
+  maxRounds: Int,
   callerId: String?,
   trump: Suit,
   callerSucceeded: Boolean,
   isSaayda: Boolean,
   gameType: GameType = GameType.FULL,
 ): RoundExtension {
-  if (round !in gameType.firstFastRound..gameType.baseRounds) return RoundExtension(false)
-  if (isSaayda) return RoundExtension(true, ExtensionReason.SAAYDA)
-  // In a fast round callerId is ONLY populated by the Super Call path —
-  // a non-null caller here already IS the Super signal, not a re-derivation.
-  if (callerId != null && callerSucceeded && trump != fixedTrumpFor(round, gameType)) {
-    return RoundExtension(true, ExtensionReason.SUPER_CALL)
+  // In-window: Sa'ayda always extends; Super Call only if the Caller succeeded.
+  if (round in gameType.firstFastRound..gameType.baseRounds) {
+    if (isSaayda) return RoundExtension(true, ExtensionReason.SAAYDA)
+    // In a fast round callerId is ONLY populated by the Super Call path —
+    // a non-null caller here already IS the Super signal, not a re-derivation.
+    if (callerId != null && callerSucceeded && trump != fixedTrumpFor(round, gameType)) {
+      return RoundExtension(true, ExtensionReason.SUPER_CALL)
+    }
+    return RoundExtension(false)
+  }
+  // Post-window: only a Sa'ayda in the ACTUAL final round extends, repeating.
+  if (isSaayda && round == maxRounds) {
+    return RoundExtension(true, ExtensionReason.SAAYDA)
   }
   return RoundExtension(false)
 }

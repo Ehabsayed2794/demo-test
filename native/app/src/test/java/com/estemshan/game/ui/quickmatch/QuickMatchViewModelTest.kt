@@ -5,6 +5,7 @@ import com.estemshan.engine.BidType
 import com.estemshan.engine.BiddingIntent
 import com.estemshan.engine.BiddingOutcome
 import com.estemshan.engine.GameType
+import com.estemshan.engine.RoundCfg
 import com.estemshan.engine.ScoringMode
 import com.estemshan.engine.Suit
 import com.estemshan.game.ui.bidding.BiddingViewModel
@@ -316,5 +317,155 @@ class QuickMatchViewModelTest {
       nextRound() // round 2, first deal
     }
     assertNotEquals("a redeal collided with the next round's deal", dealSnapshot(redeal), dealSnapshot(nextRound))
+  }
+
+  // ==========================================================================
+  //  S2 (A8.8 / Q48) — Sa'ayda extension in the offline driver
+  // ==========================================================================
+
+  /** A complete-Sa'ayda round config: every seat bids 4, takes a different
+   *  number → all fail → isSaayda=true → extension eligible. */
+  private fun saaydaCfg(round: Int): RoundCfg = RoundCfg(
+    round = round,
+    trump = Suit.SANS,
+    callerId = "p1",
+    withPlayers = emptyList(),
+    estimates = mapOf("p1" to 4, "p2" to 4, "p3" to 4, "p4" to 4),
+    dashCallers = emptyList(),
+    leaderId = "p1",
+    riskId = "p4",
+    multiplier = 1,
+    hands = emptyMap(),
+  )
+
+  private fun saaydaTricks() = mapOf("p1" to 2, "p2" to 1, "p3" to 5, "p4" to 0)
+
+  @Test
+  fun fullSaaydaRound14ExtendsTo19() {
+    val qvm = QuickMatchViewModel()
+    qvm.startMatch()
+    repeat(13) { qvm.nextRound() } // land on round 14
+    assertEquals(14, qvm.round.value)
+    assertEquals(18, qvm.maxRounds)
+
+    qvm.onTableDone(saaydaCfg(14), saaydaTricks())
+    assertEquals("round-14 Sa'ayda raises the ceiling to 19", 19, qvm.maxRounds)
+
+    // The ceiling moved, so nextRound from 14 is still allowed.
+    qvm.nextRound()
+    assertEquals(15, qvm.round.value)
+  }
+
+  @Test
+  fun fullSaaydaRound13BeforeWindowNoExtend() {
+    val qvm = QuickMatchViewModel()
+    qvm.startMatch()
+    repeat(12) { qvm.nextRound() } // land on round 13
+    assertEquals(13, qvm.round.value)
+
+    qvm.onTableDone(saaydaCfg(13), saaydaTricks())
+    assertEquals("pre-window Sa'ayda never extends", 18, qvm.maxRounds)
+
+    // nextRound from 13 works (13 < 18) but no extra round was added.
+    qvm.nextRound()
+    assertEquals(14, qvm.round.value)
+  }
+
+  @Test
+  fun fullSaaydaFinalRoundRepeatsPast18() {
+    val qvm = QuickMatchViewModel()
+    qvm.startMatch()
+    repeat(17) { qvm.nextRound() } // land on round 18
+    assertEquals(18, qvm.round.value)
+    assertEquals(18, qvm.maxRounds)
+
+    // Round 18 Sa'ayda → ceiling 19.
+    qvm.onTableDone(saaydaCfg(18), saaydaTricks())
+    assertEquals(19, qvm.maxRounds)
+    qvm.nextRound() // 18 → 19
+    assertEquals(19, qvm.round.value)
+
+    // Round 19 is post-window but IS the final round → Sa'ayda repeats to 20.
+    qvm.onTableDone(saaydaCfg(19), saaydaTricks())
+    assertEquals(20, qvm.maxRounds)
+    qvm.nextRound() // 19 → 20
+    assertEquals(20, qvm.round.value)
+
+    // Round 20 post-window, final → repeats to 21.
+    qvm.onTableDone(saaydaCfg(20), saaydaTricks())
+    assertEquals(21, qvm.maxRounds)
+  }
+
+  @Test
+  fun fullNonFinalPostWindowSaaydaAddsNothing() {
+    val qvm = QuickMatchViewModel()
+    qvm.startMatch()
+    // Raise ceiling to 21 via earlier in-window Sa'aydas (round 14+15+16 → 21).
+    repeat(13) { qvm.nextRound() } // round 14
+    qvm.onTableDone(saaydaCfg(14), saaydaTricks()) // → maxRounds 19
+    qvm.nextRound() // round 15
+    qvm.onTableDone(saaydaCfg(15), saaydaTricks()) // → maxRounds 20
+    qvm.nextRound() // round 16
+    qvm.onTableDone(saaydaCfg(16), saaydaTricks()) // → maxRounds 21
+    // Advance past the window to round 19 (post-window, not final since maxRounds=21).
+    qvm.nextRound() // 17
+    qvm.nextRound() // 18
+    qvm.nextRound() // 19
+    assertEquals(19, qvm.round.value)
+    assertEquals(21, qvm.maxRounds)
+    // Round 19 is post-window and NOT the final round → no extension.
+    qvm.onTableDone(saaydaCfg(19), saaydaTricks())
+    assertEquals("post-window non-final Sa'ayda adds nothing", 21, qvm.maxRounds)
+  }
+
+  @Test
+  fun miniSaaydaRound6ExtendsTo11() {
+    val qvm = QuickMatchViewModel()
+    qvm.startMatch(gameType = GameType.MINI)
+    assertEquals(10, qvm.maxRounds)
+    repeat(5) { qvm.nextRound() } // land on round 6
+    assertEquals(6, qvm.round.value)
+
+    qvm.onTableDone(saaydaCfg(6), saaydaTricks())
+    assertEquals("MINI round-6 Sa'ayda raises ceiling to 11", 11, qvm.maxRounds)
+    qvm.nextRound() // 6 → 7 (7 < 11)
+    assertEquals(7, qvm.round.value)
+  }
+
+  @Test
+  fun miniSaaydaRound5BeforeWindowNoExtend() {
+    val qvm = QuickMatchViewModel()
+    qvm.startMatch(gameType = GameType.MINI)
+    repeat(4) { qvm.nextRound() } // land on round 5
+    assertEquals(5, qvm.round.value)
+
+    qvm.onTableDone(saaydaCfg(5), saaydaTricks())
+    assertEquals("MINI pre-window Sa'ayda never extends", 10, qvm.maxRounds)
+  }
+
+  @Test
+  fun miniSaaydaRound10ToEleven() {
+    val qvm = QuickMatchViewModel()
+    qvm.startMatch(gameType = GameType.MINI)
+    repeat(9) { qvm.nextRound() } // land on round 10
+    assertEquals(10, qvm.round.value)
+    assertEquals(10, qvm.maxRounds)
+
+    qvm.onTableDone(saaydaCfg(10), saaydaTricks())
+    assertEquals(11, qvm.maxRounds)
+    qvm.nextRound() // 10 → 11
+    assertEquals(11, qvm.round.value)
+  }
+
+  @Test
+  fun fullFiveSaaydas14To18Reach23NoCap() {
+    val qvm = QuickMatchViewModel()
+    qvm.startMatch()
+    repeat(13) { qvm.nextRound() } // round 14
+    for (round in 14..18) {
+      qvm.onTableDone(saaydaCfg(round), saaydaTricks())
+      if (round < 18) qvm.nextRound()
+    }
+    assertEquals("five Sa'aydas 14–18 → 23, no cap rejection", 23, qvm.maxRounds)
   }
 }

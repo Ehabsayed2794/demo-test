@@ -163,7 +163,7 @@ fun NavGraphBuilder.quickMatchGraph(nav: NavController, qvm: QuickMatchViewModel
                 popUpTo(QUICK_STANDINGS) { inclusive = true }
               }
             },
-            enabled = round < gameType.baseRounds,
+            enabled = round < qvm.maxRounds,
             modifier = Modifier.fillMaxWidth().padding(16.dp),
           ) {
             Text(stringResource(R.string.quickmatch_next_round))
