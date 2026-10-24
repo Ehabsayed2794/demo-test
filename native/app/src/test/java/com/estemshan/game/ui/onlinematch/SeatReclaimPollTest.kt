@@ -753,8 +753,18 @@ class SeatReclaimPollTest {
     override suspend fun submitCard(matchId: String, card: Card): SubmitCardResult =
       notReached("submitCard")
 
-    override suspend fun advanceToNextRound(matchId: String, completedRound: Int): AdvanceResult =
-      notReached("advanceToNextRound")
+    override suspend fun advanceToNextRound(
+      matchId: String,
+      completedRound: Int,
+      nextMultiplier: Int,
+    ): AdvanceResult = notReached("advanceToNextRound")
+
+    override suspend fun advanceAfterGeneralPass(
+      matchId: String,
+      closedRound: Int,
+      finalScores: Map<String, Int>,
+      winnerIds: List<String>,
+    ): AdvanceResult = notReached("advanceAfterGeneralPass")
 
     override suspend fun extendMatchRounds(
       matchId: String,
