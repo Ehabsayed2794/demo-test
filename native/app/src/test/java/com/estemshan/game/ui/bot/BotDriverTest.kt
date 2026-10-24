@@ -19,6 +19,7 @@ import com.estemshan.engine.emit
 import com.estemshan.engine.emitPlay
 import com.estemshan.engine.initNormalRound
 import com.estemshan.engine.initTable
+import com.estemshan.engine.nextSeat
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -72,11 +73,13 @@ class BotDriverTest {
 
     val submitted = mutableListOf<com.estemshan.engine.BiddingIntent>()
     val played = mutableListOf<PlayCard>()
-    var redealCount = 0
+
+    /** How many general passes the fake host has serviced this match. */
+    var passCount = 0
       private set
 
-    /** Seed for the redeal deals; bumped so a redeal never repeats a hand. */
-    private var redealSeed = 11L
+    /** Seed for the fresh deals each pass deals; bumped so a pass never repeats a hand. */
+    private var dealSeed = 11L
 
     /** The auction's resolved outcome, once it closes. */
     var outcome: BiddingOutcome? = null
@@ -92,23 +95,34 @@ class BotDriverTest {
           outcome = r.outcome
         }
         is EmitResult.GeneralPass -> {
-          // The host's redeal, mirrored from QuickMatchFlow: the same round
-          // restarts at the doubled multiplier with a fresh deal.
+          // The host's round transition, mirrored from QuickMatchFlow: S1
+          // (A8.7 / Q51) — a pass does NOT re-deal the same round. It starts
+          // the NEXT round, at the engine's doubled multiplier, with a
+          // rotated dealer and a fresh deal.
           _bidding.value = r.state
-          check(++redealCount <= MAX_REDEALS) { "auction redealt $MAX_REDEALS times" }
+          check(++passCount <= MAX_PASSES) { "auction general-passed $MAX_PASSES times" }
           restart(r.doubledMultiplier)
         }
         is EmitResult.Rejected -> error("driver submitted an illegal intent: ${r.reason}")
       }
     }
 
-    /** Restart the auction for a general pass (see [submitBidding]). */
+    /**
+     * Advance to the next round for a general pass (see [submitBidding]):
+     * numbered previous.round + 1, dealer rotated one seat on from the
+     * auction's own first bidder (the dealer), fresh deal.
+     */
     fun restart(multiplier: Int) {
       val previous = _bidding.value ?: return
-      // A fresh deal too — the real host reshuffles, and re-bidding the
-      // exact same hand could loop on the same all-pass forever.
-      hands = Dealer.dealHands(++redealSeed)
-      _bidding.value = initNormalRound(previous.round, previous.firstBidder, previous.seats, multiplier)
+      // A fresh deal too — the real host deals the new round, and re-bidding
+      // the exact same hand could loop on the same all-pass forever.
+      hands = Dealer.dealHands(++dealSeed)
+      _bidding.value = initNormalRound(
+        previous.round + 1,
+        nextSeat(previous.seats, previous.firstBidder),
+        previous.seats,
+        multiplier,
+      )
     }
 
     override fun playCard(seat: String, card: Card) {
@@ -273,7 +287,8 @@ class BotDriverTest {
   @Test
   fun fourBotsDriveAFullAuctionToCompletion() {
     // Every seat is a bot, so the auction must close with zero human input.
-    // The provider redeals on a general pass, exactly as the real host does.
+    // The provider starts the next round on a general pass, exactly as the
+    // real host does.
     val provider = FakeProvider(
       roster = BotRoster.of(
         *seats.map { it to BotSeat(BotTier.HARD, BotPersonality.BALANCED) }.toTypedArray(),
@@ -288,7 +303,7 @@ class BotDriverTest {
     assertEquals("the auction must reach DONE", BiddingPhase.DONE, finished?.subPhase)
     assertNull("DONE means nobody is waiting", finished?.waitingFor)
     assertNotNull("the auction must have produced an outcome", provider.outcome)
-    assertTrue("general passes must be bounded", provider.redealCount < MAX_REDEALS)
+    assertTrue("general passes must be bounded", provider.passCount < MAX_PASSES)
     assertTrue("every bot turn took itself — no seat was skipped", provider.submitted.isNotEmpty())
   }
 
@@ -364,6 +379,6 @@ class BotDriverTest {
   }
 
   private companion object {
-    const val MAX_REDEALS = 40
+    const val MAX_PASSES = 40
   }
 }

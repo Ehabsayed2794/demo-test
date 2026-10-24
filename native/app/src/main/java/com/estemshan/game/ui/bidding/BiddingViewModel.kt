@@ -9,6 +9,7 @@ import com.estemshan.engine.Legality
 import com.estemshan.engine.canSubmit
 import com.estemshan.engine.emit
 import com.estemshan.engine.forbiddenEstimateFor
+import com.estemshan.engine.ScoringMode
 import com.estemshan.engine.initFastRound
 import com.estemshan.engine.initNormalRound
 import com.estemshan.engine.withFloorFor
@@ -36,15 +37,32 @@ class BiddingViewModel : ViewModel() {
   private val _generalPass = MutableStateFlow<Int?>(null)
   val generalPass: StateFlow<Int?> = _generalPass.asStateFlow()
 
-  fun startNormalRound(round: Int, dealer: String, seats: List<String>, multiplier: Int = 1) {
-    _state.value = initNormalRound(round, dealer, seats, multiplier)
+  /**
+   * [scoringMode] is S1's trailing thread: the engine derives a general
+   * pass's next-round multiplier from the mode (CLASSIC never escalates),
+   * so the auction state must carry the match's mode, not its default.
+   * NORMAL keeps every existing caller byte-compatible.
+   */
+  fun startNormalRound(
+    round: Int,
+    dealer: String,
+    seats: List<String>,
+    multiplier: Int = 1,
+    scoringMode: ScoringMode = ScoringMode.NORMAL,
+  ) {
+    _state.value = initNormalRound(round, dealer, seats, multiplier, scoringMode = scoringMode)
     _rejection.value = null
     _outcome.value = null
     _generalPass.value = null
   }
 
-  fun startFastRound(round: Int, dealer: String, seats: List<String>) {
-    _state.value = initFastRound(round, dealer, seats)
+  fun startFastRound(
+    round: Int,
+    dealer: String,
+    seats: List<String>,
+    scoringMode: ScoringMode = ScoringMode.NORMAL,
+  ) {
+    _state.value = initFastRound(round, dealer, seats, scoringMode = scoringMode)
     _rejection.value = null
     _outcome.value = null
     _generalPass.value = null
