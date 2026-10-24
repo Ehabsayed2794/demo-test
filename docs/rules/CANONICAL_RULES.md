@@ -823,6 +823,13 @@ the disconnect table may pause for a bounded 90 seconds.**
   `computeRoundExtension` (`RoundScore.kt:222-238`) **is wired** at `OnlineMatchViewModel.kt:851`,
   so it raises `maxRounds` and `isMatchComplete` reads it (`Session.kt:568`).
 
+  > **Pointer, 2026-10-24 (owner; text above left verbatim — confirmation).** A8.8 applies to the three-match
+  > placement series exactly as it applies to any other match: a placement match ends on the **effective**
+  > ceiling — `baseRounds` plus every Sa'ayda / Super Call extension — never on `GameType.baseRounds`, so the
+  > series advances only after the extended final round. No placement suppression flag exists and none is to be
+  > added. Recorded with its implementation evidence in
+  > `docs/decisions/2026-10-24-a8-placement-and-s1-split.md` §1.
+
 **What A8 does not do.** It decides no scope and no engineering process. **O-08** (voice
 provider/protocol/cost) and **O-09** (ads/consent provider) are V1 scope with unresolved suppliers;
 **O-10** (full account deletion) stays deferred from V1; **O-11**'s RP values (+30 / +15 / −8 / −20) are

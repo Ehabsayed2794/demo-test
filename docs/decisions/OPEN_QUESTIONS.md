@@ -39,6 +39,8 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 | Voice signaling | DECIDED 2026-10-22: voice is **in V1** for Rooms + Waiting Room, **never Ranked**; provider/protocol/cost open (O-12) | Q42; supersedes the earlier "post-V1" note |
 | Leaderboard, inactive-player board visibility | DEFERRED (K) | K |
 | Inactive players need season-board records | Not needed in V1 (no board) | K |
+| O-19 | CLOSED 2026-10-23 — Option B persisted currentMultiplier authorized with a strict rules surface; implementation assigned 2026-10-24 (agent/s1b-option-b-impl), unverified | 2026-10-23 direction record §1 (on docs/native-v1-implementation-plan-v2 @ 33ca9bc, not merged here) |
+| O-20 | CLOSED 2026-10-23 — Git policy ratified: one integration branch, one feature branch/worktree per agent, integrate only after review + green tests | 2026-10-23 direction record §6; docs/agents/git-workflow.md (same branch @ 33ca9bc, not merged here) |
 
 ### Decided on 2026-10-22 and 2026-10-23
 
