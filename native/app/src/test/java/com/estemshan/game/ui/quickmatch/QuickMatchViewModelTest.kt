@@ -662,4 +662,118 @@ class QuickMatchViewModelTest {
     )
     assertEquals("maxRounds is observable", listOf(18, 19), ceilings)
   }
+
+  // ==========================================================================
+  //  D1 — a NORMAL in-window caller is not a Super Call and must not extend
+  // ==========================================================================
+
+  /**
+   * A normal in-window round fixture: the ordinary auction winner locked 5
+   * tricks (4–7, never 8+) in a trump of their own choosing — any suit but
+   * the round's fixed ladder one — and made exactly it. One seat misses, so
+   * the round is not a Sa'ayda. Offline this is EVERY in-window round:
+   * QuickMatchFlow starts `startNormalRound` unconditionally, so the round
+   * number proves nothing about the call.
+   */
+  private fun normalCallerCfg(round: Int): RoundCfg = RoundCfg(
+    round = round,
+    trump = if (GameType.MINI.fixedTrumpFor(round) == Suit.HEARTS) Suit.SPADES else Suit.HEARTS,
+    callerId = "p1",
+    withPlayers = emptyList(),
+    estimates = mapOf("p1" to 5, "p2" to 3, "p3" to 2, "p4" to 2),
+    dashCallers = emptyList(),
+    leaderId = "p1",
+    riskId = "p4",
+    multiplier = 1,
+    hands = emptyMap(),
+  )
+
+  /** Caller exact on 5; p4 sole loser. Sums to 13, one success short of all. */
+  private val normalCallerTricks = mapOf("p1" to 5, "p2" to 3, "p3" to 2, "p4" to 3)
+
+  /**
+   * THE D1 pin: a succeeding normal caller inside the extension window must
+   * NOT raise the ceiling. Pre-fix, every such MINI round 6–10 was scored as
+   * a Super Call (caller + non-fixed trump + success), raising the ceiling
+   * to 15 by round 10 — phantom rounds the match never owed.
+   */
+  @Test
+  fun normalInWindowCallerDoesNotRaiseTheCeiling() {
+    val qvm = QuickMatchViewModel()
+    qvm.startMatch(gameType = GameType.MINI)
+    repeat(5) { qvm.nextRound() } // land on round 6, the window's start
+    assertEquals(6, qvm.round.value)
+    assertEquals(10, qvm.maxRounds)
+
+    for (round in 6..10) {
+      qvm.onTableDone(normalCallerCfg(round), normalCallerTricks)
+      assertEquals("a normal in-window caller raised the ceiling at round $round", 10, qvm.maxRounds)
+      qvm.nextRound()
+    }
+    assertEquals("the match ends on round 10 — no phantom round 11 exists", 10, qvm.round.value)
+    assertTrue("the scored base final completes the match", qvm.matchComplete.value)
+  }
+
+  /**
+   * The placement coordinator banks a match exactly when the scored round
+   * reaches the EFFECTIVE ceiling it reads while handling the round's result
+   * (PlacementViewModel's own predicate, reproduced verbatim). With normal
+   * callers only, the series must end on the base ceiling 10 — pre-fix the
+   * phantom ceiling outran every round and the series never banked.
+   */
+  @OptIn(ExperimentalCoroutinesApi::class)
+  @Test
+  fun placementSeriesEndsOnTheBaseCeilingWhenOnlyNormalCallersSucceed() = runTest {
+    val qvm = QuickMatchViewModel()
+    qvm.startMatch(gameType = GameType.MINI)
+    repeat(5) { qvm.nextRound() } // round 6
+
+    val banked = mutableListOf<Int>()
+    backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) {
+      qvm.roundResults.collect { result ->
+        if (result.round >= qvm.maxRounds) banked += result.round
+      }
+    }
+
+    for (round in 6..10) {
+      qvm.onTableDone(normalCallerCfg(round), normalCallerTricks)
+      qvm.nextRound()
+    }
+    assertEquals("the series banks exactly the base final round, never a phantom", listOf(10), banked)
+  }
+
+  /**
+   * The D1 counterweight: a GENUINE Super Call in the window still extends.
+   * MINI round 8's fixed trump is HEARTS; the caller locked 8 under a
+   * replacement SPADES and made exactly it — the engine's amount rule (8+)
+   * reads the caller's own committed estimate through the ViewModel, so the
+   * ceiling rises. The same call with the Caller failing (Q3) does not.
+   */
+  @Test
+  fun genuineSuperCallStillRaisesTheCeilingAndAFailedOneDoesNot() {
+    val superCfg = RoundCfg(
+      round = 8,
+      trump = Suit.SPADES,
+      callerId = "p1",
+      withPlayers = emptyList(),
+      estimates = mapOf("p1" to 8, "p2" to 2, "p3" to 2, "p4" to 1),
+      dashCallers = emptyList(),
+      leaderId = "p1",
+      riskId = "p4",
+      multiplier = 1,
+      hands = emptyMap(),
+    )
+
+    val qvm = QuickMatchViewModel()
+    qvm.startMatch(gameType = GameType.MINI)
+    repeat(7) { qvm.nextRound() } // land on round 8
+    assertEquals(8, qvm.round.value)
+    assertEquals(10, qvm.maxRounds)
+
+    qvm.onTableDone(superCfg, mapOf("p1" to 7, "p2" to 2, "p3" to 2, "p4" to 2))
+    assertEquals("a failed Super Call extends nothing (Q3)", 10, qvm.maxRounds)
+
+    qvm.onTableDone(superCfg, mapOf("p1" to 8, "p2" to 2, "p3" to 2, "p4" to 1))
+    assertEquals("a genuine in-window Super Call raises the ceiling to 11", 11, qvm.maxRounds)
+  }
 }

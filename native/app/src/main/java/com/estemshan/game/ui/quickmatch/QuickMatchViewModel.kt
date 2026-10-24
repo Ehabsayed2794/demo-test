@@ -260,9 +260,17 @@ class QuickMatchViewModel : ViewModel() {
     // round — the placement coordinator, a test oracle, any synchronous
     // collector — must see the extended ceiling when it sees the round.
     val callerSucceeded = cfg.callerId?.let { result.breakdown[it]?.succeeded } ?: false
+    // D1: the extension must know whether the call was GENUINELY a Super
+    // Call. Offline every in-window round is a normal auction
+    // (QuickMatchFlow starts startNormalRound unconditionally), so the
+    // caller is the ordinary auction winner and the engine's own amount
+    // rule — the locked number being 8+ — is the only honest discriminator.
+    // The caller is always among the committed estimates; a defensive miss
+    // passes null, the engine's "not supplied" legacy reading.
+    val callerBidAmount = cfg.callerId?.let { cfg.estimates[it] }
     val extension = computeRoundExtension(
       cfg.round, maxRounds, cfg.callerId, cfg.trump, callerSucceeded,
-      result.isSaayda, gameType = _gameType.value,
+      result.isSaayda, gameType = _gameType.value, callerBidAmount = callerBidAmount,
     )
     if (extension.extend) _maxRounds.value = maxRounds + 1
     _roundResults.tryEmit(QuickRoundResult(cfg.round, cfg.estimates, tricksWon))
