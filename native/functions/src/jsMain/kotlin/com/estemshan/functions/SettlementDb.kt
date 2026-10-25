@@ -83,6 +83,27 @@ interface SettlementDb {
     suspend fun readClaim(matchId: String): Map<String, Any?>?
 
     /**
+     * The current season, read ONCE inside the settlement transaction and
+     * before any write (Q22, V1-C10): every seated profile is judged against
+     * exactly the season this transaction commits into, so a seat that missed
+     * the bulk sweep is reset here — exactly once, before its RP is folded —
+     * and no settlement can leave a profile behind the current season. The
+     * recompute and the claim never consult it; a replay returns before it.
+     *
+     * NULL means the singleton does not exist — the fresh-deployment
+     * bootstrap: the Admin implementation answers null, the alignment serves
+     * the bootstrap literal to a seat that carries no season beyond it, and a
+     * seat already in a NON-default season fails the whole settlement closed
+     * rather than being silently reset (nobody declared that season dead).
+     * The DEFAULT is the bootstrap literal itself — which keeps every
+     * existing fake compiling and preserves the pre-Q22 fold, where a missing
+     * `seasonId` parsed as `s1` — and an EXISTING document is authoritative,
+     * read from the S59 singleton (`seasons/current`) in-transaction through
+     * [currentSeasonIdOf], failing closed on a malformed document.
+     */
+    suspend fun currentSeasonId(): String? = DEFAULT_SEASON_ID
+
+    /**
      * The seated player's own `players/{uid}` document, or null when it does
      * not exist. Read INSIDE the settlement transaction: the RP fold needs the
      * previous RP as of the commit, and reading it outside would let two
@@ -165,9 +186,15 @@ private data class SeatInput(val uid: String, val seat: String, val profile: Map
 // ── the players/{uid} ranked contract, parsed fail-closed ─────────────
 
 /**
- * The season id a settlement DEFAULTS a missing `players/seasonId` to
- * (RD24's seasons start at one; an existing seasonId is never changed here —
- * S59's reset is the only writer that moves a season forward).
+ * The bootstrap season (RD24's seasons start at one): the season a missing
+ * `players/seasonId` adopts, and the EFFECTIVE current season when the
+ * `seasons/current` singleton does not exist — for a seat that carries no
+ * season beyond it. A seat already in a non-default season with no singleton
+ * to judge it by fails the whole settlement closed instead of being reset to
+ * this literal. An existing seasonId equal to the current one is preserved; a
+ * stale one is moved to the current season by the lazy alignment
+ * ([alignSeatedProfilesToSeason]) that runs BEFORE the fold (Q22/V1-C10) —
+ * the bulk sweep is no longer the only writer that moves a season forward.
  */
 private const val DEFAULT_SEASON_ID = "s1"
 
@@ -277,8 +304,10 @@ private fun legacyRankRung(value: String): LadderRank? =
  *   rung of the one ladder table ([rankIdentityOf]). A present identity that
  *   disagrees with [rankAt] of the RP is refused by [progressionMismatch],
  *   never repaired.
- * - seasonId missing ⇒ [DEFAULT_SEASON_ID]; present must be a String. The
- *   settlement NEVER changes an existing seasonId (RD24).
+ * - seasonId missing ⇒ the parse stores the DEFAULT_SEASON_ID bootstrap
+ *   literal; alignSeatedProfilesToSeason then adopts the CURRENT season before
+ *   the fold. An absent seasons/current also reads as DEFAULT_SEASON_ID. A
+ *   present seasonId must be a String (blank/non-string fails closed).
  * - highestRank missing (highestRankTier + highestRankDivision absent) ⇒
  *   the current rung; present must name a rung. [updateHighestRank] below
  *   never lowers whatever it holds.
@@ -429,6 +458,106 @@ private fun parseRankedSeat(seat: SeatInput, matchId: String): ParsedSeat =
     profile = parseRankedProfile(seat.uid, matchId, seat.profile),
     stats = parseRankedStats(seat.uid, matchId, seat.profile),
   )
+
+/**
+ * The RAW stored `seasonId` — the value the lazy-reset decision needs, taken
+ * from the stored map because [parseRankedProfile] stores the
+ * DEFAULT_SEASON_ID bootstrap literal for a missing season, and that default
+ * is indistinguishable from a recorded one once parsed. Null means the field
+ * is absent (the caller adopts the CURRENT season). A present seasonId must
+ * be a String and non-string already fails closed in the parse; a
+ * present-but-blank one fails closed HERE, mirroring the read path's corrupt
+ * branch — a season is adopted or reset, never guessed.
+ */
+private fun rawSeasonIdOf(uid: String, matchId: String, raw: Map<String, Any?>): String? =
+  when (val value = raw["seasonId"]) {
+    null -> null
+    is String -> value.takeIf { it.isNotBlank() }
+      ?: failClosed(uid, matchId, "a blank players/seasonId — the season is adopted or reset, never guessed")
+    else -> failClosed(uid, matchId, "a non-string players/seasonId ($value)")
+  }
+
+/**
+ * Q22's lazy season reset, settlement side (E5.2, V1-C10): every seated
+ * profile is aligned to the current season BEFORE the fold, inside the same
+ * transaction, so settlement can never leave a profile in a dead season —
+ * RP accrued into a stale `seasonId` would be progression the current
+ * leaderboard cannot see.
+ *
+ * Per seat, from the RAW stored map ([currentSeasonId] null = no singleton):
+ *
+ * - `seasonId` absent ⇒ ADOPT the effective season with no reset — the read
+ *   path's lazy merge, mirrored. The parse had defaulted the field to the
+ *   bootstrap literal, which would be a fabricated stale season once s2+ is
+ *   live, so the adoption is applied to the parsed copy before anything else.
+ * - present, equal to the effective season ⇒ untouched (today's behaviour).
+ * - present and different, WITH a singleton ⇒ ONE reset, planned with the
+ *   bulk sweep's own fail-closed [planSeasonReset] so the demotion math and
+ *   the from-season guard can never drift between the sweep and this path.
+ *   Seats that slept through different numbers of seasons are grouped by the
+ *   season they actually recorded — one plan per recorded season, and a
+ *   foreign season is never folded. Any plan failure fails the WHOLE
+ *   settlement closed, exactly like every other corrupt profile value: no
+ *   seat settles ahead of a seat that could not be reset.
+ * - present and beyond the bootstrap literal, with NO singleton ⇒ the whole
+ *   settlement fails closed before any write: a lazy reset to the bootstrap
+ *   season would be a reset no season declared, and an existing season state
+ *   is exactly the thing the bootstrap must not silently overwrite.
+ *
+ * The reset carries placementState, the demotion shield and Highest Rank
+ * through the engine's own policies and touches no statistic; the fold then
+ * merges only the contract fields on top, which is what preserves them.
+ */
+private fun alignSeatedProfilesToSeason(
+  seatInputs: List<SeatInput>,
+  currentSeasonId: String?,
+  matchId: String,
+): List<ParsedSeat> {
+  val parsed = seatInputs.map { parseRankedSeat(it, matchId) }
+
+  // The season every seat is judged against: the read singleton, or the
+  // bootstrap literal when no singleton exists at all.
+  val effectiveSeasonId = currentSeasonId ?: DEFAULT_SEASON_ID
+
+  val adopted = parsed.mapIndexed { index, seat ->
+    val recorded = rawSeasonIdOf(seat.uid, matchId, seatInputs[index].profile)
+    when {
+      currentSeasonId == null && recorded != null && recorded != DEFAULT_SEASON_ID ->
+        failClosed(
+          seat.uid, matchId,
+          "a players/seasonId ('$recorded') from beyond the bootstrap season while " +
+            "seasons/current does not exist — nothing wrote; a lazy reset to the " +
+            "bootstrap season '$DEFAULT_SEASON_ID' would be a reset no season declared",
+        )
+      recorded == null ->
+        seat.copy(profile = seat.profile.copy(seasonId = effectiveSeasonId))
+      else -> seat
+    }
+  }
+
+  // With no singleton, every seat is either in or adopted into the bootstrap
+  // literal (or the alignment above failed closed), so a stale remainder here
+  // implies a live singleton and a genuine missed reset.
+  val stale = adopted.filter { it.profile.seasonId != effectiveSeasonId }
+  if (stale.isEmpty()) return adopted
+
+  val resets = LinkedHashMap<String, RankedProfile>()
+  for ((fromSeasonId, seats) in stale.groupBy { it.profile.seasonId }) {
+    val plan = planSeasonReset(
+      fromSeasonId,
+      effectiveSeasonId,
+      seats.map { it.uid to it.profile },
+    )
+    plan.failures.firstOrNull()?.let { failure ->
+      failClosed(failure.playerId, matchId, "a failed lazy season reset (${failure.reason})")
+    }
+    for (reset in plan.resets) resets[reset.playerId] = reset.profile
+  }
+  return adopted.map { seat ->
+    val reset = resets[seat.uid]
+    if (reset == null) seat else seat.copy(profile = reset)
+  }
+}
 
 /** The ladder ordinal [previousRp] sits on now (RD4 input 1). */
 private fun ladderOrdinal(previousRp: Int): Int = rankLadder.indexOf(rankAt(previousRp))
@@ -665,7 +794,9 @@ private fun foldRankedProgression(
       // exactly as parsed.
       "highestRankTier" to held.highestRank.tier,
       "highestRankDivision" to held.highestRank.division,
-      // Preserved when present, defaulted when missing; never moved (RD24).
+      // The current season, always — preserved when already current, adopted
+      // when missing, moved to current when stale — because the seat was
+      // aligned to the season read at the top of this transaction (Q22).
       "seasonId" to held.seasonId,
       // Preserved when present, defaulted when missing (RD30).
       "placementState" to held.placementState.name,
@@ -777,11 +908,20 @@ suspend fun settleOnce(db: SettlementDb, request: CallableRequest): Map<String, 
 
     // Reads before writes, all four seats, inside this transaction: two racers
     // that both read absent cannot both write, and the profile a racer reads
-    // is the one its claim commits against. The typed contract parse runs
-    // after the reads and before the first write, so a corrupt profile field
-    // fails the whole settlement closed with nothing behind it.
-    val seated = readSeatInputs(tx, fields, parsed.order, matchId)
-      .map { parseRankedSeat(it, matchId) }
+    // is the one its claim commits against. The season is read ONCE before the
+    // seats (Q22, V1-C10) — null when the singleton does not exist, which the
+    // alignment treats as the bootstrap season and guards with fail-closed —
+    // so every profile is judged, reset and folded against exactly the season
+    // this transaction commits into. The typed contract parse — and the lazy
+    // reset it feeds — runs after the reads and before the first write, so a
+    // corrupt profile field still fails the whole settlement closed with
+    // nothing behind it.
+    val currentSeasonId = tx.currentSeasonId()
+    val seated = alignSeatedProfilesToSeason(
+      seatInputs = readSeatInputs(tx, fields, parsed.order, matchId),
+      currentSeasonId = currentSeasonId,
+      matchId = matchId,
+    )
     val progression = foldRankedProgression(
       seated,
       recomputed.finalScores,
@@ -919,6 +1059,22 @@ class AdminSettlementDb : SettlementDb {
       if (!snap.exists) return null
       @Suppress("UNCHECKED_CAST")
       return dynamicToKotlin(snap.data()) as? Map<String, Any?>
+    }
+
+    /**
+     * S59's singleton, read INSIDE the transaction and before any write (Q22,
+     * V1-C10): the season a stale seat is lazily reset into is exactly the
+     * season this transaction commits into, so a season flipping mid-call
+     * cannot stamp a profile with a season the write did not land in. Absent
+     * answers NULL — the fresh-deployment bootstrap the alignment guards —
+     * while an existing document is authoritative and parsed by
+     * [currentSeasonIdOf]'s, the one parser the leaderboard and profile paths
+     * already resolve through (malformed fails closed).
+     */
+    override suspend fun currentSeasonId(): String? {
+      val snap = tx.get(db.collection(SEASONS_COLLECTION).doc(CURRENT_SEASON_DOC)).await()
+      if (!snap.exists) return null
+      return currentSeasonIdOf(exists = true, data = dynamicToKotlin(snap.data()))
     }
 
     override fun writeCorrection(

@@ -92,6 +92,8 @@ class RpApplicationTest {
     var claim: Map<String, Any?>? = null,
     val profiles: Map<String, Map<String, Any?>> = emptyMap(),
     val missingProfiles: Set<String> = emptySet(),
+    /** What `seasons/current` answers inside the transaction; the Tx's own default ("s1"). */
+    val currentSeasonId: String = "s1",
   ) : SettlementDb {
     var txRuns = 0
     var profileReads = 0
@@ -116,6 +118,10 @@ class RpApplicationTest {
           events.add("read-claim")
           return claim
         }
+
+        // Not event-logged: the season read rides before the seat reads on
+        // every settle, and the event golden pins the profile/write order.
+        override suspend fun currentSeasonId(): String = this@FakeRpDb.currentSeasonId
 
         override suspend fun readProfile(uid: String): Map<String, Any?>? {
           events.add("read-profile:$uid")
@@ -713,16 +719,19 @@ class RpApplicationTest {
   }
 
   /**
-   * An existing seasonId is PRESERVED and a missing one defaults to "s1"
-   * (RD24): u1 carries "s2", u2 carries nothing, and the writes must differ
-   * exactly so — nothing in this fold ever moves a season forward (S59's
-   * reset is the only writer that does).
+   * A seasonId equal to the CURRENT season is PRESERVED, and a missing one
+   * ADOPTS the current season (Q22, V1-C10 — the read path's lazy merge,
+   * mirrored): u1 carries "s2" against a current "s2", u2 carries nothing,
+   * and the writes must differ exactly so. A present-but-DIFFERENT season is
+   * no longer this test's business: that is the lazy reset, pinned in
+   * `LazySeasonResetTest`.
    */
   @Test
-  fun seasonIdIsPreservedWhenPresentAndDefaultedWhenAbsent() = runTest {
+  fun seasonIdIsPreservedWhenCurrentAndAdoptedWhenAbsent() = runTest {
     val db = FakeRpDb(
       match = SettlementFixtures.matchFields(uids),
       archives = archives,
+      currentSeasonId = "s2",
       profiles = mapOf(
         "u1" to SettlementFixtures.profile("u1", 690, seasonId = "s2"),
         "u2" to SettlementFixtures.profile("u2", 690),
@@ -738,7 +747,7 @@ class RpApplicationTest {
       db.writeFor("u1"),
     )
     assertEquals(
-      expectedWrite(rp = 682, tier = "Gold", division = "III", koz = 1),
+      expectedWrite(rp = 682, tier = "Gold", division = "III", koz = 1, seasonId = "s2"),
       db.writeFor("u2"),
     )
   }

@@ -4,7 +4,6 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertTrue
 
 /**
  * S44/S51 — the Ranked profile read/normalisation matrix.
@@ -63,16 +62,6 @@ class RankedProfileDbTest {
       block()
     } catch (e: Throwable) {
       return e.asDynamic().code as String
-    }
-    throw AssertionError("expected HttpsError")
-  }
-
-  /** The HttpsError message a call throws, for the denials whose words are contract. */
-  private suspend fun thrownMessage(block: suspend () -> Any?): String {
-    try {
-      block()
-    } catch (e: Throwable) {
-      return e.asDynamic().message as String
     }
     throw AssertionError("expected HttpsError")
   }
@@ -257,24 +246,48 @@ class RankedProfileDbTest {
   }
 
   @Test
-  fun aStaleProfileSeasonFailsPreconditionAndIsNeverSilentlyRestamped() = runTest {
+  fun aStaleProfileSeasonIsLazilyResetOnceIntoTheCurrentSeason() = runTest {
     val db = FakeDb(
       validProfile(), // carries seasonId = "s1"
       currentSeasonDoc = linkedMapOf<String, Any?>("seasonId" to "s2"),
     )
 
-    assertEquals("failed-precondition", thrownCode { loadOnce(db, fakeRequest("u1")) })
+    val response = loadOnce(db, fakeRequest("u1"))
 
-    // A missed reset is loud, not a sentence to a silent re-stamp: zero
-    // merges, zero writes, and the message names BOTH seasons so the operator
-    // can see exactly which transition was missed.
-    assertEquals(0, db.writes)
-    assertEquals(0, db.merges.size)
-    assertEquals(listOf("read", "season"), db.events, "the profile and the season were read; the merge never ran")
-    assertTrue(
-      "profile season 's1' is not the current season 's2'" in
-        thrownMessage { loadOnce(db, fakeRequest("u1")) },
+    // Q22 (V1-C10): a missed bulk sweep is repaired on first access — ONE
+    // reset inside the same transaction, never a silent re-stamp and never a
+    // second failure. Gold II takes the two-step demotion to Silver I at its
+    // floor; the season advances; Highest Rank never lowers.
+    assertEquals(true, response["migrated"])
+    val profile = section(response, "profile")
+    assertEquals("Silver", profile["tier"])
+    assertEquals("I", profile["division"])
+    assertEquals(450, profile["rp"])
+    assertEquals("s2", profile["seasonId"])
+    assertEquals("Gold", profile["highestRankTier"])
+    assertEquals("II", profile["highestRankDivision"])
+    assertEquals("SKIPPED", profile["placementState"])
+    assertEquals(false, profile["demotionShield"])
+
+    // The migration is ONE merge of exactly the six progression fields — the
+    // bulk sweep's own list — and nothing else: career statistics, placement,
+    // the shield and the identity fields are carried over by not being named.
+    assertEquals(1, db.writes)
+    assertEquals(
+      mapOf(
+        "tier" to "Silver",
+        "division" to "I",
+        "rp" to 450,
+        "seasonId" to "s2",
+        "highestRankTier" to "Gold",
+        "highestRankDivision" to "II",
+      ),
+      db.merges.single(),
     )
+    // The read order is the contract: profile → season → merge.
+    assertEquals(listOf("read", "season", "merge"), db.events)
+    assertEquals(12, db.doc?.get("rankedGamesPlayed"))
+    assertEquals("Nour", db.doc?.get("displayName"))
   }
 
   @Test
@@ -552,7 +565,7 @@ class RankedProfileDbTest {
           return doc
         }
 
-        override suspend fun currentSeasonId(): String {
+        override suspend fun currentSeasonId(): String? {
           events += "season"
           if (currentSeasonDoc == NO_SEASON_DOC) return super<RankedProfileDb.Tx>.currentSeasonId()
           return currentSeasonIdOf(exists = true, data = dynamicToKotlin(currentSeasonDoc))
