@@ -2096,7 +2096,8 @@ service cloud.firestore {
       // (e.g. "1".."21"), written ATOMICALLY in the SAME transaction
       // that advances past (or completes on) that round:
       //   { round: int, matchId: string,
-      //     cardLog: [exactly the round's 52 {seatId,card,round} plays],
+      //     cardLog: [exactly the round's plays, 13 per REAL seat --
+      //     52 on the four-seat full table -- each {seatId,card,round}],
       //     biddingLog: [that round's {seatId,actionType,...,round} actions],
       //     estimates: {seat: int 0..13 Final Estimates snapshot},
       //     passRound: true (ONLY on a General Pass round) }
@@ -2106,8 +2107,18 @@ service cloud.firestore {
       // passes (see isAllPassBiddingLog() above), so it archives on its own
       // narrow branch below — `passRound: true`, empty cardLog, that exact
       // window tagged with the closed round. An ordinary archive still
-      // requires all 52 cards and must not carry the marker; neither branch
+      // requires every card play of the round and must not carry the marker;
       // relaxes anything besides the marker field itself.
+      // Seat-count asymmetry fix (plan V2 section 5.10): "every card play"
+      // is 13 * this match's REAL seat count, derived from the same source
+      // the pass branch proves its window against (parent.seats --
+      // immutable after creation, and isValidSeatMap requires
+      // seats.keys().size() == players.size() from creation onward). That
+      // is the exact 13 * seats factor Settlement.replayTricks and
+      // TimeoutResolution.cardTotal already settle on. 13 * 4 == 52 for a
+      // four-seat table, so the four-seat behaviour is identical to the
+      // prior hardcoded constant; 1..3 seat matches become legitimately
+      // archivable.
       // `estimates` is ALLOWED, never required: archives written before
       // S50's archive fix (and any old client still writing the 4-key
       // shape) stay valid; matches without per-round estimates simply
@@ -2165,7 +2176,7 @@ service cloud.firestore {
                   && (isPassArchive
                        ? data.cardLog.size() == 0
                          && isAllPassBiddingLog(data.biddingLog, data.round, parent.seats)
-                       : data.cardLog.size() == 52);
+                       : data.cardLog.size() == 13 * parent.seats.keys().size());
         }
 
         allow get: if request.auth != null && request.auth.uid in parentMatch().players;
