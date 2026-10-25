@@ -11,6 +11,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.tasks.await
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -94,6 +95,12 @@ class TimeoutEmulatorTest {
   @Before
   fun wipeEmulatorsBetweenTests() {
     EmulatorSuite.reset()
+  }
+
+  @After
+  fun releaseOurFirebaseClients() {
+    val context = InstrumentationRegistry.getInstrumentation().targetContext
+    EmulatorSuite.releaseFirestoreClients(context, "-s61_")
   }
 
   private suspend fun seating(): Map<String, EmulatorSuite.ClientFirebase> {
