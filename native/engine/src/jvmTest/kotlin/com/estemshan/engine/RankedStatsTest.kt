@@ -178,8 +178,9 @@ class RankedStatsTest {
 
   @Test
   fun theTwoKozDeparturesChargeTwoKozAndOneGamesPlayedInRankedAndUnranked() {
-    // A5.1's first two rows (explicit leave + the 15-timeout removal):
-    // "2 Koz" exactly in RANKED and UNRANKED. The recorded form is option
+    // A5.1's first two rows (explicit leave + the 15-timeout removal), the
+    // RANKED/UNRANKED cells: "2 Koz" exactly — re-ratified by Q14b /
+    // Q14b(1), 2026-10-22. The recorded form is option
     // (a) — +2 to the career Koz count with the Koz % denominator +1,
     // Games Played +1 (`NATIVE_V1_PLAN_AND_ESTIMATE.md:883-884`) — and
     // never a placement: no outcome row moves.
@@ -200,8 +201,11 @@ class RankedStatsTest {
 
   @Test
   fun roomDeparturesRecordNothing() {
-    // A5.1's scope correction: ROOM is out of RD31 entirely — "no 2-Koz
-    // rule". The removal still fires in a Room; the record does not.
+    // A5.1's scope correction as it lands at THIS surface: the fold's ROOM
+    // gate records nothing. (The domain charges for ROOM departures are now
+    // Koz1 — Q14b for the explicit leave, Q37 for the 15-timeout removal,
+    // whose O-03d amount CANONICAL_RULES.md's "Pointer, 2026-10-23" closes
+    // at 1 Koz.) The removal still fires in a Room; the record does not.
     for (reason in listOf(LeaveReason.EXPLICIT_LEAVE, LeaveReason.FIFTEEN_TIMEOUT)) {
       val before = RankedStats(gamesPlayed = 5, kozCount = 2)
       val after = accumulateDepartureCharge(
@@ -213,29 +217,31 @@ class RankedStatsTest {
 
   @Test
   fun aChargedDepartureForRoomRecordsNothingEvenWhenFedDirectly() {
-    // The same scope correction as a second line of defense: the decision
-    // cores never produce a charge for a ROOM match (decideLeave → None,
-    // permanentCharge → NONE), so this branch only guards a caller that
-    // bypasses the cores. Feed it the exact state such a caller would — a
-    // 2-Koz departure charged against a Room — and the fold must refuse.
+    // A second line of defense at the stats surface: since Q14b / Q37
+    // (2026-10-22) decideLeave produces a Koz1 for a ROOM explicit leave and
+    // for the ROOM 15-timeout removal, while permanentCharge still reads
+    // NONE for ROOM — so the fold's ROOM gate is what keeps every ROOM
+    // departure at zero here, including a caller that bypasses the cores.
+    // Feed it the exact state such a caller would — a 2-Koz departure
+    // charged against a Room — and the fold must refuse.
     val before = RankedStats(gamesPlayed = 6, kingCount = 3, kozCount = 2)
     val after = accumulateDepartureCharge(before, settled, MatchMode.ROOM, KozCharge.Koz2)
     assertEquals("a caller-fed charge for a ROOM match records nothing", before, after)
   }
 
   @Test
-  fun aVoteKickDepartureChargesOneKozFinalInBothVotableModes() {
-    // A5.1's third row + the repeal: Vote Kick records 1 Koz, final — the
-    // RD31 doubling is repealed for this path — in RANKED and, since the
-    // 2026-10-17 clarification, in UNRANKED. Seed one natural Koz so the
-    // assertion is unambiguous: a doubling would read 3.
+  fun aVoteKickDepartureChargesTwoKozInBothVotableModes() {
+    // Q14d(1) (2026-10-22; register of 2026-10-23): a passed Vote Kick
+    // records 2 Koz in RANKED and UNRANKED — superseding A5.1's "1 Koz,
+    // final" and the repealed 2026-10-16 C1 closure. Seed one natural Koz so
+    // the assertion is unambiguous: the repealed 1-Koz reading would read 2.
     for (mode in listOf(MatchMode.RANKED, MatchMode.UNRANKED)) {
       val after = accumulateDepartureCharge(
         RankedStats(gamesPlayed = 1, kozCount = 1), settled, mode,
         LeaveMatch.decideLeave(mode, LeaveReason.VOTE_KICK),
       )
       assertEquals("vote kick in $mode: Games Played +1", 2, after.gamesPlayed)
-      assertEquals("vote kick in $mode: 1 Koz, final (never doubled)", 2, after.kozCount)
+      assertEquals("vote kick in $mode: Koz +2 over the seeded one (Q14d(1))", 3, after.kozCount)
     }
   }
 
