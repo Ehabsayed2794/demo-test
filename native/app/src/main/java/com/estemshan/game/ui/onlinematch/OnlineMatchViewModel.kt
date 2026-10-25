@@ -43,6 +43,8 @@ import com.estemshan.services.MatchSnapshot
 import com.estemshan.services.MatchSnapshotListener
 import com.estemshan.services.MatchSubscriptionHandle
 import com.estemshan.services.isCanonicalGeneralPassWindow
+import com.estemshan.services.generalPassWindowDefect
+import com.estemshan.services.GeneralPassWindowDefect
 import com.estemshan.services.Heartbeat
 import com.estemshan.services.DecisionTimeoutPort
 import com.estemshan.services.DecisionWindow
@@ -754,7 +756,8 @@ class OnlineMatchViewModel(
   /**
    * O-19 (Option B, 2026-10-24): advance a General-Passed round on the
    * document. The closed round is recognised only by its canonical
-   * all-pass window (no cards, the same N declining dash calls + N passes
+   * all-pass window (no cards; N Dash decisions of which at most two are
+   * declared, then passes from every remaining seat — the mixed shape
    * [replayBidding] just replayed), and [MatchStore.advanceAfterGeneralPass]
    * re-proves that window inside its own transaction — this method never
    * decides the multiplier itself. All clients may race the same write;
@@ -784,25 +787,24 @@ class OnlineMatchViewModel(
   }
 
   /**
-   * O-19 (A8 F1): the refusal stays, but it is no longer silent.
+   * O-19 (A8 F1) + the F1 owner ruling (2026-10-24): the refusal stays, but
+   * it is no longer silent.
    *
    * A round closed with no cards and no auction contract is a General Pass
-   * only if its window is the canonical all-pass shape; with a declared Dash
-   * Call inside it the pass count no longer proves the round, so the
-   * multiplier has no derivable rung and [MatchStore.advanceAfterGeneralPass]
-   * answers UNSUPPORTED_GENERAL_PASS_SHAPE. Before this method such a
-   * document reached this client as a plain `return`: the round never
-   * advanced and nothing said why. Now the service's own reason names the
-   * rejection, so the table sees the stall instead of waiting.
+   * only if its window is the canonical all-pass shape — which since the
+   * ruling INCLUDES up to two declared Dash Calls (k = 0..min(2, N-1)
+   * effective dashes, then passes from every remaining seat). What this
+   * reports now is only what the widened proof still refuses: a window
+   * claiming MORE than two declared Dashes names Reasons.TOO_MANY_DASH_CALLS
+   * by itself; every other non-canonical shape keeps
+   * UNSUPPORTED_GENERAL_PASS_SHAPE. The table sees the stall instead of
+   * waiting.
    *
    * The shape is narrowed to windows the rules can never accept, so the
    * message cannot misfire on an auction that is merely in flight: bidding
    * closed (the pass/bid write sets `biddingOpen` false only once every seat
    * has submitted), no cards for the round, at least one pass on record, and
    * no seat holding a bid or a confirmed call this table could play out.
-   * Whether the mixed Dash+Pass round below is legal or must stop being
-   * emitted at all is an open owner ruling; this reports the deadlock, it
-   * does not decide it.
    */
   private fun reportUnprovableGeneralPass(doc: MatchDoc, round: Int) {
     if (passRejectionRound == round) return
@@ -816,12 +818,16 @@ class OnlineMatchViewModel(
       }
     ) return
     passRejectionRound = round
-    setRejection(
+    val defect = generalPassWindowDefect(doc, round)
+    val reason = if (defect == GeneralPassWindowDefect.TOO_MANY_DASH_CALLS) {
+      "${Reasons.TOO_MANY_DASH_CALLS}: round $round's log claims more than the strict " +
+        "two-Dash maximum, so the window cannot be a General Pass and the round was not advanced."
+    } else {
       "${Reasons.UNSUPPORTED_GENERAL_PASS_SHAPE}: round $round closed with no cards and " +
         "no contract on record, but its auction is not a provable all-pass window, so the " +
-        "next multiplier cannot be derived and the round was not advanced.",
-      doc.version,
-    )
+        "next multiplier cannot be derived and the round was not advanced."
+    }
+    setRejection(reason, doc.version)
   }
 
   /**

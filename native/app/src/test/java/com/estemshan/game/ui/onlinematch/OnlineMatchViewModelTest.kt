@@ -32,7 +32,9 @@ import com.estemshan.game.ui.standings.buildStandings
 import com.estemshan.services.MatchAdapter
 import com.estemshan.services.FirestoreError
 import com.estemshan.services.Heartbeat
+import com.estemshan.services.effectiveDashCallCount
 import com.estemshan.services.generalPassMultiplier
+import com.estemshan.services.normaliseDashCallEntry
 import com.estemshan.services.MatchListenerFactory
 import com.estemshan.services.MatchListenerRegistration
 import com.estemshan.services.PlayerPort
@@ -419,56 +421,54 @@ class OnlineMatchViewModelTest {
   }
 
   /**
-   * O-19 / A8 F1 — the unprovable pass window is still refused, and now says
-   * why.
+   * O-19 / A8 F1 + the F1 owner ruling (2026-10-24): the refusal stands for
+   * what the widened proof still refuses, and says why.
    *
-   * A round closed with no cards is a General Pass only if its window is the
-   * canonical all-pass shape. Here p1 DECLARED a Dash and the other three
-   * passed, so the pass count no longer proves the round: the service answers
-   * UNSUPPORTED_GENERAL_PASS_SHAPE and the next multiplier has no derivable
-   * rung. The refusal stands — whether this round is legal or must stop being
-   * emitted at all is an open owner ruling (A8 item C) — but it must not be
-   * the silent `return` it used to be: the client leaves the document exactly
-   * where it found it AND publishes the reason on the state it shows.
+   * A round closed with no cards is a General Pass only if its window is
+   * the canonical all-pass shape — which since the ruling INCLUDES one or
+   * two declared Dash Calls. What still refuses is the strict two-Dash
+   * maximum: here THREE seats declared, a document the normalising write
+   * boundary can never produce. The client leaves the document exactly
+   * where it found it AND publishes the NAMED reason
+   * (TOO_MANY_DASH_CALLS) on the state it shows — never a silent clamp.
    */
   @Test
-  fun anUnprovablePassWindowRefusesTheRoundAndNamesTheReason() = runTest {
+  fun aThreeDashWindowRefusesTheRoundAndNamesTheReason() = runTest {
     Dispatchers.setMain(StandardTestDispatcher(testScheduler))
     try {
       factory = BroadcastFactory()
       players = FakePlayers()
       store = FakeMatchStore(Dealer.dealHands(11))
-      val mixedWindow = buildList {
-        add(
-          BiddingLogEntry(
-            seats[0], BiddingLogEntry.ACTION_DASH_CALL, declaredDashCall = true, round = 1,
-          ),
-        )
-        seats.drop(1).forEach {
+      val threeDashWindow = buildList {
+        seats.take(3).forEach {
           add(
             BiddingLogEntry(
-              it, BiddingLogEntry.ACTION_DASH_CALL, declaredDashCall = false, round = 1,
+              it, BiddingLogEntry.ACTION_DASH_CALL, declaredDashCall = true, round = 1,
             ),
           )
         }
-        seats.drop(1).forEach {
-          add(BiddingLogEntry(it, BiddingLogEntry.ACTION_AUCTION_BID, isPass = true, round = 1))
-        }
+        add(
+          BiddingLogEntry(
+            seats[3], BiddingLogEntry.ACTION_DASH_CALL, declaredDashCall = false, round = 1,
+          ),
+        )
+        add(BiddingLogEntry(seats[3], BiddingLogEntry.ACTION_AUCTION_BID, isPass = true, round = 1))
       }
+      assertEquals("4 dash decisions + the one remaining seat's pass", 5, threeDashWindow.size)
       // Dealt, closed, no cards: the auction is over and nothing was played.
       store.doc = fastRoundDoc().copy(
         currentRound = 1,
         currentMultiplier = 1,
         biddingOpen = false,
-        biddingLog = mixedWindow,
+        biddingLog = threeDashWindow,
         gameState = GameState(initialized = true, dealtRound = 1),
         version = 3,
       )
       val vm = makeVm("uid-a", Dispatchers.Main)
-      vm.start("m-unprovable-pass")
+      vm.start("m-three-dash-pass")
       advanceUntilIdle()
 
-      broadcast("m-unprovable-pass")
+      broadcast("m-three-dash-pass")
 
       // Half 1 — nothing advanced: not the document, not the store, not here.
       assertEquals("the refusal must not reach the store at all", 0, store.passAdvanceCalls.get())
@@ -477,25 +477,124 @@ class OnlineMatchViewModelTest {
       assertEquals("and this client's session must not advance either", 1, session.getRound().number)
 
       // Half 2 — the user can see why: the published state carries the
-      // service's own reason, not a bare stall.
+      // named reason, not a bare stall.
       val reason = rejectionOf(vm.state.value)
       assertTrue(
         "the stall must publish a reason (state was ${vm.state.value::class.simpleName})",
         reason != null,
       )
       assertTrue(
-        "the reason must name UNSUPPORTED_GENERAL_PASS_SHAPE, was: $reason",
-        reason!!.contains(Reasons.UNSUPPORTED_GENERAL_PASS_SHAPE),
+        "the reason must name TOO_MANY_DASH_CALLS, was: $reason",
+        reason!!.contains(Reasons.TOO_MANY_DASH_CALLS),
       )
 
       // Re-delivery of the same document neither advances nor goes quiet.
-      broadcast("m-unprovable-pass")
-      assertEquals("a re-delivery must not turn the refusal into a guess", 0, store.passAdvanceCalls.get())
+      broadcast("m-three-dash-pass")
+      assertEquals("a re-delivery must not clamp three dashes into a pass", 0, store.passAdvanceCalls.get())
       assertEquals(1, store.doc.currentRound)
       assertEquals(reason, rejectionOf(vm.state.value))
     } finally {
       Dispatchers.resetMain()
     }
+  }
+
+  /**
+   * F1 (owner ruling 2026-10-24, Option A): the mixed window is a FIRST-CLASS
+   * General Pass. A delivery whose round holds TWO declared Dash Calls and a
+   * pass from each remaining seat (2N-k = 6 entries, no cards) arms the
+   * next multiplier and routes exactly ONE advance write — the same contract
+   * the all-decline window satisfies above.
+   */
+  @Test
+  fun aMixedTwoDashGeneralPassDeliveryArmsTheMultiplierAndAdvances() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      val dashers = seats.take(2).toSet()
+      val mixedLog = buildList {
+        seats.forEach {
+          add(
+            BiddingLogEntry(
+              it, BiddingLogEntry.ACTION_DASH_CALL, declaredDashCall = it in dashers, round = 1,
+            ),
+          )
+        }
+        seats.filter { it !in dashers }.forEach {
+          add(BiddingLogEntry(it, BiddingLogEntry.ACTION_AUCTION_BID, isPass = true, round = 1))
+        }
+      }
+      assertEquals(6, mixedLog.size)
+      store.doc = fastRoundDoc().copy(
+        currentRound = 1,
+        biddingLog = mixedLog,
+        version = 3,
+      )
+      val vm = makeVm("uid-a", Dispatchers.Main)
+      vm.start("m-mixed-pass")
+      advanceUntilIdle()
+
+      broadcast("m-mixed-pass")
+      val session = sessions.getValue("uid-a")
+      assertEquals(
+        "the mixed pass must arm the session round's multiplier",
+        2,
+        session.getRound().multiplier,
+      )
+      assertNull(
+        "the cancelled round waits on nobody",
+        biddingOf(vm.state.value).waitingFor,
+      )
+      assertEquals(
+        "the mixed pass must be advanced exactly once despite re-deliveries",
+        1,
+        store.passAdvanceCalls.get(),
+      )
+      assertEquals(
+        "the document owns the advance",
+        2,
+        store.doc.currentRound,
+      )
+      assertEquals(
+        "the document carries the laddered multiplier",
+        2,
+        store.doc.currentMultiplier,
+      )
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * F1: the test fake's own write boundary mirrors the service's — a
+   * declared Dash attempt that arrives once two are effective persists as a
+   * decline, so windows built through the fake are the windows Firestore
+   * would really hold.
+   */
+  @Test
+  fun theStoreFakeNormalisesAThirdDashAttemptLikeTheService() = runTest {
+    store = FakeMatchStore(Dealer.dealHands(11))
+    store.doc = fastRoundDoc().copy(
+      // fastRoundDoc sits on round 14; the seeded effective Dashes and the
+      // attempt below are all tagged with the round being played.
+      currentRound = 1,
+      biddingLog = listOf(
+        BiddingLogEntry("p1", BiddingLogEntry.ACTION_DASH_CALL, declaredDashCall = true, round = 1),
+        BiddingLogEntry("p2", BiddingLogEntry.ACTION_DASH_CALL, declaredDashCall = true, round = 1),
+      ),
+    )
+    store.submitBiddingAction(
+      "m-normalise",
+      BiddingActionInput(actionType = BiddingLogEntry.ACTION_DASH_CALL, declaredDashCall = true),
+    )
+    val persisted = store.doc.biddingLog.last()
+    assertEquals(
+      "the over-cap attempt must persist as a decline at the fake boundary too",
+      false,
+      persisted.declaredDashCall,
+    )
+    assertEquals(BiddingLogEntry.ACTION_DASH_CALL, persisted.actionType)
   }
 
   /**
@@ -2307,8 +2406,14 @@ class OnlineMatchViewModelTest {
     ): SubmitBiddingActionResult {
       actionCalls.incrementAndGet()
       val seat = doc.seats.entries.firstOrNull { it.value == "uid-a" }?.key ?: "p1"
+      // The real service's F1 normalising boundary: an over-cap declared
+      // Dash attempt persists as a decline (MatchService.submitBiddingAction).
+      val entry = normaliseDashCallEntry(
+        action.toLogEntry(seat, doc.currentRound),
+        effectiveDashCallCount(doc.biddingLog, doc.currentRound),
+      )
       doc = doc.copy(
-        biddingLog = doc.biddingLog + action.toLogEntry(seat, doc.currentRound),
+        biddingLog = doc.biddingLog + entry,
         version = doc.version + 1,
       )
       return SubmitBiddingActionResult(
