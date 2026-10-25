@@ -193,16 +193,17 @@ class SeasonResetTest {
   }
 
   @Test
-  fun placementAndUnrankedMatchesStayExcludedAcrossTheReset() {
-    // RD23/RD28 gates hold on both sides of the boundary: mid-placement
-    // and non-RANKED modes record nothing, before or after a reset.
+  fun placementMatchesStayExcludedAcrossTheReset() {
+    // Q46 (superseding RD28/A3.5): mid-placement records nothing in every
+    // mode (RD10); a completed ROOM/UNRANKED/RANKED match records the same
+    // counters on both sides of a reset (Q14c/Q17).
     val ranked = profile("Gold", "I", 830, seasonId = "S1", placementState = PlacementState.COMPLETE)
     val midPlacement = profile("Bronze", "III", 0, seasonId = "S1", placementState = PlacementState.IN_PROGRESS)
     val reset = applySeasonReset(ranked, "S2")
 
     assertEquals("placement matches count toward nothing", RankedStats(), accumulateRankedStat(RankedStats(), MatchOutcome.KING, midPlacement, MatchMode.RANKED))
-    assertEquals("rooms record no Ranked stats", RankedStats(), accumulateRankedStat(RankedStats(), MatchOutcome.KING, reset, MatchMode.ROOM))
-    assertEquals("unranked records no Ranked stats", RankedStats(), accumulateRankedStat(RankedStats(), MatchOutcome.KING, reset, MatchMode.UNRANKED))
+    assertEquals("a completed ROOM match records the same counters", RankedStats(gamesPlayed = 1, kingCount = 1), accumulateRankedStat(RankedStats(), MatchOutcome.KING, reset, MatchMode.ROOM))
+    assertEquals("a completed UNRANKED match records the same counters", RankedStats(gamesPlayed = 1, kingCount = 1), accumulateRankedStat(RankedStats(), MatchOutcome.KING, reset, MatchMode.UNRANKED))
     assertEquals(
       "ranked still accumulates after the reset",
       1,
