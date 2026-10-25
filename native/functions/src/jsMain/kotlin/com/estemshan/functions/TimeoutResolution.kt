@@ -12,7 +12,11 @@ import com.estemshan.engine.EmitResult
 import com.estemshan.engine.GameType
 import com.estemshan.engine.InactiveTakeover
 import com.estemshan.engine.InactivityClock
+import com.estemshan.engine.KozCharge
+import com.estemshan.engine.LeaveMatch
+import com.estemshan.engine.LeaveReason
 import com.estemshan.engine.MAX_DASH_CALLS
+import com.estemshan.engine.MatchMode
 import com.estemshan.engine.Play
 import com.estemshan.engine.PlayCard
 import com.estemshan.engine.PlayEmit
@@ -217,11 +221,80 @@ object TimeoutResolution {
 
   /**
    * The `timeoutRemovedUids` write for a removal: appends [uid] to the
-   * mechanism's own list, distinct. The ONLY field the timeout mechanism
-   * writes for a removal — never `botSeats`, never Vote Kick's `removedUids`.
+   * mechanism's own list, distinct. Never `botSeats`, never Vote Kick's
+   * `removedUids` — and since S5 it is accompanied in the SAME write by the
+   * removal's own charge map ([TIMEOUT_REMOVED_CHARGES_FIELD], below).
    */
   fun removalWrite(fields: Map<String, Any?>, uid: String): List<String> =
     (timeoutRemovedUids(fields) + uid).distinct()
+
+  /**
+   * S5 (A8.3 / Q37 + RD31 / Q14d(1), closing IB-22): the 15-timeout removal
+   * records its own Koz charge — **1 in ROOM, 2 in RANKED and UNRANKED** —
+   * decided by the already-merged engine table, never here:
+   * [LeaveMatch.decideLeave] with [LeaveReason.FIFTEEN_TIMEOUT] returns
+   * exactly T-15's row. The removal is NOT a departure (Q14b(1)/A6.12), so
+   * nothing re-charges it as a leave; this is the one charge the removal
+   * itself owes.
+   *
+   * The amount is persisted adjacent to `timeoutRemovedUids`, on the SAME
+   * match document, in [TIMEOUT_REMOVED_CHARGES_FIELD]: a uid → Koz map,
+   * admin-written only. Like `timeoutRemovedUids` itself it has no
+   * firestore.rules entry — clients are denied by the update dispatch's
+   * fall-through `false` while the whole-document `allow get` keeps it
+   * readable by every seat, which is the zero-rules path `timeoutRemovedUids`
+   * and `inactivity/` already proved (the Admin SDK bypasses rules). No
+   * rules change, no SHA touch.
+   */
+  const val TIMEOUT_REMOVED_CHARGES_FIELD = "timeoutRemovedCharges"
+
+  /**
+   * The removal charge in persisted form: the Koz amount, or null when the
+   * engine table records nothing. Never null for FIFTEEN_TIMEOUT today — the
+   * reason has no None cell — but the write stays conditional so the engine,
+   * not this file, remains the single authority on amounts.
+   */
+  fun removalChargeKoz(mode: MatchMode): Int? =
+    when (LeaveMatch.decideLeave(mode, LeaveReason.FIFTEEN_TIMEOUT)) {
+      KozCharge.Koz1 -> 1
+      KozCharge.Koz2 -> 2
+      KozCharge.None -> null
+    }
+
+  /**
+   * Parses the persisted charge map. Malformed entries are dropped, never
+   * guessed — this read feeds [removalChargeWrite]'s carry-forward, so a
+   * dropped entry means "not re-recorded", the same fail-closed posture every
+   * other stored-value parser here takes.
+   */
+  fun timeoutRemovedCharges(fields: Map<String, Any?>): Map<String, Int> =
+    (fields[TIMEOUT_REMOVED_CHARGES_FIELD] as? Map<*, *>)?.entries?.mapNotNull { (k, v) ->
+      val uid = k as? String ?: return@mapNotNull null
+      val koz = (v as? Number)?.toInt() ?: return@mapNotNull null
+      uid to koz
+    }?.toMap() ?: emptyMap()
+
+  /**
+   * The `timeoutRemovedCharges` write for a removal: every already-recorded
+   * seat's charge is carried verbatim and this seat's is SET by uid — so two
+   * removals accumulate in one map, and a same-uid rewrite is a value-
+   * identical no-op (the amount is a pure function of the mode, which is
+   * create-only), never an additive double charge.
+   */
+  fun removalChargeWrite(fields: Map<String, Any?>, uid: String, koz: Int): Map<String, Int> =
+    timeoutRemovedCharges(fields) + (uid to koz)
+
+  /**
+   * S5: the match's authority mode as this resolver reads it. Mirrors
+   * Settlement.parseMatchMode / RoomDoc.parseMatchMode (absent or
+   * unrecognised ⇒ ROOM, never throws); `mode` is create-only —
+   * `isValidNewMatch` seeds it and no update validator names it — so the
+   * value the removal reads at the 15th timeout is the value the match was
+   * created with.
+   */
+  fun storedMatchMode(fields: Map<String, Any?>): MatchMode =
+    (fields["mode"] as? String)?.let { runCatching { MatchMode.valueOf(it) }.getOrNull() }
+      ?: MatchMode.ROOM
 
   // ── constants mirrored from :services (not visible to :functions) ────
 
