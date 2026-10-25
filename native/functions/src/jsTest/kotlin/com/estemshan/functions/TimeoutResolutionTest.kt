@@ -422,6 +422,65 @@ class TimeoutResolutionTest {
   }
 
   /**
+   * F1 (owner ruling 2026-10-24, strict two-Dash maximum): a persisted
+   * window claiming THREE declared Dash Calls is a document the
+   * normalising write boundaries can never produce, so the resolver
+   * refuses it BY NAME before any replay — never silently caps to two and
+   * decides on the clamped state.
+   */
+  @Test
+  fun aPersistedWindowClaimingThreeDeclaredDashesIsRefusedByName() {
+    val log = listOf(
+      mapOf("seatId" to "p1", "actionType" to "SubmitDashCallDecision", "declaredDashCall" to true, "round" to 1),
+      mapOf("seatId" to "p2", "actionType" to "SubmitDashCallDecision", "declaredDashCall" to true, "round" to 1),
+      mapOf("seatId" to "p3", "actionType" to "SubmitDashCallDecision", "declaredDashCall" to true, "round" to 1),
+      mapOf("seatId" to "p4", "actionType" to "SubmitDashCallDecision", "declaredDashCall" to false, "round" to 1),
+    )
+    val doc = normalRoundDoc(biddingLog = log, version = 2)
+    val pending = TimeoutResolution.pendingDecision(doc)
+    // Detection itself replays (the engine caps the third internally), so a
+    // decision exists; the named refusal happens at resolution.
+    if (pending == null) return
+    val resolution = TimeoutResolution.resolveExpired(doc, dealtHands(), pending)
+    val noWrite = assertIs<TimeoutResolution.Resolution.NoWrite>(resolution)
+    assertEquals(TimeoutResolution.Reason.HISTORY_CORRUPT, noWrite.reason)
+    assertTrue(
+      noWrite.message.contains("declared Dash Calls"),
+      "the refusal must name the declared-Dash contract it broke",
+    )
+  }
+
+  /**
+   * F1: the resolver's OWN dash write mirrors the engine reducer — with two
+   * effective Dashes already on the log, the timed seat's dash decision
+   * persists declaredDashCall=false and the seat stays in the auction pool.
+   * (BidBrain's own gate declines here too; this pins the WRITE boundary so
+   * the persisted shape never depends on the brain's whim.)
+   */
+  @Test
+  fun aThirdDashAttemptOnATwoDashDocumentPersistsAsADecline() {
+    val log = listOf(
+      mapOf("seatId" to "p1", "actionType" to "SubmitDashCallDecision", "declaredDashCall" to true, "round" to 1),
+      mapOf("seatId" to "p2", "actionType" to "SubmitDashCallDecision", "declaredDashCall" to true, "round" to 1),
+      mapOf("seatId" to "p3", "actionType" to "SubmitDashCallDecision", "declaredDashCall" to false, "round" to 1),
+    )
+    val doc = normalRoundDoc(biddingLog = log, version = 2)
+    val pending = TimeoutResolution.pendingDecision(doc)!!
+    assertEquals("p4", pending.seatId)
+
+    val resolution = TimeoutResolution.resolveExpired(doc, dealtHands(), pending)
+    assertIs<TimeoutResolution.Resolution.Applied>(resolution)
+    val entry = arrayUnionEntries(resolution.write.updates["biddingLog"]).single()
+    assertEquals("p4", entry["seatId"])
+    assertEquals("SubmitDashCallDecision", entry["actionType"])
+    assertEquals(
+      false,
+      entry["declaredDashCall"],
+      "the over-cap attempt must persist as a decline (the seat stays in the auction)",
+    )
+  }
+
+  /**
    * S73 Stage 2 (RD19) — the resolver's own chain end to end, in memory.
    *
    * Every case above hands the resolver a document already sitting on one
