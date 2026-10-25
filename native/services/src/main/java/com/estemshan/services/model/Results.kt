@@ -66,6 +66,11 @@ object Reasons {
    *  provable N-declines + N-passes shape (e.g. a seat declared a Dash
    *  call). Refused rather than advanced on a guess. */
   const val UNSUPPORTED_GENERAL_PASS_SHAPE = "UNSUPPORTED_GENERAL_PASS_SHAPE"
+  /** F1 (owner ruling 2026-10-24): the closing round's log claims MORE than
+   *  the strict two-Dash maximum (MAX_DASH_CALLS). The service's write
+   *  boundary makes such a window unpersistable, so a document carrying it
+   *  is refused BY NAME — never silently clamped to two. */
+  const val TOO_MANY_DASH_CALLS = "TOO_MANY_DASH_CALLS"
 
   // Idempotent no-op reasons (RETURNED, never thrown)
   const val ALREADY_ADVANCED = "ALREADY_ADVANCED"

@@ -222,10 +222,12 @@ class MultiplierPersistenceTest {
   }
 
   @Test
-  fun declaredDashCallIsUnprovableAndRefused() {
+  fun aSingleDeclaredDashIsNowAProvableWindow() {
+    // F1 (owner ruling 2026-10-24): one declared Dash + passes from every
+    // remaining seat IS a valid General Pass (2N-1 entries).
     val window = passWindow(seats.keys, round = 3, declareDashFor = "p3")
     assertEquals(7, window.size)
-    assertFalse(isCanonicalGeneralPassWindow(match(biddingLog = window), 3))
+    assertTrue(isCanonicalGeneralPassWindow(match(biddingLog = window), 3))
   }
 
   @Test
@@ -333,14 +335,16 @@ class MultiplierPersistenceTest {
   }
 
   @Test
-  fun aPassWithAnUnprovableWindowIsRefused() {
+  fun aPassWithASingleDeclaredDashAdvances() {
+    // F1: the k=1 mixed window advances — the shape the pre-F1 proof
+    // refused is the feature now.
     val decision = decideGeneralPassAdvance(
       match(biddingLog = passWindow(seats.keys, 3, declareDashFor = "p1")),
       closedRound = 3,
       finalScores = emptyMap(),
       winnerIds = emptyList(),
     )
-    assertEquals(GeneralPassAdvance.UnsupportedShape, decision)
+    assertEquals(GeneralPassAdvance.Advance(nextRound = 4, nextMultiplier = 2), decision)
   }
 
   @Test

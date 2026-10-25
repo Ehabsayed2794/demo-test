@@ -4,6 +4,7 @@ import com.estemshan.engine.BiddingIntent
 import com.estemshan.engine.BiddingOutcome
 import com.estemshan.engine.BiddingPhase
 import com.estemshan.engine.BiddingState
+import com.estemshan.engine.BidType
 import com.estemshan.engine.Card
 import com.estemshan.engine.DEFAULT_SEATS
 import com.estemshan.engine.DisconnectVoteState
@@ -11,6 +12,7 @@ import com.estemshan.engine.EmitResult
 import com.estemshan.engine.GameType
 import com.estemshan.engine.InactiveTakeover
 import com.estemshan.engine.InactivityClock
+import com.estemshan.engine.MAX_DASH_CALLS
 import com.estemshan.engine.Play
 import com.estemshan.engine.PlayCard
 import com.estemshan.engine.PlayEmit
@@ -749,6 +751,24 @@ object TimeoutResolution {
     return raw.map { parseLoggedAction(it) ?: return null }
   }
 
+  /**
+   * F1 (owner ruling 2026-10-24): the number of DECLARED Dash Calls the
+   * document claims for [round]. Null when a biddingLog entry is too
+   * malformed even to count — the caller reports corrupt history by name
+   * rather than replaying a guess.
+   */
+  private fun declaredDashCalls(fields: Map<String, Any?>, round: Int): Int? {
+    val raw = fields["biddingLog"] as? List<*> ?: return 0
+    var count = 0
+    for (item in raw) {
+      val map = strMap(item) ?: return null
+      if (num(map["round"]) != round) continue
+      if (map["actionType"] as? String != "SubmitDashCallDecision") continue
+      if (map["declaredDashCall"] as? Boolean == true) count++
+    }
+    return count
+  }
+
   // ── detection: which decision is timed, and when does it expire ──────
 
   /**
@@ -899,6 +919,23 @@ object TimeoutResolution {
 
     return when (pending.phase) {
       DecisionPhase.BIDDING -> {
+        // F1 (owner ruling 2026-10-24): a persisted window claiming more
+        // than MAX_DASH_CALLS declared Dash Calls is corrupt history — the
+        // normalising write boundaries can never persist it — and is
+        // refused BY NAME before any replay, never silently clamped.
+        val declared = declaredDashCalls(fields, currentRound)
+          ?: return Resolution.NoWrite(
+            Reason.HISTORY_CORRUPT,
+            "resolveDecisionTimeout: round $currentRound's biddingLog is malformed.",
+          )
+        if (declared > MAX_DASH_CALLS) {
+          return Resolution.NoWrite(
+            Reason.HISTORY_CORRUPT,
+            "resolveDecisionTimeout: round $currentRound's log claims $declared " +
+              "declared Dash Calls — the strict maximum is $MAX_DASH_CALLS; " +
+              "refusing to replay a window the write boundary would never persist.",
+          )
+        }
         val state = replayBidding(fields, order, currentRound)
           ?: return Resolution.NoWrite(
             Reason.HISTORY_UNAVAILABLE,
@@ -1127,15 +1164,24 @@ object TimeoutResolution {
           ),
         ))
       }
-      is BiddingIntent.DashCallDecision -> biddingWrite(
-        fields, loggedDashCall(seatId, state.round, intent.declaredDashCall),
-        mapOf(
-          "phase" to state.subPhase.name,
-          "seatId" to seatId,
-          "declaredDashCall" to intent.declaredDashCall,
-          "botTier" to profile.tier.name,
-        ),
-      )
+      is BiddingIntent.DashCallDecision -> {
+        // F1 (owner ruling 2026-10-24, strict two-Dash maximum): this write
+        // boundary mirrors the engine reducer — an over-cap declared attempt
+        // is applied as a PASS there, so it is PERSISTED as a decline and
+        // the seat stays in the auction pool. Same count the reducer itself
+        // derives (existing DASHCALL bids in the replayed state).
+        val existingEffective = state.bids.values.count { it.type == BidType.DASHCALL }
+        val declared = intent.declaredDashCall && existingEffective < MAX_DASH_CALLS
+        biddingWrite(
+          fields, loggedDashCall(seatId, state.round, declared),
+          mapOf(
+            "phase" to state.subPhase.name,
+            "seatId" to seatId,
+            "declaredDashCall" to declared,
+            "botTier" to profile.tier.name,
+          ),
+        )
+      }
       is BiddingIntent.AuctionBid -> biddingWrite(
         fields, loggedAuctionBid(seatId, state.round, intent),
         mapOf(

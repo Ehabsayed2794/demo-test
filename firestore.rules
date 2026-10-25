@@ -1202,6 +1202,17 @@ service cloud.firestore {
              && entry.get('round', null) == round;
     }
 
+    // A Dash-Call DECISION — declared or declined, both structurally valid
+    // here; the strict two-DECLARED cap is counted separately by the mixed
+    // window below. A missing decision field reads as a decline (the
+    // decline branch keeps its own strict presence check); the window's
+    // size equation and distinctness still bound the shape.
+    function isDashDecisionEntry(entry, round, seats) {
+      return entry.get('actionType', null) == 'SubmitDashCallDecision'
+             && entry.get('seatId', null) in seats
+             && entry.get('round', null) == round;
+    }
+
     // An auction PASS, tagged with the round being closed.
     function isAuctionPassEntry(entry, round, seats) {
       return entry.get('actionType', null) == 'SubmitAuctionBid'
@@ -1210,25 +1221,12 @@ service cloud.firestore {
              && entry.get('round', null) == round;
     }
 
-    // S1's actual General-Pass window, proven structurally. A normal round
-    // always logs one Dash decision per seat first, then the auction; when
-    // every seat declines the Dash call and every seat then passes, the log
-    // is exactly N declining Dash entries followed by N auction passes
-    // (2N entries for N seats) — the shape MatchAdapterReloadReplayTest and
-    // the online pass fixture write. Distinctness within each block, with
-    // every seat drawn from the N-key seat map, makes each block a bijection
-    // onto the seats: no seat can decide/pass twice and every seat appears
-    // exactly once in each block.
-    //
-    // KNOWN LIMITATION (reported, not silently widened): if any seat
-    // DECLARED a Dash call, the auction holds fewer than N passes, so the
-    // ladder cannot be proven from this log alone; that shape is refused
-    // here and by MatchService.advanceAfterGeneralPass() with an explicit
-    // UNSUPPORTED_GENERAL_PASS_SHAPE error, never advanced on a guess.
-    function isAllPassBiddingLog(log, round, seats) {
-      let n = seats.keys().size();
-      return n >= 1
-        && log.size() == n * 2
+    // The k = 0 window — the pre-F1 isAllPassBiddingLog verbatim: every seat
+    // DECLINES the Dash call, then every seat passes (2N entries). Kept as
+    // its own function so the k > 0 proof below cannot perturb the cost or
+    // the semantics of the shape every existing suite already pins.
+    function isAllDeclineWindow(log, round, seats, n) {
+      return log.size() == n * 2
         && (n >= 1 ? isDecliningDashEntry(log[0], round, seats) : true)
         && (n >= 2 ? isDecliningDashEntry(log[1], round, seats) : true)
         && (n >= 3 ? isDecliningDashEntry(log[2], round, seats) : true)
@@ -1251,6 +1249,128 @@ service cloud.firestore {
         && (n >= 3 ? log[n + 1].get('seatId', null) != log[n + 2].get('seatId', null) : true)
         && (n >= 4 ? log[n + 1].get('seatId', null) != log[n + 3].get('seatId', null) : true)
         && (n >= 4 ? log[n + 2].get('seatId', null) != log[n + 3].get('seatId', null) : true);
+    }
+
+    // The F1 MIXED window (owner ruling 2026-10-24, Option A — DECIDED):
+    // of the N Dash decisions exactly k are DECLARED with 1 <= k <=
+    // min(2, N-1) — the strict two-Dash maximum; a window claiming THREE
+    // declared Dashes fails the k cap below and is refused, never clamped —
+    // and the auction that follows holds exactly N-k PASSES from distinct
+    // seats, none of them a declared dasher. Total 2N-k entries (a four-seat
+    // table: 7 / 6 at k = 1 / 2). An all-dashing table (k = N) ends in
+    // SANS, never a General Pass, and stays refused. Reached ONLY when
+    // log.size() != n * 2 (the dispatcher's ternary short-circuits), so k
+    // is necessarily >= 1 here — a DECLARED entry is what shrank the log.
+    //
+    // The dashers' positions (at most two) are located by ternary walks —
+    // CEL's ?: short-circuits, so a k == 1 window never pays for the second
+    // walk — and every pass seat is then compared against the (at most two)
+    // dasher seats. All indexes are behind the dispatcher's size bounds and
+    // the n-guards on the walks.
+    function isMixedPassWindow(log, round, seats, n) {
+      // First and second DECLARED positions (ternary walks; -1 when absent,
+      // n > i guards every index), then k derived from them — one walk
+      // structure instead of a separate counting sum. The declaredDashAt
+      // reads are inlined (helper-call overhead is real against the engine's
+      // per-request expression budget). The dispatcher sent us here only
+      // because log.size() != n * 2, so a k of 0 is malformed (it
+      // contradicts the size equation below) and fails closed.
+      let d0 = (n > 0
+              ? (log[0].get('declaredDashCall', false) == true ? 0
+              : (n > 1
+              ? (log[1].get('declaredDashCall', false) == true ? 1
+              : (n > 2
+              ? (log[2].get('declaredDashCall', false) == true ? 2
+              : (n > 3 ? (log[3].get('declaredDashCall', false) == true ? 3 : -1) : -1))
+              : -1))
+              : -1))
+              : -1);
+      let d1 = (d0 == 0
+              ? (n > 1
+              ? (log[1].get('declaredDashCall', false) == true ? 1
+              : (n > 2
+              ? (log[2].get('declaredDashCall', false) == true ? 2
+              : (n > 3 ? (log[3].get('declaredDashCall', false) == true ? 3 : -1) : -1))
+              : -1))
+              : -1)
+              : (d0 == 1
+              ? (n > 2
+              ? (log[2].get('declaredDashCall', false) == true ? 2
+              : (n > 3 ? (log[3].get('declaredDashCall', false) == true ? 3 : -1) : -1))
+              : -1)
+              : (d0 == 2
+              ? (n > 3 ? (log[3].get('declaredDashCall', false) == true ? 3 : -1) : -1)
+              : -1)));
+      let k = (d0 >= 0 ? 1 : 0) + (d1 >= 0 ? 1 : 0);
+      // Seat ids are bound once and reused — the distinctness and
+      // disjointness terms below stay inside the rules engine's expression
+      // budget (a single-expression complexity cap and a per-request
+      // 1000-expression cap both apply; this file's Sprint 4.2.3 notes the
+      // CEL ?:-short-circuits / &&-does-not facts this layout relies on).
+      // Ten lets max per function (engine limit) — seat ids that repeat
+      // most are the bound ones; s2/s3 stay inline below.
+      let s0 = log[0].get('seatId', null);
+      let s1 = (n >= 2 ? log[1].get('seatId', null) : null);
+      let q0 = (log.size() > n ? log[n].get('seatId', null) : null);
+      let q1 = (log.size() > n + 1 ? log[n + 1].get('seatId', null) : null);
+      let q2 = (log.size() > n + 2 ? log[n + 2].get('seatId', null) : null);
+      let sd0 = (d0 >= 0 ? log[d0].get('seatId', null) : null);
+      let sd1 = (k == 2 ? log[d1].get('seatId', null) : null);
+      return k <= (n <= 2 ? n - 1 : 2)
+        && log.size() == n * 2 - k
+        // The Dash block: n decisions, one per seat position.
+        && isDashDecisionEntry(log[0], round, seats)
+        && (n >= 2 ? isDashDecisionEntry(log[1], round, seats) : true)
+        && (n >= 3 ? isDashDecisionEntry(log[2], round, seats) : true)
+        && (n >= 4 ? isDashDecisionEntry(log[3], round, seats) : true)
+        // Distinctness inside the Dash block (a bijection onto the seats).
+        && (n >= 2 ? s0 != s1 : true)
+        && (n >= 3 ? s0 != log[2].get('seatId', null) : true)
+        && (n >= 4 ? s0 != log[3].get('seatId', null) : true)
+        && (n >= 3 ? s1 != log[2].get('seatId', null) : true)
+        && (n >= 4 ? s1 != log[3].get('seatId', null) : true)
+        && (n >= 4 ? log[2].get('seatId', null) != log[3].get('seatId', null) : true)
+        // The pass block: exactly n - k entries at positions n..n+L-1,
+        // each an auction pass tagged with the closing round.
+        && (n - k >= 1 ? isAuctionPassEntry(log[n], round, seats) : true)
+        && (n - k >= 2 ? isAuctionPassEntry(log[n + 1], round, seats) : true)
+        && (n - k >= 3 ? isAuctionPassEntry(log[n + 2], round, seats) : true)
+        // Distinctness inside the pass block (L <= 3 because k >= 1).
+        && (n - k >= 2 ? q0 != q1 : true)
+        && (n - k >= 3 ? q0 != q2 : true)
+        && (n - k >= 3 ? q1 != q2 : true)
+        // No DECLARED dasher among the passers: every pass seat differs
+        // from the first dasher seat, and from the second when k == 2.
+        // (d1 is only dereferenced on that cold-guarded k == 2 branch.)
+        && (n - k >= 1 ? q0 != sd0 : true)
+        && (n - k >= 2 ? q1 != sd0 : true)
+        && (n - k >= 3 ? q2 != sd0 : true)
+        && (k == 1 ? true
+             : ((n - k >= 1 ? q0 != sd1 : true)
+                && (n - k >= 2 ? q1 != sd1 : true)
+                && (n - k >= 3 ? q2 != sd1 : true)));
+    }
+
+    // S1's actual General-Pass window, proven structurally — the exact
+    // shape MatchAdapterReloadReplayTest and the online pass fixture write,
+    // generalized by the F1 owner ruling (2026-10-24, Option A): a mixed
+    // Dash-Call + all-pass auction IS a valid General Pass. N Dash
+    // decisions first, then the auction passes; of the N decisions at most
+    // min(2, N-1) are DECLARED, and the passes number exactly N-k. The two
+    // shapes are proved by separate functions behind a size ternary —
+    // CEL's ?: short-circuits (Sprint A hotfix note), so the common k = 0
+    // window pays only its own proof, and neither branch's cost stacks
+    // against the other inside the engine's expression budget.
+    function isAllPassBiddingLog(log, round, seats) {
+      let n = seats.keys().size();
+      // No size pre-guards here: every index access in either branch sits
+      // behind its own ternary or its branch's size equation, and an
+      // out-of-equation arrival fails closed (a CEL evaluation error
+      // denies), which is the fail-closed behaviour this file relies on.
+      return n >= 1
+        && (log.size() == n * 2
+             ? isAllDeclineWindow(log, round, seats, n)
+             : isMixedPassWindow(log, round, seats, n));
     }
 
     // The owner-fixed pass ladder: Classic stays 1; Normal 1 -> 2, then
