@@ -353,32 +353,29 @@ service cloud.firestore {
     // side — this is what makes the atomic-transaction requirement
     // rules-enforced, not just a JS-layer convention.
     // ── S67 (E7, Game Type & Calculation Mode) ───────────────────────
-    // The four helpers below are the rules-layer mirror of the :engine
-    // GameType enum (FULL baseRounds 18 / firstFastRound 14 /
-    // maxExtensions 5; MINI 10 / 6 / 1). Every one is written so a doc
-    // written BEFORE S67 — with NO gameType field — behaves exactly as
-    // FULL: the amendment's absent-means-FULL back-compat, which is why
-    // no existing room or match needs a migration and a Full match stays
-    // byte-identical to today. `.get(k, null)` (not bare `data.gameType`)
-    // so an absent key is a clean null rather than a key-error.
+    // The three helpers below are the rules-layer mirror of the :engine
+    // GameType enum (FULL baseRounds 18 / firstFastRound 14; MINI
+    // 10 / 6). Every one is written so a doc written BEFORE S67 — with
+    // NO gameType field — behaves exactly as FULL: the amendment's
+    // absent-means-FULL back-compat, which is why no existing room or
+    // match needs a migration and a Full match stays byte-identical to
+    // today. `.get(k, null)` (not bare `data.gameType`) so an absent key
+    // is a clean null rather than a key-error. D2 (A8.8 / Q48,
+    // 2026-10-25) removed the per-type extension COUNT cap helper that
+    // used to live here — no extension count cap exists for either type
+    // any more, matching MatchService, which enforces none.
     //
     // baseRoundsOf: the ceiling a FRESH match of this type starts at.
     function baseRoundsOf(data) {
       return data.get('gameType', null) == 'MINI' ? 10 : 18;
     }
 
-    // firstFastRoundOf: the lower bound of the Rapid Rounds window, the
-    // only rounds ever eligible to extend maxRounds (FULL 14, MINI 6).
+    // firstFastRoundOf: the lower bound of the Rapid Rounds window —
+    // the lowest round ever eligible to extend maxRounds (FULL 14,
+    // MINI 6). Rounds past the type's window qualify only as the
+    // ACTUAL final round (D2, A8.8 / Q48 — see isValidRoundExtension).
     function firstFastRoundOf(data) {
       return data.get('gameType', null) == 'MINI' ? 6 : 14;
-    }
-
-    // maxExtensionsOf: how many extensions a match may ever record. FULL
-    // is 5 — exactly what its 14–18 window's five distinct rounds already
-    // imply, so this cap is unreachable for Full and changes nothing.
-    // MINI is exactly ONE (10 → 11 max), the GM3 boundary.
-    function maxExtensionsOf(data) {
-      return data.get('gameType', null) == 'MINI' ? 1 : 5;
     }
 
     // effectiveGameType: the type a doc counts as, absent ⇒ FULL. Used
@@ -1503,15 +1500,20 @@ service cloud.firestore {
     // CANNOT verify a qualifying Super Call or Sa'ayda genuinely
     // occurred in `completedRound` (that would mean reimplementing
     // BiddingEngine/ScoringEngine's rules here in CEL, which no prior
-    // sprint's rule has ever done) — it only rejects a STRUCTURALLY
-    // malformed extension: wrong version math, `maxRounds` moving by
-    // anything other than exactly +1, `completedRound` outside the
-    // fixed Rapid Rounds window (14-18), the SAME round number being
-    // used to extend twice, or any field this write should never
-    // touch. See `MatchService.extendMatchRounds()`'s own "HONEST
-    // LIMITATION" note and this sprint's Final Report — the
-    // service/transaction layer, not this rule, is what's actually
-    // trusted for "was this extension legitimate."
+    // sprint's rule has ever done; it also cannot see `reason`, so
+    // MatchService remains the authority for Sa'ayda-vs-Super-Call
+    // legitimacy) — it only rejects a STRUCTURALLY malformed
+    // extension: wrong version math, `maxRounds` moving by anything
+    // other than exactly +1, `completedRound` outside the type's
+    // Rapid Rounds window and not the actual final round (D2,
+    // A8.8 / Q48: the type-derived window stays, the extension count
+    // cap is gone, and a final-round Sa'ayda may repeat past
+    // baseRounds), the SAME round number being used to extend twice,
+    // or any field this write should never touch. See
+    // `MatchService.extendMatchRounds()`'s own "HONEST LIMITATION"
+    // note and this sprint's Final Report — the service/transaction
+    // layer, not this rule, is what's actually trusted for "was this
+    // extension legitimate."
     function isValidRoundExtension() {
       let oldData = resource.data;
       let newData = request.resource.data;
@@ -1555,15 +1557,20 @@ service cloud.firestore {
              // before, byte-for-byte — no security invariant changed.
              && (oldRounds.size() == 0 ? true : newRounds[0:oldRounds.size()] == oldRounds)
              && appendedRound is int
-             // S67: the Rapid Rounds window is type-derived (FULL 14–18,
-             // MINI 6–10); a pre-S67 match has no gameType ⇒ FULL ⇒ the
-             // exact same 14–18 bounds.
-             && appendedRound >= firstFastRoundOf(oldData) && appendedRound <= baseRoundsOf(oldData)
-             // S67 (GM3): the extension COUNT cap — MINI allows exactly
-             // ONE extension (10 → 11 max). FULL's cap is 5, which its
-             // 14–18 window already implies (five distinct qualifying
-             // rounds at most), so Full is unchanged.
-             && oldRounds.size() < maxExtensionsOf(oldData)
+             // D2 (A8.8 / Q48): the qualifying window is type-derived
+             // (FULL 14–18, MINI 6–10; a pre-S67 match has no gameType
+             // ⇒ FULL ⇒ the exact same 14–18 bounds) and there is NO
+             // extension count cap — the S67/GM3 cap (MINI 1 / FULL 5)
+             // was removed to match MatchService, which enforces none.
+             // A completed round qualifies when it is inside the type's
+             // window OR is the ACTUAL final round (== maxRounds), so a
+             // final-round Sa'ayda can repeat past baseRounds. The rules
+             // cannot see `reason`; this stays a structural rule and
+             // MatchService remains the authority for
+             // Sa'ayda-vs-Super-Call legitimacy.
+             && appendedRound >= firstFastRoundOf(oldData)
+             && appendedRound <= oldData.maxRounds
+             && (appendedRound <= baseRoundsOf(oldData) || appendedRound == oldData.maxRounds)
              && !(appendedRound in oldRounds);
     }
 
