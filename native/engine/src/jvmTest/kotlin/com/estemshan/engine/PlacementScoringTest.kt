@@ -92,6 +92,31 @@ class PlacementScoringTest {
   }
 
   @Test
+  fun aSharedBottomScoresTheKozComponentsNotAUniqueThird() {
+    // Q2d / Q2f: both seats tied at the lowest total are rank 4 and Koz, so
+    // the placement signals read 0.0 — never a unique Third's 1/3.
+    val totals = mapOf("p1" to 100, "p2" to 99, "p3" to 10, "p4" to 10)
+    val sharedKoz = recordPlacementMatch(0, totals, "p3", emptyList())
+    val king = recordPlacementMatch(0, totals, "p1", emptyList())
+
+    assertEquals("the shared bottom is the last placement", 4, sharedKoz.placement)
+    assertEquals("the shared bottom is Koz", MatchOutcome.KOZ, sharedKoz.outcome)
+    assertEquals("Koz outcome component", 0.0, placementOutcomeComponent(sharedKoz.outcome), 1e-9)
+    assertEquals("last-place rank component", 0.0, placementRankComponent(sharedKoz.placement), 1e-9)
+    assertEquals("King outcome component", 1.0, placementOutcomeComponent(king.outcome), 1e-9)
+    assertEquals("first-place rank component", 1.0, placementRankComponent(king.placement), 1e-9)
+
+    assertTrue(
+      "a shared Koz scores below a unique Third on the outcome signal",
+      placementOutcomeComponent(sharedKoz.outcome) < placementOutcomeComponent(MatchOutcome.THIRD),
+    )
+    assertTrue(
+      "a shared Koz scores below a unique Third on the rank signal",
+      placementRankComponent(sharedKoz.placement) < placementRankComponent(3),
+    )
+  }
+
+  @Test
   fun rankComponentRefusesARankOutsideTheFourSeatTable() {
     assertThrows(IllegalArgumentException::class.java) { placementRankComponent(0) }
     assertThrows(IllegalArgumentException::class.java) { placementRankComponent(5) }

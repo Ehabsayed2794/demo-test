@@ -99,10 +99,22 @@ class PlacementTest {
   }
 
   // ==========================================================================
-  //  Placement and outcome — RD17's tie rules
+  //  Placement and outcome — Q2d / A6.7 tie rules
   // ==========================================================================
 
   private val decisive = mapOf("p1" to 300, "p2" to 200, "p3" to 100, "p4" to 0)
+
+  private fun assertPlacements(
+    totals: Map<String, Int>,
+    expected: Map<String, Pair<Int, MatchOutcome>>,
+  ) {
+    assertEquals("every seat is specified", totals.keys, expected.keys)
+    totals.keys.forEach { seat ->
+      val (rank, outcome) = expected.getValue(seat)
+      assertEquals("placementRank($seat) at $totals", rank, placementRank(totals, seat))
+      assertEquals("placementOutcome($seat) at $totals", outcome, placementOutcome(totals, seat))
+    }
+  }
 
   @Test
   fun aDecisiveMatchRanksOneThroughFour() {
@@ -136,13 +148,65 @@ class PlacementTest {
   }
 
   @Test
-  fun aTieForLastFabricatesNoKoz() {
-    // RD17: a tie for last means there is no *unique* last place, so nobody
-    // is KOZ — the tied seats take the placement they actually achieved.
+  fun aSharedLastMakesEveryTiedSeatKoz() {
+    // Q2d / A6.7: every player tied at the lowest total is Koz and shares the
+    // last placement for RP. The seats above keep their competition ranks.
     val tieLast = mapOf("p1" to 300, "p2" to 200, "p3" to 100, "p4" to 100)
-    assertEquals(3, placementRank(tieLast, "p3"))
-    assertEquals(MatchOutcome.THIRD, placementOutcome(tieLast, "p4"))
-    assertFalse("no seat is KOZ on a tied last", tieLast.any { placementOutcome(tieLast, it.key) == MatchOutcome.KOZ })
+    assertEquals("the shared bottom takes the last placement", 4, placementRank(tieLast, "p3"))
+    assertEquals("the other tied seat takes it too", 4, placementRank(tieLast, "p4"))
+    assertEquals(MatchOutcome.KOZ, placementOutcome(tieLast, "p3"))
+    assertEquals(MatchOutcome.KOZ, placementOutcome(tieLast, "p4"))
+    assertEquals("the leader is still King", 1, placementRank(tieLast, "p1"))
+    assertEquals(MatchOutcome.KING, placementOutcome(tieLast, "p1"))
+    assertEquals("the runner-up is still Second", 2, placementRank(tieLast, "p2"))
+    assertEquals(MatchOutcome.SECOND, placementOutcome(tieLast, "p2"))
+
+    // recordPlacementMatch writes the numeric last placement and KOZ.
+    val record = recordPlacementMatch(0, tieLast, "p4", emptyList())
+    assertEquals(4, record.placement)
+    assertEquals(MatchOutcome.KOZ, record.outcome)
+  }
+
+  @Test
+  fun aThreeWayBottomTieMakesOneKingAndThreeKoz() {
+    // Q2d example: 100 / 99 / 99 / 99.
+    assertPlacements(
+      mapOf("p1" to 100, "p2" to 99, "p3" to 99, "p4" to 99),
+      mapOf(
+        "p1" to (1 to MatchOutcome.KING),
+        "p2" to (4 to MatchOutcome.KOZ),
+        "p3" to (4 to MatchOutcome.KOZ),
+        "p4" to (4 to MatchOutcome.KOZ),
+      ),
+    )
+  }
+
+  @Test
+  fun aSharedBottomBelowKingAndSecondMakesTwoKoz() {
+    // Q2d example: 100 / 99 / 10 / 10.
+    assertPlacements(
+      mapOf("p1" to 100, "p2" to 99, "p3" to 10, "p4" to 10),
+      mapOf(
+        "p1" to (1 to MatchOutcome.KING),
+        "p2" to (2 to MatchOutcome.SECOND),
+        "p3" to (4 to MatchOutcome.KOZ),
+        "p4" to (4 to MatchOutcome.KOZ),
+      ),
+    )
+  }
+
+  @Test
+  fun aTopTieWithAUniqueLastMakesTwoKingsOneThirdAndOneKoz() {
+    // Q2d example: 100 / 100 / 50 / 20.
+    assertPlacements(
+      mapOf("p1" to 100, "p2" to 100, "p3" to 50, "p4" to 20),
+      mapOf(
+        "p1" to (1 to MatchOutcome.KING),
+        "p2" to (1 to MatchOutcome.KING),
+        "p3" to (3 to MatchOutcome.THIRD),
+        "p4" to (4 to MatchOutcome.KOZ),
+      ),
+    )
   }
 
   @Test
