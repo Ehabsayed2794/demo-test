@@ -9,7 +9,58 @@ Superseded passages are left verbatim under dated pointer notes, per this
 repo's convention. The purpose is unchanged: agent-facing operational context
 about where truth lives — not a spec.
 
+> **Refreshed again 2026-10-25 (pointer; the 2026-10-24 introduction above is left verbatim).**
+> The remote-tracking tip, the rules pin and the live-lane inventory changed; the 2026-10-25 section below
+> supersedes the "Source of truth" bullets for those facts. Nothing above is deleted.
+
+## 2026-10-25 refresh — origin/main and live lanes
+
+**Remote-tracking `origin/main` = `9fc5e7b`** ("Merge pull request #162 from Ehabsayed2794/agent/a3-dash-risk"),
+re-derived 2026-10-25 via `git rev-parse origin/main` and `git log -1 origin/main`. It is ten PR
+merges ahead of `88217a3` (#153-#162); `git log --first-parent --no-merges 88217a3..9fc5e7b` is empty,
+so no direct integration commit landed in the range. Per-PR SHAs and diffstats are in
+`docs/NATIVE_V1_IMPLEMENTATION_PLAN_V2.md` §5.10. Local `main` is still `b557c3e`
+(`git for-each-ref`, 2026-10-25) and is not a source of truth.
+
+**The live remote tip is not that SHA.** `git ls-remote origin refs/heads/main` returned
+`638abba0c5597eb702262ec64aabb7d72589c694` earlier on 2026-10-25 and
+`444a57bd1b7b86097a78c24526b469dc97285239` at the final read the same day — it moved during the pass.
+Neither object is present locally (`git cat-file -t` fails for both), so neither was fetched or
+inspected; their contents are UNVERIFIED. Everything below describes the fetched `9fc5e7b`.
+
+**`firestore.rules` at `9fc5e7b`:** 2,695 lines, blob
+`2ac419423f9035f7c995f4c2dec63fe33c20e73c`, SHA-256 pin
+`830026757c6809227de9ad2636e0259f083284308e7fbbeb303b84d6cda70daf` — the pin matches the LF blob
+when hashed locally. It changed twice in the range: #157 (F1 mixed pass window; pin
+`c03bdfd…` → `ed12488…`) and #159 (D2 extension-cap removal; `ed12488…` → `8300267…`).
+
+**Merged-lane worktrees still on disk** (`git worktree list`, 2026-10-25): `a1-rules-extensions` at
+`a59f244`, `a3-dash-risk` at `2b648bc`, `a4-shared-koz` at `53918cc` — all merged into `9fc5e7b`;
+their branches are not live work.
+
+### Live lanes (IN-FLIGHT, 2026-10-25)
+
+Write scopes are the files a lane is **allowed** to touch, not a review of its diff. HEAD and status
+were read with read-only `git -C <worktree>`; uncommitted contents were not reviewed, accepted or
+claimed.
+
+| Lane | Worktree / branch | Base -> tip | State | Allowed write scope |
+|---|---|---|---|---|
+| a2 lazy season reset | `D:\worktrees\a2-lazy-season-reset` / `agent/a2-lazy-season-reset` | `6bbe3f1` -> `aa657a2` | **IN FLIGHT / UNMERGED.** One commit ahead (`aa657a2`, *Functions(E5.2/E5.3): lazy season reset on first access; settlement resets before the fold (Q22)*); `git merge-base --is-ancestor aa657a2 9fc5e7b` is false. Committed file set (6 files, +1101/-75): `RankedProfileDb.kt`, `SeasonResetRun.kt`, `SettlementDb.kt`, `LazySeasonResetTest.kt`, `RankedProfileDbTest.kt`, `RpApplicationTest.kt` under `native/functions/`. Base `6bbe3f1` is four merges behind `9fc5e7b` (#159-#162). | Those three `jsMain` functions files and the three `jsTest` files only; no engine, app or rules files. |
+| a5 manifest parity | `D:\worktrees\a5-manifest` / `agent/a5-manifest` | `6bbe3f1` (no commits ahead) | **IN FLIGHT / UNCOMMITTED.** Modified `native/functions/index.js`; untracked `tests/functions-manifest-parity.test.cjs`. Base `6bbe3f1` is four merges behind `9fc5e7b`. | `native/functions/index.js` and `tests/functions-manifest-parity.test.cjs` only. |
+| a6 emulator hooks | `D:\worktrees\a6-emulator-hooks` / `agent/a6-emulator-hooks` | `6bbe3f1` (no commits ahead) | **IN FLIGHT / UNCOMMITTED.** Modified `native/services/src/androidTest/java/com/estemshan/services/InactivityEmulatorTest.kt`, `TimeoutEmulatorTest.kt`, `VoteKickEmulatorTest.kt`. Base `6bbe3f1` is four merges behind `9fc5e7b`. | Those three `androidTest` files only. |
+| a7 S3-A stats eligibility | `D:\worktrees\a7-s3-stats-eligibility` / `agent/a7-s3-stats-eligibility` | `9fc5e7b` (HEAD = base) | **IN FLIGHT.** Engine-only; HEAD equals base, no commits ahead; at the final 2026-10-25 read it carries uncommitted edits to `RankedStats.kt` + `RankedStatsTest.kt`. No acceptance is claimed. | `native/engine/**` only (expected focus `RankedStats.kt` + `RankedStatsTest.kt`); no app, services, functions or rules. |
+| a8 S5-A timeout charge | `D:\worktrees\a8-s5-timeout-charge` / `agent/a8-s5-timeout-charge` | `9fc5e7b` (HEAD = base) | **IN FLIGHT.** Functions timeout-only; HEAD equals base, no commits ahead, clean status at the time of this record. No acceptance is claimed. | `native/functions/**` only (expected focus `TimeoutResolution.kt`, `TimeoutResolutionDb.kt`, `TimeoutResolutionTest.kt`); no engine, app, services or rules. |
+| a9 rules seat count | `D:\worktrees\a9-rules-seat-count` / `agent/a9-rules-seat-count` | `9fc5e7b` (HEAD = base) | **IN FLIGHT.** Rules-only; HEAD equals base, no commits ahead; at the final 2026-10-25 read it carries uncommitted edits to `firestore.rules` + `firestore.rules.sha256` and an untracked `tests/rules-archive-seat-count.test.cjs`. No fix is merged; no acceptance is claimed. | `firestore.rules`, `firestore.rules.sha256`, and rules tests under `tests/` only; no Kotlin/JS app code. |
+| a10 sprint reconcile | `D:\worktrees\a10-sprint-reconcile` / `agent/a10-sprint-reconcile` | `9fc5e7b` | **IN FLIGHT.** This docs lane; the diff is left uncommitted. | `docs/NATIVE_V1_IMPLEMENTATION_PLAN_V2.md` and `docs/agents/project-memory.md` only. |
+
 ## Source of truth
+
+> **Superseded 2026-10-25 (pointer; the bullets below are the 2026-10-24 record).** The remote-tracking tip
+> is `9fc5e7b`, not `88217a3`; the live remote tip moved `638abba` → `444a57b` on 2026-10-25
+> (both unfetched, UNVERIFIED, absent locally); the rules values moved to 2,695 lines / blob
+> `2ac4194` / pin `8300267`; local `main` is still `b557c3e`. The
+> 2026-10-25 refresh above is the current record.
 
 - `origin/main` = `88217a3` ("Merge pull request #152 from
   Ehabsayed2794/agent/s1b-option-b-impl"), fetched 2026-10-24. This is the
@@ -86,6 +137,10 @@ From `git log --merges --oneline c42480f..origin/main`:
   "Integrate S1 Core: General Pass wiring" (`0ae9864`), "Integrate S1 fix"
   (`397c163`), "Integrate S4: fast-bid ties" (`5edfb34`), "Integrate S2:
   Sa'ayda extension wiring" (`8881fe0`).
+
+> **Extended 2026-10-25:** the list above stops at #152 because it is the 2026-10-24 record.
+> #153-#162 have since merged (ten merges; no direct integration commits); their SHAs and
+> diffstats are in the 2026-10-25 refresh above and in plan §5.10.
 
 ## Parked design (do not build UI)
 
@@ -306,3 +361,11 @@ isolated worktrees.
   Credential Manager holds `git:https://github.com` and `gh:github.com`
   entries); `git push` uses the GCM helper with `GCM_INTERACTIVE=never` and
   `GIT_TERMINAL_PROMPT=0`. Never print the token.
+
+> **Node policy merged 2026-10-25 (pointer; the trap text above is the pre-merge record).** PR #156
+> (`95808bd`) put `docs/engineering/NODEJS_SAFE_USAGE.md` and the `AGENTS.md` Node.js rule on
+> `origin/main`; `git ls-tree -r --name-only 9fc5e7b` lists both, so a fresh worktree from this tip
+> has the policy. No `.github/workflows/` file changed in `88217a3..9fc5e7b` (`git diff --name-only`
+> returns none for that path), so the Node 20 deploy vs Node 22 test drift recorded 2026-10-25
+> remains an OPEN OWNER DECISION. The shell PATH was not re-checked today; the 2026-10-24 record
+> (no `node`/`npm`) stands.
