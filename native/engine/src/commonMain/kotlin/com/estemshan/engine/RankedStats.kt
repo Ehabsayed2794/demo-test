@@ -7,10 +7,14 @@ package com.estemshan.engine
  * The S03 profile grid renders all nine plus Highest Rank; the S44 long-press
  * popover renders only the six values that matter mid-match.
  *
- * Scope (RD28): Public Ranked AND Private Ranked count; ROOM and UNRANKED do
- * not — Unranked is a first-class rank-blind mode, never ROOM + a marker.
- * Placement matches count toward NOTHING (RD10) — not Games Played, not any
- * percentage.
+ * Scope (Q46 + Q14c + Q17, 2026-10-22 — superseding RD28/A3.5, which the
+ * plan's D-05 dissonance row already flagged): a completed match counts
+ * toward the nine in ROOM, RANKED and UNRANKED alike, and the percentages
+ * denominate over that all-mode Games Played. Unranked stays a first-class
+ * rank-blind mode, never ROOM + a marker — rank-blind means no RP, never no
+ * statistics. RP movement stays Ranked-only (Q46). Placement matches count
+ * toward NOTHING (RD10) — not Games Played, not any percentage, in every
+ * mode.
  *
  * ONE movement is carved out of the no-Unranked rule: the A5.1 departure
  * charge. The 2026-10-16 owner closure (option (a)) and the 2026-10-17 owner
@@ -61,7 +65,7 @@ data class RankedStats(
   val thirdCount: Int = 0,
   val kozCount: Int = 0,
 ) {
-  /** Whole percent over completed Ranked matches; 0 before the first. */
+  /** Whole percent over completed matches in every mode (Q17); 0 before the first. */
   val kingPct: Int get() = percent(kingCount)
   val secondPct: Int get() = percent(secondCount)
   val thirdPct: Int get() = percent(thirdCount)
@@ -86,15 +90,29 @@ data class RankedStats(
 }
 
 /**
- * Fold ONE completed match into the nine career statistics. Two gates, both
+ * Fold ONE completed match into the nine career statistics. ONE gate,
  * returning [stats] untouched:
  *
- * - [mode] must be [MatchMode.RANKED] (RD28: ROOM and UNRANKED record no
- *   Ranked statistics).
  * - the account must not be mid-placement (RD10: placement matches count
- *   toward no statistic — not Games Played, not any percentage). Derived from
- *   [profile] rather than passed as a flag so the two gates cannot disagree:
- *   placement matches happen exactly while [isPlacement] holds.
+ *   toward no statistic — not Games Played, not any percentage — in every
+ *   mode). Derived from [profile] rather than passed as a flag so the gate
+ *   cannot disagree with the placement service's view: placement matches
+ *   happen exactly while [isPlacement] holds.
+ *
+ * [mode] stays in the signature (callers — the RANKED settlement path today,
+ * the ROOM/UNRANKED writers S3/S6 add — carry it) but no longer gates: Q46
+ * (N-1, 2026-10-22) rules the old RANKED-only gate the defect, and Q14c +
+ * Q17 widen it — a completion in ROOM, RANKED or UNRANKED increments Games
+ * Played and the seat's outcome counter, and the percentages' denominator
+ * aggregates all three modes. What stays Ranked-only is RP movement (Q46):
+ * tier/division/RP live in [RankedProfile] and the RP engines above this
+ * fold, which never touches them — a ROOM or UNRANKED completion moves
+ * counters only, never RP.
+ *
+ * Tie conventions arrive with [outcome], decided upstream by the merged
+ * [placementRank]/[placementOutcome] (Q2d/Q2f, PR #161): every bottom-tied
+ * seat takes the LAST placement — KOZ in this vocabulary — unless all four
+ * seats tie, which is all-King.
  *
  * Nothing else is recorded (RD23): no match history and no seasonal trophy in
  * v1. Callers above the engine apply the result; this function never mutates
@@ -106,7 +124,7 @@ fun accumulateRankedStat(
   profile: RankedProfile,
   mode: MatchMode,
 ): RankedStats {
-  if (mode != MatchMode.RANKED || isPlacement(profile)) return stats
+  if (isPlacement(profile)) return stats
   return stats.copy(
     gamesPlayed = stats.gamesPlayed + 1,
     kingCount = stats.kingCount + if (outcome == MatchOutcome.KING) 1 else 0,
@@ -126,11 +144,13 @@ fun accumulateRankedStat(
  * governs: the two Koz departures add 2, a Vote Kick adds 1 final, a
  * reclaimable return adds nothing.
  *
- * Gates, in [accumulateRankedStat]'s order:
+ * Gates:
  * - [KozCharge.None] records nothing — the "no penalty" row and the ROOM
  *   disconnect's "no Koz" verdict never reach the counters.
  * - [MatchMode.ROOM] records nothing — A5.1 excludes ROOM from RD31
- *   entirely ("no 2-Koz rule"), and ROOM records no statistics anyway.
+ *   entirely ("no 2-Koz rule"). Since Q46, ROOM completions reach the
+ *   outcome fold above, but this charge path stays ROOM-closed here; the
+ *   ROOM amounts are S5's to rule in.
  * - a placement profile records nothing (RD10: placement matches count
  *   toward NO statistic — the charge feeds Games Played and Koz %, the very
  *   counters RD10 pins). Reading flagged in the S63 report.

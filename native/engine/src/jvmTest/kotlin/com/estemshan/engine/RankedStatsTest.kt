@@ -6,12 +6,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * S44 — the exactly-nine career statistics: the grid is nine and no tenth,
- * the two inclusion gates (mode == RANKED, not placement) are both real, and
- * percentages derive from completed Ranked matches (RD23 / RD10 / RD28).
- * Below that: the A5.1 departure-charge fold — the one career movement
- * UNRANKED carries (the Koz counter as a plain departure counter,
- * 2026-10-17).
+ * S44 + S3 — the exactly-nine career statistics: the grid is nine and no
+ * tenth, every mode's completion reaches the counters (Q46/Q14c/Q17 — the
+ * old RANKED-only gate was the defect) while placement (RD10) is the one
+ * exclusion left standing in every mode, and percentages derive from the
+ * all-mode Games Played (RD23 / RD10). Tie conventions arrive via the merged
+ * [placementOutcome] (Q2d/Q2f, PR #161): a shared bottom takes the LAST
+ * placement — Koz for stats — and the all-tie case is all-King. Below that:
+ * the A5.1 departure-charge fold — unchanged, still the one ROOM-closed
+ * path (the Koz counter as a plain departure counter, 2026-10-17).
  */
 class RankedStatsTest {
 
@@ -123,25 +126,68 @@ class RankedStatsTest {
   }
 
   @Test
-  fun roomAndUnrankedMatchesRecordNoRankedStatistics() {
-    // RD28: only RANKED counts. Unranked is first-class rank-blind, not a
-    // ROOM + a marker, so it is its own no-op branch here.
-    for (mode in listOf(MatchMode.ROOM, MatchMode.UNRANKED)) {
-      val before = RankedStats(gamesPlayed = 5, kingCount = 2)
-      val after = accumulateRankedStat(before, MatchOutcome.KING, settled, mode)
-      assertEquals("$mode must not record stats", before, after)
+  fun everyModeCompletionRecordsTheSameCounters() {
+    // Q46 (N-1, 2026-10-22): the RANKED-only gate was the defect. Q14c/Q17:
+    // a completion in ROOM, RANKED or UNRANKED increments Games Played and
+    // the seat's outcome counter alike. Only RP stays Ranked-only, and this
+    // fold is RP-blind by construction — it takes a profile to READ the
+    // placement gate and returns counters only, so a ROOM or UNRANKED
+    // completion can never move tier/division/RP through it.
+    for (mode in MatchMode.entries) {
+      val stats = accumulateRankedStat(RankedStats(), MatchOutcome.KING, settled, mode)
+      assertEquals("$mode: Games Played +1", 1, stats.gamesPlayed)
+      assertEquals("$mode: King +1", 1, stats.kingCount)
+      assertEquals("$mode: no second", 0, stats.secondCount)
+      assertEquals("$mode: no third", 0, stats.thirdCount)
+      assertEquals("$mode: no koz", 0, stats.kozCount)
     }
   }
 
   @Test
-  fun placementMatchesCountTowardNoStatisticEvenInRankedMode() {
-    // RD10: placement matches count toward nothing — not Games Played, not
-    // any percentage — even though the mode is RANKED.
+  fun tenMatchesPerModeAggregateIntoOneDenominator() {
+    // T-19's worked example (plan §5.8 row "Nine statistics for every
+    // mode"): 10 ROOM + 10 UNRANKED + 10 RANKED with 3 Kings each → Games
+    // Played 30, King count 9, King % 30. Q17: counts and percentages
+    // aggregate across all three modes — one career, one denominator.
+    var stats = RankedStats()
+    for (mode in listOf(MatchMode.ROOM, MatchMode.UNRANKED, MatchMode.RANKED)) {
+      repeat(3) { stats = accumulateRankedStat(stats, MatchOutcome.KING, settled, mode) }
+      repeat(7) { stats = accumulateRankedStat(stats, MatchOutcome.SECOND, settled, mode) }
+    }
+    assertEquals(30, stats.gamesPlayed)
+    assertEquals(9, stats.kingCount)
+    assertEquals(21, stats.secondCount)
+    assertEquals(30, stats.kingPct)
+    assertEquals(70, stats.secondPct)
+  }
+
+  @Test
+  fun percentagesDenominateOverAllModesEvenWithNoRankedMatch() {
+    // The denominator is the all-mode Games Played (Q17), not a Ranked-only
+    // one in disguise: a career with no RANKED match at all still computes
+    // whole percentages — and the zero-game divide-by-zero safety is
+    // unchanged (pinned above in anEmptyStatBlockReadsAllZeros).
+    var stats = accumulateRankedStat(RankedStats(), MatchOutcome.KING, settled, MatchMode.ROOM)
+    stats = accumulateRankedStat(stats, MatchOutcome.SECOND, settled, MatchMode.UNRANKED)
+    assertEquals(2, stats.gamesPlayed)
+    assertEquals(50, stats.kingPct)
+    assertEquals(50, stats.secondPct)
+  }
+
+  @Test
+  fun placementMatchesCountTowardNoStatisticInEveryMode() {
+    // RD10 through the widened gate (S3 acceptance 4): placement counts
+    // toward nothing — not Games Played, not any percentage — in EVERY
+    // mode. Placement runs in Ranked play, but the gate is mode-blind: it
+    // reads the profile, so it cannot disagree with what the placement
+    // service sees.
     val placing = beginPlacement(season)
     assertTrue(isPlacement(placing))
-    val before = RankedStats(gamesPlayed = 2, kozCount = 1)
-    val after = accumulateRankedStat(before, MatchOutcome.KING, placing, ranked)
-    assertEquals(before, after)
+    for (mode in MatchMode.entries) {
+      val before = RankedStats(gamesPlayed = 2, kozCount = 1)
+      val after = accumulateRankedStat(before, MatchOutcome.KING, placing, mode)
+      assertEquals("$mode: mid-placement records nothing", before, after)
+    }
     assertNotEquals(settled, placing)
   }
 
@@ -171,6 +217,61 @@ class RankedStatsTest {
     assertEquals(2, carried.gamesPlayed)
     assertEquals(1, carried.kingCount)
     assertEquals(1, carried.secondCount)
+  }
+
+  // ── Tie placement through the merged conventions (Q2d/Q2f, PR #161) ────
+
+  @Test
+  fun sharedBottomSeatsTakeTheLastPlacementAsKozForStats() {
+    // Q2d: every seat tied at the lowest total shares the LAST placement —
+    // rank 4, KOZ in this vocabulary — and Q2f gives them all the same last
+    // placement, so no bottom-tied seat ever reads Third. The convention is
+    // decided upstream by the merged placementRank/placementOutcome; what
+    // this pins is that the accumulator folds whatever they produce, per
+    // player, in any mode. 100/99/10/10 (T-13 case 2's shape): King,
+    // Second, two Koz.
+    val totals = mapOf("A" to 100, "B" to 99, "C" to 10, "D" to 10)
+    assertEquals(4, placementRank(totals, "C"))
+    assertEquals(4, placementRank(totals, "D"))
+    for (seat in listOf("C", "D")) {
+      assertEquals("bottom-tied seat $seat is Koz", MatchOutcome.KOZ, placementOutcome(totals, seat))
+      val stats = accumulateRankedStat(RankedStats(), placementOutcome(totals, seat), settled, ranked)
+      assertEquals(1, stats.gamesPlayed)
+      assertEquals(1, stats.kozCount)
+      assertEquals("a tied-lowest seat is never Third", 0, stats.thirdCount)
+    }
+    // The same shared-bottom Koz rides the widened ROOM path — the mode the
+    // old gate closed (Q46).
+    val roomSharedKoz = accumulateRankedStat(
+      RankedStats(), placementOutcome(totals, "C"), settled, MatchMode.ROOM,
+    )
+    assertEquals(1, roomSharedKoz.kozCount)
+    assertEquals(1, roomSharedKoz.gamesPlayed)
+
+    // T-13 case 1: 100/99/99/99 → one King + a three-way shared bottom, all
+    // Koz — shared Koz is never Second/Third.
+    val threeWayBottom = mapOf("A" to 100, "B" to 99, "C" to 99, "D" to 99)
+    assertEquals(MatchOutcome.KING, placementOutcome(threeWayBottom, "A"))
+    for (seat in listOf("B", "C", "D")) {
+      assertEquals(MatchOutcome.KOZ, placementOutcome(threeWayBottom, seat))
+      assertEquals(4, placementRank(threeWayBottom, seat))
+    }
+  }
+
+  @Test
+  fun theAllTieCaseIsAllKingInEveryMode() {
+    // Q2d's sole exception: all four seats tied stays rank 1 — every seat
+    // is King, and each player's own fold records a King, in every mode.
+    val totals = mapOf("A" to 77, "B" to 77, "C" to 77, "D" to 77)
+    for (mode in MatchMode.entries) {
+      for (seat in totals.keys) {
+        assertEquals(1, placementRank(totals, seat))
+        assertEquals(MatchOutcome.KING, placementOutcome(totals, seat))
+        val stats = accumulateRankedStat(RankedStats(), placementOutcome(totals, seat), settled, mode)
+        assertEquals("$mode seat $seat: all-tie is a King", 1, stats.kingCount)
+        assertEquals("$mode seat $seat: Games Played +1", 1, stats.gamesPlayed)
+      }
+    }
   }
 
   // ── A5.1 departure charges (2026-10-16 closure option (a), with the
