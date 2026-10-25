@@ -347,6 +347,19 @@ suspend fun resolveTimeoutOnce(
             // this resolver never runs.
             merged["timeoutRemovedUids"] =
               TimeoutResolution.removalWrite(fresh, seatUid!!)
+            // S5 (A8.3 / Q37 + RD31 / Q14d(1), closing IB-22): the removal's
+            // own Koz charge — ROOM 1, RANKED/UNRANKED 2, decided by the
+            // engine table — rides the SAME transaction as the removal, so it
+            // can never land without the removal, and never twice: once this
+            // commits, the uid is in `timeoutRemovedUids`, so botControlledSeats
+            // makes every later resolution of the seat skip the counter and
+            // this branch entirely (the removal's own idempotency proof).
+            // Recorded here, applied at settlement by the settlement lane —
+            // nothing downstream is consumed in this lane.
+            TimeoutResolution.removalChargeKoz(TimeoutResolution.storedMatchMode(fresh))?.let { koz ->
+              merged[TimeoutResolution.TIMEOUT_REMOVED_CHARGES_FIELD] =
+                TimeoutResolution.removalChargeWrite(fresh, seatUid, koz)
+            }
           }
           takeover?.let {
             // RD19: the takeover rides the SAME write as the decision that
