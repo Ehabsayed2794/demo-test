@@ -159,12 +159,12 @@ fun calculateRoundScore(input: RoundScoreInput): RoundScoreResult {
     } else if (input.classic) {
       role = normalRoleFor(bid.type, bid.amount, isCaller, isWith, isRisk)
       val classicBid = if (bid.type == BidType.TRICKS) bid.amount else 0
-      delta = calculateClassicScore(role, classicBid, won, total, soleWinner, soleLoser)
+      delta = calculateClassicScore(role, classicBid, won, total, soleWinner, soleLoser, isRisk)
       notes.add("Classic $role ${if (win) "success" else "failure"} → $delta")
     } else {
       role = normalRoleFor(bid.type, bid.amount, isCaller, isWith, isRisk)
       val normalBid = if (bid.type == BidType.TRICKS) bid.amount else 0
-      delta = calculateNormalScore(role, normalBid, won, soleWinner, soleLoser, total)
+      delta = calculateNormalScore(role, normalBid, won, soleWinner, soleLoser, total, isRisk)
       notes.add("$role ${if (win) "success" else "failure"} → $delta")
     }
 
