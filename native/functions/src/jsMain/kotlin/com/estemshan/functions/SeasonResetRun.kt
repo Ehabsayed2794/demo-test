@@ -683,8 +683,12 @@ private fun corrupt(message: String): Nothing = throw IllegalArgumentException(m
  * The ONLY fields a reset writes. Career statistics, placement, the shield and
  * every display field are absent by construction: the batch merge leaves them
  * untouched, which is what lets an irreversible migration preserve them.
+ *
+ * Internal because Q22's lazy reset (RankedProfileDb, SettlementDb) merges the
+ * same six fields on first access — one list, so the sweep and the lazy path
+ * can never drift apart.
  */
-private fun progressionFields(profile: RankedProfile): Map<String, Any?> = linkedMapOf(
+internal fun progressionFields(profile: RankedProfile): Map<String, Any?> = linkedMapOf(
   FIELD_TIER to profile.tier,
   FIELD_DIVISION to profile.division,
   FIELD_RP to profile.rp,
