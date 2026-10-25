@@ -4,13 +4,18 @@
 // Covers:
 //   * the ordinary scored advance still accepted, with the multiplier bounded
 //     (1..8) and Classic pinned to 1;
-//   * the General Pass branch: S1's actual provable window (N declining Dash
-//     decisions followed by N auction passes) accepted with the exact ladder
-//     value only — never a jump, never a skipped round, never a non-player;
+//   * the General Pass branch, F1 contract (owner ruling 2026-10-24, Option A):
+//     the k=0 window verbatim (N declining Dash decisions + N auction passes,
+//     2N entries) AND the mixed window (1 <= k <= min(2, N-1) declared Dashes
+//     + N-k passes, 2N-k entries) accepted with the exact ladder value only —
+//     never a jump, never a skipped round, never a non-player;
+//   * k >= 3 declared Dashes refused (the strict two-Dash maximum, never a
+//     silent clamp), and the all-dashing table (k = N) refused at every N —
+//     including the one-seat single-DECLARED-Dash shape;
 //   * the pass archive (`passRound: true`, empty cardLog, that exact window)
 //     accepted; an ordinary archive still requires 52 cards;
 //   * under-four seat maps (the seat-count correction to the draft's
-//     hardcoded four), and the unprovable Dash-call variant refused.
+//     hardcoded four), down to the one-seat table.
 //
 // Run with a live emulator on 127.0.0.1:8080. If unavailable the suite exits 2
 // and prints STATUS BLOCKED — never a green result.
@@ -476,6 +481,49 @@ async function main() {
         cardPhase: null, turn: null, cardLog: [], biddingLog: [],
         currentMultiplier: 2, updatedAt: new Date()
       })).then(() => true).catch(() => false));
+
+    // A ONE-seat table (isValidSeatMap permits it): the cap is
+    // min(2, N-1) = 0, so the ONLY provable window is the k=0 decline.
+    // (a) is the one-entry leak the pre-audit cap admitted: a single
+    // DECLARED Dash with zero passes must be refused — an all-dashing
+    // table ends in SANS, never a General Pass, at every N including 1.
+    const players1 = [A];
+    const seats1 = { p1: A };
+    await env.withSecurityRulesDisabled(async (admin) => {
+      await admin.firestore().collection("matches").doc("o19-one-declared").set(
+        baseMatch(players1, seats1, {
+          currentRound: 1, dealer: A, version: 5, currentMultiplier: 1,
+          biddingLog: passWindow(seats1, 1, { dashCallSeats: ["p1"] })
+        })
+      );
+      await admin.firestore().collection("matches").doc("o19-one-decline").set(
+        baseMatch(players1, seats1, {
+          currentRound: 1, dealer: A, version: 5, currentMultiplier: 1,
+          biddingLog: passWindow(seats1, 1)
+        })
+      );
+    });
+    check("one-seat DECLARED Dash with zero passes (k = N) -> DENY",
+      await assertFails(ref(A, "o19-one-declared").update({
+        currentRound: 2, dealer: A, version: 6, biddingOpen: true,
+        bids: { p1: null }, lastBidSeat: null, cardPhase: null,
+        turn: null, cardLog: [], biddingLog: [], currentMultiplier: 2, updatedAt: new Date()
+      })).then(() => true).catch(() => false));
+
+    // (b) the cap fix must NOT tighten the k=0 window: a one-seat decline
+    // + pass (2N entries) still advances. The read-back makes the exercise
+    // explicit — the test fails loudly if the update silently no-ops.
+    check("one-seat decline + pass (2N, k=0) -> ALLOW",
+      await assertSucceeds(ref(A, "o19-one-decline").update({
+        currentRound: 2, dealer: A, version: 6, biddingOpen: true,
+        bids: { p1: null }, lastBidSeat: null, cardPhase: null,
+        turn: null, cardLog: [], biddingLog: [], currentMultiplier: 2, updatedAt: new Date()
+      })).then(() => true).catch(() => false));
+    await env.withSecurityRulesDisabled(async (admin) => {
+      const snap = await admin.firestore().collection("matches").doc("o19-one-decline").get();
+      check("one-seat k=0 advance really committed (currentRound read back as 2)",
+        snap.data().currentRound === 2 && snap.data().currentMultiplier === 2);
+    });
 
     await env.withSecurityRulesDisabled(async (admin) => {
       await admin.firestore().collection("matches").doc("o19-two-bad").set(

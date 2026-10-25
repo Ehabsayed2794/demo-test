@@ -1316,7 +1316,7 @@ service cloud.firestore {
       let q2 = (log.size() > n + 2 ? log[n + 2].get('seatId', null) : null);
       let sd0 = (d0 >= 0 ? log[d0].get('seatId', null) : null);
       let sd1 = (k == 2 ? log[d1].get('seatId', null) : null);
-      return k <= (n == 2 ? 1 : 2)
+      return k <= (n <= 2 ? n - 1 : 2)
         && log.size() == n * 2 - k
         // The Dash block: n decisions, one per seat position.
         && isDashDecisionEntry(log[0], round, seats)
