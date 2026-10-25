@@ -1,5 +1,20 @@
 # Five parallel agent tasks — 2026-10-20
 
+> **Historical record — noted 2026-10-25 (pointer; the body below is left
+> verbatim).** This package is the 2026-10-20 briefing for the five-agent
+> batch and is kept as history, not as a runnable brief — all five tasks
+> have since merged (PRs #140, #141, #142, #143, #144). Its baseline
+> `origin/main` at `3979028` is long superseded; the tip at the base of the
+> branch that tracked this package is `88217a3`. Its paths are stale too:
+> `C:\Users\ehab.sayed\Desktop\demo-test` no longer holds the repository
+> (it is an empty directory as of 2026-10-25); the primary worktree is
+> `D:\demo-test`, and the five task worktrees named below now live under
+> `D:\worktrees\` (`s59-season-job`, `s70-join-gate`, `s63-abuse-tests`,
+> `s64-leaderboard-client`, `s64-season-reads` — re-derived from
+> `git worktree list`, 2026-10-25). The plan document this package cites,
+> `docs/NATIVE_V1_PLAN_AND_ESTIMATE.md`, is superseded by
+> `docs/NATIVE_V1_IMPLEMENTATION_PLAN_V2.md` per `AGENTS.md`.
+
 All five tasks are sourced from `docs/NATIVE_V1_PLAN_AND_ESTIMATE.md` (E6b, S59/S63/S64/S70 and R27/RD29/RD30). None of them is a design task, and none converts a design mock to Android.
 
 ## Why these five

@@ -274,11 +274,24 @@ isolated worktrees.
   `agent/agent-ops-docs` — worktree `D:\worktrees\agent-docs` — now tracks
   both the policy (`252e24f`) and the `AGENTS.md` rule (`7ba39cf`), pending
   the owner's push; until that lands on `origin/main`, the rule above stands
-  for fresh worktrees. The policy was re-audited against the machine on
-  2026-10-24 and every verifiable claim held: CI pins Node 22
-  (`test.yml`, `r1-golden-verification.yml`, `android.yml`), no
-  `.nvmrc`/`.node-version`/`engines` pin exists, and there is still no
-  `node`/`npm` on the shell PATH.)
+  for fresh worktrees. The policy was audited against the machine on
+  2026-10-24, corrected 2026-10-25 after review. Scope of the audit: all
+  five files in `.github/workflows/`, the root and `native/functions`
+  `package.json`, the tracked tree, and the shell PATH. Two audited claims
+  FAILED and are corrected here. (1) The runtime is not unpinned:
+  `native/functions/package.json:7-9` pins `"node": "22"`, which AGREES with
+  the CI major. There is no `.nvmrc` or `.node-version` anywhere in the
+  tracked tree, and the root `package.json` has no `engines` — but the
+  functions package does. (The imported policy's own §A.4 sentence "there is
+  no `.nvmrc`/`.node-version`/`engines` pin in the repo" predates this
+  discovery; amending it is the owner's call — this pass records, it does
+  not rewrite the policy.) (2) "CI pins Node 22" was incomplete: 6 of the 7
+  `node-version` pins in CI are 22 (`test.yml:51`,
+  `r1-golden-verification.yml:54`, `android.yml:222/370/507/576`), but
+  `deploy-production.yml:46` pins 20 — the production deploy job runs a
+  DIFFERENT Node major from every test job. That drift is an OPEN OWNER
+  DECISION (recorded 2026-10-25); this docs pass changed no workflow.
+  Confirmed unchanged: there is still no `node`/`npm` on the shell PATH.)
 - `demo-test-roadmap` and the design worktrees track older/different state.
   Never treat them as `origin/main`. (2026-10-24: they now live under
   `D:\worktrees\` after the project moved to D:.)
