@@ -187,6 +187,71 @@ class RoundScoreTest {
     assertEquals(-22, loss.deltas.getValue("p4"))
   }
 
+  // ── A7.1 / A6.3 / Current Rules item 4: a Normal Dash seat that is ALSO the
+  // Risk player adds the Risk ladder to its own Dash value, exactly once. ──
+  // Total 5+5+5+0 = 15 → Risk 10, Over. p4 dashes and takes 2 against its
+  // fixed 0 estimate; p1/p2 succeed, so p4 is neither sole winner nor sole
+  // loser and no bonus or doubling masks the component.
+  private fun dashRiskRound(classic: Boolean, riskId: String = "p4") = calculateRoundScore(
+    RoundScoreInput(
+      round = 7,
+      order = seats,
+      bids = bids("p1" to t(5), "p2" to t(5), "p3" to t(5), "p4" to Bid(BidType.DASH, 0)),
+      tricksWon = tricks("p1" to 5, "p2" to 5, "p3" to 1, "p4" to 2),
+      callerId = "p1",
+      riskPlayerId = riskId,
+      classic = classic,
+    ),
+  )
+
+  @Test
+  fun normalDashWhoIsAlsoRiskAddsTheLadderOnce() {
+    val r = dashRiskRound(classic = false)
+    assertEquals(15, r.totalBids)
+    assertEquals(10, r.riskValue)
+    assertEquals("p4", r.riskPlayerId)
+    // A Dash seat stays REG_DASH — its Risk is a component, never a new role.
+    assertEquals(Role.REG_DASH, r.breakdown.getValue("p4").role)
+    assertTrue(r.breakdown.getValue("p4").isRisk)
+    assertTrue(!r.breakdown.getValue("p4").isSoleWinner)
+    assertTrue(!r.breakdown.getValue("p4").isSoleLoser)
+    // A6.3 owner case: −(10 + 2) − 10 = −22.
+    assertEquals(-22, r.deltas.getValue("p4"))
+    // The non-Risk seats are untouched: CALLER success = 10 + 5 + 10.
+    assertEquals(25, r.deltas.getValue("p1"))
+  }
+
+  @Test
+  fun classicDashWhoIsAlsoRiskAddsTheLadderOnce() {
+    val r = dashRiskRound(classic = true)
+    assertEquals(15, r.totalBids)
+    assertEquals(Role.REG_DASH, r.breakdown.getValue("p4").role)
+    assertTrue(r.breakdown.getValue("p4").isRisk)
+    assertTrue(!r.breakdown.getValue("p4").isSoleLoser)
+    // A7.1 owner case: Over failure −T = −2, plus −10 = −12 — never the
+    // Normal-mode −22, and never the Classic WIZZ_RISK formula.
+    assertEquals(-12, r.deltas.getValue("p4"))
+    // Classic CALLER success = bid + 13 + 10.
+    assertEquals(28, r.deltas.getValue("p1"))
+  }
+
+  @Test
+  fun dashSeatThatIsNotRiskKeepsTheOldValues() {
+    // Same table with the Risk moved to p3: p4's Dash rows fall back to
+    // −(10+T) and the Classic −T, while p3 scores through its own RISK role.
+    val normal = dashRiskRound(classic = false, riskId = "p3")
+    assertEquals(Role.REG_DASH, normal.breakdown.getValue("p4").role)
+    assertTrue(!normal.breakdown.getValue("p4").isRisk)
+    assertEquals(-12, normal.deltas.getValue("p4")) // −(10 + 2), no ladder
+    assertEquals(Role.RISK, normal.breakdown.getValue("p3").role)
+    assertEquals(-14, normal.deltas.getValue("p3")) // −(miss 4 + ladder 10)
+
+    val classic = dashRiskRound(classic = true, riskId = "p3")
+    assertEquals(-2, classic.deltas.getValue("p4")) // Over failure −T
+    assertEquals(Role.RISK, classic.breakdown.getValue("p3").role)
+    assertEquals(-14, classic.deltas.getValue("p3")) // −(miss 4 + 10)
+  }
+
   // ── Risk fallback walks past Dash-Call seats to the last estimator ──
   @Test
   fun riskFallbackSkipsDashCall() {
