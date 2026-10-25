@@ -54,7 +54,7 @@ enum class VoteKickUnavailability {
   /** Fewer than 7 fully complete rounds (vote opens Round 8+). */
   ROUNDS_SHORT,
 
-  /** No single unique Koz — last place tied (RD17) or no scores. */
+  /** No single unique Koz — the Koz is shared (Q2d/Q2e) or there are no scores. */
   NO_UNIQUE_KOZ,
 
   /** Named target is not the unique Koz. */
@@ -102,8 +102,9 @@ data class VoteKickRemoval(val targetSeat: String, val targetUid: String)
 fun voteKickThreshold(eligibleCount: Int): Int = eligibleCount / 2 + 1
 
 /**
- * The unique current Koz (last place), or null when last place is tied
- * (RD17 — never fabricate a Koz) or there are no scores.
+ * The unique current Koz (last place), or null when the Koz is shared
+ * (Q2d makes every tied-bottom seat Koz; Q2e forbids kicking a shared
+ * Koz) or there are no scores.
  */
 fun uniqueKozSeat(standings: Map<String, Int>): String? {
   if (standings.isEmpty()) return null

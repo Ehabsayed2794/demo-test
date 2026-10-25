@@ -31,7 +31,7 @@ class VoteKickTest {
     mode, completedRounds, standings, targetSeat, initiatorSeat, botSeats, cooldown, currentRound,
   )
 
-  // ── unique Koz (RD17) ─────────────────────────────────────────────
+  // ── unique Koz (Q2e) ─────────────────────────────────────────────
 
   @Test
   fun uniqueLastPlaceResolves() {
