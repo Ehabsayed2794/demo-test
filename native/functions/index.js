@@ -9,7 +9,10 @@
 // and every call 404s with functions/not-found. This file re-publishes each
 // callable as a plain enumerable property, which is the shape the CLI needs.
 //
-// Keep this in sync when a callable is added to Functions.kt. The guard below
+// Keep this in sync whenever any @JsName export is added to or removed from
+// any file under native/functions/src/jsMain/kotlin/ (Functions.kt and the
+// *Exports.kt files all count — every @JsName("...") value must appear here).
+// The guard below
 // makes drift fail LOUDLY at emulator start — a callable listed here but not
 // exported by the bundle, or one that lost its trigger metadata — instead of
 // silently deploying an empty module.
@@ -29,6 +32,7 @@ const exported = {
   getRankedLeaderboard: kotlin.getRankedLeaderboard,
   scheduledSeasonReset: kotlin.scheduledSeasonReset,
   joinRankDownRoom: kotlin.joinRankDownRoom,
+  operatorSeasonResetDryRun: kotlin.operatorSeasonResetDryRun,
 };
 
 for (const [name, fn] of Object.entries(exported)) {
