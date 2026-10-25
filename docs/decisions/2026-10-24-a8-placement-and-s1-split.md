@@ -12,6 +12,16 @@ verified**.
 and `c14f4a4` Integrate S1 Core, `397c163` Integrate S1 fix, `8881fe0` Integrate S2). This record was
 written on a branch cut from that commit, so the cited files and line numbers are the ones on that line.
 
+> **Post-record update, 2026-10-25 — O-19 implementation status superseded.** §2 and §3 below were written on
+> 2026-10-24 against `8881fe0`, before S1b landed. Option B has since been delivered on `agent/s1b-option-b-impl`
+> and merged into `main` as **PR #152** (merge commit `88217a3a102d256a02c2c69958be45659df10e52`, 2026-10-24
+> 18:13 +0300): `currentMultiplier` now appears in `firestore.rules`, services, app and functions on `main`, and
+> the S1 row of `docs/NATIVE_V1_IMPLEMENTATION_PLAN_V2.md` records the acceptance evidence (engine 507 /
+> services 213 / app 205 / functions 544 unit tests green; rules 29 of 29 on the live emulator). Read the
+> "[V] assigned … unverified" statements in §2 and §3 as superseded by this note. Nothing else changes: none of
+> the files cited in §1–§3 changed between `8881fe0` and `88217a3`, so every line reference above still resolves
+> on `main` as of this update.
+
 Companion records: `docs/decisions/2026-10-23-final-owner-answers.md` (Q51–Q52, sprint scope);
 `docs/decisions/OPEN_QUESTIONS.md` (register; O-19 and O-20 now in §B); `docs/rules/CANONICAL_RULES.md`
 A8.8 (Sa'ayda extension count), which receives a pointer note from this change and no edit to its rule text.
