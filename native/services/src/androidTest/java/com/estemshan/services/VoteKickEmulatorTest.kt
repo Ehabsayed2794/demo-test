@@ -12,6 +12,7 @@ import com.estemshan.services.model.VoteKickDoc
 import com.estemshan.services.session.AuthPort
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.tasks.await
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -39,6 +40,12 @@ class VoteKickEmulatorTest {
   @Before
   fun wipeEmulatorsBetweenTests() {
     EmulatorSuite.reset()
+  }
+
+  @After
+  fun releaseOurFirebaseClients() {
+    val context = InstrumentationRegistry.getInstrumentation().targetContext
+    EmulatorSuite.releaseFirestoreClients(context, "-s60_")
   }
 
   private suspend fun seating(): Map<String, EmulatorSuite.ClientFirebase> {

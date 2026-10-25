@@ -15,6 +15,7 @@ import com.google.firebase.functions.FirebaseFunctionsException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.tasks.await
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -141,6 +142,12 @@ class InactivityEmulatorTest {
   @Before
   fun wipeEmulatorsBetweenTests() {
     EmulatorSuite.reset()
+  }
+
+  @After
+  fun releaseOurFirebaseClients() {
+    val context = InstrumentationRegistry.getInstrumentation().targetContext
+    EmulatorSuite.releaseFirestoreClients(context, "-s73_")
   }
 
   private suspend fun seating(): Map<String, EmulatorSuite.ClientFirebase> {
