@@ -79,6 +79,7 @@ import com.estemshan.services.model.Reasons.UNKNOWN_NEXT_SEAT
 import com.estemshan.services.model.Reasons.UNKNOWN_OPENING_SEAT
 import com.estemshan.services.model.Reasons.UNKNOWN_SEAT
 import com.estemshan.services.model.Reasons.UNSUPPORTED_GENERAL_PASS_SHAPE
+import com.estemshan.services.model.Reasons.TOO_MANY_DASH_CALLS
 import com.estemshan.services.model.Reasons.VOTE_CLOSED
 import com.estemshan.services.model.Reasons.VOTE_EXPIRED
 import com.estemshan.services.model.Reasons.VOTE_LOCKED
@@ -390,7 +391,16 @@ class MatchService(
           "submitBiddingAction: the match document changed since this action was validated (expected version $expectedVersion, found ${fresh.version}) — not written; re-fetch and retry."))
       }
       val freshSeatId = resolveSeat(fresh)
-      val newEntry = action.toLogEntry(freshSeatId, fresh.currentRound)
+      // F1 (owner ruling 2026-10-24): the ONE normalising write boundary.
+      // The engine's reducer converts an over-cap Dash ATTEMPT to a PASS
+      // (canSubmit never rejects it), so the persisted entry records what
+      // the engine applied: with MAX_DASH_CALLS effective Dashes already
+      // on this round's log, a further declared attempt persists as a
+      // DECLINE and the seat stays in the auction pool.
+      val newEntry = normaliseDashCallEntry(
+        action.toLogEntry(freshSeatId, fresh.currentRound),
+        effectiveDashCallCount(fresh.biddingLog, fresh.currentRound),
+      )
       val nextVersion = expectedVersion + 1
       tx.update(matchRef, mapOf(
         "biddingLog" to FieldValue.arrayUnion(newEntry.toFields()),
@@ -727,6 +737,11 @@ class MatchService(
         return@runTx TxOutcome.Err(ServiceException(UNSUPPORTED_GENERAL_PASS_SHAPE,
           "advanceAfterGeneralPass: round $closedRound's window is not a complete all-pass " +
             "auction — refusing to advance on a guess."))
+      }
+      if (decision is GeneralPassAdvance.TooManyDashCalls) {
+        return@runTx TxOutcome.Err(ServiceException(TOO_MANY_DASH_CALLS,
+          "advanceAfterGeneralPass: round $closedRound's log claims more than " +
+            "MAX_DASH_CALLS declared Dash Calls — refusing to advance on a clamped guess."))
       }
       if (decision is GeneralPassAdvance.InvalidResult) {
         return@runTx TxOutcome.Err(ServiceException(INVALID_RESULT,
