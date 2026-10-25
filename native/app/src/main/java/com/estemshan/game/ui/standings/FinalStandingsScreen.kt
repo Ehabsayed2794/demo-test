@@ -139,12 +139,9 @@ private fun RankedFinalStandings(
   val lastIndex = (state.rows.size - 1).coerceAtLeast(0)
   val maxTotal = state.rows.maxOfOrNull { it.total }
   val minTotal = state.rows.minOfOrNull { it.total }
-  // Unique last place only — ties share no Koz (RD8 / unique-Koz rule).
-  val kozSeat = if (minTotal != null && state.rows.count { it.total == minTotal } == 1) {
-    state.rows.first { it.total == minTotal }.seat
-  } else {
-    null
-  }
+  val allSeatsTie = minTotal != null && maxTotal == minTotal
+  // Q2d: every seat tied at the bottom is Koz; an all-seat tie makes every
+  // seat Match King, so no seat shows the Koz mug.
   val userTotal = state.rows.firstOrNull { it.seat == ranked.userSeat }?.total
   val userIsMatchKing = userTotal != null && maxTotal != null && userTotal == maxTotal
 
@@ -204,7 +201,7 @@ private fun RankedFinalStandings(
             row = row,
             displayedTotal = tallyScoreFrame(row.total, scoreProgress.value),
             isMatchKing = row.isWinner,
-            isKoz = row.seat == kozSeat,
+            isKoz = isKozRow(row.total, minTotal, allSeatsTie),
             scoreDone = scoreDone,
             tierChip = if (row.seat == ranked.userSeat) ranked.nextRankLabel else null,
           )
@@ -259,7 +256,7 @@ private fun ReturnToRankedButton(onClick: () -> Unit) {
 /**
  * Ranked row: Match King (1st place, ties share) keeps the crown in
  * Match-King gold #E8A33D; Rank King gets no crown and no divisions
- * (RD8 three-way distinction); unique last keeps the Koz mug; your row
+ * (RD8 three-way distinction); each tied-bottom seat keeps the Koz mug; your row
  * carries your NEW rank's tier chip. The Gold tier chip never reuses
  * the Match-King gold — it is a GoldDim-bordered chip with ink text.
  */
