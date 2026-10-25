@@ -19,6 +19,13 @@ data class FinalStandingsUiState(
   val rows: List<StandingRow>,
 )
 
+/**
+ * Q2d: every row tied at the lowest total shows the Koz mug. An all-seat
+ * tie is all Match King, so no row shows it.
+ */
+fun isKozRow(total: Int, minTotal: Int?, allSeatsTie: Boolean): Boolean =
+  !allSeatsTie && minTotal != null && total == minTotal
+
 fun buildStandings(
   totals: Map<String, Int>,
   lastDeltas: Map<String, Int> = emptyMap(),
