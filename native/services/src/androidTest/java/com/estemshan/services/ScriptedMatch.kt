@@ -571,20 +571,21 @@ class ScriptedMatch(
   }
 
   /**
-   * One raw declaration with a CALLER-CHOSEN cycle, no retry, no sync.
-   * This is the only way to reproduce a write that was validated against a
-   * cycle the document has already left — the thing STALE_CYCLE exists
-   * for — and to observe the exact refusal the service throws.
+   * One raw declaration with a CALLER-CHOSEN (or deliberately absent) cycle,
+   * no retry, no sync. This is the only way to reproduce a write that was
+   * validated against a cycle the document has already left — the thing
+   * STALE_CYCLE exists for — or a legacy client that names no cycle at all,
+   * and to observe the exact refusal the service throws.
    */
-  suspend fun submitDeclarationRaw(seat: String, tricks: Int, expectedCycle: Int): SubmitBidResult =
+  suspend fun submitDeclarationRaw(seat: String, tricks: Int, expectedCycle: Int?): SubmitBidResult =
     bySeat.getValue(seat).store.submitBid(matchId, seat, tricks, expectedCycle)
 
-  /** One raw confirm with a caller-chosen cycle — see [submitDeclarationRaw]. */
+  /** One raw confirm with a caller-chosen or absent cycle — see [submitDeclarationRaw]. */
   suspend fun submitConfirmRaw(
     seat: String,
     tricks: Int,
     suit: Suit,
-    expectedCycle: Int,
+    expectedCycle: Int?,
   ): SubmitBiddingActionResult = bySeat.getValue(seat).store.submitBiddingAction(
     matchId,
     BiddingActionInput(

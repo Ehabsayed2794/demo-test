@@ -93,10 +93,11 @@ data class BiddingActionInput(
   val suit: String? = null,
   /**
    * The fast-round declaration cycle the caller validated this action
-   * against ([MatchDoc.biddingCycle]), or null to opt out (legacy callers).
-   * A fast Super Call CONFIRM atomically starts the next cycle, so a
-   * delayed CONFIRM from the previous one must never be applied twice.
-   * Never persisted into the log entry.
+   * against ([MatchDoc.biddingCycle]). A fast Super Call CONFIRM atomically
+   * starts the next cycle, so a delayed CONFIRM from the previous one must
+   * never be applied twice. Null is legal only while the round is still in
+   * cycle 0; once a Super Call has committed, a cycle-less write is refused
+   * as STALE_CYCLE. Never persisted into the log entry.
    */
   val expectedCycle: Int? = null,
 ) {
@@ -551,6 +552,10 @@ const val RAPID_ROUND_MIN = 14
 const val RAPID_ROUND_MAX = 18
 
 const val MAX_BID_VALUE = 13
+
+/** A6.10: the lowest declaration that opens a fast-round Super Call. */
+const val FAST_SUPER_CALL_MIN_TRICKS = 8
+
 const val MIN_RANK_VALUE = 2
 const val MAX_RANK_VALUE = 14
 

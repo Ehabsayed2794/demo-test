@@ -22,6 +22,7 @@ import com.estemshan.services.model.DealResult
 import com.estemshan.services.model.EndMatchResult
 import com.estemshan.services.model.AdvanceResult
 import com.estemshan.services.model.ExtendResult
+import com.estemshan.services.model.FAST_SUPER_CALL_MIN_TRICKS
 import com.estemshan.services.model.GameState
 import com.estemshan.services.model.HandDoc
 import com.estemshan.services.model.MatchDoc
@@ -316,6 +317,15 @@ class MatchService(
       // wiping bids/ and bumping biddingCycle in its own transaction. A bid
       // validated against the previous cycle must never land in this one,
       // where its seat's slot is legitimately empty again.
+      if (expectedCycle == null && match.biddingCycle > 0) {
+        // A legacy/late client that names no cycle cannot prove which
+        // declaration cycle it validated against. Once a Super Call has
+        // committed, the seat's slot is legitimately empty again, so
+        // accepting null would let the write land in a cycle it never saw.
+        return@runTx TxOutcome.Err(ServiceException(STALE_CYCLE,
+          "submitBid: the round is in declaration cycle ${match.biddingCycle}; a declaration " +
+            "must name the cycle it was validated against (expectedCycle is required after a Super Call)."))
+      }
       if (expectedCycle != null && match.biddingCycle != expectedCycle) {
         return@runTx TxOutcome.Err(ServiceException(STALE_CYCLE,
           "submitBid: the declaration cycle moved (expected $expectedCycle, found " +
@@ -434,6 +444,13 @@ class MatchService(
       val fastConfirm = action.actionType == BiddingLogEntry.ACTION_CONFIRM_CALL &&
         fresh.gameType.isFastRound(fresh.currentRound)
 
+      if (action.expectedCycle == null && fresh.biddingCycle > 0) {
+        // Same rule as submitBid: after a Super Call, a write that names no
+        // cycle cannot be tied to the cycle its engine verdict came from.
+        return@runTx TxOutcome.Err(ServiceException(STALE_CYCLE,
+          "submitBiddingAction: the round is in declaration cycle ${fresh.biddingCycle}; the " +
+            "action must name the cycle it was validated against (expectedCycle is required after a Super Call)."))
+      }
       if (action.expectedCycle != null && action.expectedCycle != fresh.biddingCycle) {
         // A lost response may make the caller retry the confirm that already
         // committed: that exact cycle boundary + the cycle's own (last)
@@ -1526,6 +1543,3 @@ fun interface Deal {
 /** firestore.rules requires exactly 13 cards per hand doc. */
 private const val HAND_SIZE = 13
 private const val MILLIS_PER_SECOND = 1000L
-
-/** A6.10: the lowest declaration that opens a fast-round Super Call. */
-private const val FAST_SUPER_CALL_MIN_TRICKS = 8

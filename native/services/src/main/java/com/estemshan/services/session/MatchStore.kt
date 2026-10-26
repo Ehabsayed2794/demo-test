@@ -51,7 +51,8 @@ interface MatchStore {
    * A Final Estimate (one value per seat, ever — in the ACTIVE declaration
    * cycle). [expectedCycle] is the fast-round cycle the caller validated
    * against; a mismatch is refused as STALE_CYCLE instead of landing in a
-   * cycle the value was never meant for. Null opts out (legacy callers).
+   * cycle the value was never meant for. Null is legal only while the round
+   * is still in cycle 0; after a Super Call it is refused as STALE_CYCLE.
    */
   suspend fun submitBid(
     matchId: String,

@@ -746,7 +746,7 @@ class OnlineMatchViewModel(
         "FAST_CYCLE_UNPERSISTED" ->
           "FAST_CYCLE_UNPERSISTED: this fast round's Super Call predates persisted " +
             "re-declarations, so its bidding cannot be resumed on this client."
-        "CYCLE_LOG_MISMATCH", "CYCLE_BIDS_MISMATCH" ->
+        "CYCLE_LOG_MISMATCH", "CYCLE_BIDS_MISMATCH", "CYCLE_CHAIN_INVALID" ->
           "FAST_CYCLE_LOG_MISMATCH: the document's fast-round declaration history is " +
             "inconsistent, so this round cannot be replayed safely."
         else -> "FAST_CYCLE_RESTORE_FAILED: the fast-round declaration cycle could not be " +

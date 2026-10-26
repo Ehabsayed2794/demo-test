@@ -182,11 +182,18 @@ class FastSuperCallRestoreTest {
     tricks: Int,
     suit: Suit,
     round: Int = 14,
+  ) = confirmEntryRaw(seat, tricks, suit.name, round)
+
+  private fun confirmEntryRaw(
+    seat: String,
+    tricks: Int,
+    suitName: String,
+    round: Int = 14,
   ) = BiddingLogEntry(
     seatId = seat,
     actionType = BiddingLogEntry.ACTION_CONFIRM_CALL,
     tricks = tricks,
-    suit = suit.name,
+    suit = suitName,
     round = round,
   )
 
@@ -451,6 +458,126 @@ class FastSuperCallRestoreTest {
     assertFalse(outcome.applied)
     assertTrue(outcome.desync)
     assertEquals("CYCLE_BIDS_MISMATCH", outcome.reason)
+  }
+
+  @Test
+  fun aSubEightConfirmationFailsTheWholeChainClosed() {
+    // 8 is the lowest Super Call. A document claiming cycle 1 from a 7 could
+    // not have been written by the live path; rebuilding only the last link
+    // would play a table that never existed.
+    val document = doc(
+      bids = mapOf("p3" to 7),
+      log = listOf(confirmEntry("p3", 7, Suit.CLUBS)),
+      cycle = 1,
+    )
+    val session = sessionAt()
+    val before = session.bidding!!
+
+    val outcome = MatchAdapter(session).restoreFastBiddingCycle("match-sub-eight", document)
+
+    assertFalse("a call below 8 is not a Super Call", outcome.applied)
+    assertTrue(outcome.desync)
+    assertEquals("CYCLE_CHAIN_INVALID", outcome.reason)
+    assertEquals("the offending log entry is named", 0, outcome.index)
+    assertEquals("the engine is untouched", before, session.bidding!!)
+  }
+
+  @Test
+  fun aDecreasingConfirmationChainFailsClosed() {
+    // Every later Super Call must rise above the previous confirmed number.
+    // The second link is below the first, so the document is not a replayable
+    // T-09 history even though its LAST link alone looks well-formed.
+    val document = doc(
+      bids = mapOf("p2" to 9),
+      log = listOf(
+        confirmEntry("p3", 10, Suit.CLUBS),
+        confirmEntry("p2", 9, Suit.HEARTS),
+      ),
+      cycle = 2,
+    )
+    val session = sessionAt()
+    val before = session.bidding!!
+
+    val outcome = MatchAdapter(session).restoreFastBiddingCycle("match-decreasing", document)
+
+    assertFalse("a decreasing chain is not restored", outcome.applied)
+    assertTrue(outcome.desync)
+    assertEquals("CYCLE_CHAIN_INVALID", outcome.reason)
+    assertEquals("the second confirmation is the offender", 1, outcome.index)
+    assertEquals("the engine is untouched", before, session.bidding!!)
+  }
+
+  @Test
+  fun anEqualNumberConfirmationChainFailsClosed() {
+    // A further Super Call is opened only by a STRICTLY higher declaration.
+    // An equal number cannot start a new cycle, so it cannot be a second
+    // confirmation.
+    val document = doc(
+      bids = mapOf("p2" to 10),
+      log = listOf(
+        confirmEntry("p3", 10, Suit.CLUBS),
+        confirmEntry("p2", 10, Suit.HEARTS),
+      ),
+      cycle = 2,
+    )
+    val session = sessionAt()
+    val before = session.bidding!!
+
+    val outcome = MatchAdapter(session).restoreFastBiddingCycle("match-equal", document)
+
+    assertFalse("an equal-number chain is not restored", outcome.applied)
+    assertTrue(outcome.desync)
+    assertEquals("CYCLE_CHAIN_INVALID", outcome.reason)
+    assertEquals("the repeated number is the offender", 1, outcome.index)
+    assertEquals("the engine is untouched", before, session.bidding!!)
+  }
+
+  @Test
+  fun anEarlierMalformedTrumpFailsTheWholeChainClosed() {
+    // The last link is valid on its own; the FIRST link's trump is not a real
+    // suit. Validating only the last confirmation would silently accept it.
+    val document = doc(
+      bids = mapOf("p2" to 11),
+      log = listOf(
+        confirmEntryRaw("p3", 10, "BOGUS"),
+        confirmEntry("p2", 11, Suit.HEARTS),
+      ),
+      cycle = 2,
+    )
+    val session = sessionAt()
+    val before = session.bidding!!
+
+    val outcome = MatchAdapter(session).restoreFastBiddingCycle("match-bad-suit", document)
+
+    assertFalse("a malformed earlier trump is refused", outcome.applied)
+    assertTrue(outcome.desync)
+    assertEquals("CYCLE_CHAIN_INVALID", outcome.reason)
+    assertEquals("the first confirmation is the offender", 0, outcome.index)
+    assertEquals("the engine is untouched", before, session.bidding!!)
+  }
+
+  @Test
+  fun anEarlierForeignSeatFailsTheWholeChainClosed() {
+    // A confirmation names a seat that is not in this match. The LAST link is
+    // a real seat, so only a full-chain check can catch it.
+    val document = doc(
+      bids = mapOf("p2" to 11),
+      log = listOf(
+        confirmEntry("p9", 10, Suit.CLUBS),
+        confirmEntry("p2", 11, Suit.HEARTS),
+      ),
+      cycle = 2,
+    )
+    val session = sessionAt()
+    val before = session.bidding!!
+
+    val outcome = MatchAdapter(session).restoreFastBiddingCycle("match-foreign-seat", document)
+
+    assertFalse("a foreign seat is refused", outcome.applied)
+    assertTrue(outcome.desync)
+    assertEquals("CYCLE_CHAIN_INVALID", outcome.reason)
+    assertEquals("the foreign confirmation is the offender", 0, outcome.index)
+    assertEquals("the engine is untouched", before, session.bidding!!)
   }
 
   @Test

@@ -10,6 +10,8 @@ import com.estemshan.engine.emit
 import com.estemshan.engine.emitPlay
 import com.estemshan.engine.resolveTrick
 import com.estemshan.services.model.BiddingLogEntry
+import com.estemshan.services.model.FAST_SUPER_CALL_MIN_TRICKS
+import com.estemshan.services.model.MAX_BID_VALUE
 import com.estemshan.services.model.MatchDoc
 import com.estemshan.services.session.GameSessionPort
 import com.estemshan.services.session.MatchAdapterPort
@@ -378,6 +380,18 @@ class MatchAdapter(
         version = matchDoc.version,
       )
     }
+    // T-09 fail-closed: validate the WHOLE chain, not only the last link.
+    // The last confirmation is what rebuilds the active cycle, but the
+    // earlier ones are the proof that this is a replayable Super Call
+    // history: every call is a real 8..13 number by a real seat with a real
+    // trump, and each cycle rises above the previous one. A chain that
+    // violates any of those cannot have come from the live path.
+    invalidFastConfirmIndex(matchDoc, round)?.let { badIndex ->
+      return ApplyOutcome(
+        applied = false, reason = CYCLE_CHAIN_INVALID, desync = true,
+        index = badIndex, version = matchDoc.version,
+      )
+    }
     val key = "$round:${matchDoc.biddingCycle}"
     if (fastCycleRestored[matchId] == key) return ApplyOutcome.notApplied(ALREADY_RESTORED)
 
@@ -457,6 +471,32 @@ class MatchAdapter(
       applied = true, reason = REASON_APPLIED, appliedCount = 1,
       version = matchDoc.version, outcome = outcome,
     )
+  }
+
+  /**
+   * T-09: the index of the first confirmation that makes the round's chain
+   * unreplayable, or null when every confirmation is a real Super Call.
+   *
+   * A fast round's confirmations are its cycle boundaries. The document
+   * keeps only the ACTIVE cycle's declarations, so a later restore can see
+   * the earlier calls only through this log. Validating just the last call
+   * would let a sub-8 or decreasing chain be "repaired" into a state the
+   * table never reached; the whole chain must be a strictly rising sequence
+   * of 8..13 calls, each by a real seat with a real suit.
+   */
+  private fun invalidFastConfirmIndex(matchDoc: MatchDoc, round: Int): Int? {
+    var previousTricks: Int? = null
+    for ((index, entry) in matchDoc.biddingLog.withIndex()) {
+      if (entry.round != round) continue
+      if (entry.actionType != BiddingLogEntry.ACTION_CONFIRM_CALL) continue
+      if (entry.seatId !in matchDoc.seats) return index
+      val tricks = entry.tricks
+      if (tricks == null || tricks < FAST_SUPER_CALL_MIN_TRICKS || tricks > MAX_BID_VALUE) return index
+      if (parseSuit(entry.suit) == null) return index
+      if (previousTricks != null && tricks <= previousTricks) return index
+      previousTricks = tricks
+    }
+    return null
   }
 
   // ── Remote card application ────────────────────────────────────────
@@ -1102,6 +1142,11 @@ private const val ALREADY_RESTORED = "ALREADY_RESTORED"
 private const val FAST_CYCLE_UNPERSISTED = "FAST_CYCLE_UNPERSISTED"
 private const val CYCLE_LOG_MISMATCH = "CYCLE_LOG_MISMATCH"
 private const val CYCLE_BIDS_MISMATCH = "CYCLE_BIDS_MISMATCH"
+/** T-09: the round's confirmation chain is not a replayable Super Call
+ *  history — a number outside 8..13, a non-rising repeat, a foreign seat or
+ *  an unknown suit. Refused as a whole instead of rebuilding only its last
+ *  link. */
+private const val CYCLE_CHAIN_INVALID = "CYCLE_CHAIN_INVALID"
 
 private const val EMPTY_MATCH_ID = "EMPTY_MATCH_ID"
 private const val RECONNECT_BASE_MS = 250

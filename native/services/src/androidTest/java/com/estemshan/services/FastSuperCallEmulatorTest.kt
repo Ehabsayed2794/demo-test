@@ -219,6 +219,19 @@ class FastSuperCallEmulatorTest {
     // must be reported as applied — never written twice.
     val lostResponse = match.submitConfirmRaw(caller, SUPER_CALL, Suit.SANS, expectedCycle = 0)
     assertEquals("the retry reports the committed cycle", 1, lostResponse.biddingCycle)
+
+    // ── boundary: a legacy client that names NO cycle ────────────────
+    // The document has committed a Super Call, so a write that cannot say
+    // which cycle its engine verdict came from must be refused — even while
+    // this caller's local engine is still in CONFIRM (the lost-response
+    // shape). Without the gate it would land in the active cycle.
+    val noCycleConfirm = runCatching {
+      match.submitConfirmRaw(caller, SUPER_CALL, Suit.SANS, expectedCycle = null)
+    }
+    val noCycleConfirmError = noCycleConfirm.exceptionOrNull() as? ServiceException
+    assertNotNull("a cycle-less confirm must be refused, got $noCycleConfirm", noCycleConfirmError)
+    assertEquals(Reasons.STALE_CYCLE, noCycleConfirmError!!.reason)
+
     val afterRetry = match.standings()
     assertEquals("the confirm is ONE write", confirmVersion + 1, afterRetry.version)
     assertEquals("the retry wrote no second entry", 1, confirms(afterRetry).size)
@@ -260,6 +273,17 @@ class FastSuperCallEmulatorTest {
     val staleError = stale.exceptionOrNull() as? ServiceException
     assertNotNull("a stale-cycle declaration must be refused, got $stale", staleError)
     assertEquals(Reasons.STALE_CYCLE, staleError!!.reason)
+
+    // ── boundary: a declaration that names NO cycle after the call ───
+    val noCycleDeclaration = runCatching {
+      match.submitDeclarationRaw(order[0], LOW, expectedCycle = null)
+    }
+    val noCycleDeclarationError = noCycleDeclaration.exceptionOrNull() as? ServiceException
+    assertNotNull(
+      "a cycle-less declaration must be refused, got $noCycleDeclaration",
+      noCycleDeclarationError,
+    )
+    assertEquals(Reasons.STALE_CYCLE, noCycleDeclarationError!!.reason)
 
     // ── boundary: a COMPETING confirm from a non-caller ──────────────
     val competing = runCatching {
