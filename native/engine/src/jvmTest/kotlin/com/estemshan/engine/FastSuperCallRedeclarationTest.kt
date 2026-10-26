@@ -245,8 +245,8 @@ class FastSuperCallRedeclarationTest {
     assertEquals(BiddingPhase.CONFIRM, s.subPhase)
     // The fast confirmation carries no suit constraint (A6.10): the Super
     // Caller may take any trump, even a weaker one.
-    s = confirmState(s, "p1", 8, Suit.CLUBS)
-    assertEquals(Suit.CLUBS, s.declaredTrump)
+    s = confirmState(s, "p1", 8, Suit.HEARTS)
+    assertEquals(Suit.HEARTS, s.declaredTrump)
     assertEquals(BiddingPhase.ESTIMATES, s.subPhase)
 
     // p2 raises to 9 and may take an even weaker trump.
@@ -263,7 +263,7 @@ class FastSuperCallRedeclarationTest {
   @Test
   fun equalNumberInAWeakerSuitOpensNoCallAndGrantsNoWith() {
     // Hand-built state: the confirmed call is 8 HEARTS and p2 still holds an
-    // equal 8 declared under the weaker SPADES. The engine never keeps such a
+    // equal 8 declared under the weaker DIAMONDS. The engine never keeps such a
     // record on its own — every declaration is made under the current trump —
     // so the case is built by hand.
     val s = initFastRound(15, "p1", seats).copy(
@@ -277,7 +277,7 @@ class FastSuperCallRedeclarationTest {
       waitingFor = "p4",
       bids = mapOf(
         "p1" to Bid(BidType.TRICKS, 8, Suit.HEARTS),
-        "p2" to Bid(BidType.TRICKS, 8, Suit.SPADES),
+        "p2" to Bid(BidType.TRICKS, 8, Suit.DIAMONDS),
         "p3" to Bid(BidType.TRICKS, 3, Suit.SPADES),
       ),
     )
