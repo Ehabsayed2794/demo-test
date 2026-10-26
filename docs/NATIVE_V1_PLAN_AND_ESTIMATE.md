@@ -598,7 +598,8 @@ These carry the same standing as D1–D4, V1–V5, RD1–RD28, and GM1–GM8.
 > GameType/scoring **present** (GM1–GM8). The one rule that is genuinely shared
 > with a Room is *not* the mode's definition: an Unranked table fills its empty
 > seats from the shared pool and starts only when full, whereas an invite-only
-> Room fills nothing and may start with 2–3.
+> Room fills nothing and starts only when four seated players are all ready
+> (owner decision 2026-10-26, superseding the earlier 2–3 start).
 
 ### Architecture: three match types, three authority modes
 
@@ -612,7 +613,7 @@ Per the owner, **Create Game (S36) presents a match-type choice of three entries
 
 | Match type | `mode` | Rank gate | Seat fill | Voice / pause | Vote Kick | RP / stats |
 |---|---|---|---|---|---|---|
-| **Invite-only Room** | `ROOM` | none | none — code/invite only; 2–3 player start valid | **yes** / yes | no | none |
+| **Invite-only Room** | `ROOM` | none | none — code/invite only; four ready players required to start | **yes** / yes | no | none |
 | **Ranked** (solo) | `RANKED` | RD9 pool, server-derived | matchmaking (S55) | no / no | yes | full |
 | **Rank-down** (Ranked + private flag) | `RANKED` | **RD29, server-side at join** | friends fill; pool not used | no / no | yes | full |
 | **Unranked** *(new)* | **`UNRANKED`** | **none — rank-blind** | **shared human pool; bots only after a 4 minute timeout** | **no** / **yes** | **yes** (amended 2026-10-17) | **none** |
@@ -631,7 +632,7 @@ Per the owner, **Create Game (S36) presents a match-type choice of three entries
 > `ROOM` is the only mode without it. RD18 and the five-paths table carry the same
 > correction. See `docs/decisions/2026-10-17-unranked-scope-owner-clarification.md`.
 
-**The invite-only Room is a fourth product path and is unchanged** — code-shared, fills no seat from any pool, permits a 2–3 player start, and keeps push-to-talk. It is deliberately **not** one of the three match types: some friend groups want no strangers, and removing a designed path would violate "do not invent." S08's "no AI seat is fabricated to fill gaps" rule survives scoped to this path only.
+**The invite-only Room is a fourth product path** — code-shared, fills no seat from any pool, keeps push-to-talk, and starts only when four seated players are all ready (owner decision 2026-10-26, superseding the earlier 2–3 start). It is deliberately **not** one of the three match types: some friend groups want no strangers, and removing a designed path would violate "do not invent." S08's "no AI seat is fabricated to fill gaps" rule survives scoped to this path only.
 
 ### Architecture: the join-time gate and the conversion
 
