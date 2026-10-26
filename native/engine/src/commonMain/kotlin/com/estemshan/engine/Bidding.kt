@@ -504,6 +504,11 @@ fun canSubmit(state: BiddingState, intent: BiddingIntent): Legality {
     is BiddingIntent.ConfirmCall -> {
       if (state.subPhase != BiddingPhase.CONFIRM) return Legality(false, "Not the Confirmation phase")
       if (state.waitingFor != intent.playerId) return Legality(false, "Not this seat's turn")
+      // The absolute 13-trick maximum holds in EVERY round, fast included:
+      // the fast exemption only drops the Caller-relative Call Cap.
+      if (intent.tricks > MAX_TRICKS) {
+        return Legality(false, "Max is $MAX_TRICKS")
+      }
       if (bidBelowWinningCall(intent.tricks, state.auctionTop)) {
         return Legality(false, "Can't lower your winning call")
       }
@@ -737,6 +742,11 @@ private fun emitConfirmCall(state: BiddingState, intent: BiddingIntent.ConfirmCa
   if (state.waitingFor != intent.playerId) return EmitResult.Rejected("Not this seat's turn")
   val t = intent.tricks
   val s = intent.suit
+  // The absolute 13-trick maximum holds in EVERY round, fast included: the
+  // fast exemption only drops the Caller-relative Call Cap.
+  if (t > MAX_TRICKS) {
+    return EmitResult.Rejected("Max is $MAX_TRICKS")
+  }
   if (bidBelowWinningCall(t, state.auctionTop)) {
     return EmitResult.Rejected("Can't lower your winning call")
   }

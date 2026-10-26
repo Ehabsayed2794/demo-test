@@ -26,7 +26,6 @@ import com.estemshan.engine.ScoringMode
 import com.estemshan.engine.Suit
 import com.estemshan.engine.TablePhase
 import com.estemshan.engine.TableState
-import com.estemshan.engine.biddingOrder
 import com.estemshan.engine.bot.BotPersonality
 import com.estemshan.engine.bot.BotTier
 import com.estemshan.engine.bot.BidBrain
@@ -1121,33 +1120,38 @@ object TimeoutResolution {
     }?.toMap().orEmpty()
 
     val logged = loggedIntents(fields) ?: return BiddingReplay(null, null)
-    for (entry in logged) {
+    for (index in logged.indices) {
+      val entry = logged[index]
       if (entry.seat !in order) return BiddingReplay(null, null)
-      if (fast && entry is LoggedIntent.Confirm &&
-        state.subPhase == BiddingPhase.ESTIMATES
-      ) {
-        // Fast Super Call. A live document keeps each WIPED seat's
-        // PRE-confirm estimate in bids/: submitBid is one value per seat and
-        // CONFIRM does not reopen bidding (MatchService.submitBid;
-        // firestore.rules), so there is no authoritative post-confirm value
-        // to feed. Only a caller first in bidding order completes at CONFIRM
-        // without a re-declaration; anything else fails closed rather than
-        // replaying a stale number as if it were final. Archives settle
-        // through Settlement.scoreRound, where the values are final.
-        if (biddingOrder(state).indexOf(entry.seat) > 0) {
-          return BiddingReplay(null, null)
+      if (fast && entry is LoggedIntent.Confirm) {
+        // A fast Super Call is NOT the end of the fast round: the
+        // confirmation cancels the forced trump, the Super Caller takes a
+        // new one and EVERY other seat declares again counter-clockwise
+        // (T-09). A declaration above the confirmed number opens the NEXT
+        // cycle, so the log can hold several confirmations and none of
+        // them closes the round.
+        //
+        // A live document keeps ONE value per seat (submitBid is one value
+        // per seat and CONFIRM only appends to biddingLog), so the
+        // re-declarations are NOT in the document: the stored values are
+        // the PRE-confirm numbers. The replay therefore stops at the last
+        // confirmation and reports the seat the table waits for, rather
+        // than replaying a stale number as if it were the
+        // re-declaration. Archives settle through Settlement.scoreRound,
+        // where the values are final.
+        if (state.subPhase != BiddingPhase.ESTIMATES) return BiddingReplay(null, null)
+        val chain = ArrayList<FastSuperConfirm>()
+        var cursor = index
+        while (cursor < logged.size) {
+          val next = logged[cursor]
+          if (next !is LoggedIntent.Confirm) return BiddingReplay(null, null)
+          if (next.seat !in order) return BiddingReplay(null, null)
+          chain.add(FastSuperConfirm(next.seat, next.tricks, next.suit))
+          cursor++
         }
-        when (val emitted = replayFastSuperConfirm(
-          state, entry.seat, entry.tricks, entry.suit, stored,
-        )) {
-          is EmitResult.Completed -> return BiddingReplay(emitted.state, emitted.outcome)
-          is EmitResult.GeneralPass -> return BiddingReplay(null, null)
-          is EmitResult.Applied -> {
-            state = emitted.state
-            continue
-          }
-          is EmitResult.Rejected -> return BiddingReplay(null, null)
-        }
+        val replayed = replayFastSuperCallChain(state, chain, stored)
+          ?: return BiddingReplay(null, null)
+        return BiddingReplay(replayed.state, replayed.outcome)
       }
       val intent = when (entry) {
         is LoggedIntent.Dash -> BiddingIntent.DashCallDecision(entry.seat, entry.declared)
