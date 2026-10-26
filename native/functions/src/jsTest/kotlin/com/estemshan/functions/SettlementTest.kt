@@ -450,14 +450,42 @@ class SettlementTest {
   }
 
   @Test
-  fun fastSuperCallConfirmMayRaiseAboveTheCallerEstimate() {
+  fun aRaisedFastSuperCallSettlesOnTheConfirmedNumberItStored() {
     // The engine allows the Super Caller to confirm ABOVE their winning
-    // number (only lowering is illegal). p2 declared 8, then confirms 9 SANS;
-    // p1 (before p2) is wiped and re-declares 8. Bids 8/9/3/2 total 22 →
-    // Risk ladder 30, Risk player p1 (last re-declaration). Won 4/3/3/3:
-    // p1 RISK misses 4 → −34; p2 SUPER_CALL 9 misses 6 → −41 (raising the
-    // call from 8 would have scored −32, so the confirmed number is load-
-    // bearing); p3 sole winner 23; p4 misses 1 → −1.
+    // number (only lowering is illegal), and the T-09 atomic reset stores
+    // the CONFIRMED number in the caller's own slot. p2 declared 8, then
+    // confirmed 9 SANS, so the archive holds 9 for p2; p1 (before p2) is
+    // wiped and re-declares 8. Bids 8/9/3/2 total 22 → Risk ladder 30,
+    // Risk player p1 (last re-declaration). Won 4/3/3/3: p1 RISK misses 4
+    // → −34; p2 SUPER_CALL 9 misses 6 → −41 (raising the call from 8 would
+    // have scored −32, so the confirmed number is load-bearing); p3 sole
+    // winner 23; p4 misses 1 → −1.
+    val winners = listOf(
+      "p1", "p1", "p1", "p1",
+      "p2", "p2", "p2",
+      "p3", "p3", "p3",
+      "p4", "p4", "p4",
+    )
+    val round = archived(
+      14, winners, "SANS",
+      listOf(confirm("p2", 9, "SANS", 14)),
+      mapOf("p1" to 8, "p2" to 9, "p3" to 3, "p4" to 2),
+      leaderId = "p2",
+    )
+    val scored = Settlement.scoreRound(shellMatch(), round, "p1", 1, 8)
+    assertTrue(scored != null, "a raising fast Super Call must settle")
+    assertEquals(mapOf("p1" to -34, "p2" to -41, "p3" to 23, "p4" to -1), scored.deltas)
+  }
+
+  @Test
+  fun aLegacyRaisingConfirmArchiveFailsClosed() {
+    // §5: the T-09 reset stores the CONFIRMED number in the caller's slot,
+    // so a last caller archived BELOW its confirmed number cannot be a
+    // T-09 record. It is the pre-T-09 shape: the auction ended at the
+    // confirmation, p2's stored 8 is the cancelled winning declaration,
+    // and the surviving values are pre-confirm declarations — replaying
+    // them as re-declarations would invent a With set the table never had.
+    // Refuse rather than reinterpret the historical record.
     val winners = listOf(
       "p1", "p1", "p1", "p1",
       "p2", "p2", "p2",
@@ -470,9 +498,10 @@ class SettlementTest {
       mapOf("p1" to 8, "p2" to 8, "p3" to 3, "p4" to 2),
       leaderId = "p2",
     )
-    val scored = Settlement.scoreRound(shellMatch(), round, "p1", 1, 8)
-    assertTrue(scored != null, "a raising fast Super Call must settle")
-    assertEquals(mapOf("p1" to -34, "p2" to -41, "p3" to 23, "p4" to -1), scored.deltas)
+    assertNull(
+      Settlement.scoreRound(shellMatch(), round, "p1", 1, 8),
+      "a pre-T-09 calling slot below the confirmed number must fail closed",
+    )
   }
 
   @Test

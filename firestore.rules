@@ -1063,6 +1063,21 @@ service cloud.firestore {
       let oldLog = oldData.biddingLog;
       let newLog = newData.biddingLog;
       let appended = newLog[newLog.size() - 1];
+      // T-09 (fast Super Call): a fast-round CONFIRM is not an ordinary
+      // confirmation — the service commits the engine's own wipe in the
+      // SAME write (MatchService.submitBiddingAction), so this validator
+      // must accept exactly that one extra shape. A normal-round CONFIRM
+      // (and every Dash/Auction entry) keeps the append-only log shape.
+      let fastConfirm = appended.actionType == 'SubmitConfirmCall'
+        && oldData.get('currentRound', 0) >= firstFastRoundOf(oldData);
+      // The ACTIVE declaration cycle's values (post-wipe, one per seat).
+      // Same precomputed per-fixed-seat facts pattern as
+      // isValidBidSubmission()'s pXHasBid above.
+      let activeBids = oldData.get('bids', {});
+      let p1Declared = oldData.seats.get('p1', null) == null || activeBids.get('p1', null) != null;
+      let p2Declared = oldData.seats.get('p2', null) == null || activeBids.get('p2', null) != null;
+      let p3Declared = oldData.seats.get('p3', null) == null || activeBids.get('p3', null) != null;
+      let p4Declared = oldData.seats.get('p4', null) == null || activeBids.get('p4', null) != null;
       return
              // "Authenticated."
              request.auth != null
@@ -1076,9 +1091,15 @@ service cloud.firestore {
              // document shape reaching this rule. Round Lifecycle
              // sprint: added 'currentRound', read below.
              && 'seats' in oldData && 'biddingLog' in oldData && 'version' in oldData && 'currentRound' in oldData
-             // "Reject every other write." — only these THREE fields
-             // may ever change via this rule.
-             && newData.diff(oldData).affectedKeys().hasOnly(['biddingLog', 'version', 'updatedAt'])
+             // "Reject every other write." — the append-only shape may
+             // change only these THREE fields; the fast Super Call reset
+             // adds exactly the four fields the engine's wipe touches
+             // (bids, biddingOpen, lastBidSeat, biddingCycle) and nothing
+             // else. Every other field stays structurally immutable.
+             && (fastConfirm
+                  ? newData.diff(oldData).affectedKeys().hasOnly(
+                      ['biddingLog', 'bids', 'biddingOpen', 'lastBidSeat', 'biddingCycle', 'version', 'updatedAt'])
+                  : newData.diff(oldData).affectedKeys().hasOnly(['biddingLog', 'version', 'updatedAt']))
              // "Version increments correctly." — identical guarantee to
              // isValidBidSubmission()'s/isValidCardSubmission()'s own,
              // on the SAME shared `version` counter.
@@ -1098,7 +1119,38 @@ service cloud.firestore {
              && oldData.seats[appended.seatId] == request.auth.uid
              // The newly-appended entry is well-formed, INCLUDING being
              // tagged with the current authoritative round.
-             && isValidBiddingActionEntry(appended, oldData.currentRound);
+             && isValidBiddingActionEntry(appended, oldData.currentRound)
+             // T-09: the fast Super Call reset itself — the exact inverse
+             // of the wipe the engine's CONFIRM reducer commits. The map
+             // may hold ONLY the confirming caller, at the confirmed
+             // number (so every seat's slot for the NEXT cycle starts
+             // empty); the declarations re-open; lastBidSeat is cleared;
+             // and biddingCycle advances by exactly one.
+             //
+             // HONEST, DOCUMENTED LIMITATION (this file's standing
+             // pattern): the rules cannot count the round's prior
+             // confirmations or re-derive the engine's 8+ declaration /
+             // suit-precedence / strictly-increasing-number resolution.
+             // MatchService re-proves both inside its own transaction
+             // (confirms.size == biddingCycle, the caller's own
+             // declaration, 8..13, > the previous cycle), and every
+             // client's engine rejects an illegal replay — so this is a
+             // generic SHAPE gate, never gameplay validation.
+             && (!fastConfirm
+                  || (appended.tricks is int
+                      && appended.tricks >= 8
+                      && appended.tricks <= 13
+                      && appended.seatId in activeBids
+                      && activeBids[appended.seatId] is int
+                      && appended.tricks >= activeBids[appended.seatId]
+                      && p1Declared && p2Declared && p3Declared && p4Declared
+                      && newData.bids.keys().hasOnly([appended.seatId])
+                      && newData.bids[appended.seatId] == appended.tricks
+                      && newData.biddingOpen == true
+                      && 'lastBidSeat' in newData && newData.lastBidSeat == null
+                      && 'biddingCycle' in newData
+                      && newData.biddingCycle
+                           == (('biddingCycle' in oldData) ? oldData.biddingCycle : 0) + 1));
     }
 
     // Round Lifecycle sprint — the fourth, and only other, legitimate
@@ -1421,11 +1473,18 @@ service cloud.firestore {
               // (both already []) still passes, while any non-empty log
               // content on an advance is denied.
               && newData.diff(oldData).affectedKeys().hasOnly(
-                   ['currentRound', 'dealer', 'version', 'biddingOpen', 'bids', 'lastBidSeat', 'cardPhase', 'turn', 'cardLog', 'biddingLog', 'currentMultiplier', 'updatedAt'])
+                   ['currentRound', 'dealer', 'version', 'biddingOpen', 'bids', 'lastBidSeat', 'biddingCycle', 'cardPhase', 'turn', 'cardLog', 'biddingLog', 'currentMultiplier', 'updatedAt'])
               && newData.version == oldData.version + 1
               && newData.currentRound == oldData.currentRound + 1
               && newData.cardLog == []
               && newData.biddingLog == []
+              // T-09: the next round opens in declaration cycle 0. A doc
+              // that carries the field (a fast round that committed a
+              // Super Call) MUST reset it here — omitting it would keep the
+              // old round's count and make every client's cycle restore
+              // fail closed against a history that no longer exists. A
+              // pre-T-09 doc (no field) stays legal without a rewrite.
+              && (!('biddingCycle' in newData) || newData.biddingCycle == 0)
               // O-19: an ordinary advance carries the engine's nextMultiplier
               // and only BOUNDS it (see the trust boundary above). A pass
               // round has zero card plays and its complete Dash+auction

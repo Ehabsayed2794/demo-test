@@ -83,6 +83,11 @@ class MatchAdapter(
   private val cardVersion = mutableMapOf<String, Int>()
   private val cardCount = mutableMapOf<String, Int>()
   private val resolvedTrickNo = mutableMapOf<String, Int>()
+  /** T-09: "round:cycle" of the last fast declaration cycle this adapter
+   *  reconstructed from the document. A live client whose own replay already
+   *  applied the confirming entry records the same key, so the restore never
+   *  rebuilds a state the engine already holds. */
+  private val fastCycleRestored = mutableMapOf<String, String>()
 
   // ── MatchAdapterPort: identity + authority ──────────────────────────
 
@@ -292,6 +297,17 @@ class MatchAdapter(
       // per consumed round — the last one in the delivery decides.
       if (result is EmitResult.GeneralPass) generalPass = result.doubledMultiplier
       session.updateBiddingState(result.state())
+      // T-09: a fast-round Super Call CONFIRM just committed a declaration
+      // cycle through the engine. Record it so the next delivery's cycle
+      // restore is a no-op instead of rebuilding a state this replay holds.
+      if (matchDoc.gameType.isFastRound(entry.round) &&
+        entry.actionType == BiddingLogEntry.ACTION_CONFIRM_CALL
+      ) {
+        val cycle = matchDoc.biddingLog.subList(0, i + 1).count {
+          it.round == entry.round && it.actionType == BiddingLogEntry.ACTION_CONFIRM_CALL
+        }
+        fastCycleRestored[matchId] = "${entry.round}:$cycle"
+      }
       results.add(EntryOutcome(i, true, REASON_APPLIED, entry.seatId))
       i++
     }
@@ -306,6 +322,140 @@ class MatchAdapter(
       results = results,
       outcome = outcome,
       generalPassMultiplier = generalPass,
+    )
+  }
+
+  // ── Fast Super Call cycle restoration (T-09) ────────────────────────
+
+  /**
+   * restoreFastBiddingCycle — rebuilds the local engine's ACTIVE fast-round
+   * declaration cycle from the document, for a client that arrived (or
+   * reloaded) after a Super Call.
+   *
+   * Fast declarations go through submitBid and are never logged, so the log
+   * cannot replay them; and the log's CONFIRM cannot be emitted into a fresh
+   * engine because its Confirmation phase only opens after every seat has
+   * declared. The document itself carries everything the engine's own
+   * reducers need:
+   *
+   * - `biddingCycle` is the number of confirmations this round has committed;
+   * - the LAST of those confirmations is the Super Call that started the
+   *   active cycle (it wiped every earlier declaration);
+   * - `bids` holds ONLY the active cycle's declarations — the Super Caller's
+   *   confirmed number plus whatever seats have re-declared since.
+   *
+   * So the state after that confirmation is replayed through the REAL engine
+   * from a synthesized pre-confirm state (the same construction
+   * Settlement.replayFastSuperCallChain uses), and the active cycle's stored
+   * declarations are then fed in the engine's own order, exactly like
+   * seedStoredEstimates. A cycle-0 document needs none of this — the fresh
+   * initFastRound plus the ordinary stored-estimate seed already reproduce it.
+   *
+   * Fail-closed: a document whose confirmations and biddingCycle disagree, or
+   * that holds a confirmation while claiming cycle 0 (the pre-persistence
+   * shape, where re-declarations could never be written), is NOT
+   * reinterpreted — it is reported as FAST_CYCLE_UNPERSISTED / CYCLE_LOG_MISMATCH
+   * so the UI can refuse to play on a history the document cannot prove.
+   */
+  fun restoreFastBiddingCycle(matchId: String, matchDoc: MatchDoc?): ApplyOutcome {
+    if (matchId.isEmpty() || matchDoc == null) return malformed()
+    if (!matchDoc.gameType.isFastRound(matchDoc.currentRound)) {
+      return ApplyOutcome.notApplied(NOT_FAST_ROUND)
+    }
+    val round = matchDoc.currentRound
+    val confirms = matchDoc.roundBids(round)
+      .filter { it.actionType == BiddingLogEntry.ACTION_CONFIRM_CALL }
+    if (matchDoc.biddingCycle == 0) {
+      return if (confirms.isEmpty()) ApplyOutcome.notApplied(NO_CYCLE_TO_RESTORE)
+      else ApplyOutcome(
+        applied = false, reason = FAST_CYCLE_UNPERSISTED, desync = true,
+        version = matchDoc.version,
+      )
+    }
+    if (confirms.size != matchDoc.biddingCycle) {
+      return ApplyOutcome(
+        applied = false, reason = CYCLE_LOG_MISMATCH, desync = true,
+        version = matchDoc.version,
+      )
+    }
+    val key = "$round:${matchDoc.biddingCycle}"
+    if (fastCycleRestored[matchId] == key) return ApplyOutcome.notApplied(ALREADY_RESTORED)
+
+    val last = confirms.last()
+    val suit = parseSuit(last.suit) ?: return ApplyOutcome(
+      applied = false, reason = MALFORMED_ENTRY, desync = true, index = matchDoc.biddingLog.size - 1,
+      version = matchDoc.version,
+    )
+    val tricks = last.tricks ?: return ApplyOutcome(
+      applied = false, reason = MALFORMED_ENTRY, desync = true, index = matchDoc.biddingLog.size - 1,
+      version = matchDoc.version,
+    )
+    val state = session.getBiddingState() ?: return ApplyOutcome.notApplied(ENGINE_UNAVAILABLE)
+    val dealerSeat = matchDoc.dealer.takeIf { it.isNotEmpty() }
+      ?.let { uid -> matchDoc.uidToSeat(uid) }
+      ?: return ApplyOutcome(applied = false, reason = MALFORMED_SNAPSHOT, desync = true, version = matchDoc.version)
+
+    // The wipe the confirmation committed: the caller's own slot holds the
+    // confirmed number and can never be re-declared. Every OTHER stored
+    // value is a declaration of this active cycle.
+    val stored = matchDoc.bids.mapNotNull { (seat, value) -> value?.let { seat to it } }.toMap()
+    if (stored[last.seatId] != tricks) {
+      return ApplyOutcome(
+        applied = false, reason = CYCLE_BIDS_MISMATCH, desync = true, version = matchDoc.version,
+      )
+    }
+
+    val seats = state.seats
+    if (last.seatId !in seats || seats.toSet() != matchDoc.seats.keys) {
+      return ApplyOutcome(applied = false, reason = MALFORMED_SNAPSHOT, desync = true, version = matchDoc.version)
+    }
+    val preConfirm = com.estemshan.engine.initFastRound(
+      round, dealerSeat, seats, matchDoc.currentMultiplier, matchDoc.gameType, matchDoc.scoringMode,
+    ).copy(
+      subPhase = com.estemshan.engine.BiddingPhase.CONFIRM,
+      waitingFor = last.seatId,
+      auctionTop = tricks,
+      auctionSuit = suit,
+      noSuitConstraint = true,
+    )
+    val emitted = emit(preConfirm, BiddingIntent.ConfirmCall(last.seatId, tricks, suit))
+    if (emitted !is EmitResult.Applied) {
+      return ApplyOutcome(
+        applied = false, reason = ENGINE_REJECTED, desync = true, version = matchDoc.version,
+      )
+    }
+    var replayed = emitted.state
+    var outcome: BiddingOutcome? = null
+
+    // The active cycle's declarations, in the engine's own turn order. A
+    // seat whose value is absent has not declared yet — the walk stops
+    // there and leaves the engine waiting on it, which is the live state.
+    var guard = 0
+    while (guard <= seats.size) {
+      guard++
+      if (replayed.subPhase != com.estemshan.engine.BiddingPhase.ESTIMATES) break
+      val waiting = replayed.waitingFor ?: break
+      val value = stored[waiting] ?: break
+      when (val result = emit(replayed, BiddingIntent.FinalEstimate(waiting, value))) {
+        is EmitResult.Rejected -> return ApplyOutcome(
+          applied = false, reason = ENGINE_REJECTED, desync = true, version = matchDoc.version,
+        )
+        is EmitResult.GeneralPass -> return ApplyOutcome(
+          applied = false, reason = ENGINE_REJECTED, desync = true, version = matchDoc.version,
+        )
+        is EmitResult.Applied -> replayed = result.state
+        is EmitResult.Completed -> {
+          replayed = result.state
+          outcome = result.outcome
+          break
+        }
+      }
+    }
+    session.updateBiddingState(replayed)
+    fastCycleRestored[matchId] = key
+    return ApplyOutcome(
+      applied = true, reason = REASON_APPLIED, appliedCount = 1,
+      version = matchDoc.version, outcome = outcome,
     )
   }
 
@@ -436,6 +586,7 @@ class MatchAdapter(
       cardVersion.clear()
       cardCount.clear()
       resolvedTrickNo.clear()
+      fastCycleRestored.clear()
       return
     }
     bidVersion.remove(matchId)
@@ -444,6 +595,7 @@ class MatchAdapter(
     cardVersion.remove(matchId)
     cardCount.remove(matchId)
     resolvedTrickNo.remove(matchId)
+    fastCycleRestored.remove(matchId)
   }
 
   // Test/diagnostic-only observability of the internal gates.
@@ -940,6 +1092,16 @@ private const val MALFORMED_ENTRY = "MALFORMED_ENTRY"
 private const val LOCAL_ECHO_MISMATCH = "LOCAL_ECHO_MISMATCH"
 private const val NOT_RESOLVING = "NOT_RESOLVING"
 private const val ALREADY_RESOLVED = "ALREADY_RESOLVED"
+private const val NOT_FAST_ROUND = "NOT_FAST_ROUND"
+private const val NO_CYCLE_TO_RESTORE = "NO_CYCLE_TO_RESTORE"
+private const val ALREADY_RESTORED = "ALREADY_RESTORED"
+/** T-09: the document holds a fast-round confirmation but no persisted
+ *  cycle — the pre-change shape, under which re-declarations could never be
+ *  written. Fail closed rather than read the PRE-confirm bids as if they
+ *  were re-declarations. */
+private const val FAST_CYCLE_UNPERSISTED = "FAST_CYCLE_UNPERSISTED"
+private const val CYCLE_LOG_MISMATCH = "CYCLE_LOG_MISMATCH"
+private const val CYCLE_BIDS_MISMATCH = "CYCLE_BIDS_MISMATCH"
 
 private const val EMPTY_MATCH_ID = "EMPTY_MATCH_ID"
 private const val RECONNECT_BASE_MS = 250

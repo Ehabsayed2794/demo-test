@@ -47,7 +47,18 @@ interface MatchStore {
    */
   suspend fun loadHand(matchId: String, seatId: String, round: Int): HandDoc?
 
-  suspend fun submitBid(matchId: String, seatId: String, bid: Int): SubmitBidResult
+  /**
+   * A Final Estimate (one value per seat, ever — in the ACTIVE declaration
+   * cycle). [expectedCycle] is the fast-round cycle the caller validated
+   * against; a mismatch is refused as STALE_CYCLE instead of landing in a
+   * cycle the value was never meant for. Null opts out (legacy callers).
+   */
+  suspend fun submitBid(
+    matchId: String,
+    seatId: String,
+    bid: Int,
+    expectedCycle: Int? = null,
+  ): SubmitBidResult
 
   suspend fun submitBiddingAction(matchId: String, action: BiddingActionInput): SubmitBiddingActionResult
 

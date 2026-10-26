@@ -841,6 +841,54 @@ object TimeoutResolution {
     return count
   }
 
+  /**
+   * T-09 (§5, fail-closed): a fast round's active declaration cycle is
+   * PERSISTED, never inferred. The atomic CONFIRM write appends the
+   * confirmation, replaces `bids` with the caller's confirmed number and
+   * bumps `biddingCycle`, all in one transaction — so for the round in play:
+   *
+   * - `biddingCycle` equals the number of confirmations on record;
+   * - the LAST caller's slot still holds the number it confirmed (the one
+   *   declaration the active cycle inherits from the confirmation).
+   *
+   * A document that fails either was written before that wipe existed. Its
+   * `bids` hold the PRE-confirm declarations the confirmation already
+   * cancelled, and replaying them as the active cycle's re-declarations
+   * would invent a round. The message names the contract so the refusal is
+   * distinguishable from a merely unreplayable history.
+   *
+   * Null when the round is trustworthy — or when an entry is too malformed
+   * to judge, which the replay's own parse then fails closed on.
+   */
+  private fun cycleHistoryCorruption(fields: Map<String, Any?>, round: Int): String? {
+    var confirms = 0
+    var lastSeat: String? = null
+    var lastTricks: Int? = null
+    for (item in (fields["biddingLog"] as? List<*>).orEmpty()) {
+      val map = strMap(item) ?: return null
+      if (num(map["round"]) != round) continue
+      if (map["actionType"] as? String != "SubmitConfirmCall") continue
+      confirms++
+      lastSeat = map["seatId"] as? String ?: return null
+      lastTricks = num(map["tricks"]) ?: return null
+    }
+    val cycle = num(fields["biddingCycle"]) ?: 0
+    if (cycle != confirms) {
+      return "resolveDecisionTimeout: round $round holds $confirms fast Super Call " +
+        "confirmation(s) but biddingCycle is $cycle — the document never persisted the " +
+        "re-declaration reset; refusing to replay superseded declarations."
+    }
+    val seat = lastSeat ?: return null
+    val confirmed = lastTricks ?: return null
+    val stored = num(strMap(fields["bids"])?.get(seat))
+    if (stored != confirmed) {
+      return "resolveDecisionTimeout: round $round's active cycle is $cycle but seat " +
+        "'$seat' confirmed $confirmed trick(s) and bids/$seat holds $stored — the reset's " +
+        "own declaration is missing; refusing to replay the cycle."
+    }
+    return null
+  }
+
   // ── detection: which decision is timed, and when does it expire ──────
 
   /**
@@ -866,38 +914,51 @@ object TimeoutResolution {
     val timerSeconds = parseDecisionTimerSeconds(fields["decisionTimerSeconds"])
     val anchor = parseUpdatedAtMillis(fields) ?: return null
 
-    if (fields["biddingOpen"] as? Boolean == true) {
-      val state = replayBidding(fields, order, currentRound) ?: return null
-      if (state.subPhase != BiddingPhase.DONE) {
-        val waiting = state.waitingFor ?: return null
-        if (waiting !in order) return null
-        return Pending(
-          phase = DecisionPhase.BIDDING,
-          seatId = waiting,
-          durationSeconds = durationFor(fields, waiting, timerSeconds, DecisionPhase.BIDDING),
-          anchorMillis = anchor,
-        )
-      }
-      // The flag is a write-shape artifact, not the auction's authority: both
-      // writers derive it from "every seat has a bid", and a Dash Caller never
-      // submits an estimate, so it outlives the auction on every round that has
-      // one — a derivation `firestore.rules:799` pins for client writes. When the
-      // replay says DONE the round is playing cards, so fall through below rather
-      // than leaving the table with no timed decision at all: that silence stops
-      // RD20's card timeouts and RD19's takeover from ever firing.
-    }
-
-    // Card play. The round is done when every card is on the document —
-    // maybeCompleteRound's own structural check — so a finished round waiting
-    // on advanceToNextRound is NOT a timed decision.
+    // A round with every card on the document is over — maybeCompleteRound's
+    // own structural check — so no bidding decision can be legal and a
+    // finished round waiting on advanceToNextRound is NOT a timed decision.
+    // Checked before the replay: a played-out round must never be sent back
+    // into an auction its (already archived) log cannot reconstruct.
     val cardCount = (fields["cardLog"] as? List<*>)?.size ?: 0
     if (cardCount >= cardTotal(order.size)) return null
 
-    // Once the opening card is published, the document's own `turn` is the
-    // authority (PLAY mid-trick, or RESOLVING where it already holds the
-    // trick winner who leads next). Before it, the engine-selected opening
-    // leader must publish — the doc's turn is still null (rounds 2+) or the
-    // round-1 dealer placeholder — so the leader comes from the auction.
+    // The replay is the authority on which phase is live; `biddingOpen` only
+    // says where to look first. It cannot say "nothing is pending" on its own:
+    // a fast Super Call's CONFIRM opens exactly when the last declaration
+    // lands, and that same submitBid CLOSES the flag (both writers derive it
+    // from "every seat has a bid") — so a flag-only gate would leave the
+    // trump selection untimed forever. Ask the bidding replay whenever the
+    // round is dealt; it reports its waiting seat while the auction is live,
+    // and a DONE auction falls through to the cards.
+    val bidding = replayBidding(fields, order, currentRound)
+    if (bidding == null) {
+      // Unreplayable history. With the flag open nothing may be guessed, and
+      // with it closed the card path below still owns the round.
+      if (fields["biddingOpen"] as? Boolean == true) return null
+    } else if (bidding.subPhase != BiddingPhase.DONE) {
+      val waiting = bidding.waitingFor ?: return null
+      if (waiting !in order) return null
+      return Pending(
+        phase = DecisionPhase.BIDDING,
+        seatId = waiting,
+        durationSeconds = durationFor(fields, waiting, timerSeconds, DecisionPhase.BIDDING),
+        anchorMillis = anchor,
+      )
+    }
+    // The flag is a write-shape artifact, not the auction's authority: both
+    // writers derive it from "every seat has a bid", and a Dash Caller never
+    // submits an estimate, so it outlives the auction on every round that has
+    // one — a derivation `firestore.rules:799` pins for client writes. A DONE
+    // replay means the round is playing cards, so fall through below rather
+    // than leaving the table with no timed decision at all: that silence stops
+    // RD20's card timeouts and RD19's takeover from ever firing.
+
+    // Card play. Once the opening card is published, the document's own
+    // `turn` is the authority (PLAY mid-trick, or RESOLVING where it already
+    // holds the trick winner who leads next). Before it, the engine-selected
+    // opening leader must publish — the doc's turn is still null (rounds 2+)
+    // or the round-1 dealer placeholder — so the leader comes from the
+    // auction.
     val seat = if (fields["cardPhase"] != null) {
       val turnUid = fields["turn"] as? String ?: return null
       seatOfUid(fields, turnUid) ?: return null
@@ -991,6 +1052,17 @@ object TimeoutResolution {
 
     return when (pending.phase) {
       DecisionPhase.BIDDING -> {
+        // T-09 (§5): a fast round's active declaration cycle is PERSISTED, not
+        // inferred. A document whose cycle counter and confirmation log do not
+        // agree (a pre-T-09 writer, a lost update) cannot be replayed — its
+        // bids/ are the wiped seats' PRE-confirm declarations — so it is
+        // refused by name rather than reinterpreted as the active cycle.
+        if (parseGameType(fields["gameType"]).isFastRound(currentRound)) {
+          val corrupt = cycleHistoryCorruption(fields, currentRound)
+          if (corrupt != null) {
+            return Resolution.NoWrite(Reason.HISTORY_CORRUPT, corrupt)
+          }
+        }
         // F1 (owner ruling 2026-10-24): a persisted window claiming more
         // than MAX_DASH_CALLS declared Dash Calls is corrupt history — the
         // normalising write boundaries can never persist it — and is
@@ -1109,6 +1181,10 @@ object TimeoutResolution {
     val dealerSeat = seatOfUid(fields, fields["dealer"] as? String ?: return BiddingReplay(null, null))
       ?.takeIf { it in order } ?: return BiddingReplay(null, null)
     val fast = gameType.isFastRound(round)
+    // T-09: a fast round's active cycle is persisted; a document that never
+    // recorded the wipe must not be replayed at all (see
+    // [cycleHistoryCorruption]) — detection and card resolution included.
+    if (fast && cycleHistoryCorruption(fields, round) != null) return BiddingReplay(null, null)
     var state: BiddingState = if (fast) {
       initFastRound(round, dealerSeat, order, roundMultiplier, gameType, scoringMode)
     } else {
@@ -1131,14 +1207,13 @@ object TimeoutResolution {
         // cycle, so the log can hold several confirmations and none of
         // them closes the round.
         //
-        // A live document keeps ONE value per seat (submitBid is one value
-        // per seat and CONFIRM only appends to biddingLog), so the
-        // re-declarations are NOT in the document: the stored values are
-        // the PRE-confirm numbers. The replay therefore stops at the last
-        // confirmation and reports the seat the table waits for, rather
-        // than replaying a stale number as if it were the
-        // re-declaration. Archives settle through Settlement.scoreRound,
-        // where the values are final.
+        // T-09 live schema: each confirmation atomically wiped bids/ to the
+        // caller's own number and bumped biddingCycle, so the document's
+        // stored values are the ACTIVE cycle's declarations — the caller's
+        // confirmed number plus every re-declaration since. The walk below
+        // the loop therefore feeds exactly those re-declarations, in the
+        // engine's own turn order, and closes the round only once the last
+        // one is on record.
         if (state.subPhase != BiddingPhase.ESTIMATES) return BiddingReplay(null, null)
         val chain = ArrayList<FastSuperConfirm>()
         var cursor = index
@@ -1151,7 +1226,12 @@ object TimeoutResolution {
         }
         val replayed = replayFastSuperCallChain(state, chain, stored)
           ?: return BiddingReplay(null, null)
-        return BiddingReplay(replayed.state, replayed.outcome)
+        if (replayed.outcome != null) return BiddingReplay(replayed.state, replayed.outcome)
+        // The chain consumed the rest of the log — there are no logged
+        // entries left to emit; continue with the active cycle's stored
+        // declarations.
+        state = replayed.state
+        break
       }
       val intent = when (entry) {
         is LoggedIntent.Dash -> BiddingIntent.DashCallDecision(entry.seat, entry.declared)
@@ -1270,16 +1350,45 @@ object TimeoutResolution {
           "botTier" to profile.tier.name,
         ),
       )
-      is BiddingIntent.ConfirmCall -> biddingWrite(
-        fields, loggedConfirmCall(seatId, state.round, intent),
-        mapOf(
-          "phase" to state.subPhase.name,
-          "seatId" to seatId,
-          "tricks" to intent.tricks,
-          "suit" to intent.suit.name,
-          "botTier" to profile.tier.name,
-        ),
-      )
+      is BiddingIntent.ConfirmCall -> if (state.fastRound) {
+        // T-09: a fast-round CONFIRM is the Super Call's trump selection and
+        // commits the SAME atomic reset MatchService.submitBiddingAction
+        // performs — the log entry, the wipe to the caller's own number, the
+        // re-opened declarations and the cycle bump, in ONE update. An
+        // append-only log write (biddingWrite) would leave bids/ full, and
+        // every re-declaration would be refused as ALREADY_BID.
+        Resolution.Applied(DecisionWrite(
+          updates = mapOf(
+            "biddingLog" to FieldValue.arrayUnion(
+              toPlain(loggedConfirmCall(seatId, state.round, intent)),
+            ),
+            "bids" to mapOf(seatId to intent.tricks),
+            "biddingOpen" to true,
+            "lastBidSeat" to null,
+            "biddingCycle" to (num(fields["biddingCycle"]) ?: 0) + 1,
+            "version" to (num(fields["version"]) ?: 0) + 1,
+            "updatedAt" to FieldValue.serverTimestamp(),
+          ),
+          decided = mapOf(
+            "phase" to state.subPhase.name,
+            "seatId" to seatId,
+            "tricks" to intent.tricks,
+            "suit" to intent.suit.name,
+            "botTier" to profile.tier.name,
+          ),
+        ))
+      } else {
+        biddingWrite(
+          fields, loggedConfirmCall(seatId, state.round, intent),
+          mapOf(
+            "phase" to state.subPhase.name,
+            "seatId" to seatId,
+            "tricks" to intent.tricks,
+            "suit" to intent.suit.name,
+            "botTier" to profile.tier.name,
+          ),
+        )
+      }
     }
   }
 

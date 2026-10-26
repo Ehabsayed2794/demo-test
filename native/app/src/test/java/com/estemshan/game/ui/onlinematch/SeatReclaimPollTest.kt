@@ -742,8 +742,12 @@ class SeatReclaimPollTest {
     private fun notReached(name: String): Nothing =
       error("$name is not part of the reclaim poll's path — this suite submits nothing")
 
-    override suspend fun submitBid(matchId: String, seatId: String, bid: Int): SubmitBidResult =
-      notReached("submitBid")
+    override suspend fun submitBid(
+      matchId: String,
+      seatId: String,
+      bid: Int,
+      expectedCycle: Int?,
+    ): SubmitBidResult = notReached("submitBid")
 
     override suspend fun submitBiddingAction(
       matchId: String,

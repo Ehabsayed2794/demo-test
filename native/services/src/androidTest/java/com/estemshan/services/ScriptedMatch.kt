@@ -4,9 +4,11 @@ import com.estemshan.engine.Bid
 import com.estemshan.engine.BidType
 import com.estemshan.engine.BiddingOutcome
 import com.estemshan.engine.BiddingPhase
+import com.estemshan.engine.BiddingState
 import com.estemshan.engine.Card
 import com.estemshan.engine.ExtensionReason
 import com.estemshan.engine.GameSession
+import com.estemshan.engine.GameType
 import com.estemshan.engine.HandAuthority
 import com.estemshan.engine.MatchMode
 import com.estemshan.engine.RoundCfg
@@ -30,6 +32,8 @@ import com.estemshan.services.model.RAPID_ROUND_MIN
 import com.estemshan.services.model.Reasons
 import com.estemshan.services.model.SEAT_IDS
 import com.estemshan.services.model.ServiceException
+import com.estemshan.services.model.SubmitBidResult
+import com.estemshan.services.model.SubmitBiddingActionResult
 import com.estemshan.services.model.VoteDoc
 import com.estemshan.services.session.AuthPort
 import com.estemshan.services.session.GameSessionBridge
@@ -138,12 +142,16 @@ class ScriptedMatch(
    * allowed to trigger the start, so any other order would leave the
    * match unstarted.
    */
-  suspend fun start(mode: MatchMode = MatchMode.ROOM): String {
+  suspend fun start(
+    mode: MatchMode = MatchMode.ROOM,
+    gameType: GameType = GameType.FULL,
+  ): String {
     val creator = uids.getValue(seats.first())
     roomCode = clients.first().rooms.createRoom(
       creator,
       "suite-room",
       mode = mode,
+      gameType = gameType,
       decisionTimerSeconds = decisionTimerSeconds,
     )
     for (i in 1 until clients.size) {
@@ -264,10 +272,13 @@ class ScriptedMatch(
     client.engine.clearPlayState()
     val dealerSeat = doc.dealer?.let { doc.uidToSeat(it) } ?: seats.first()
     val multiplier = client.engine.getRound().multiplier
-    val state = if (doc.currentRound >= RAPID_ROUND_MIN) {
-      initFastRound(doc.currentRound, dealerSeat, seats, multiplier)
+    // The fast-round boundary is the MATCH's own game type (GM1): FULL starts
+    // at 14, MINI at 6. Passing it through also picks the right fixed-trump
+    // ladder, which is indexed from the type's own first fast round.
+    val state = if (doc.gameType.isFastRound(doc.currentRound)) {
+      initFastRound(doc.currentRound, dealerSeat, seats, multiplier, doc.gameType, doc.scoringMode)
     } else {
-      initNormalRound(doc.currentRound, dealerSeat, seats, multiplier)
+      initNormalRound(doc.currentRound, dealerSeat, seats, multiplier, doc.gameType, doc.scoringMode)
     }
     client.engine.initializeBiddingState(state)
   }
@@ -275,8 +286,14 @@ class ScriptedMatch(
   /** Replay the bid + action logs, completing the auction exactly once. */
   private fun replayBidding(client: Client, doc: MatchDoc) {
     val fromActions = client.adapter.applyRemoteBiddingAction(matchId, doc)
+    // T-09: a client that was not live for the Super Call's confirm has no
+    // log entry it can emit (fast declarations are never logged), so the
+    // active declaration cycle is rebuilt from the document itself. For a
+    // client whose own replay already applied the confirm this is a no-op
+    // (ALREADY_RESTORED), so the live history is never discarded.
+    val fromCycle = client.adapter.restoreFastBiddingCycle(matchId, doc)
     val fromBid = client.adapter.applyRemoteBid(matchId, doc)
-    val outcome = fromActions.outcome ?: fromBid.outcome ?: return
+    val outcome = fromActions.outcome ?: fromCycle.outcome ?: fromBid.outcome ?: return
     client.outcome = outcome
     client.engine.completeBidding(outcome)
   }
@@ -332,7 +349,7 @@ class ScriptedMatch(
     return first
   }
 
-  private suspend fun submitBidding(seat: String) {
+  private suspend fun submitBidding(seat: String, cycle: Int) {
     val client = bySeat.getValue(seat)
     val state = client.engine.getBiddingState() ?: return
     val actor = state.waitingFor ?: return
@@ -341,6 +358,7 @@ class ScriptedMatch(
     val action: BiddingActionInput? = when (state.subPhase) {
       BiddingPhase.DASH -> BiddingActionInput(
         BiddingLogEntry.ACTION_DASH_CALL, declaredDashCall = false,
+        expectedCycle = cycle,
       )
       BiddingPhase.AUCTION ->
         // The first seat to act wins the auction with 4 spades; everyone
@@ -349,15 +367,18 @@ class ScriptedMatch(
         if (state.auctionBidder == null && state.auctionTop == 0) {
           BiddingActionInput(
             BiddingLogEntry.ACTION_AUCTION_BID, isPass = false,
-            tricks = AUCTION_BID, suit = Suit.SPADES.name,
+            tricks = AUCTION_BID, suit = Suit.SPADES.name, expectedCycle = cycle,
           )
         } else {
-          BiddingActionInput(BiddingLogEntry.ACTION_AUCTION_BID, isPass = true)
+          BiddingActionInput(
+            BiddingLogEntry.ACTION_AUCTION_BID, isPass = true, expectedCycle = cycle,
+          )
         }
       BiddingPhase.CONFIRM -> BiddingActionInput(
         BiddingLogEntry.ACTION_CONFIRM_CALL,
         tricks = state.auctionTop,
         suit = (state.auctionSuit ?: error("confirm with no auction suit")).name,
+        expectedCycle = cycle,
       )
       BiddingPhase.ESTIMATES -> null
       BiddingPhase.DONE -> return
@@ -368,7 +389,7 @@ class ScriptedMatch(
       }
     } else {
       retryEmulatorTx("submitBid seat ${client.seatId}") {
-        client.store.submitBid(matchId, actor, ESTIMATE)
+        client.store.submitBid(matchId, actor, ESTIMATE, cycle)
       }
     }
   }
@@ -468,9 +489,130 @@ class ScriptedMatch(
       syncAll(doc)
       if (clients.first().engine.getBiddingState()?.subPhase == BiddingPhase.DONE) return
       val actor = biddingActor() ?: return
-      submitBidding(actor)
+      submitBidding(actor, doc.biddingCycle)
     }
     error("round $round bidding did not reach DONE within $BIDDING_GUARD moves")
+  }
+
+  // ── T-09: driving a Fast Super Call step by step ─────────────────────
+  //
+  // A Fast Super Call is not a Confirmation Phase: the CONFIRM starts the
+  // next declaration cycle and every seat but the caller re-declares. That
+  // makes "who acts next" a property of the DOCUMENT's cycle, not of a
+  // fixed script, so a test must be able to stop between the confirm and
+  // the re-declarations, and the number a seat declares (8+, or a higher
+  // number that re-opens the call) is the point of the test, not a
+  // constant. These primitives expose exactly that: one real service
+  // write, then a full four-client sync from the committed document.
+
+  /** Pull the committed document and push it through all four engines. */
+  suspend fun syncFromDocument(): MatchDoc {
+    val doc = loadMatch()
+    syncAll(doc)
+    return doc
+  }
+
+  /** The seat every engine agrees is waiting; null once the auction is DONE. */
+  fun waitingSeat(): String? = biddingActor()
+
+  /** The auction phase every engine agrees it is in. */
+  fun biddingPhase(): BiddingPhase? {
+    val phases = clients.map { it.engine.getBiddingState()?.subPhase }
+    phases.forEachIndexed { i, phase ->
+      assertEquals("seat ${clients[i].seatId} agrees on the bidding phase", phases.first(), phase)
+    }
+    return phases.first()
+  }
+
+  /** One client's own auction view — the client under test, never a proxy. */
+  fun biddingState(seat: String): BiddingState? =
+    bySeat.getValue(seat).engine.getBiddingState()
+
+  /** The auction outcome a client completed for itself, if it has. */
+  fun auctionOutcome(seat: String): BiddingOutcome? = bySeat.getValue(seat).outcome
+
+  /**
+   * Declare [tricks] as [seat] against the document's ACTIVE cycle. The
+   * expectedCycle is always the document's own value — the same contract
+   * :app uses — so a declaration that raced a Super Call is refused as
+   * STALE_CYCLE instead of landing in the wrong cycle.
+   */
+  suspend fun declare(seat: String, tricks: Int): MatchDoc {
+    val client = bySeat.getValue(seat)
+    val state = client.engine.getBiddingState() ?: error("no auction state for $seat")
+    assertEquals("$seat declares only on its own turn", seat, state.waitingFor)
+    assertEquals("the declaration lands in ESTIMATES", BiddingPhase.ESTIMATES, state.subPhase)
+    val doc = loadMatch()
+    retryEmulatorTx("declare $seat=$tricks") {
+      client.store.submitBid(matchId, seat, tricks, doc.biddingCycle)
+    }
+    return syncFromDocument()
+  }
+
+  /** Confirm the Super Call as [seat] at [tricks] with [suit]. */
+  suspend fun confirmSuperCall(seat: String, tricks: Int, suit: Suit): MatchDoc {
+    val client = bySeat.getValue(seat)
+    val state = client.engine.getBiddingState() ?: error("no auction state for $seat")
+    assertEquals("the Super Call is confirmed by its caller", seat, state.waitingFor)
+    assertEquals("the confirm lands in CONFIRM", BiddingPhase.CONFIRM, state.subPhase)
+    val doc = loadMatch()
+    retryEmulatorTx("confirm $seat at $tricks $suit") {
+      client.store.submitBiddingAction(
+        matchId,
+        BiddingActionInput(
+          BiddingLogEntry.ACTION_CONFIRM_CALL,
+          tricks = tricks,
+          suit = suit.name,
+          expectedCycle = doc.biddingCycle,
+        ),
+      )
+    }
+    return syncFromDocument()
+  }
+
+  /**
+   * One raw declaration with a CALLER-CHOSEN cycle, no retry, no sync.
+   * This is the only way to reproduce a write that was validated against a
+   * cycle the document has already left — the thing STALE_CYCLE exists
+   * for — and to observe the exact refusal the service throws.
+   */
+  suspend fun submitDeclarationRaw(seat: String, tricks: Int, expectedCycle: Int): SubmitBidResult =
+    bySeat.getValue(seat).store.submitBid(matchId, seat, tricks, expectedCycle)
+
+  /** One raw confirm with a caller-chosen cycle — see [submitDeclarationRaw]. */
+  suspend fun submitConfirmRaw(
+    seat: String,
+    tricks: Int,
+    suit: Suit,
+    expectedCycle: Int,
+  ): SubmitBiddingActionResult = bySeat.getValue(seat).store.submitBiddingAction(
+    matchId,
+    BiddingActionInput(
+      BiddingLogEntry.ACTION_CONFIRM_CALL,
+      tricks = tricks,
+      suit = suit.name,
+      expectedCycle = expectedCycle,
+    ),
+  )
+
+  /**
+   * Throw away one client's local auction + table state and rebuild it from
+   * the committed document alone — a cold reload of one device mid-round.
+   *
+   * The adapter registries go too ([MatchAdapter.resetSyncState]), so both
+   * the log replay AND the fast-cycle restore run from scratch: the point
+   * is that the DOCUMENT, not a remembered call, decides what the client
+   * sees. The hand is kept deliberately (a real reload re-reads it from
+   * hands/, which the async pass would do); the auction is what this
+   * rebuilds.
+   */
+  suspend fun reloadClient(seat: String) {
+    val client = bySeat.getValue(seat)
+    client.engine.clearBiddingState()
+    client.engine.clearPlayState()
+    client.adapter.resetSyncState(matchId)
+    client.outcome = null
+    syncAll(loadMatch())
   }
 
   private suspend fun drivePlay(round: Int) {

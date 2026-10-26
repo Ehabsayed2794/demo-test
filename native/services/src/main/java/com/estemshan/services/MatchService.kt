@@ -60,6 +60,7 @@ import com.estemshan.services.model.Reasons.ENGINE_UNAVAILABLE
 import com.estemshan.services.model.Reasons.ILLEGAL_BIDDING_ACTION
 import com.estemshan.services.model.Reasons.ILLEGAL_CARD
 import com.estemshan.services.model.Reasons.INVALID_ARGUMENT
+import com.estemshan.services.model.Reasons.INVALID_BIDDING_ACTION_VALUE
 import com.estemshan.services.model.Reasons.INVALID_BID_VALUE
 import com.estemshan.services.model.Reasons.INVALID_CARD_VALUE
 import com.estemshan.services.model.Reasons.INVALID_RESULT
@@ -72,6 +73,7 @@ import com.estemshan.services.model.Reasons.PERMISSION_DENIED
 import com.estemshan.services.model.Reasons.REMOVED_FROM_MATCH
 import com.estemshan.services.model.Reasons.LEFT_MATCH
 import com.estemshan.services.model.Reasons.ROUND_NOT_COMPLETE
+import com.estemshan.services.model.Reasons.STALE_CYCLE
 import com.estemshan.services.model.Reasons.STALE_GAME_STATE
 import com.estemshan.services.model.Reasons.TRICK_WINNER_UNAVAILABLE
 import com.estemshan.services.model.Reasons.UNAUTHENTICATED
@@ -267,7 +269,7 @@ class MatchService(
     return if (hand.round == round) hand else null
   }
 
-  // ── 1. submitBid: Final Estimate — one value per seat, ever ─────────
+  // ── 1. submitBid: Final Estimate — one value per seat, per cycle ─────
 
   /**
    * submitBid(matchId, seatId, bid) — Final Estimate only. Dash/Auction/
@@ -276,8 +278,18 @@ class MatchService(
    * stays as-is. The engine is NOT consulted here — a final estimate's
    * legality is the bidding log's business, and bids/ is the one-value
    * channel the rules validator locks to a single seat's slot.
+   *
+   * T-09: "one value per seat" is scoped to the ACTIVE declaration cycle.
+   * A fast Super Call CONFIRM wipes bids/ (keeping only the caller's own
+   * number) and bumps biddingCycle in the same transaction, so a seat that
+   * declared before the call can — and must — declare again afterwards.
    */
-  override suspend fun submitBid(matchId: String, seatId: String, bid: Int): SubmitBidResult {
+  override suspend fun submitBid(
+    matchId: String,
+    seatId: String,
+    bid: Int,
+    expectedCycle: Int?,
+  ): SubmitBidResult {
     require(matchId.isNotEmpty()) { "submitBid: matchId is required." }
     require(seatId.isNotEmpty()) { "submitBid: seatId is required." }
     if (!isValidGenericBidValue(bid)) {
@@ -299,6 +311,15 @@ class MatchService(
       if (match.isRemoved(auth.currentUid() ?: "")) {
         return@runTx TxOutcome.Err(ServiceException(REMOVED_FROM_MATCH,
           "submitBid: you were removed from this match and cannot rejoin."))
+      }
+      // T-09: a fast Super Call CONFIRM starts the next declaration cycle by
+      // wiping bids/ and bumping biddingCycle in its own transaction. A bid
+      // validated against the previous cycle must never land in this one,
+      // where its seat's slot is legitimately empty again.
+      if (expectedCycle != null && match.biddingCycle != expectedCycle) {
+        return@runTx TxOutcome.Err(ServiceException(STALE_CYCLE,
+          "submitBid: the declaration cycle moved (expected $expectedCycle, found " +
+            "${match.biddingCycle}) — not written; re-fetch and re-declare."))
       }
       if (match.biddingOpen != true) {
         return@runTx TxOutcome.Err(ServiceException(BIDDING_CLOSED,
@@ -322,6 +343,7 @@ class MatchService(
       TxOutcome.Ok(SubmitBidResult(
         matchId = matchId, seatId = seatId, bid = bid, version = nextVersion,
         biddingOpen = !allSubmitted, allSubmitted = allSubmitted,
+        biddingCycle = match.biddingCycle,
       ))
     }
   }
@@ -402,6 +424,99 @@ class MatchService(
         effectiveDashCallCount(fresh.biddingLog, fresh.currentRound),
       )
       val nextVersion = expectedVersion + 1
+      // T-09: a fast-round CONFIRM is the Super Call's trump selection, not
+      // an ordinary confirmation (fast rounds never run a Confirmation
+      // Phase). The engine answers it by wiping every seat except the caller
+      // and restarting the declarations CCW, so the document MUST commit the
+      // same wipe in the SAME transaction — an append-only log write would
+      // leave the doc's one-value-per-seat bids/ full and make every
+      // re-declaration permanently unbeatable as ALREADY_BID.
+      val fastConfirm = action.actionType == BiddingLogEntry.ACTION_CONFIRM_CALL &&
+        fresh.gameType.isFastRound(fresh.currentRound)
+
+      if (action.expectedCycle != null && action.expectedCycle != fresh.biddingCycle) {
+        // A lost response may make the caller retry the confirm that already
+        // committed: that exact cycle boundary + the cycle's own (last)
+        // confirmation entry is this request's own effect, so report it as
+        // applied instead of duplicating it. Later re-declarations in the
+        // active cycle do not change the caller's own locked slot.
+        val alreadyApplied = fastConfirm &&
+          fresh.biddingCycle == action.expectedCycle + 1 &&
+          fresh.bids[freshSeatId] == action.tricks &&
+          fresh.roundBids(fresh.currentRound)
+            .filter { it.actionType == BiddingLogEntry.ACTION_CONFIRM_CALL }
+            .lastOrNull()?.let { last ->
+              last.seatId == freshSeatId && last.tricks == action.tricks &&
+                last.suit == action.suit
+            } == true
+        if (alreadyApplied) {
+          return@runTx TxOutcome.Ok(SubmitBiddingActionResult(
+            matchId = matchId, seatId = freshSeatId, actionType = action.actionType,
+            version = fresh.version, logLength = fresh.biddingLog.size,
+            biddingCycle = fresh.biddingCycle,
+          ))
+        }
+        return@runTx TxOutcome.Err(ServiceException(STALE_CYCLE,
+          "submitBiddingAction: the declaration cycle moved (expected ${action.expectedCycle}, " +
+            "found ${fresh.biddingCycle}) — not written; re-fetch and retry."))
+      }
+
+      if (fastConfirm) {
+        val tricks = action.tricks ?: return@runTx TxOutcome.Err(ServiceException(
+          INVALID_BIDDING_ACTION_VALUE,
+          "submitBiddingAction: a Super Call CONFIRM needs a trick count."))
+        val confirms = fresh.roundBids(fresh.currentRound)
+          .filter { it.actionType == BiddingLogEntry.ACTION_CONFIRM_CALL }
+        if (confirms.size != fresh.biddingCycle) {
+          return@runTx TxOutcome.Err(ServiceException(ILLEGAL_BIDDING_ACTION,
+            "submitBiddingAction: round ${fresh.currentRound} holds ${confirms.size} " +
+              "confirmation(s) but its active cycle is ${fresh.biddingCycle} — the document " +
+              "is not a replayable Super Call history; refusing to extend it."))
+        }
+        val declaration = fresh.bids[freshSeatId]
+          ?: return@runTx TxOutcome.Err(ServiceException(ILLEGAL_BIDDING_ACTION,
+            "submitBiddingAction: seat '$freshSeatId' has no declaration in the active " +
+              "declaration cycle — only a seat that declared can confirm its Super Call."))
+        val allDeclared = fresh.seats.isNotEmpty() &&
+          fresh.seats.keys.all { fresh.bids[it] != null }
+        if (!allDeclared) {
+          return@runTx TxOutcome.Err(ServiceException(ILLEGAL_BIDDING_ACTION,
+            "submitBiddingAction: the active declaration cycle is not complete — " +
+              "a Super Call can only be confirmed after every seat declared."))
+        }
+        if (tricks < FAST_SUPER_CALL_MIN_TRICKS || tricks > MAX_BID_VALUE) {
+          return@runTx TxOutcome.Err(ServiceException(ILLEGAL_BIDDING_ACTION,
+            "submitBiddingAction: a Super Call confirms $FAST_SUPER_CALL_MIN_TRICKS.." +
+              "$MAX_BID_VALUE tricks (the absolute maximum holds in every round)."))
+        }
+        if (tricks < declaration) {
+          return@runTx TxOutcome.Err(ServiceException(ILLEGAL_BIDDING_ACTION,
+            "submitBiddingAction: the confirmed number $tricks is below seat " +
+              "'$freshSeatId' own declaration $declaration."))
+        }
+        val previousTricks = confirms.lastOrNull()?.tricks
+        if (previousTricks != null && tricks <= previousTricks) {
+          return@runTx TxOutcome.Err(ServiceException(ILLEGAL_BIDDING_ACTION,
+            "submitBiddingAction: a further Super Call must exceed the previous cycle's " +
+              "confirmed number $previousTricks (got $tricks)."))
+        }
+        val bids = mapOf(freshSeatId to tricks)
+        tx.update(matchRef, mapOf(
+          "biddingLog" to FieldValue.arrayUnion(newEntry.toFields()),
+          "bids" to bids,
+          "biddingOpen" to true,
+          "lastBidSeat" to null,
+          "biddingCycle" to fresh.biddingCycle + 1,
+          "version" to nextVersion,
+          "updatedAt" to FieldValue.serverTimestamp(),
+        ))
+        return@runTx TxOutcome.Ok(SubmitBiddingActionResult(
+          matchId = matchId, seatId = freshSeatId, actionType = action.actionType,
+          version = nextVersion, logLength = fresh.biddingLog.size + 1,
+          biddingCycle = fresh.biddingCycle + 1,
+        ))
+      }
+
       tx.update(matchRef, mapOf(
         "biddingLog" to FieldValue.arrayUnion(newEntry.toFields()),
         "version" to nextVersion,
@@ -410,6 +525,7 @@ class MatchService(
       TxOutcome.Ok(SubmitBiddingActionResult(
         matchId = matchId, seatId = freshSeatId, actionType = action.actionType,
         version = nextVersion, logLength = fresh.biddingLog.size + 1,
+        biddingCycle = fresh.biddingCycle,
       ))
     }
   }
@@ -670,6 +786,7 @@ class MatchService(
         "biddingOpen" to true,
         "bids" to match.seats.keys.associateWith { null },
         "lastBidSeat" to null,
+        "biddingCycle" to 0,
         "turn" to null,
         "cardPhase" to null,
         "cardLog" to emptyList<CardLogEntry>(),
@@ -789,6 +906,7 @@ class MatchService(
             "biddingOpen" to true,
             "bids" to match.seats.keys.associateWith { null },
             "lastBidSeat" to null,
+            "biddingCycle" to 0,
             "turn" to null,
             "cardPhase" to null,
             "cardLog" to emptyList<CardLogEntry>(),
@@ -1408,3 +1526,6 @@ fun interface Deal {
 /** firestore.rules requires exactly 13 cards per hand doc. */
 private const val HAND_SIZE = 13
 private const val MILLIS_PER_SECOND = 1000L
+
+/** A6.10: the lowest declaration that opens a fast-round Super Call. */
+private const val FAST_SUPER_CALL_MIN_TRICKS = 8
