@@ -292,18 +292,18 @@ class BiddingTest {
     assertEquals("p3", s.callerId)
     assertEquals(listOf("p4"), s.withPlayers)
 
-    // The Super Call replaces SPADES with HEARTS.
+    // The Super Call replaces SPADES with HEARTS. Every seat except the
+    // caller is wiped (T-09), so p4's 8♠ no longer survives.
     s = confirm(s, "p3", 8, Suit.HEARTS)
     assertEquals(BiddingPhase.ESTIMATES, s.subPhase)
-    assertEquals("p1", s.waitingFor)
+    assertEquals("p4", s.waitingFor)
     assertEquals(Bid(BidType.TRICKS, 8, Suit.HEARTS), s.bids.getValue("p3"))
-    // p4 declared before the Super Call and is not wiped by the engine's
-    // A6.11 partial reset, so its 8 stays under the old trump.
-    assertEquals(Bid(BidType.TRICKS, 8, Suit.SPADES), s.bids.getValue("p4"))
-    assertTrue("pre-super 8♠ is not With under ♥", s.withPlayers.isEmpty())
+    assertNull(s.bids["p4"])
+    assertTrue("the provisional 8♠ duplicate is wiped with its seat", s.withPlayers.isEmpty())
 
-    // p1 re-declares 8 under the final trump: an exact duplicate of the
-    // Super Caller's number+suit, therefore With. p2 stays low.
+    // p4 and p1 declare 8 again under the final trump: exact duplicates of
+    // the Super Caller's number+suit, therefore With. p2 stays low.
+    s = applied(estimate(s, "p4", 8))
     s = applied(estimate(s, "p1", 8))
     var outcome: BiddingOutcome? = null
     when (val r = estimate(s, "p2", 2)) {
@@ -315,17 +315,16 @@ class BiddingTest {
     }
     assertEquals(BiddingPhase.DONE, s.subPhase)
     assertEquals("p3", s.callerId)
-    // p1 (8♥) is With. p4's 8♠ has the right number but the replaced suit,
-    // so it is NOT With (A6.10/A7.2).
-    assertEquals(listOf("p1"), s.withPlayers)
+    // p1 and p4 declared 8 under the final ♥ trump, so both are With.
+    assertEquals(listOf("p1", "p4"), s.withPlayers)
     val o = outcome ?: throw AssertionError("never completed")
     assertEquals("p3", o.callerId)
-    assertEquals(listOf("p1"), o.withPlayers)
+    assertEquals(listOf("p1", "p4"), o.withPlayers)
     assertEquals(Suit.HEARTS, o.trump)
     assertEquals(mapOf("p1" to 8, "p2" to 2, "p3" to 8, "p4" to 8), o.estimates)
   }
 
-  // ── A6.10: confirm with no pre-super seats must not reuse the 8+ set ──
+  // ── A6.10/T-09: the confirmation never completes the round ──
   @Test
   fun fastSuperCallConfirmRecomputesWithWhenNoSeatsAreWiped() {
     var s = fast(15, "p1") // dealer p1, so the Super Caller is first in order
@@ -342,15 +341,26 @@ class BiddingTest {
     assertEquals("p1", s.callerId)
     assertEquals(listOf("p2"), s.withPlayers)
 
-    val result = emit(s, BiddingIntent.ConfirmCall("p1", 8, Suit.HEARTS))
+    // T-09: the confirmation wipes EVERY seat except the caller, so the
+    // round cannot complete here — p2 declares again under the final trump.
+    s = confirm(s, "p1", 8, Suit.HEARTS)
+    assertEquals(BiddingPhase.ESTIMATES, s.subPhase)
+    assertEquals("p2", s.waitingFor)
+    assertEquals(setOf("p1"), s.bids.keys)
+    assertTrue("the provisional set is discarded with the wiped seats", s.withPlayers.isEmpty())
+
+    s = applied(estimate(s, "p2", 8))
+    s = applied(estimate(s, "p3", 4))
+    val result = estimate(s, "p4", 5)
     val completed = result as? EmitResult.Completed
-      ?: throw AssertionError("confirm with no pre-super seats should complete, got $result")
+      ?: throw AssertionError("the round must complete after the re-declarations, got $result")
     s = completed.state
     assertEquals(BiddingPhase.DONE, s.subPhase)
     assertEquals("p1", s.callerId)
-    // p2's 8 was declared under SPADES, not the final HEARTS: not With.
-    assertTrue("8♠ must not be With under the final ♥ trump", s.withPlayers.isEmpty())
-    assertTrue(completed.outcome.withPlayers.isEmpty())
+    // p2 declared 8 again under the final HEARTS trump: an exact duplicate
+    // of the Caller's 8♥, therefore With (A8.1).
+    assertEquals(listOf("p2"), s.withPlayers)
+    assertEquals(listOf("p2"), completed.outcome.withPlayers)
     assertEquals(Suit.HEARTS, completed.outcome.trump)
     assertEquals(mapOf("p1" to 8, "p2" to 8, "p3" to 4, "p4" to 5), completed.outcome.estimates)
   }
@@ -509,24 +519,31 @@ class BiddingTest {
     assertEquals("p3", s.callerId)
     assertEquals(8, s.auctionTop)
 
-    // S2: replacement trump wipes only pre-super seats.
+    // S2 (T-09): the replacement trump wipes EVERY seat except the Super
+    // Caller's own record — the old partial reset kept p4's 3♠.
     s = confirm(s, "p3", 8, Suit.HEARTS)
     assertEquals(BiddingPhase.ESTIMATES, s.subPhase)
-    assertEquals("p1", s.waitingFor)
+    assertEquals("p4", s.waitingFor)
     assertNull(s.bids["p1"])
     assertNull(s.bids["p2"])
+    assertNull(s.bids["p4"])
     assertEquals(Bid(BidType.TRICKS, 8, Suit.HEARTS), s.bids["p3"])
-    assertEquals(Bid(BidType.TRICKS, 3, Suit.SPADES), s.bids["p4"])
     assertEquals(Suit.HEARTS, s.declaredTrump)
 
-    // S3: re-estimation completes with the Super Caller locked.
+    // S3: every other seat declares again, counter-clockwise from the
+    // caller, and the round completes with the Super Caller locked.
+    when (val r = estimate(s, "p4", 3)) {
+      is EmitResult.Applied -> s = r.state
+      else -> throw AssertionError("p4 re-estimate should apply")
+    }
+    assertEquals("p1", s.waitingFor)
     when (val r = estimate(s, "p1", 4)) {
       is EmitResult.Applied -> s = r.state
       else -> throw AssertionError("p1 re-estimate should apply")
     }
     assertEquals("p2", s.waitingFor)
     var outcome: BiddingOutcome? = null
-    when (val r = estimate(s, "p2", 2)) {
+    when (val r = estimate(s, "p2", 5)) {
       is EmitResult.Completed -> {
         s = r.state
         outcome = r.outcome
@@ -540,7 +557,7 @@ class BiddingTest {
     val o = outcome ?: throw AssertionError("never completed")
     assertEquals("p3", o.callerId)
     assertEquals(Suit.HEARTS, o.trump)
-    assertEquals(mapOf("p1" to 4, "p2" to 2, "p3" to 8, "p4" to 3), o.estimates)
+    assertEquals(mapOf("p1" to 4, "p2" to 5, "p3" to 8, "p4" to 3), o.estimates)
   }
 
   // ── Dash-Call seat skips estimation; outcome carries dashCallers ──

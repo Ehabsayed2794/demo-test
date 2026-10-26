@@ -115,6 +115,9 @@ data class BiddingState(
 
 const val MAX_DASH_CALLS = 2
 
+/** The highest number of tricks a seat can ever declare (the 13-card suit). */
+const val MAX_TRICKS = 13
+
 val DEFAULT_SEATS: List<String> = listOf("p1", "p2", "p3", "p4")
 
 private val FIXED_SUITS: List<Suit> = listOf(
@@ -297,16 +300,52 @@ fun estimateExceedsCap(tricks: Int, cap: Int): Boolean = tricks > cap
 fun withFloorFor(history: List<BidAction>, pId: String): Int? =
   history.filter { it.actionType == "BID" && it.playerId == pId }.lastOrNull()?.value
 
+/**
+ * Suit-aware floor (E2.2 / T-12): the last number [pId] bid in the Caller's
+ * winning suit [winningSuit]. A later higher bid in another suit does not
+ * raise it, and a seat that never bid that suit has no floor at all.
+ */
+fun withFloorFor(history: List<BidAction>, pId: String, winningSuit: Suit): Int? =
+  history.filter {
+    it.actionType == "BID" && it.playerId == pId && it.suit == winningSuit
+  }.lastOrNull()?.value
+
+/**
+ * With-floor legality. [winningSuit] narrows the floor to the Caller's
+ * winning suit; null (a Dash round, or a hand-built state without one) falls
+ * back to the suit-blind floor so legacy behaviour is unchanged.
+ */
 fun estimateBelowWithFloor(
   history: List<BidAction>,
   pId: String,
   tricks: Int,
   withPlayers: List<String>,
+  winningSuit: Suit?,
 ): Boolean {
   if (!withPlayers.contains(pId)) return false
-  val floor = withFloorFor(history, pId) ?: return false
+  val floor = if (winningSuit == null) {
+    withFloorFor(history, pId)
+  } else {
+    withFloorFor(history, pId, winningSuit)
+  } ?: return false
   return tricks < floor
 }
+
+/** Suit-blind form kept for the app/bot callers; delegates with a null suit. */
+fun estimateBelowWithFloor(
+  history: List<BidAction>,
+  pId: String,
+  tricks: Int,
+  withPlayers: List<String>,
+): Boolean = estimateBelowWithFloor(history, pId, tricks, withPlayers, null)
+
+/** The floor the "Min is …" rejection shows — suit-aware whenever the state carries the winning suit. */
+private fun floorShownInRejection(
+  history: List<BidAction>,
+  pId: String,
+  winningSuit: Suit?,
+): Int? =
+  if (winningSuit == null) withFloorFor(history, pId) else withFloorFor(history, pId, winningSuit)
 
 /** The number the R1 rule forbids for this seat right now (null = no constraint). */
 fun forbiddenEstimateFor(state: BiddingState, pId: String): Int? {
@@ -319,6 +358,23 @@ fun forbiddenEstimateFor(state: BiddingState, pId: String): Int? {
 fun estimateIsForbidden13(state: BiddingState, pId: String, tricks: Int): Boolean {
   val forbidden = forbiddenEstimateFor(state, pId) ?: return false
   return tricks == forbidden
+}
+
+/**
+ * Estimation Jump-In suit gate (rules §2.2.1a): the estimate's recorded suit
+ * is [BiddingState.declaredTrump]; the Caller's winning suit is
+ * [BiddingState.auctionSuit]. When both are present they must be EQUAL — a
+ * matching number in a different suit is not With.
+ *
+ * A state with no `auctionSuit` (hand-built or legacy) keeps the number-only
+ * rule: the runtime always sets both together at the confirmation, so such a
+ * state is not one the engine can produce, and failing closed on it would
+ * reject a jump-in the rules allow.
+ */
+private fun jumpInSuitOk(state: BiddingState): Boolean {
+  val callerSuit = state.auctionSuit ?: return true
+  val estimateSuit = state.declaredTrump ?: return true
+  return callerSuit == estimateSuit
 }
 
 fun bidSum(bids: Map<String, Bid>): Int =
@@ -459,11 +515,18 @@ fun canSubmit(state: BiddingState, intent: BiddingIntent): Legality {
     is BiddingIntent.FinalEstimate -> {
       if (state.subPhase != BiddingPhase.ESTIMATES) return Legality(false, "Not the Final Estimates phase")
       if (state.waitingFor != intent.playerId) return Legality(false, "Not this seat's turn")
-      if (estimateExceedsCap(intent.tricks, state.auctionTop)) {
-        return Legality(false, "Max is ${state.auctionTop} (Caller's cap)")
+      // Fast rounds have no Call Cap (rules §2.3, T-24): the Caller's number
+      // is not a ceiling there, so a seat may re-declare above the confirmed
+      // call — that is the repeated Super Call of T-09.
+      val cap = if (state.fastRound) MAX_TRICKS else state.auctionTop
+      if (estimateExceedsCap(intent.tricks, cap)) {
+        return Legality(
+          false,
+          if (state.fastRound) "Max is $MAX_TRICKS" else "Max is $cap (Caller's cap)",
+        )
       }
-      if (estimateBelowWithFloor(state.actionHistory, intent.playerId, intent.tricks, state.withPlayers)) {
-        val floor = withFloorFor(state.actionHistory, intent.playerId)
+      if (estimateBelowWithFloor(state.actionHistory, intent.playerId, intent.tricks, state.withPlayers, state.auctionSuit)) {
+        val floor = floorShownInRejection(state.actionHistory, intent.playerId, state.auctionSuit)
         return Legality(false, "Min is $floor (your own With bid)")
       }
       if (estimateIsForbidden13(state, intent.playerId, intent.tricks)) {
@@ -685,60 +748,31 @@ private fun emitConfirmCall(state: BiddingState, intent: BiddingIntent.ConfirmCa
   val history = state.actionHistory + BidAction(intent.playerId, "CONFIRM_TRUMP", t, s)
 
   if (state.noSuitConstraint) {
-    // Fast-round Super Call: replacement trump wipes ONLY the seats that bid
-    // before the Super Caller; later estimates remain committed.
-    val order = biddingOrder(state)
-    val callerIndex = order.indexOf(intent.playerId)
-    val preSuper = if (callerIndex > 0) order.subList(0, callerIndex) else emptyList()
-    val wiped = newBids.filterKeys { !preSuper.contains(it) }
+    // Fast-round Super Call: the replacement trump wipes EVERY seat except
+    // the Super Caller's own record (T-09). Every other seat re-declares,
+    // counter-clockwise from the caller, so the round can never complete on
+    // the confirm — not even when the caller is first in the bidding order.
+    val wiped = newBids.filterKeys { it == intent.playerId }
     // A6.10/A8.1: With is the exact final number under the FINAL trump. The
     // provisional pre-confirm set (>=8 declarers) is discarded here and again
     // at completion, after the wiped seats have re-declared.
     val finalWith = fastWithAtFinalCall(state, wiped, intent.playerId, t, s)
-    return if (preSuper.isNotEmpty()) {
-      EmitResult.Applied(
-        state.copy(
-          auctionTop = t,
-          auctionSuit = s,
-          declaredTrump = s,
-          bids = wiped,
-          withPlayers = finalWith,
-          callerId = intent.playerId,
-          subPhase = BiddingPhase.ESTIMATES,
-          noSuitConstraint = false,
-          fastSuperResolved = true,
-          waitingFor = preSuper[0],
-          lastBidderId = null,
-          actionHistory = history,
-        ),
-      )
-    } else {
-      val done = state.copy(
+    return EmitResult.Applied(
+      state.copy(
         auctionTop = t,
         auctionSuit = s,
         declaredTrump = s,
         bids = wiped,
         withPlayers = finalWith,
         callerId = intent.playerId,
-        subPhase = BiddingPhase.DONE,
+        subPhase = BiddingPhase.ESTIMATES,
         noSuitConstraint = false,
         fastSuperResolved = true,
-        waitingFor = null,
+        waitingFor = nextSeat(state.seats, intent.playerId),
+        lastBidderId = null,
         actionHistory = history,
-      )
-      EmitResult.Completed(
-        done,
-        BiddingOutcome(
-          trump = s,
-          callerId = intent.playerId,
-          withPlayers = finalWith,
-          estimates = extractEstimates(wiped),
-          dashCallers = emptyList(),
-          riskPlayerId = state.lastBidderId,
-          leaderId = intent.playerId,
-        ),
-      )
-    }
+      ),
+    )
   }
 
   // Normal-round confirm: Dash Callers never re-estimate — start at the
@@ -766,13 +800,16 @@ private fun emitFinalEstimate(state: BiddingState, intent: BiddingIntent.FinalEs
   if (state.subPhase != BiddingPhase.ESTIMATES) return EmitResult.Rejected("Not the Final Estimates phase")
   if (state.waitingFor != intent.playerId) return EmitResult.Rejected("Not this seat's turn")
   val pId = intent.playerId
-  val cap = state.auctionTop
+  // Fast rounds have no Call Cap (rules §2.3, T-24) — see canSubmit.
+  val cap = if (state.fastRound) MAX_TRICKS else state.auctionTop
 
   if (estimateExceedsCap(intent.tricks, cap)) {
-    return EmitResult.Rejected("Max is $cap (Caller's cap)")
+    return EmitResult.Rejected(
+      if (state.fastRound) "Max is $MAX_TRICKS" else "Max is $cap (Caller's cap)",
+    )
   }
-  if (estimateBelowWithFloor(state.actionHistory, pId, intent.tricks, state.withPlayers)) {
-    val floor = withFloorFor(state.actionHistory, pId)
+  if (estimateBelowWithFloor(state.actionHistory, pId, intent.tricks, state.withPlayers, state.auctionSuit)) {
+    val floor = floorShownInRejection(state.actionHistory, pId, state.auctionSuit)
     return EmitResult.Rejected("Min is $floor (your own With bid)")
   }
   if (estimateIsForbidden13(state, pId, intent.tricks)) {
@@ -789,9 +826,13 @@ private fun emitFinalEstimate(state: BiddingState, intent: BiddingIntent.FinalEs
   var withPlayers = state.withPlayers.toMutableList()
 
   // Estimation Jump-In (rules §2.2.1a, normal rounds): any non-caller whose
-  // final estimate exactly matches the Caller's locked number becomes With.
+  // final estimate matches BOTH the Caller's number and suit becomes With.
+  // Open to anyone, including a passer. The estimate's suit is `declaredTrump`;
+  // the Caller's winning suit is `auctionSuit`. When both are present they must
+  // be equal; when `auctionSuit` is null (hand-built / legacy state) the suit
+  // gate is dropped and number-only matching is kept.
   if (!state.fastRound && pId != state.callerId && intent.tricks == state.auctionTop &&
-    !withPlayers.contains(pId)
+    !withPlayers.contains(pId) && jumpInSuitOk(state)
   ) {
     withPlayers.add(pId)
   }
@@ -822,6 +863,33 @@ private fun emitFinalEstimate(state: BiddingState, intent: BiddingIntent.FinalEs
   )
 
   if (state.fastRound) {
+    // A declaration above the current call re-opens the Super Call (T-09):
+    // the winner of the higher set becomes the new Super Caller and every
+    // other seat re-declares under the new trump. This is checked BEFORE the
+    // completion branch, so a higher call never ends the round.
+    val higher = fastDeclarations(state, newBids, 8).filter { it.amount > state.auctionTop }
+    if (higher.isNotEmpty()) {
+      val higherCall = resolveFastCall(higher)
+      val higherCallerId = higherCall.callerId
+      if (higherCallerId != null) {
+        val higherBid = newBids.getValue(higherCallerId).amount
+        val reopened = base.copy(
+          callerId = higherCallerId,
+          // Provisional: the exact duplicates among the higher declarations.
+          // The authoritative set is recomputed once the new Super Call has
+          // chosen the final trump.
+          withPlayers = higherCall.withPlayers,
+          auctionTop = higherBid,
+          subPhase = BiddingPhase.CONFIRM,
+          noSuitConstraint = true,
+          // The current auctionTop is not confirmed yet: only this call's own
+          // confirm sets the flag back to true.
+          fastSuperResolved = false,
+          waitingFor = higherCallerId,
+        )
+        return EmitResult.Applied(reopened)
+      }
+    }
     // A6.10/A7.2: the >=8 Super Call is decided by number first, then the
     // suit hierarchy. Declaration order is consulted only for exact
     // number-and-suit duplicates (A8.1), never for a different-suit tie.
