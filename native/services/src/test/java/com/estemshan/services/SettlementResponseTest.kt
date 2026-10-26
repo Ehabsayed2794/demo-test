@@ -12,21 +12,22 @@ import org.junit.Test
  * These cover the mapping in the order the screen acts on it: a settlement
  * carries the caller's OWN movement and the server's replay marker and
  * nothing else, an absent or malformed `you` is "nothing to reveal" rather
- * than a guess, ROOM/UNRANKED's `NOT_RANKED` no-op is terminal with its mode
- * kept for the log, a response that says neither direction is a denial, and
- * a response that is not a map is retried rather than read. The three
- * retryable transport codes are pinned against every other code the SDK can
- * hand back, because the difference between them is the difference between
- * a first attempt that stops and one that never will.
+ * than a guess, the legacy pre-S6 `NOT_RANKED` no-op is still terminal with
+ * its mode kept for the log, a response that says neither direction is a
+ * denial, and a response that is not a map is retried rather than read. The
+ * three retryable transport codes are pinned against every other code the
+ * SDK can hand back, because the difference between them is the difference
+ * between a first attempt that stops and one that never will.
  *
- * The wire vocabulary (`settled`, `replayed`, `reason`, `mode`, `NOT_RANKED`,
- * `you`, `previousRp`, `delta`) and the transport codes' NAMES are repeated
- * here as literals because `:services` cannot see `:functions`, and
- * `FirebaseFunctionsException.Code` cannot be initialized on a plain JVM at
- * all — the same unavoidable duplication [DecisionWindow] documents. And
- * this file is the wire contract's ONLY guard today: no settlement emulator
- * or device suite exists, and the server half that ships the vocabulary is
- * itself unshipped, so a drifted copy is caught here or nowhere.
+ * The wire vocabulary (`settled`, `replayed`, `reason`, `mode`, `NOT_RANKED`
+ * (legacy pre-S6), `you`, `previousRp`, `delta`) and the transport codes'
+ * NAMES are repeated here as literals because `:services` cannot see
+ * `:functions`, and `FirebaseFunctionsException.Code` cannot be initialized
+ * on a plain JVM at all — the same unavoidable duplication [DecisionWindow]
+ * documents. And this file is the wire contract's ONLY guard today: no
+ * settlement emulator or device suite exists, and the server half that ships
+ * the vocabulary is itself unshipped, so a drifted copy is caught here or
+ * nowhere.
  *
  * Deliberately NOT here: the view model's once-per-session trigger and its
  * retry bound (the screen's own budget), the settlement's recompute (the
@@ -104,7 +105,11 @@ class SettlementResponseTest {
     if (delta != null) put("delta", delta)
   }
 
-  /** The mode gate's no-op: ROOM/UNRANKED never settle (RD28). */
+  /**
+   * A legacy pre-S6 mode-gate no-op (RD28): the current server settles
+   * ROOM/UNRANKED stats-only, but a stored response or an older deployed
+   * function can still answer this shape, and the client must read it.
+   */
   private fun notRankedResponse(mode: Any? = "ROOM"): Map<String, Any?> = mapOf(
     "ok" to true,
     "settled" to false,
@@ -235,16 +240,16 @@ class SettlementResponseTest {
     assertEquals(outcomeOf(settledResponse()), lean)
   }
 
-  // ── the mode gate's no-op ────────────────────────────────────────────
+  // ── the legacy mode-gate no-op ───────────────────────────────────────
 
   @Test
-  fun notRankedIsTheTerminalNoOpWithTheServersMode() {
+  fun legacyNotRankedIsTheTerminalNoOpWithTheServersMode() {
     val room = outcomeOf(notRankedResponse(mode = "ROOM"))
     val unranked = outcomeOf(notRankedResponse(mode = "UNRANKED"))
 
-    // Nothing settled because nothing ever will: the mode cannot be retried
-    // and the reveal has nothing to show. The mode's own name is kept for
-    // the log — beyond that the outcome carries nothing.
+    // The legacy gate never settled these modes, so the no-op is terminal:
+    // it cannot be retried and the reveal has nothing to show. The mode's
+    // own name is kept for the log — beyond that the outcome carries nothing.
     assertEquals(SettlementPort.SettlementOutcome.NotRanked("ROOM"), room)
     assertEquals(SettlementPort.SettlementOutcome.NotRanked("UNRANKED"), unranked)
   }
@@ -267,7 +272,7 @@ class SettlementResponseTest {
     )
     val noReason = outcomeOf(mapOf("ok" to true, "settled" to false))
 
-    // `NOT_RANKED` is the one no-op the mode gate names. A settled:false the
+    // `NOT_RANKED` is the one legacy no-op the mode gate named. A settled:false the
     // server did not explain is not read as one — a client that guessed
     // would quietly skip a settlement that failed for a reason its own
     // build could have handled.

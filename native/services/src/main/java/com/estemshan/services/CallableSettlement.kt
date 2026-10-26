@@ -61,7 +61,8 @@ class CallableSettlement(
  * and its reader cannot drift apart.
  *
  * The wire vocabulary this layer reads (`settled`, `replayed`, `reason`,
- * `mode`, `NOT_RANKED`, `you`, `previousRp`, `delta`) is mirrored here as
+ * `mode`, `NOT_RANKED` (legacy pre-S6), `you`, `previousRp`, `delta`) is
+ * mirrored here as
  * literals: `:services` cannot see `:functions`. The copy is pinned by the
  * JVM mapping test only — no settlement emulator or device suite exists yet,
  * and the server half that ships the vocabulary is itself unshipped — so
@@ -96,12 +97,14 @@ object SettlementResponse {
 
   /**
    * The response's two readable facts — whether the match settled, and the
-   * caller's own movement — and its one terminal no-op reason. `settled:
-   * false` with `NOT_RANKED` is the mode gate's own answer (ROOM/UNRANKED
-   * never settle, RD28): terminal, with the mode kept for the log. A
-   * response that says neither direction is not read as either: it is a
-   * denial, because a client that guessed "settled" from a shape it did not
-   * understand would reveal a movement the server never awarded.
+   * caller's own movement — and one legacy terminal no-op reason. Current
+   * servers settle ROOM/UNRANKED stats-only and answer `settled: true` with
+   * no `you`; `settled: false` with `NOT_RANKED` is the pre-S6 gate's answer,
+   * kept for compatibility with an older deployed function or a stored
+   * response. It is terminal, with the mode kept for the log. A response that
+   * says neither direction is not read as either: it is a denial, because a
+   * client that guessed "settled" from a shape it did not understand would
+   * reveal a movement the server never awarded.
    */
   fun forData(data: Any?): SettlementPort.SettlementOutcome {
     val fields = data as? Map<*, *> ?: return SettlementPort.SettlementOutcome.Retryable
@@ -145,7 +148,7 @@ object SettlementResponse {
   private const val PREVIOUS_RP = "previousRp"
   private const val DELTA = "delta"
 
-  /** The mode gate's no-op reason — ROOM/UNRANKED never settle (RD28). */
+  /** Legacy pre-S6 no-op reason; current ROOM/UNRANKED responses settle. */
   private const val REASON_NOT_RANKED = "NOT_RANKED"
 
   /** A mode this build cannot read is still a no-op, logged as UNKNOWN. */

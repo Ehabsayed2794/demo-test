@@ -40,9 +40,9 @@ import com.estemshan.functions.Settlement.RecomputedMatch
  * error.
  *
  * Decisions recorded here:
- * - NoOp (ROOM/UNRANKED) and gate-denied (NOT_MEMBER) attempts do not
- *   write ledger documents: they are not settlement outcomes, and writes
- *   must not be amplifiable by an authenticated prober. Each gets one
+ * - Stats-only ROOM/UNRANKED settlements and gate-denied (NOT_MEMBER)
+ *   attempts do not write ledger documents: stats-only moves no RP, and
+ *   writes must not be amplifiable by an authenticated prober. Each gets one
  *   cheap ASCII console line instead (retry forensics, zero Firestore
  *   cost). Consequence for R30, stated plainly: the ledger's rows are all
  *   RANKED, so it answers R29 (settlement volume) and R25 (corrections)
@@ -206,7 +206,18 @@ object SettlementLedger {
     return line.toString()
   }
 
-  /** NoOp hook line (not ledger-recorded - see the file KDoc). */
+  /**
+   * Stats-only hook line (not ledger-recorded — see the file KDoc). The
+   * current ROOM/UNRANKED path moves counters, never RP, so it has no RP
+   * settlement to audit.
+   */
+  fun statsOnlyLine(matchId: String, mode: String): String =
+    "S6_SETTLE outcome=STATS_ONLY matchId=$matchId mode=$mode"
+
+  /**
+   * Legacy NoOp hook line, retained for the pre-S6 outcome vocabulary and
+   * its test. Current ROOM/UNRANKED settlements use [statsOnlyLine].
+   */
   fun noOpLine(matchId: String, mode: String): String =
     "S62_SETTLE outcome=NOOP matchId=$matchId mode=$mode"
 

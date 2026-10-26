@@ -60,9 +60,12 @@ interface SettlementPort {
     data class Settled(val replayed: Boolean, val you: RpMovement?) : SettlementOutcome
 
     /**
-     * The match is not RANKED — ROOM/UNRANKED never settle (RD28). Terminal:
-     * no retry can change the mode, and there is nothing to reveal. [mode]
-     * is the server's own name for the match's mode, kept for the log.
+     * A legacy pre-S6 answer: the mode gate refused ROOM/UNRANKED under RD28,
+     * which current servers no longer do — they settle those modes stats-only
+     * and answer `settled: true` with no `you`. Terminal for the response it
+     * reads: no retry can change the recorded answer, and there is nothing to
+     * reveal. [mode] is the server's own name for the match's mode, kept for
+     * the log.
      */
     data class NotRanked(val mode: String) : SettlementOutcome
 
