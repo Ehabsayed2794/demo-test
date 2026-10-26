@@ -10,6 +10,7 @@ import com.estemshan.engine.Card
 import com.estemshan.engine.DEFAULT_SEATS
 import com.estemshan.engine.GameType
 import com.estemshan.engine.MatchMode
+import com.estemshan.engine.MAX_TRICKS
 import com.estemshan.engine.Play
 import com.estemshan.engine.RANKS
 import com.estemshan.engine.RoundScoreInput
@@ -80,90 +81,127 @@ private const val FAST_SUPER_CALL_MIN = 8
 private const val TAKEOVER_REMOVED_UIDS_FIELD = "takeoverRemovedUids"
 
 /**
- * Replays a fast-round Super Call CONFIRM that was logged after the estimates
- * which triggered it.
- *
- * The archive keeps only the FINAL estimates: seats wiped by the Super Call
- * re-declared, so their pre-confirm numbers are gone. The logged CONFIRM is
- * the authoritative record of the final number and trump, so this rebuilds the
- * state the confirm requires from the archived final estimates of the caller
- * and every seat after them. Seats before the caller are left out — they were
- * wiped and will re-declare from the same final values through the normal
- * estimate loop. The engine then performs the wipe, With recomputation and
- * completion exactly as live play did.
- *
- * This deliberately does not re-derive the Super Call from the pre-confirm
- * estimates (they are not in the archive). [state] must be a fast round still
- * in ESTIMATES and must not already have a resolved Super Call.
- *
- * CONFIRM appends to biddingLog and never rewrites bids/, so the caller's
- * archived value is still its pre-confirm declaration. The logged CONFIRM is
- * trusted for the final number/trump, but not unconditionally: the caller's
- * value must be a real 8+ declaration and cannot exceed the confirmed number,
- * and no seat after the caller may exceed the caller's value either. The caller
- * won the pre-confirm auction, so every later declaration was at most theirs;
- * a higher value means the log names a seat that was not the winner (or a
- * forged CONFIRM) and is refused.
+ * One fast Super Call CONFIRM from the log: the Super Caller, the number
+ * they confirmed and the trump they took.
  */
-internal fun replayFastSuperConfirm(
+internal data class FastSuperConfirm(val seat: String, val tricks: Int, val suit: Suit)
+
+/**
+ * The replayed state of a fast Super Call chain.
+ *
+ * [state] is the state after the LAST confirmation — the re-declaration
+ * phase, where every seat except the last Super Caller declares again.
+ * [outcome] is non-null only when the chain closed the round on its own;
+ * the engine's fast confirmation never does, it always re-opens the
+ * re-declaration.
+ */
+internal data class FastSuperChain(
+  val state: BiddingState,
+  val outcome: BiddingOutcome?,
+  val confirmTricks: Int,
+)
+
+/**
+ * Replays a chain of fast-round Super Call confirmations (T-09).
+ *
+ * A fast Super Call is NOT the end of the fast round: the confirmation
+ * cancels the forced trump, the Super Caller takes a new one, and EVERY
+ * seat except that caller declares again counter-clockwise under it. A
+ * declaration above the confirmed number opens the NEXT cycle, so a round
+ * can hold several confirmations and only the last one closes the auction.
+ *
+ * The archive keeps ONE value per seat, so an earlier cycle's declarations
+ * are gone: only the last cycle's caller still holds its own declaration
+ * (it never declares again after its own confirmation). The replay proves
+ * what the archive can prove and trusts the logged confirmation for the
+ * rest:
+ *
+ * - every confirmation is a real Super Call: 8..13 tricks. The absolute
+ *   13-trick maximum holds in fast rounds too — the fast exemption drops
+ *   only the Caller-relative Call Cap;
+ * - the numbers strictly increase: a new cycle is opened only by a
+ *   declaration ABOVE the previous cycle's confirmed number;
+ * - the last caller's slot holds EXACTLY the confirmed number. That is the
+ *   T-09 atomic reset's own shape: the write replaces `bids` with
+ *   `{caller: tricks}` and the caller never declares again, so its slot is
+ *   the confirmed number even when the caller raised it at confirmation.
+ *
+ * §5 (never reinterpret a historical record): a last-caller slot below the
+ * confirmed number cannot come from a T-09 document — it is the pre-T-09
+ * archive shape, whose auction ENDED at the confirmation and whose surviving
+ * numbers are the declarations the confirmation already cancelled. Such an
+ * archive is refused rather than replayed as re-declarations, which would
+ * invent a With set the table never had.
+ *
+ * Documented limitation: a pre-T-09 archive whose last-caller slot happens
+ * to EQUAL its confirmed number (no raise at confirmation — the common case)
+ * is byte-identical to a T-09 archive, because no field records which engine
+ * produced it. It settles under the T-09 rules; only the archive format
+ * could ever disambiguate it, and rewriting historical archives is out of
+ * scope by rule.
+ *
+ * Anything else fails closed. Each cycle is replayed through the REAL
+ * engine, so the full wipe, the With recomputation and the re-declaration
+ * order are the engine's own.
+ */
+internal fun replayFastSuperCallChain(
   state: BiddingState,
-  seat: String,
-  tricks: Int,
-  suit: Suit,
-  estimates: Map<String, Int>,
-): EmitResult {
-  if (!state.fastRound || state.subPhase != BiddingPhase.ESTIMATES ||
-    state.fastSuperResolved || state.callerId != null
-  ) {
-    return EmitResult.Rejected("No pending fast Super Call")
-  }
-  if (tricks < FAST_SUPER_CALL_MIN) {
-    return EmitResult.Rejected("Super Call needs $FAST_SUPER_CALL_MIN+ tricks")
-  }
+  confirms: List<FastSuperConfirm>,
+  stored: Map<String, Int>,
+): FastSuperChain? {
+  if (!state.fastRound || confirms.isEmpty()) return null
   val order = biddingOrder(state)
-  val callerIndex = order.indexOf(seat)
-  if (callerIndex < 0) return EmitResult.Rejected("Seat is not in bidding order")
+  var current = state
+  var previousTricks: Int? = null
+  var outcome: BiddingOutcome? = null
+  var confirmTricks = 0
 
-  val callerEstimate = estimates[seat]
-    ?: return EmitResult.Rejected("Missing caller estimate")
-  if (callerEstimate < FAST_SUPER_CALL_MIN || callerEstimate > tricks) {
-    return EmitResult.Rejected("Logged CONFIRM does not match the caller's Super Call")
-  }
+  for ((index, confirm) in confirms.withIndex()) {
+    val isLast = index == confirms.lastIndex
+    val seat = confirm.seat
+    if (seat !in order) return null
+    val tricks = confirm.tricks
+    if (tricks < FAST_SUPER_CALL_MIN || tricks > MAX_TRICKS) return null
+    if (previousTricks != null && tricks <= previousTricks) return null
 
-  val fixedTrump = state.declaredTrump ?: fixedTrumpFor(state.round, state.gameType)
-  val bids = LinkedHashMap<String, Bid>()
-  for (index in callerIndex until order.size) {
-    val declaredSeat = order[index]
-    val value = estimates[declaredSeat]
-      ?: return EmitResult.Rejected("Missing final estimate for $declaredSeat")
-    if (value > callerEstimate) {
-      return EmitResult.Rejected(
-        "Later declaration $value exceeds the Super Caller's $callerEstimate",
-      )
+    // The last cycle's caller slot is the confirmed number itself (see the
+    // §5 note above): anything else — lower is the pre-T-09 archive shape,
+    // higher contradicts the confirmation — is not a T-09 record. An earlier
+    // cycle's declaration is gone (the archive keeps one value per seat), so
+    // only the confirmed numbers can be checked there.
+    val declaration = if (isLast) stored[seat] else null
+    if (isLast && declaration != tricks) return null
+
+    // The confirmation phase opens for this caller. The trump in force is
+    // the one the previous cycle confirmed (the round's fixed trump in the
+    // first cycle) and the number the caller must confirm is its own
+    // declaration — known for the last cycle only.
+    val inForce = current.declaredTrump ?: fixedTrumpFor(state.round, state.gameType)
+    val preConfirm = current.copy(
+      subPhase = BiddingPhase.CONFIRM,
+      waitingFor = seat,
+      noSuitConstraint = true,
+      fastSuperResolved = false,
+      callerId = null,
+      withPlayers = emptyList(),
+      auctionTop = declaration ?: previousTricks ?: (FAST_SUPER_CALL_MIN - 1),
+      bids = mapOf(seat to Bid(BidType.TRICKS, declaration ?: tricks, inForce)),
+      lastBidderId = null,
+    )
+    when (val emitted = emit(preConfirm, BiddingIntent.ConfirmCall(seat, tricks, confirm.suit))) {
+      is EmitResult.Applied -> current = emitted.state
+      is EmitResult.Completed -> {
+        current = emitted.state
+        outcome = emitted.outcome
+      }
+      is EmitResult.GeneralPass -> return null
+      is EmitResult.Rejected -> return null
     }
-    bids[declaredSeat] = if (value == 0) {
-      Bid(BidType.DASH, 0, fixedTrump)
-    } else {
-      Bid(BidType.TRICKS, value, fixedTrump)
-    }
+    previousTricks = tricks
+    confirmTricks = tricks
+    if (outcome != null) break
   }
-
-  val preConfirm = state.copy(
-    bids = bids,
-    callerId = seat,
-    auctionTop = tricks,
-    auctionSuit = fixedTrump,
-    declaredTrump = fixedTrump,
-    withPlayers = emptyList(),
-    noSuitConstraint = true,
-    fastSuperResolved = false,
-    subPhase = BiddingPhase.CONFIRM,
-    waitingFor = seat,
-    // The last estimate before the Super Call is the last seat in bidding
-    // order. With pre-Super seats this is overwritten by their re-declaration.
-    lastBidderId = order.last(),
-  )
-  return emit(preConfirm, BiddingIntent.ConfirmCall(seat, tricks, suit))
+  return FastSuperChain(current, outcome, confirmTricks)
 }
 
 object Settlement {
@@ -693,36 +731,43 @@ object Settlement {
     while (index < archived.actions.size) {
       val entry = archived.actions[index]
       if (entry.seat !in order) return null
-      if (fast && entry.kind == ActionKind.CONFIRM &&
-        state.subPhase == BiddingPhase.ESTIMATES
-      ) {
+      if (fast && entry.kind == ActionKind.CONFIRM) {
         // A fast Super Call is confirmed AFTER the estimates that triggered
-        // it, but only the final estimates survive in the archive. Rebuild
-        // the confirm's pre-state from the caller onward; seats before the
-        // caller are wiped and re-declared by the estimate loop below.
-        val tricks = entry.tricks ?: return null
-        val suit = entry.suit ?: return null
+        // it, but only the FINAL estimates survive in the archive. Every
+        // higher Super Call logs its own confirmation, so the rest of the
+        // log is the chain of cycles: each one wipes every seat except the
+        // new Super Caller, who then takes a new trump and every other
+        // seat declares again.
+        if (state.subPhase != BiddingPhase.ESTIMATES) return null
         val estimates = archived.estimates ?: return null
-        val biddingSeats = biddingOrder(state)
-        val callerIndex = biddingSeats.indexOf(entry.seat)
-        if (callerIndex < 0) return null
-        confirmTricks = tricks
-        when (val emitted = replayFastSuperConfirm(state, entry.seat, tricks, suit, estimates)) {
-          is EmitResult.Completed -> {
-            outcome = emitted.outcome
-            fed.addAll(biddingSeats.subList(callerIndex, biddingSeats.size))
-            index++
-            break
-          }
-          is EmitResult.Applied -> {
-            state = emitted.state
-            fed.addAll(biddingSeats.subList(callerIndex, biddingSeats.size))
-            index++
-            continue
-          }
-          is EmitResult.GeneralPass -> return null
-          is EmitResult.Rejected -> return null
+        val chain = archived.actions.subList(index, archived.actions.size)
+        if (chain.any { it.kind != ActionKind.CONFIRM }) return null
+        val confirms = chain.map {
+          FastSuperConfirm(
+            it.seat,
+            it.tricks ?: return null,
+            it.suit ?: return null,
+          )
         }
+        // The final Super Call was opened by a declaration ABOVE the
+        // previous cycle's confirmed number. The archive keeps one value
+        // per seat and the last caller never declares again after its own
+        // confirmation, so its archived value IS that declaration.
+        if (confirms.size > 1) {
+          val declaration = estimates[confirms.last().seat] ?: return null
+          if (declaration <= confirms[confirms.size - 2].tricks) return null
+        }
+        val replayed = replayFastSuperCallChain(state, confirms, estimates) ?: return null
+        confirmTricks = replayed.confirmTricks
+        outcome = replayed.outcome
+        state = replayed.state
+        // Only the LAST Super Caller's own declaration is materialised by
+        // the chain: every other seat declared again under the final trump
+        // and is fed by the estimate loop below. Marking a seat as fed
+        // because of its position relative to the caller would leave the
+        // round without a declaration it never made.
+        fed.add(confirms.last().seat)
+        break
       }
       val intent = when (entry.kind) {
         ActionKind.DASH -> BiddingIntent.DashCallDecision(

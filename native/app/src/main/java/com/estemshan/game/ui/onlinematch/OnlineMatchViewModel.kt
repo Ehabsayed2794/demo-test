@@ -367,18 +367,24 @@ class OnlineMatchViewModel(
     val id = matchId ?: return
     val seat = boundSeat ?: return
     val version = lastDoc?.version
+    // T-09: the declaration cycle this intent was decided in. A fast Super
+    // Call CONFIRM atomically starts the next cycle, so an intent validated
+    // against the old one is refused (STALE_CYCLE) instead of landing in a
+    // cycle it was never meant for. null on the doc-less legacy path.
+    val cycle = lastDoc?.biddingCycle
     viewModelScope.launch(worker) {
       submitMutex.withLock {
         val failure = runCatching {
           when (intent) {
             is BiddingIntent.FinalEstimate ->
-              store.submitBid(id, seat, intent.tricks)
+              store.submitBid(id, seat, intent.tricks, expectedCycle = cycle)
             is BiddingIntent.DashCallDecision ->
               store.submitBiddingAction(
                 id,
                 BiddingActionInput(
                   actionType = BiddingLogEntry.ACTION_DASH_CALL,
                   declaredDashCall = intent.declaredDashCall,
+                  expectedCycle = cycle,
                 ),
               )
             is BiddingIntent.AuctionBid ->
@@ -389,6 +395,7 @@ class OnlineMatchViewModel(
                   isPass = intent.isPass,
                   tricks = intent.tricks,
                   suit = intent.suit?.name,
+                  expectedCycle = cycle,
                 ),
               )
             is BiddingIntent.ConfirmCall ->
@@ -398,6 +405,7 @@ class OnlineMatchViewModel(
                   actionType = BiddingLogEntry.ACTION_CONFIRM_CALL,
                   tricks = intent.tricks,
                   suit = intent.suit.name,
+                  expectedCycle = cycle,
                 ),
               )
           }
@@ -725,6 +733,28 @@ class OnlineMatchViewModel(
    */
   private fun replayBidding(snapshot: MatchSnapshot, doc: MatchDoc) {
     val id = matchId ?: return
+    // T-09: a fast round that has already committed a Super Call keeps its
+    // ACTIVE cycle in bids/ — the log cannot replay the fast declarations and
+    // the confirm cannot be emitted into a fresh engine. Rebuild that cycle
+    // through the engine BEFORE the incremental interpreters, so no stale
+    // pre-confirm value can be applied at the round's opening turn. A
+    // document this cannot be proven from is refused by name instead of
+    // played on a guess (the legacy mid-Super-Call shape).
+    val restored = adapter.restoreFastBiddingCycle(id, doc)
+    if (restored.desync) {
+      val reason = when (restored.reason) {
+        "FAST_CYCLE_UNPERSISTED" ->
+          "FAST_CYCLE_UNPERSISTED: this fast round's Super Call predates persisted " +
+            "re-declarations, so its bidding cannot be resumed on this client."
+        "CYCLE_LOG_MISMATCH", "CYCLE_BIDS_MISMATCH", "CYCLE_CHAIN_INVALID" ->
+          "FAST_CYCLE_LOG_MISMATCH: the document's fast-round declaration history is " +
+            "inconsistent, so this round cannot be replayed safely."
+        else -> "FAST_CYCLE_RESTORE_FAILED: the fast-round declaration cycle could not be " +
+          "restored (${restored.reason})."
+      }
+      setRejection(reason, doc.version)
+      return
+    }
     adapter.applyRemoteBid(id, doc)
     val reDrive = adapter.applyRemoteBiddingAction(id, doc)
     seedStoredEstimates(doc)
@@ -732,7 +762,8 @@ class OnlineMatchViewModel(
     // then reports a duplicate with no outcome attached. A seed that
     // already closed it contributes no outcome here either, so the funnel
     // is still hit exactly once per round.
-    val outcome = snapshot.biddingActionSync?.outcome
+    val outcome = restored.outcome
+      ?: snapshot.biddingActionSync?.outcome
       ?: reDrive.outcome
       ?: snapshot.bidSync?.outcome
     if (outcome != null) {

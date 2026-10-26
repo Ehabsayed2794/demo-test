@@ -91,6 +91,15 @@ data class BiddingActionInput(
   val isPass: Boolean? = null,
   val tricks: Int? = null,
   val suit: String? = null,
+  /**
+   * The fast-round declaration cycle the caller validated this action
+   * against ([MatchDoc.biddingCycle]). A fast Super Call CONFIRM atomically
+   * starts the next cycle, so a delayed CONFIRM from the previous one must
+   * never be applied twice. Null is legal only while the round is still in
+   * cycle 0; once a Super Call has committed, a cycle-less write is refused
+   * as STALE_CYCLE. Never persisted into the log entry.
+   */
+  val expectedCycle: Int? = null,
 ) {
 
   /** Stamps the authoritative round and drops nothing the type omits. */
@@ -342,6 +351,19 @@ data class MatchDoc(
    * same reading firestore.rules' isValidStoredMultiplier applies.
    */
   val currentMultiplier: Int = 1,
+  /**
+   * T-09 (Fast Super Call live persistence): which declaration cycle the
+   * transient [bids] map currently holds. 0 is the round's opening cycle;
+   * every completed fast-round Super Call CONFIRM writes the next cycle
+   * atomically with that CONFIRM's log entry, wiping [bids] down to the
+   * Super Caller's own confirmed number. So `bids` NEVER carries a previous
+   * cycle's declarations and a re-declaration is an ordinary one-value-per
+   * -seat write again. Absent in a doc written before this field ⇒ 0 (no
+   * migration); a doc that holds a CONFIRM for the current round but reads
+   * 0 is the pre-change, non-resumable shape and is refused by name (see
+   * MatchAdapter.FAST_CYCLE_UNPERSISTED), never silently reinterpreted.
+   */
+  val biddingCycle: Int = 0,
 ) {
 
   /** The match is over, terminal: status never moves complete → anything. */
@@ -514,6 +536,7 @@ data class MatchDoc(
           ?.mapNotNull { it as? String } ?: emptyList(),
         failedVoteKickCooldown = VoteKickCooldownData.fromFields(fields["failedVoteKickCooldown"]),
         currentMultiplier = (fields["currentMultiplier"] as? Long)?.toInt() ?: 1,
+        biddingCycle = (fields["biddingCycle"] as? Long)?.toInt() ?: 0,
       )
     }
   }
@@ -529,6 +552,10 @@ const val RAPID_ROUND_MIN = 14
 const val RAPID_ROUND_MAX = 18
 
 const val MAX_BID_VALUE = 13
+
+/** A6.10: the lowest declaration that opens a fast-round Super Call. */
+const val FAST_SUPER_CALL_MIN_TRICKS = 8
+
 const val MIN_RANK_VALUE = 2
 const val MAX_RANK_VALUE = 14
 
