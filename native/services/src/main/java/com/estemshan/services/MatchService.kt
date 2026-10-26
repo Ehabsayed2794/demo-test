@@ -136,8 +136,10 @@ class MatchService(
   /**
    * startMatch(roomId) — creates matches/{id} and flips rooms/{roomId} to
    * in_game in ONE transaction. Idempotent: a room that already has a
-   * matchId returns it without a second write. Requires all players ready;
-   * firestore.rules' isValidMatchIdChange() re-verifies that independently.
+   * matchId returns it without a second write. Requires a FULL table of
+   * ready players ([RoomDoc.canStart]); firestore.rules'
+   * isValidMatchIdChange() re-verifies the ready-players half of that
+   * independently.
    */
   override suspend fun startMatch(roomId: String): String {
     require(roomId.isNotEmpty()) { "startMatch: roomId is required." }
@@ -155,9 +157,9 @@ class MatchService(
           StartMatchResult(matchId = existing, created = false, players = room.players),
         )
       }
-      if (!room.allReady) {
+      if (!room.canStart) {
         return@runTx TxOutcome.Err(
-          ServiceException(INVALID_ARGUMENT, "Not all players are ready."),
+          ServiceException(INVALID_ARGUMENT, "A table needs four ready players to start."),
         )
       }
       tx.set(newMatchRef, buildInitialMatchFields(
