@@ -59,12 +59,13 @@ import java.net.Socket
 class RoomStartGateEmulatorTest {
 
   @Before
-  fun requireEmulatorsOrSkip() = runBlocking(Dispatchers.IO) {
+  fun requireEmulatorsOrSkip(): Unit = runBlocking(Dispatchers.IO) {
     assumeTrue(
       "Firestore/Auth emulators not reachable at ${EmulatorSuite.HOST}:${EmulatorSuite.FIRESTORE_PORT} — skipping",
       emulatorReachable(),
     )
     EmulatorSuite.reset()
+    Unit
   }
 
   @After
