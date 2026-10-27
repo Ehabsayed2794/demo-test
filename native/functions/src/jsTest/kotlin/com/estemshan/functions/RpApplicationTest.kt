@@ -1235,9 +1235,19 @@ class RpApplicationTest {
   }
 
   /**
-   * ROOM and UNRANKED still no-op BEFORE the transaction — zero profile reads,
-   * zero writes, and (as before progression) zero transactions. A room match
-   * must never move anyone's rank, and it must not even look.
+   * Name retained from S6 acceptance criterion 15 (the pre-S6 rule); "never
+   * touch a profile" now means the RP/rank/season fields — the five career
+   * counters do move.
+   *
+   * S6 (A7.5/A8.4, Q38/Q46 — superseding RD28): a ROOM/UNRANKED completion
+   * now SETTLES stats-only. The pre-S6 test of this name asserted the
+   * no-op — zero transactions, zero profile touches — the stale rule this
+   * task replaces. What RD28's repeal keeps is the RP half: the write owns
+   * EXACTLY the five counter fields, so `rp`, `tier`, `division`,
+   * `demotionShield`, `highestRankTier`, `highestRankDivision`, `seasonId`
+   * and `placementState` are untouched by construction (the exact field-set
+   * assertion, not just the values), while Games Played and one outcome
+   * counter move for every human seat. No `you` rides the response.
    */
   @Test
   fun roomAndUnrankedNeverTouchAProfile() = runTest {
@@ -1250,14 +1260,29 @@ class RpApplicationTest {
 
       val response = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
 
-      assertEquals(true, response["ok"])
-      assertEquals(false, response["settled"])
-      assertEquals("NOT_RANKED", response["reason"])
-      assertEquals(mode, response["mode"])
-      assertNull(response["you"], "a no-op reports no progression")
-      assertEquals(0, db.txRuns, "$mode must not open a transaction")
-      assertEquals(0, db.profileReads, "$mode must not read a profile")
-      assertEquals(0, db.profileWrites.size, "$mode must not write a profile")
+      assertEquals(true, response["settled"], "$mode settles stats-only")
+      assertNull(response["you"], "$mode reports no RP movement")
+      assertEquals(1, db.txRuns, "$mode opens exactly one transaction")
+      assertEquals(4, db.profileReads, "$mode reads every human seat's profile")
+      assertEquals(4, db.profileWrites.size, "$mode writes every human seat's profile")
+      db.profileWrites.forEach { (uid, fields) ->
+        assertEquals(
+          setOf(
+            "rankedGamesPlayed", "rankedKingCount", "rankedSecondCount",
+            "rankedThirdCount", "rankedKozCount",
+          ),
+          fields.keys,
+          "$mode write for '$uid' owns exactly the five counter fields — " +
+            "rp/tier/division/demotionShield/highestRank*/seasonId/placementState untouched",
+        )
+        assertEquals(1, fields["rankedGamesPlayed"], "$mode counts the match for '$uid'")
+      }
+      assertEquals(0, db.appends.size, "$mode appends no RP ledger row")
+      // The golden placements: p1 King, p2 Koz, p3 Third, p4 Second.
+      assertEquals(1, db.writeFor("u1")["rankedKingCount"])
+      assertEquals(1, db.writeFor("u2")["rankedKozCount"])
+      assertEquals(1, db.writeFor("u3")["rankedThirdCount"])
+      assertEquals(1, db.writeFor("u4")["rankedSecondCount"])
     }
   }
 

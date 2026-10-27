@@ -72,6 +72,14 @@ import com.estemshan.engine.trickWinner
 private const val FAST_SUPER_CALL_MIN = 8
 
 /**
+ * S7's 7th-inactivity-takeover removal list, read as a RAW field name: the
+ * `:services` match model does not carry it yet (another task owns that
+ * file), so settlement parses it straight off the document. Absent on every
+ * document until S7 lands — parsed as empty, never fatal.
+ */
+private const val TAKEOVER_REMOVED_UIDS_FIELD = "takeoverRemovedUids"
+
+/**
  * Replays a fast-round Super Call CONFIRM that was logged after the estimates
  * which triggered it.
  *
@@ -212,6 +220,21 @@ object Settlement {
    * completion); null means the document predates the field, and the
    * replayed chain is then the only authority — the compatible legacy
    * fallback, never a silent reset.
+   *
+   * Departure provenance (S6, A7.5) — parsed from the same converged fields
+   * the gate already reads, so provenance adds no read and opens no race:
+   * [leftUids] (S72 explicit Leave Match), [timeoutRemovedUids] (S61's
+   * 15-timeout counter), [removedUids] (S60 Vote Kick) and
+   * [takeoverRemovedUids] (the 7th-inactivity takeover, written by S7 and
+   * read as a raw field name until the services model carries it). All four
+   * are absent ⇒ empty; each is parsed defensively (a non-list reads as
+   * empty, a non-string element is skipped — the DisconnectVoteFlow
+   * `stringSet` convention). [departedUids] is the union the stats-only
+   * settlement's forced-KOZ override consumes.
+   * `disconnectReplacedUids` is deliberately NOT parsed here: a permanently
+   * replaced disconnect keeps its own charge table (A7.4: ROOM none, UNRANKED
+   * 2 Koz) whose consumer does not exist yet, so it neither forces KOZ nor
+   * adds a charge in S6.
    */
   data class ConvergedMatch(
     val matchId: String,
@@ -228,7 +251,24 @@ object Settlement {
     val claimedWinners: List<String>?,
     val archives: List<ArchivedRound>,
     val currentMultiplier: Int? = null,
-  )
+    val leftUids: List<String> = emptyList(),
+    val timeoutRemovedUids: List<String> = emptyList(),
+    val removedUids: List<String> = emptyList(),
+    val takeoverRemovedUids: List<String> = emptyList(),
+  ) {
+    /**
+     * Every uid the converged document records as departed through any of
+     * the four terminal mechanisms — the set the A7.5 override folds to KOZ
+     * whatever the seat's bot finished as. `disconnectReplacedUids` is
+     * excluded by design (see the class KDoc). The forced KOZ is the ONLY
+     * Koz the stats-only settlement records; the separate departure-charge
+     * accumulator is deliberately not called on that path, so a later
+     * consumer must not add a second Koz for the same event.
+     */
+    val departedUids: Set<String>
+      get() = (leftUids.asSequence() + timeoutRemovedUids.asSequence() +
+        removedUids.asSequence() + takeoverRemovedUids.asSequence()).toSet()
+  }
 
   // ── outcomes ──────────────────────────────────────────────────────
 
@@ -243,8 +283,14 @@ object Settlement {
   )
 
   sealed class SettleDecision {
-    /** Not a Ranked match — no-op by design (ROOM/UNRANKED never settle). */
-    data class NoOp(val mode: MatchMode) : SettleDecision()
+    /**
+     * ROOM/UNRANKED (S6, A7.5/A8.4, Q38/Q46 — superseding RD28's "never
+     * settle"): the match settles STATS-ONLY — the five stored career
+     * counters per attributed human seat, never RP, never a season, never a
+     * correction. The seam routes this to the stats-only transaction in
+     * SettlementDb (no recompute, no archive read).
+     */
+    data class StatsOnly(val mode: MatchMode) : SettleDecision()
 
     /** Ranked + member — proceed to the archive stage. */
     data object Proceed : SettleDecision()
@@ -289,6 +335,16 @@ object Settlement {
   fun parseMatchMode(value: Any?): MatchMode =
     (value as? String)?.let { runCatching { MatchMode.valueOf(it) }.getOrNull() }
       ?: MatchMode.ROOM
+
+  /**
+   * A departure-provenance uid list: absent or a non-list reads as empty,
+   * and a non-string element is skipped (the `stringSet` convention
+   * DisconnectVoteFlow already uses for `removedUids`/`timeoutRemovedUids`).
+   * Provenance is advisory input to the stats-only override, never a gate —
+   * a malformed list must not make a converged match unsettleable.
+   */
+  fun parseUidList(value: Any?): List<String> =
+    (value as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
 
   fun parseCard(fields: Any?): SettledPlay? {
     val map = strMap(fields) ?: return null
@@ -397,6 +453,10 @@ object Settlement {
       claimedWinners = claimedWinners,
       archives = emptyList(),
       currentMultiplier = currentMultiplier,
+      leftUids = parseUidList(fields["leftUids"]),
+      timeoutRemovedUids = parseUidList(fields["timeoutRemovedUids"]),
+      removedUids = parseUidList(fields["removedUids"]),
+      takeoverRemovedUids = parseUidList(fields[TAKEOVER_REMOVED_UIDS_FIELD]),
     )
   }
 
@@ -448,9 +508,12 @@ object Settlement {
   // ── gate ──────────────────────────────────────────────────────────
 
   /**
-   * Membership + mode gate over the converged document. ROOM/UNRANKED
-   * (including absent-or-legacy mode, which parses as ROOM per S43) are
-   * an explicit no-op — settlement never runs outside RANKED (RD28).
+   * Membership + mode gate over the converged document. ROOM and UNRANKED
+   * (including an absent-or-legacy mode, which parses as ROOM per S43)
+   * settle STATS-ONLY (S6, A7.5/A8.4 / Q38/Q46, superseding RD28's
+   * "never settle"): the five stored career counters per attributed human
+   * seat — Games Played and one outcome row, with a departed human forced
+   * to KOZ — and never RP. RANKED proceeds to the archive recompute.
    */
   fun decide(uid: String, match: ConvergedMatch): SettleDecision {
     if (uid !in match.players) {
@@ -460,7 +523,7 @@ object Settlement {
       )
     }
     if (match.mode != MatchMode.RANKED) {
-      return SettleDecision.NoOp(match.mode)
+      return SettleDecision.StatsOnly(match.mode)
     }
     return SettleDecision.Proceed
   }
