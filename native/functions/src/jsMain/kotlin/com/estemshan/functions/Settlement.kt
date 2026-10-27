@@ -121,8 +121,24 @@ internal data class FastSuperChain(
  *   only the Caller-relative Call Cap;
  * - the numbers strictly increase: a new cycle is opened only by a
  *   declaration ABOVE the previous cycle's confirmed number;
- * - the last caller's own declaration is a real 8+ Super Call that does
- *   not exceed the confirmed number.
+ * - the last caller's slot holds EXACTLY the confirmed number. That is the
+ *   T-09 atomic reset's own shape: the write replaces `bids` with
+ *   `{caller: tricks}` and the caller never declares again, so its slot is
+ *   the confirmed number even when the caller raised it at confirmation.
+ *
+ * §5 (never reinterpret a historical record): a last-caller slot below the
+ * confirmed number cannot come from a T-09 document — it is the pre-T-09
+ * archive shape, whose auction ENDED at the confirmation and whose surviving
+ * numbers are the declarations the confirmation already cancelled. Such an
+ * archive is refused rather than replayed as re-declarations, which would
+ * invent a With set the table never had.
+ *
+ * Documented limitation: a pre-T-09 archive whose last-caller slot happens
+ * to EQUAL its confirmed number (no raise at confirmation — the common case)
+ * is byte-identical to a T-09 archive, because no field records which engine
+ * produced it. It settles under the T-09 rules; only the archive format
+ * could ever disambiguate it, and rewriting historical archives is out of
+ * scope by rule.
  *
  * Anything else fails closed. Each cycle is replayed through the REAL
  * engine, so the full wipe, the With recomputation and the re-declaration
@@ -148,18 +164,13 @@ internal fun replayFastSuperCallChain(
     if (tricks < FAST_SUPER_CALL_MIN || tricks > MAX_TRICKS) return null
     if (previousTricks != null && tricks <= previousTricks) return null
 
-    // The last cycle's caller keeps its own declaration (it never declares
-    // again after its own confirmation), so its archived value IS that
-    // declaration: it must be a real 8+ Super Call and cannot exceed the
-    // confirmed number. An earlier cycle's declaration is gone — the
-    // archive keeps one value per seat — so only the confirmed numbers
-    // can be checked there.
+    // The last cycle's caller slot is the confirmed number itself (see the
+    // §5 note above): anything else — lower is the pre-T-09 archive shape,
+    // higher contradicts the confirmation — is not a T-09 record. An earlier
+    // cycle's declaration is gone (the archive keeps one value per seat), so
+    // only the confirmed numbers can be checked there.
     val declaration = if (isLast) stored[seat] else null
-    if (isLast && (declaration == null || declaration < FAST_SUPER_CALL_MIN ||
-      declaration > tricks)
-    ) {
-      return null
-    }
+    if (isLast && declaration != tricks) return null
 
     // The confirmation phase opens for this caller. The trump in force is
     // the one the previous cycle confirmed (the round's fixed trump in the

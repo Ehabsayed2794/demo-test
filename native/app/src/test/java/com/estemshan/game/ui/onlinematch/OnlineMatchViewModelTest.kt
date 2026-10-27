@@ -51,6 +51,7 @@ import com.estemshan.services.model.HandDoc
 import com.estemshan.services.model.LeaveResult
 import com.estemshan.services.model.MatchDoc
 import com.estemshan.services.model.Reasons
+import com.estemshan.services.model.ServiceException
 import com.estemshan.services.model.StoredCard
 import com.estemshan.services.model.SubmitBidResult
 import com.estemshan.services.model.SubmitBiddingActionResult
@@ -193,6 +194,118 @@ class OnlineMatchViewModelTest {
     cardPhase = null,
     biddingLog = emptyList(),
     gameState = GameState.NOT_DEALT,
+  )
+
+  // ── T-09 documents, derived from the real engine ───────────────────
+
+  /** One real fast-round emit chain from the dealer, asserting nothing was
+   *  rejected — the fixtures below are legal engine histories, not invented
+   *  documents. */
+  private fun driveFast(vararg intents: BiddingIntent): BiddingState {
+    var state = initFastRound(14, seats.first(), seats)
+    for (intent in intents) {
+      state = when (val result = emit(state, intent)) {
+        is EmitResult.Applied -> result.state
+        is EmitResult.Completed -> result.state
+        is EmitResult.Rejected -> error("fast fixture rejected $intent: ${result.reason}")
+        is EmitResult.GeneralPass -> error("unexpected general pass in a fast fixture")
+      }
+    }
+    return state
+  }
+
+  private fun fastDocFrom(
+    state: BiddingState,
+    version: Int,
+    log: List<BiddingLogEntry>,
+    cycle: Int,
+    lastBidSeat: String?,
+  ): MatchDoc = fastRoundDoc().copy(
+    version = version,
+    bids = state.bids.mapValues { it.value.amount },
+    lastBidSeat = lastBidSeat,
+    biddingCycle = cycle,
+    biddingLog = log,
+    gameState = GameState(initialized = true, dealtRound = 14),
+  )
+
+  /** The opening cycle is complete: all four declared 8/9/10/7, so the
+   *  engine's own next act is the Super Call's CONFIRM on p3 (10). */
+  private fun fastOpeningCycleDoc(): MatchDoc {
+    val state = driveFast(
+      BiddingIntent.FinalEstimate("p1", 8),
+      BiddingIntent.FinalEstimate("p2", 9),
+      BiddingIntent.FinalEstimate("p3", 10),
+      BiddingIntent.FinalEstimate("p4", 7),
+    )
+    assertEquals("the 8+ declarations opened the call", BiddingPhase.CONFIRM, state.subPhase)
+    return fastDocFrom(state, version = 40, log = emptyList(), cycle = 0, lastBidSeat = "p4")
+  }
+
+  /** Live cycle 1: p3 confirmed 10 CLUBS (wiping the opening declarations);
+   *  p4 and p1 re-declared, so the next seat is p2. */
+  private fun fastCycleOneState(): BiddingState = driveFast(
+    BiddingIntent.FinalEstimate("p1", 8),
+    BiddingIntent.FinalEstimate("p2", 9),
+    BiddingIntent.FinalEstimate("p3", 10),
+    BiddingIntent.FinalEstimate("p4", 7),
+    BiddingIntent.ConfirmCall("p3", 10, Suit.CLUBS),
+    BiddingIntent.FinalEstimate("p4", 6),
+    BiddingIntent.FinalEstimate("p1", 4),
+  )
+
+  private fun fastSuperCycleOneDoc(): MatchDoc {
+    val state = fastCycleOneState()
+    return fastDocFrom(
+      state, version = 41, cycle = 1, lastBidSeat = "p1",
+      log = listOf(
+        BiddingLogEntry(
+          seatId = "p3",
+          actionType = BiddingLogEntry.ACTION_CONFIRM_CALL,
+          tricks = 10,
+          suit = Suit.CLUBS.name,
+          round = 14,
+        ),
+      ),
+    )
+  }
+
+  /** Live cycle 2: p2 re-declared 11 over the confirmed 10, re-opened the
+   *  call on itself, confirmed a NEW trump (HEARTS); p3 re-declared. */
+  private fun fastCycleTwoState(): BiddingState {
+    var state = fastCycleOneState()
+    state = when (val r = emit(state, BiddingIntent.FinalEstimate("p2", 11))) {
+      is EmitResult.Applied -> r.state
+      else -> error("p2's higher declaration must re-open the call: $r")
+    }
+    state = when (val r = emit(state, BiddingIntent.ConfirmCall("p2", 11, Suit.HEARTS))) {
+      is EmitResult.Applied -> r.state
+      else -> error("the higher Super Call must confirm: $r")
+    }
+    return when (val r = emit(state, BiddingIntent.FinalEstimate("p3", 5))) {
+      is EmitResult.Applied -> r.state
+      else -> error("p3 must re-declare under the new trump: $r")
+    }
+  }
+
+  private fun fastSuperCycleTwoDoc(): MatchDoc = fastDocFrom(
+    fastCycleTwoState(), version = 42, cycle = 2, lastBidSeat = "p3",
+    log = listOf(
+      BiddingLogEntry(
+        seatId = "p3",
+        actionType = BiddingLogEntry.ACTION_CONFIRM_CALL,
+        tricks = 10,
+        suit = Suit.CLUBS.name,
+        round = 14,
+      ),
+      BiddingLogEntry(
+        seatId = "p2",
+        actionType = BiddingLogEntry.ACTION_CONFIRM_CALL,
+        tricks = 11,
+        suit = Suit.HEARTS.name,
+        round = 14,
+      ),
+    ),
   )
 
   // ═══════════════════════════════════════════════════════════════════
@@ -1350,6 +1463,399 @@ class OnlineMatchViewModelTest {
   }
 
   // ═══════════════════════════════════════════════════════════════════
+  // T-09 — the live Fast Super Call declaration cycle
+  // ═══════════════════════════════════════════════════════════════════
+
+  /**
+   * A client that reloads mid-cycle has no log to replay: fast declarations
+   * are never logged, and the CONFIRM cannot be emitted into a fresh engine.
+   * The document is the authority (`biddingCycle` + the last CONFIRM + the
+   * active `bids`), and the view model must rebuild the engine from it BEFORE
+   * any incremental interpreter touches the round. The seats that declared
+   * before the call (p1) and after it (p4) are both in the active cycle; the
+   * engine waits on p2.
+   */
+  @Test
+  fun resumingAfterASuperCall_restoresTheActiveCycleBeforeTheLog() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastSuperCycleOneDoc()
+      val vm = makeVm("uid-b", Dispatchers.Main)
+
+      vm.start("m-super-restore")
+      advanceUntilIdle()
+      broadcast("m-super-restore")
+
+      val bidding = biddingOf(vm.state.value)
+      assertNull("a proven cycle is not a desync", rejectionOf(vm.state.value))
+      assertEquals(BiddingPhase.ESTIMATES, bidding.subPhase)
+      assertEquals("the Super Caller", "p3", bidding.callerId)
+      assertEquals("the confirmed number", 10, bidding.auctionTop)
+      assertEquals("the confirmed trump", Suit.CLUBS, bidding.declaredTrump)
+      assertEquals("the next seat CCW from the caller", "p2", bidding.waitingFor)
+      assertEquals(
+        "only the ACTIVE cycle is in the engine",
+        setOf("p3", "p4", "p1"), bidding.bids.keys,
+      )
+      assertEquals(10, bidding.bids.getValue("p3").amount)
+      assertEquals(6, bidding.bids.getValue("p4").amount)
+      assertEquals(4, bidding.bids.getValue("p1").amount)
+      assertTrue("the Super Call is resolved", bidding.fastSuperResolved)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * A higher re-declaration starts ANOTHER cycle: the document's last CONFIRM
+   * is the authority, and the first cycle's declarations must not survive
+   * anywhere in the restored engine.
+   */
+  @Test
+  fun resumingAfterASecondSuperCall_restoresOnlyTheFinalCycle() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastSuperCycleTwoDoc()
+      val vm = makeVm("uid-a", Dispatchers.Main)
+
+      vm.start("m-super-two")
+      advanceUntilIdle()
+      broadcast("m-super-two")
+
+      val bidding = biddingOf(vm.state.value)
+      assertEquals(BiddingPhase.ESTIMATES, bidding.subPhase)
+      assertEquals("the second Super Caller", "p2", bidding.callerId)
+      assertEquals("the final call's number", 11, bidding.auctionTop)
+      assertEquals("the replacement trump", Suit.HEARTS, bidding.declaredTrump)
+      assertEquals("p4 re-declares next", "p4", bidding.waitingFor)
+      assertEquals(
+        "the first cycle was wiped, not merged",
+        setOf("p2", "p3"), bidding.bids.keys,
+      )
+      assertEquals(5, bidding.bids.getValue("p3").amount)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * The pre-persistence shape: a CONFIRM is in the log but the document
+   * claims cycle 0, so the re-declarations it needs were never persisted.
+   * The client must refuse by name rather than invent a cycle — and must
+   * leave the fresh opening auction untouched for the document to fix.
+   */
+  @Test
+  fun legacySuperCallDocument_isRefusedByNameAndLeavesTheRoundUnplayed() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastSuperCycleOneDoc().copy(biddingCycle = 0, version = 43)
+      val vm = makeVm("uid-b", Dispatchers.Main)
+
+      vm.start("m-super-legacy")
+      advanceUntilIdle()
+      broadcast("m-super-legacy")
+
+      val rejection = rejectionOf(vm.state.value)
+      assertTrue(
+        "the refusal names the shape: $rejection",
+        rejection != null && rejection.startsWith("FAST_CYCLE_UNPERSISTED"),
+      )
+      val bidding = biddingOf(vm.state.value)
+      assertEquals("the round is still at its fresh opening", "p1", bidding.waitingFor)
+      assertNull("no caller was invented", bidding.callerId)
+      assertEquals("the fast-round opening sentinel", 13, bidding.auctionTop)
+      assertTrue("no declaration was applied", bidding.bids.isEmpty())
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /** A document whose CONFIRM count and cycle disagree cannot be replayed. */
+  @Test
+  fun inconsistentCycleLog_isRefusedAndStaysUnplayed() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      // Two cycles claimed, one CONFIRM in the log.
+      store.doc = fastSuperCycleOneDoc().copy(biddingCycle = 2, version = 44)
+      val vm = makeVm("uid-a", Dispatchers.Main)
+
+      vm.start("m-super-mismatch")
+      advanceUntilIdle()
+      broadcast("m-super-mismatch")
+
+      val rejection = rejectionOf(vm.state.value)
+      assertTrue(
+        "the refusal names the inconsistency: $rejection",
+        rejection != null && rejection.startsWith("FAST_CYCLE_LOG_MISMATCH"),
+      )
+      assertTrue("nothing was applied", biddingOf(vm.state.value).bids.isEmpty())
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * The cycle gate on the WRITE side: every intent carries the declaration
+   * cycle it was decided in. An estimate from the restored cycle 1 goes to
+   * submitBid with that cycle, and the live document accepts it as an
+   * ordinary one-value-per-seat re-declaration.
+   */
+  @Test
+  fun estimateFromTheRestoredCycle_carriesTheDocumentsCycle() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastSuperCycleOneDoc()
+      val vm = makeVm("uid-b", Dispatchers.Main)
+
+      vm.start("m-super-estimate")
+      advanceUntilIdle()
+      broadcast("m-super-estimate")
+
+      vm.submitBidding(BiddingIntent.FinalEstimate("p2", 3))
+      advanceUntilIdle()
+
+      assertEquals("the write carried cycle 1", listOf(1), store.bidCycles)
+      assertEquals("the re-declaration landed", 3, store.doc.bids["p2"])
+      assertEquals("the cycle did not move", 1, store.doc.biddingCycle)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * Dash/Auction intents share the action channel and must carry the cycle
+   * too. Pinned on a normal round (cycle 0) so the legacy shape stays the
+   * default rather than being accidentally gated on a missing field.
+   */
+  @Test
+  fun normalRoundDashCall_carriesCycleZero() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      val vm = makeVm("uid-a", Dispatchers.Main)
+
+      vm.start("m-cycle-dash")
+      advanceUntilIdle()
+      broadcast("m-cycle-dash")
+      assertEquals(BiddingPhase.DASH, biddingOf(vm.state.value).subPhase)
+
+      vm.submitBidding(BiddingIntent.DashCallDecision("p1", declaredDashCall = false))
+      advanceUntilIdle()
+
+      assertEquals("the action carried the opening cycle", listOf(0), store.actionCycles)
+      assertEquals(
+        "the Dash decision is in the log",
+        BiddingLogEntry.ACTION_DASH_CALL, store.doc.biddingLog.single().actionType,
+      )
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * The Super Call itself, end to end through the document: p3 confirms 10
+   * with a new trump, the ONE transaction-applied write wipes bids/ down to
+   * p3's own number and bumps the cycle, and the echo reconstructs the next
+   * cycle's ESTIMATES state on the same client.
+   */
+  @Test
+  fun confirmingTheSuperCall_roundTripsTheAtomicResetThroughTheDocument() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastOpeningCycleDoc()
+      store.actorUid = "uid-c" // p3, the Super Caller
+      val vm = makeVm("uid-c", Dispatchers.Main)
+
+      vm.start("m-super-confirm")
+      advanceUntilIdle()
+      broadcast("m-super-confirm")
+      val opening = biddingOf(vm.state.value)
+      assertEquals(BiddingPhase.CONFIRM, opening.subPhase)
+      assertEquals("the winning declaration's owner confirms", "p3", opening.waitingFor)
+
+      vm.submitBidding(BiddingIntent.ConfirmCall("p3", 10, Suit.CLUBS))
+      advanceUntilIdle()
+
+      assertEquals("the action carried the opening cycle", listOf(0), store.actionCycles)
+      // The document's own shape: ONE log entry, bids wiped to the caller's
+      // number, the declarations reopened, and the cycle advanced.
+      assertEquals(1, store.doc.biddingCycle)
+      assertEquals(1, store.doc.biddingLog.size)
+      assertEquals(mapOf("p3" to 10), store.doc.bids)
+      assertNull("the wipe clears the last declarer", store.doc.lastBidSeat)
+      assertTrue("re-declarations are open", store.doc.biddingOpen)
+
+      broadcast("m-super-confirm")
+      val next = biddingOf(vm.state.value)
+      assertNull("the echo is not a desync", rejectionOf(vm.state.value))
+      assertEquals(BiddingPhase.ESTIMATES, next.subPhase)
+      assertEquals("p3", next.callerId)
+      assertEquals(10, next.auctionTop)
+      assertEquals("the replacement trump", Suit.CLUBS, next.declaredTrump)
+      assertEquals("every other seat re-declares from the caller's next seat", "p4", next.waitingFor)
+      assertEquals("the previous cycle's declarations are gone", setOf("p3"), next.bids.keys)
+      assertEquals(1, store.doc.biddingCycle)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * Stale intent, live refusal: an intent decided in cycle 1 must not land in
+   * cycle 2 after another Super Call committed. The service refuses it by
+   * name; the newer delivery then restores the client onto the new cycle.
+   */
+  @Test
+  fun staleCycleIntent_isRefusedAndTheNextDeliveryRestoresTheNewCycle() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastSuperCycleOneDoc()
+      val vm = makeVm("uid-a", Dispatchers.Main)
+
+      vm.start("m-super-stale")
+      advanceUntilIdle()
+      broadcast("m-super-stale")
+      assertEquals(BiddingPhase.ESTIMATES, biddingOf(vm.state.value).subPhase)
+
+      // Move the document to cycle 2 behind this client's back (another
+      // seat's higher call committed and the delivery has not arrived yet).
+      store.doc = fastSuperCycleTwoDoc()
+      vm.submitBidding(BiddingIntent.FinalEstimate("p1", 2))
+      advanceUntilIdle()
+
+      assertEquals(
+        "the client sent the cycle it had actually seen",
+        listOf(1), store.bidCycles,
+      )
+      assertEquals("the service refused the stale write", 1, store.staleCycleRefusals)
+      assertNull("nothing landed in the new cycle", store.doc.bids["p1"])
+      assertEquals("the document's cycle did not move", 2, store.doc.biddingCycle)
+
+      // The delivery arrives: the client rebuilds onto the ACTIVE cycle.
+      broadcast("m-super-stale")
+      val restored = biddingOf(vm.state.value)
+      assertNull("the newer document is not a desync", rejectionOf(vm.state.value))
+      assertEquals("the new Super Caller", "p2", restored.callerId)
+      assertEquals(11, restored.auctionTop)
+      assertEquals(Suit.HEARTS, restored.declaredTrump)
+      assertEquals("p4", restored.waitingFor)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * The full live loop: a reloading client restores cycle 1, submits the
+   * missing re-declaration, the document records it as an ordinary bid, and
+   * the round completes — Caller, trump, With set and estimates all come from
+   * the FINAL cycle, and the table opens on the caller's lead.
+   */
+  @Test
+  fun restoredCycle_persistsTheLastReDeclarationAndCompletesTheRound() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastSuperCycleOneDoc()
+      val vm = makeVm("uid-b", Dispatchers.Main)
+
+      vm.start("m-super-complete")
+      advanceUntilIdle()
+      broadcast("m-super-complete")
+      assertEquals("p2", biddingOf(vm.state.value).waitingFor)
+
+      vm.submitBidding(BiddingIntent.FinalEstimate("p2", 3))
+      advanceUntilIdle()
+      broadcast("m-super-complete")
+
+      assertEquals("the re-declaration is on the document", 3, store.doc.bids["p2"])
+      assertEquals("still the same cycle", 1, store.doc.biddingCycle)
+      val published = vm.state.value
+      assertNull("no rejection on the completing delivery", rejectionOf(published))
+      val table = tableOf(published)
+      assertEquals("the round opens at trick 1", 1, table.trickNo)
+      assertEquals("the Super Caller leads", "p3", table.cfg.callerId)
+      assertEquals("the final trump", Suit.CLUBS, table.cfg.trump)
+      assertEquals(
+        "the estimates are the ACTIVE cycle's declarations",
+        mapOf("p3" to 10, "p4" to 6, "p1" to 4, "p2" to 3),
+        table.cfg.estimates,
+      )
+      assertEquals("nobody else matched 10 CLUBS", emptyList<String>(), table.cfg.withPlayers)
+      assertEquals("the caller holds the turn", "p3", table.turn)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * And the cold reload after that completion: a brand-new view model (fresh
+   * session and adapter, no client-side history) rebuilds the same table from
+   * the document alone — the acceptance criterion's "persist, restore and
+   * replay the complete flow", not just "the unit tests are green".
+   */
+  @Test
+  fun coldReloadAfterTheSuperCallRound_rebuildsTheSameTable() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = fastSuperCycleOneDoc()
+      val first = makeVm("uid-b", Dispatchers.Main)
+      first.start("m-super-reload")
+      advanceUntilIdle()
+      broadcast("m-super-reload")
+      first.submitBidding(BiddingIntent.FinalEstimate("p2", 3))
+      advanceUntilIdle()
+      broadcast("m-super-reload")
+      val live = tableOf(first.state.value)
+
+      // Structural reload: a NEW session+adapter (the page worktree's own
+      // bootstrap), receiving the committed document for the first time.
+      val reloaded = makeVm("uid-d", Dispatchers.Main)
+      reloaded.start("m-super-reload")
+      advanceUntilIdle()
+      broadcast("m-super-reload")
+
+      val resumed = tableOf(reloaded.state.value)
+      assertNull("the reload is not a desync", rejectionOf(reloaded.state.value))
+      assertEquals("the same trick", live.trickNo, resumed.trickNo)
+      assertEquals("the same caller", live.cfg.callerId, resumed.cfg.callerId)
+      assertEquals("the same final trump", live.cfg.trump, resumed.cfg.trump)
+      assertEquals("the same estimates", live.cfg.estimates, resumed.cfg.estimates)
+      assertEquals("the same With set", live.cfg.withPlayers, resumed.cfg.withPlayers)
+      assertEquals("the same opening leader", live.turn, resumed.turn)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════
   // The round-1 cold-start fixture, built by driving the real engines
   // ═══════════════════════════════════════════════════════════════════
 
@@ -2340,6 +2846,17 @@ class OnlineMatchViewModelTest {
     val extendCalls = AtomicInteger(0)
     val endCalls = AtomicInteger(0)
 
+    /** T-09: the `expectedCycle` each write carried, in call order. */
+    val bidCycles = mutableListOf<Int?>()
+    val actionCycles = mutableListOf<Int?>()
+
+    /** How many writes the cycle guard refused. */
+    var staleCycleRefusals: Int = 0
+
+    /** The signed-in uid the fake's seat resolution uses (MatchService reads
+     *  it from auth; one store stands in for every seat's writes here). */
+    var actorUid: String = "uid-a"
+
     /** The deal as played: a card leaves the hand that played it, so a
      *  submitCard() can attribute it the way the signed-in user would. */
     private val remaining = hands.mapValues { it.value.toMutableList() }
@@ -2387,8 +2904,28 @@ class OnlineMatchViewModelTest {
       return HandDoc(seatId, round, hand.map { StoredCard.fromEngine(it) })
     }
 
-    override suspend fun submitBid(matchId: String, seatId: String, bid: Int): SubmitBidResult {
+    override suspend fun submitBid(
+      matchId: String,
+      seatId: String,
+      bid: Int,
+      expectedCycle: Int?,
+    ): SubmitBidResult {
       bidCalls.incrementAndGet()
+      bidCycles += expectedCycle
+      // The real service's gates, in its own order: cycle guard, then the
+      // open-bidding gate, then one value per seat IN THE ACTIVE CYCLE
+      // (MatchService.submitBid) — a faithful double must not accept a
+      // re-declaration the document would refuse.
+      if (expectedCycle != null && doc.biddingCycle != expectedCycle) {
+        staleCycleRefusals++
+        throw ServiceException(Reasons.STALE_CYCLE, "submitBid: stale cycle")
+      }
+      if (doc.biddingOpen != true) {
+        throw ServiceException(Reasons.BIDDING_CLOSED, "submitBid: bidding is closed")
+      }
+      if (doc.bids[seatId] != null) {
+        throw ServiceException(Reasons.ALREADY_BID, "submitBid: already submitted")
+      }
       val bids = doc.bids + (seatId to bid)
       val allSubmitted = doc.seats.isNotEmpty() && doc.seats.keys.all { bids[it] != null }
       doc = doc.copy(
@@ -2397,7 +2934,10 @@ class OnlineMatchViewModelTest {
         biddingOpen = !allSubmitted,
         version = doc.version + 1,
       )
-      return SubmitBidResult(matchId, seatId, bid, doc.version, !allSubmitted, allSubmitted)
+      return SubmitBidResult(
+        matchId, seatId, bid, doc.version, !allSubmitted, allSubmitted,
+        biddingCycle = doc.biddingCycle,
+      )
     }
 
     override suspend fun submitBiddingAction(
@@ -2405,19 +2945,43 @@ class OnlineMatchViewModelTest {
       action: BiddingActionInput,
     ): SubmitBiddingActionResult {
       actionCalls.incrementAndGet()
-      val seat = doc.seats.entries.firstOrNull { it.value == "uid-a" }?.key ?: "p1"
+      actionCycles += action.expectedCycle
+      val seat = doc.seats.entries.firstOrNull { it.value == actorUid }?.key ?: "p1"
+      // MatchService's cycle guard: an intent decided in an older declaration
+      // cycle is refused instead of landing in the new one.
+      if (action.expectedCycle != null && doc.biddingCycle != action.expectedCycle) {
+        staleCycleRefusals++
+        throw ServiceException(Reasons.STALE_CYCLE, "submitBiddingAction: stale cycle")
+      }
       // The real service's F1 normalising boundary: an over-cap declared
       // Dash attempt persists as a decline (MatchService.submitBiddingAction).
       val entry = normaliseDashCallEntry(
         action.toLogEntry(seat, doc.currentRound),
         effectiveDashCallCount(doc.biddingLog, doc.currentRound),
       )
-      doc = doc.copy(
-        biddingLog = doc.biddingLog + entry,
-        version = doc.version + 1,
-      )
+      // T-09: a fast-round CONFIRM is the Super Call's ONE atomic reset —
+      // the log entry, the wipe down to the caller's own number, the reopened
+      // declarations and the cycle bump (MatchService.submitBiddingAction).
+      if (action.actionType == BiddingLogEntry.ACTION_CONFIRM_CALL &&
+        doc.gameType.isFastRound(doc.currentRound)
+      ) {
+        doc = doc.copy(
+          biddingLog = doc.biddingLog + entry,
+          bids = mapOf(seat to (action.tricks ?: error("confirm without tricks"))),
+          biddingOpen = true,
+          lastBidSeat = null,
+          biddingCycle = doc.biddingCycle + 1,
+          version = doc.version + 1,
+        )
+      } else {
+        doc = doc.copy(
+          biddingLog = doc.biddingLog + entry,
+          version = doc.version + 1,
+        )
+      }
       return SubmitBiddingActionResult(
         matchId, seat, action.actionType, doc.version, doc.biddingLog.size,
+        biddingCycle = doc.biddingCycle,
       )
     }
 

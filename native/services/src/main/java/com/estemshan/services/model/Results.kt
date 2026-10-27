@@ -43,6 +43,11 @@ object Reasons {
   const val ALREADY_BID = "ALREADY_BID"
   const val INVALID_BIDDING_ACTION_VALUE = "INVALID_BIDDING_ACTION_VALUE"
   const val ILLEGAL_BIDDING_ACTION = "ILLEGAL_BIDDING_ACTION"
+  /** T-09: the caller's validated fast-round declaration cycle is no longer
+   *  the document's active one — a Super Call CONFIRM has started the next
+   *  cycle (or the round moved on). Refused rather than applied to a cycle
+   *  the action was never validated against. */
+  const val STALE_CYCLE = "STALE_CYCLE"
 
   // Cards
   const val INVALID_CARD_VALUE = "INVALID_CARD_VALUE"
@@ -160,6 +165,8 @@ data class SubmitBidResult(
   val version: Int,
   val biddingOpen: Boolean,
   val allSubmitted: Boolean,
+  /** The declaration cycle this bid landed in (fast rounds; 0 otherwise). */
+  val biddingCycle: Int = 0,
 )
 
 data class SubmitBiddingActionResult(
@@ -168,6 +175,9 @@ data class SubmitBiddingActionResult(
   val actionType: String,
   val version: Int,
   val logLength: Int,
+  /** The active declaration cycle AFTER this write — a fast Super Call
+   *  CONFIRM writes the next one; every other action keeps the old value. */
+  val biddingCycle: Int = 0,
 )
 
 data class SubmitCardResult(

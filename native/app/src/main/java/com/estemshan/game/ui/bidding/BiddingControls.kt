@@ -31,6 +31,7 @@ import com.estemshan.engine.BiddingIntent
 import com.estemshan.engine.BiddingPhase
 import com.estemshan.engine.BiddingState
 import com.estemshan.engine.EmitResult
+import com.estemshan.engine.MAX_TRICKS
 import com.estemshan.engine.Suit
 import com.estemshan.engine.auctionBidBeatsTop
 import com.estemshan.engine.auctionBidIsWith
@@ -187,7 +188,10 @@ fun EstimatesControls(
   floor: Int?,
   onIntent: (BiddingIntent) -> Unit,
 ) {
-  val cap = state.auctionTop
+  // T-09: a fast round has no Caller-relative Call Cap — a declaration above
+  // the confirmed call re-opens the Super Call, so the only ceiling is the
+  // absolute 13. Normal rounds stay capped at the Caller's number.
+  val cap = if (state.fastRound) MAX_TRICKS else state.auctionTop
   var tricks by remember(seat, cap) { mutableFloatStateOf(0f) }
   val picked = tricks.roundToInt().coerceIn(0, cap)
   val intent = BiddingIntent.FinalEstimate(seat, picked)
