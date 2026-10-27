@@ -271,7 +271,7 @@ class RoomService(
    * must not generate a predictable permission-denied retry loop.
    */
   private suspend fun maybeStartMatch(roomId: String, room: RoomDoc): MatchStartResult {
-    if (room.status != RoomDoc.STATUS_WAITING || !room.allReady) {
+    if (room.status != RoomDoc.STATUS_WAITING || !room.canStart) {
       return MatchStartResult.NOT_ALL_READY
     }
     val currentUid = auth.currentUid()

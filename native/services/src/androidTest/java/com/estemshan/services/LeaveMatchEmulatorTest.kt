@@ -24,7 +24,7 @@ import org.junit.runner.RunWith
 
 /**
  * S72 — Explicit Leave Match end to end against the host emulators:
- * real MatchService, real firestore.rules, two real signed-in users.
+ * real MatchService, real firestore.rules, four real signed-in users.
  *
  * Covers:
  *  1. First leave completes; stored leftUids contains the leaver's uid;
@@ -35,10 +35,10 @@ import org.junit.runner.RunWith
  *     (reason == ALREADY_LEFT); version and leftUids unchanged.
  *
  * Isolation: [EmulatorSuite.reset] wipes between tests, and
- * [releaseOurFirebaseClients] gives this class's two clients back after
+ * [releaseOurFirebaseClients] gives this class's four clients back after
  * every test — the same S74 hygiene, because the instrumented process sits
  * one client away from ConnectivityManager's per-UID callback quota and an
- * unreleased pair here is enough to kill a LATER class's test.
+ * unreleased set here is enough to kill a LATER class's test.
  * Execution is CI-only (no emulator in this sandbox); this file compiles
  * locally via :services:assembleDebugAndroidTest.
  */
@@ -51,7 +51,7 @@ class LeaveMatchEmulatorTest {
   }
 
   /**
-   * S72 — release THIS class's two Firebase clients after every test.
+   * S72 - release THIS class's four Firebase clients after every test.
    *
    * Every [EmulatorSuite.client] call mints a named `FirebaseApp` whose
    * Firestore gRPC channel registers a ConnectivityManager default-network
@@ -75,11 +75,13 @@ class LeaveMatchEmulatorTest {
     EmulatorSuite.releaseFirestoreClients(context, "-s72_")
   }
 
-  private suspend fun twoClients(): Map<String, EmulatorSuite.ClientFirebase> {
+  private suspend fun fourClients(): Map<String, EmulatorSuite.ClientFirebase> {
     val context = InstrumentationRegistry.getInstrumentation().targetContext
     return mapOf(
       "p1" to EmulatorSuite.client(context, "s72_p1"),
       "p2" to EmulatorSuite.client(context, "s72_p2"),
+      "p3" to EmulatorSuite.client(context, "s72_p3"),
+      "p4" to EmulatorSuite.client(context, "s72_p4"),
     )
   }
 
@@ -98,11 +100,10 @@ class LeaveMatchEmulatorTest {
     )
   }
 
-  private suspend fun startTwoSeatMatch(
+  private suspend fun startFourSeatMatch(
     seating: Map<String, EmulatorSuite.ClientFirebase>,
   ): String {
     val p1 = seating.getValue("p1")
-    val p2 = seating.getValue("p2")
 
     val roomService1 = com.estemshan.services.RoomService(
       p1.db,
@@ -124,17 +125,19 @@ class LeaveMatchEmulatorTest {
       15,
     )
 
-    // p2 joins
-    val roomService2 = com.estemshan.services.RoomService(
-      p2.db,
-      object : AuthPort { override fun currentUid() = p2.uid },
-      { _ -> "" },
-      NoRankDownJoin,
-    )
-    roomService2.joinRoom(roomCode, p2.uid)
-
-    // Both ready, p1 (creator) starts last — only the creator may start.
-    roomService2.setReady(roomCode, p2.uid, true)
+    // The gate needs a FULL table (E4.4), so p2, p3 and p4 join and ready.
+    // p1 (creator) readies last — only the creator may start.
+    for (seat in listOf("p2", "p3", "p4")) {
+      val client = seating.getValue(seat)
+      val rooms = com.estemshan.services.RoomService(
+        client.db,
+        object : AuthPort { override fun currentUid() = client.uid },
+        { _ -> "" },
+        NoRankDownJoin,
+      )
+      rooms.joinRoom(roomCode, client.uid)
+      rooms.setReady(roomCode, client.uid, true)
+    }
     val started = roomService1.setReady(roomCode, p1.uid, true)
     return started.matchStart!!.matchId
       ?: error("match did not start: ${started.matchStart}")
@@ -153,8 +156,8 @@ class LeaveMatchEmulatorTest {
 
   @Test
   fun leaveMatch_recordsExactlyOnceAndBotTakesSeat() = runBlocking {
-    val seating = twoClients()
-    val matchId = startTwoSeatMatch(seating)
+    val seating = fourClients()
+    val matchId = startFourSeatMatch(seating)
 
     // ── 1. uid1 (p1) leaves ──
     val svc1 = leaveServiceFor(seating, "p1")
