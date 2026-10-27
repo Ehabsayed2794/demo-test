@@ -16,7 +16,7 @@ import kotlinx.coroutines.test.runTest
  * profile, so a second fold would compound — which is exactly the
  * observable the idempotence test needs. The fake also instruments the two
  * surfaces the hard prohibitions name (`seasons/current` through
- * [SettlementDb.SettlementTx.currentSeasonId], and the RP ledger through
+ * [SettlementDb.SettlementTx.currentLazyResetSeason], and the RP ledger through
  * `appendLedger`), plus the archive read the RANKED path owns.
  *
  * The golden table throughout: p1 25 (KING), p4 14 (SECOND), p3 12 (THIRD),
@@ -132,7 +132,7 @@ class StatsOnlySettlementTest {
           return claim
         }
 
-        override suspend fun currentSeasonId(): String? {
+        override suspend fun currentLazyResetSeason(): String? {
           seasonReads++
           events.add("read-season")
           return "s1"

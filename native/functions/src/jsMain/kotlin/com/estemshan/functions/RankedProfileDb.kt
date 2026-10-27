@@ -38,12 +38,19 @@ interface RankedProfileDb {
     suspend fun read(uid: String): Map<String, Any?>?
 
     /**
-     * The current season, as S44/S51 normalizes the profile against it — read
-     * from the S59 singleton (`seasons/current`) INSIDE the same transaction
-     * as [read] and [merge], so the profile is judged against exactly the
-     * season a merge would commit into. [loadOnce] performs this read second,
-     * after the profile: every read precedes every write, as Firestore's
-     * transaction rule requires.
+     * The season a stale profile is lazily reset into, as the normalization
+     * judges it — read from the S59 singleton (`seasons/current`) INSIDE the
+     * same transaction as [read] and [merge], so the profile is judged against
+     * exactly the season a merge would commit into. [loadOnce] performs this
+     * read second, after the profile: every read precedes every write, as
+     * Firestore's transaction rule requires.
+     *
+     * This is NOT the board's current season while a reset is `RUNNING`: the
+     * sweep stamps profiles with the target before the season job flips
+     * `seasonId`, so judging them against the outgoing season would reset the
+     * players the sweep just moved BACKWARDS, irreversibly (R27). The Admin
+     * implementation answers with [lazyResetSeasonOf], which serves the
+     * in-flight target for exactly that window.
      *
      * NULL means the singleton does not exist — the fresh-deployment
      * bootstrap: the Admin implementation answers null and the normalization
@@ -52,10 +59,10 @@ interface RankedProfileDb {
      * than being silently reset (nobody declared that season dead). The
      * DEFAULT is the bootstrap literal itself — which keeps every existing
      * fake compiling and reproduces the pre-Q22 read — and an EXISTING
-     * document is authoritative, parsed by [currentSeasonIdOf] and failing
+     * document is authoritative, parsed by [lazyResetSeasonOf] and failing
      * closed on a malformed one.
      */
-    suspend fun currentSeasonId(): String? = DEFAULT_SEASON_ID
+    suspend fun currentLazyResetSeason(): String? = DEFAULT_SEASON_ID
 
     /**
      * Field-level merge of [fields] onto `players/{uid}`. The caller passes
@@ -90,9 +97,9 @@ private const val FIELD_RANKED_KOZ_COUNT = "rankedKozCount"
  * — for a profile that carries no season beyond it. A profile already in a
  * non-default season with no singleton to judge it by fails closed instead of
  * being reset to this literal. This is also the default [RankedProfileDb.Tx]
- * answer, what a current-season read resolves to under a fake or a fresh
+ * answer, what a lazy-reset season read resolves to under a fake or a fresh
  * deployment; an existing document is authoritative and its parsing lives in
- * [currentSeasonIdOf] — no normalization here falls back to this literal on
+ * [lazyResetSeasonOf] — no normalization here falls back to this literal on
  * its own.
  */
 private const val DEFAULT_SEASON_ID = "s1"
@@ -126,10 +133,11 @@ suspend fun loadOnce(db: RankedProfileDb, request: CallableRequest): Map<String,
     // does not exist is still reported without opening the season singleton.
     // Null means the singleton itself is absent (the bootstrap): the
     // normalization serves the bootstrap season only to a profile that
-    // carries no season beyond it.
-    val currentSeasonId = tx.currentSeasonId()
+    // carries no season beyond it. A RUNNING reset answers the in-flight
+    // target, never the outgoing season the board still serves.
+    val lazyResetSeason = tx.currentLazyResetSeason()
 
-    val normalized = normalizeProfile(stored, currentSeasonId)
+    val normalized = normalizeProfile(stored, lazyResetSeason)
     if (normalized.mergeFields.isNotEmpty()) {
       tx.merge(uid, normalized.mergeFields)
     }
@@ -149,19 +157,24 @@ private data class NormalizedProfile(
  * a corrupt RP or a foreign rung is not something a read callable may silently
  * reinterpret.
  *
- * The season is judged against the current one (S64): an absent `seasonId`
- * adopts the current season (or the bootstrap literal when the singleton
- * itself is absent) under the lazy merge; a present one equal to the current
- * season is served untouched; a present-but-blank one is corrupt; a present
- * one naming a DIFFERENT season missed the bulk sweep — Q22's lazy reset
- * (V1-C10) moves it into the current season exactly ONCE, here in the same
+ * The season is judged against the one the lazy reset must land in (S64): an
+ * absent `seasonId` adopts it (or the bootstrap literal when the singleton
+ * itself is absent) under the lazy merge; a present one equal to it is served
+ * untouched — including, during a RUNNING reset, a profile the sweep has
+ * already moved to the in-flight target, which must never be reset BACKWARDS
+ * into the outgoing season (R27); a present-but-blank one is corrupt; a
+ * present one naming a DIFFERENT season missed the bulk sweep — Q22's lazy
+ * reset (V1-C10) moves it into that season exactly ONCE, here in the same
  * transaction, however many seasons it slept through. One bootstrap guard
  * rides on top: with NO singleton at all, only the bootstrap season may be
  * served or adopted — a profile already in a non-default season fails closed,
  * because a lazy reset to the bootstrap season would be a reset no season
  * declared.
  */
-private fun normalizeProfile(stored: Map<String, Any?>, currentSeasonId: String?): NormalizedProfile {
+private fun normalizeProfile(
+  stored: Map<String, Any?>,
+  lazyResetSeason: String?,
+): NormalizedProfile {
   val hasRp = stored.containsKey(FIELD_RP)
   val rp = if (hasRp) nonNegativeInt(stored.getValue(FIELD_RP), FIELD_RP) else 0
 
@@ -194,7 +207,7 @@ private fun normalizeProfile(stored: Map<String, Any?>, currentSeasonId: String?
       // state the bootstrap must not silently overwrite — resetting it to
       // the bootstrap literal would demote a player against a season nobody
       // declared, so the read fails loud before any merge can run.
-      currentSeasonId == null -> when {
+      lazyResetSeason == null -> when {
         recorded == DEFAULT_SEASON_ID -> recorded
         else -> corrupt(
           "profile season '$recorded' cannot be served while seasons/current does not " +
@@ -202,21 +215,25 @@ private fun normalizeProfile(stored: Map<String, Any?>, currentSeasonId: String?
             "reset to the bootstrap season would be a reset no season declared.",
         )
       }
-      // The profile's own season IS the current one: served as-is, no season
-      // merge — a profile the reset has already stamped must not be rewritten.
-      recorded == currentSeasonId -> recorded
+      // The profile's own season IS the one the lazy reset lands in: served
+      // as-is, no season merge — a profile the reset has already stamped must
+      // not be rewritten. During a RUNNING reset this is the seat the sweep
+      // already moved to the in-flight target; resetting it into the outgoing
+      // season would be a BACKWARDS demotion (R27).
+      recorded == lazyResetSeason -> recorded
       // A season the reset has moved past missed the bulk sweep: ONE lazy
       // reset on this first access (Q22, V1-C10), regardless of how many
       // seasons were missed — the engine's reset math is defined against the
       // rung, not against a season count, and no record is fabricated for a
       // season the player never played in (RD24).
-      else -> return lazySeasonReset(stored, recorded, currentSeasonId)
+      else -> return lazySeasonReset(stored, recorded, lazyResetSeason)
     }
   } else {
     // Lazy initialization: a profile written before seasons existed becomes
-    // the CURRENT season, merged below — whatever the singleton says, not a
-    // hardcoded first season; a missing singleton adopts the bootstrap.
-    currentSeasonId ?: DEFAULT_SEASON_ID
+    // the season the lazy reset lands in, merged below — whatever the
+    // singleton says, not a hardcoded first season; a missing singleton
+    // adopts the bootstrap.
+    lazyResetSeason ?: DEFAULT_SEASON_ID
   }
 
   val hasHighestTier = stored.containsKey(FIELD_HIGHEST_RANK_TIER)
@@ -325,15 +342,15 @@ private fun normalizeProfile(stored: Map<String, Any?>, currentSeasonId: String?
 private fun lazySeasonReset(
   stored: Map<String, Any?>,
   recorded: String,
-  currentSeasonId: String,
+  lazyResetSeason: String,
 ): NormalizedProfile {
   val preReset = when (val parsed = parseStoredProfile(stored, recorded)) {
     is ProfileParse.Parsed -> parsed.profile
     is ProfileParse.Failed -> corrupt(
-      "profile of season '$recorded' cannot be lazily reset into '$currentSeasonId': ${parsed.reason}",
+      "profile of season '$recorded' cannot be lazily reset into '$lazyResetSeason': ${parsed.reason}",
     )
   }
-  val reset = applySeasonReset(preReset, currentSeasonId)
+  val reset = applySeasonReset(preReset, lazyResetSeason)
   val stats = statsOf(stored)
 
   val merge = linkedMapOf<String, Any?>()
@@ -474,13 +491,14 @@ class AdminRankedProfileDb : RankedProfileDb {
      * in. Absent answers NULL — the fresh-deployment bootstrap the
      * normalization guards — while an existing document is authoritative,
      * converted through [dynamicToKotlin] exactly as [read]'s is and parsed
-     * by [currentSeasonIdOf]'s, shared with the leaderboard path (malformed
-     * fails closed).
+     * by [lazyResetSeasonOf]: the in-flight TARGET while a reset is RUNNING (a
+     * profile the sweep already moved must not be reset backwards), otherwise
+     * the outgoing `seasonId` the board still serves (malformed fails closed).
      */
-    override suspend fun currentSeasonId(): String? {
+    override suspend fun currentLazyResetSeason(): String? {
       val snap = tx.get(db.collection(SEASONS_COLLECTION).doc(CURRENT_SEASON_DOC)).await()
       if (!snap.exists) return null
-      return currentSeasonIdOf(exists = true, data = dynamicToKotlin(snap.data()))
+      return lazyResetSeasonOf(exists = true, data = dynamicToKotlin(snap.data()))
     }
 
     override fun merge(uid: String, fields: Map<String, Any?>) {

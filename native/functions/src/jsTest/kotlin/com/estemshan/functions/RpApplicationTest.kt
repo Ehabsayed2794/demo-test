@@ -93,7 +93,7 @@ class RpApplicationTest {
     val profiles: Map<String, Map<String, Any?>> = emptyMap(),
     val missingProfiles: Set<String> = emptySet(),
     /** What `seasons/current` answers inside the transaction; the Tx's own default ("s1"). */
-    val currentSeasonId: String = "s1",
+    val lazyResetSeason: String = "s1",
   ) : SettlementDb {
     var txRuns = 0
     var profileReads = 0
@@ -121,7 +121,7 @@ class RpApplicationTest {
 
         // Not event-logged: the season read rides before the seat reads on
         // every settle, and the event golden pins the profile/write order.
-        override suspend fun currentSeasonId(): String = this@FakeRpDb.currentSeasonId
+        override suspend fun currentLazyResetSeason(): String = this@FakeRpDb.lazyResetSeason
 
         override suspend fun readProfile(uid: String): Map<String, Any?>? {
           events.add("read-profile:$uid")
@@ -731,7 +731,7 @@ class RpApplicationTest {
     val db = FakeRpDb(
       match = SettlementFixtures.matchFields(uids),
       archives = archives,
-      currentSeasonId = "s2",
+      lazyResetSeason = "s2",
       profiles = mapOf(
         "u1" to SettlementFixtures.profile("u1", 690, seasonId = "s2"),
         "u2" to SettlementFixtures.profile("u2", 690),
