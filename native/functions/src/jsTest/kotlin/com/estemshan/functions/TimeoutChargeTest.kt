@@ -279,6 +279,20 @@ class TimeoutChargeTest {
     assertNull(db.written!!["leftUids"])
   }
 
+  @Test
+  fun theFifteenthTimeoutNeverWritesTheSeventhTakeoversOwnFields() = runTest {
+    // S7's charge map and removal list are the takeover mechanism's OWN — a
+    // SIBLING of this one, never shared. The other direction (the 7th never
+    // writing timeoutRemovedUids/timeoutRemovedCharges) is
+    // SeventhTakeoverTest's to pin.
+    val db = FakeTimeoutDb(removalDoc(mode = "ROOM"), dealtHands(), storedCounts = mapOf("u1" to 14))
+
+    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+
+    assertNull(db.written!![TimeoutResolution.TAKEOVER_REMOVED_UIDS_FIELD])
+    assertNull(db.written!![TimeoutResolution.TAKEOVER_REMOVED_CHARGES_FIELD])
+  }
+
   // ── idempotence: a replay of the same removal cannot charge twice ──────
 
   @Test

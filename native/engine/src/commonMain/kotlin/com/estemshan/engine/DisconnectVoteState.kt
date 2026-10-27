@@ -41,6 +41,14 @@ import kotlin.math.floor
  *   permanently the configured bot's for the rest of the match, the uid is
  *   recorded on [REPLACED_UIDS_FIELD] for the charge table, and nothing
  *   reclaims it any more.
+ * - `CANCELLED` — S7 (A8.2 / Q36): the ballot was killed by the 7th inactivity
+ *   takeover removing the seat, not by any verdict. Terminal like `REPLACED`
+ *   but even quieter: not held, not reclaimable, no deadline, no verdict, and
+ *   no path ever moves it back to `HOLD`/`VOTE`/`WAIT`/`REPLACED`. The removal
+ *   path deletes the whole entry, so a healthy document never carries one —
+ *   the phase exists so a partial or old write can never be mistaken for a
+ *   live ballot (an entry that parses as `CANCELLED` is a dead flow, never a
+ *   pending question).
  *
  * **Why one public field and one private collection.** The frozen
  * `firestore.rules` cannot be widened for S74 (the same zero-rules doctrine
@@ -225,6 +233,11 @@ data class DisconnectVoteState(
           if (deadline == null || verdict != DisconnectVoteStatus.WAIT) return null
         DisconnectVotePhase.REPLACED ->
           if (deadline == null || verdict == null) return null
+        DisconnectVotePhase.CANCELLED ->
+          // A8.2 / Q36: cancelled is the one phase with no bounds and no
+          // verdict — the ballot was killed, not closed. Either would be a
+          // contradiction, exactly as a `HOLD` with a deadline is.
+          if (deadline != null || verdict != null) return null
       }
       return DisconnectVoteState(
         seatId = seatId,
@@ -247,15 +260,26 @@ data class DisconnectVoteState(
       return out
     }
 
-    /** The seats the flow drives right now — every phase is a bot-held seat. */
-    fun heldSeats(voteRaw: Any?): Set<String> = parseAll(voteRaw).keys
+    /**
+     * The seats the flow drives right now — every LIVE phase is a bot-held
+     * seat. A `CANCELLED` entry is not one (A8.2 / Q36): the seat it describes
+     * was removed by the 7th takeover, whose own removal list — not this
+     * marker — is what makes that seat bot-driven, so the entry must not pace
+     * it, hold it, or resurrect it.
+     */
+    fun heldSeats(voteRaw: Any?): Set<String> =
+      parseAll(voteRaw).filterValues { it.phase != DisconnectVotePhase.CANCELLED }.keys
 
     /**
      * The seats still RECLAIMABLE by their owner: held in `HOLD`, `VOTE` or
-     * `WAIT`. A `REPLACED` seat is not — the waiting ended without a reconnect.
+     * `WAIT`. A `REPLACED` seat is not — the waiting ended without a reconnect
+     * — and neither is a `CANCELLED` one: the seat was removed outright
+     * (S7/A8.2), so there is nothing left to take back.
      */
     fun reclaimableSeats(voteRaw: Any?): Set<String> =
-      parseAll(voteRaw).filterValues { it.phase != DisconnectVotePhase.REPLACED }.keys
+      parseAll(voteRaw)
+        .filterValues { it.phase != DisconnectVotePhase.REPLACED && it.phase != DisconnectVotePhase.CANCELLED }
+        .keys
 
     /**
      * The pause's end while ANY seat's ballot sits in its granted `WAIT`
@@ -320,8 +344,9 @@ data class DisconnectVoteState(
 }
 
 /**
- * The four phases of one seat's disconnect-vote entry, in lifecycle order:
- * held from detection, the ballot, the granted pause, the permanent
- * replacement. Serialized as the enum names.
+ * The phases of one seat's disconnect-vote entry, in lifecycle order: held
+ * from detection, the ballot, the granted pause, the permanent replacement,
+ * and the takeover-killed terminal state S7 added. Serialized as the enum
+ * names.
  */
-enum class DisconnectVotePhase { HOLD, VOTE, WAIT, REPLACED }
+enum class DisconnectVotePhase { HOLD, VOTE, WAIT, REPLACED, CANCELLED }

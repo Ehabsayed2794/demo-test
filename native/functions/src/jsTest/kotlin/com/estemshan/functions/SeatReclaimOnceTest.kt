@@ -406,9 +406,12 @@ class SeatReclaimOnceTest {
     assertEquals(0, db.counterReads)
     assertEquals(0, db.counterExistsReads)
     assertTrue(db.writtenCounts.isEmpty())
-    // The stored clock is replaced, never consulted — its validity has no
-    // bearing on returning a seat to its own player.
-    assertEquals(0, db.inactivityReads)
+    // Since S7 the private document IS read — exactly once, under the same
+    // lock — but only to CARRY the takeover count into the replacement
+    // (A7.3: a reclaim resets the clock, never the seat's takeover history).
+    // The clock's validity is still not consulted: the read feeds the carry,
+    // never the decision.
+    assertEquals(1, db.inactivityReads)
     // Reconstruction is the resolver's job; a reclaim decides from the match
     // document alone, so no hand leaves the subcollection.
     assertEquals(0, db.handReads)

@@ -28,6 +28,12 @@ package com.estemshan.engine
  *   DisconnectVote's own (Q33 / A7.4: UNRANKED 2 Koz, ROOM none, RANKED has
  *   no vote) and no leave penalty is added on top.
  * - Seat still reclaimable and the human returns → no departure, no Koz.
+ * - The 7th inactivity takeover keeps its own charge too (A7.3 / Q32): 1 Koz
+ *   in ROOM, 2 Koz in RANKED and UNRANKED — [seventhTakeoverCharge], the table
+ *   S7 records at the moment the takeover removes the seat. It is NOT a
+ *   [LeaveReason] and never passes through [LeaveMatch.decideLeave]: the
+ *   removal is a takeover event, not a departure, and adding a reason value
+ *   would break the four-row table DepartureContractTest pins.
  *
  * Layering: everything here is pure Kotlin over caller-supplied inputs — no
  * Firestore, no clock, no GameSession, no standings. :services translates
@@ -76,4 +82,20 @@ object LeaveMatch {
       }
     }
   }
+}
+
+/**
+ * S7 (A7.3 / Q32): the charge the 7th inactivity takeover records when it
+ * removes the seat — **1 Koz in ROOM, 2 Koz in RANKED and UNRANKED** — fired
+ * immediately, even with a ballot open or a WAIT running.
+ *
+ * A standalone table, deliberately NOT a [LeaveReason]: the takeover removal
+ * is not a departure (A6.12 keeps only voluntary leaves departures), and
+ * [LeaveMatch.decideLeave]'s four-row table is a pinned contract
+ * (DepartureContractTest). The resolver records the amount at the removal and
+ * the settlement path consumes it later — the two halves are separate lanes.
+ */
+fun seventhTakeoverCharge(mode: MatchMode): KozCharge = when (mode) {
+  MatchMode.ROOM -> KozCharge.Koz1
+  MatchMode.RANKED, MatchMode.UNRANKED -> KozCharge.Koz2
 }

@@ -537,6 +537,58 @@ class DisconnectVoteFlowTest {
     )
   }
 
+  // ── S7 (A7.3 / A8.2): the takeover-removed uid and the CANCELLED flow ──
+
+  @Test
+  fun aTakeoverRemovedUidIsNeverAskedAndNeverDetected() {
+    // A uid the 7th takeover removed has ended its participation, exactly as
+    // a kick-removed or timeout-removed one: never in an electorate, never a
+    // detection candidate again.
+    val asked = matchFields(vote = mapOf("p2" to held("p2")))
+      .toMutableMap()
+      .apply { put(TimeoutResolution.TAKEOVER_REMOVED_UIDS_FIELD, listOf("u3")) }
+    assertEquals(
+      listOf("u1", "u4"),
+      DisconnectVoteFlow.electorateUids(asked, departedSeatId = "p2"),
+      "a 7th-takeover-removed uid is gone from the electorate",
+    )
+
+    val detected = matchFields().toMutableMap()
+      .apply { put(TimeoutResolution.TAKEOVER_REMOVED_UIDS_FIELD, listOf("u1")) }
+    assertEquals(
+      listOf("p2", "p3", "p4"),
+      DisconnectVoteFlow.candidates(detected).map { it.seatId },
+      "a takeover-removed seat is never re-detected",
+    )
+  }
+
+  @Test
+  fun aCancelledEntryRestoresNothingAndIsNeverResurrected() {
+    val cancelled = mapOf(
+      "p2" to DisconnectVoteState(
+        seatId = "p2",
+        phase = DisconnectVotePhase.CANCELLED,
+        detectedAtMillis = anchor,
+      ).toFields(),
+    )
+
+    assertEquals(
+      DisconnectVoteFlow.Restore.NothingHeld,
+      DisconnectVoteFlow.restore(matchFields(vote = cancelled), "u2"),
+      "a cancelled ballot is a dead flow — no seat to return (A8.2 / Q36)",
+    )
+    // Nothing about a dead flow is ever due again: no deadline runs, the
+    // entry keeps the seat out of re-detection, and the resolver's step
+    // cannot move it back into any live phase.
+    val step = DisconnectVoteFlow.step(
+      matchFields(vote = cancelled),
+      anchor + 1_000L,
+      hearts(),
+      emptyMap(),
+    )
+    assertTrue(step is DisconnectVoteFlow.Step.NoWrite, "a cancelled flow is never re-opened: $step")
+  }
+
   // ── the resolver's one transaction ───────────────────────────────────
 
   /** The seam: reads and writes recorded, the doc swappable between passes. */
@@ -796,9 +848,27 @@ class DisconnectVoteFlowTest {
             DisconnectVotePhase.VOTE -> openVote("p2")
             DisconnectVotePhase.WAIT -> grantedWait("p2", endsAt = anchor + 90_000L)
             DisconnectVotePhase.REPLACED -> replacedEntry("p2")
+            // S7 / A8.2: the cancelled entry is a dead flow — its seat is
+            // paced by the 7th takeover's own removal list, not by a marker
+            // the ballot-cancellation was supposed to erase.
+            DisconnectVotePhase.CANCELLED ->
+              DisconnectVoteState(
+                seatId = "p2",
+                phase = phase,
+                detectedAtMillis = anchor,
+              ).toFields()
           },
         ),
       )
+      if (phase == DisconnectVotePhase.CANCELLED) {
+        assertEquals(
+          emptySet<String>(),
+          TimeoutResolution.disconnectHeldSeats(fields),
+          "a cancelled entry holds nobody (A8.2): the removal list paces that seat",
+        )
+        assertNull(TimeoutResolution.disconnectPauseRemaining(fields, anchor))
+        continue
+      }
       assertEquals(
         setOf("p2"),
         TimeoutResolution.disconnectHeldSeats(fields),
@@ -853,9 +923,21 @@ class DisconnectVoteFlowTest {
     if (pause != null) put(DisconnectVoteState.VOTE_FIELD, mapOf("p2" to pause))
   }
 
-  /** The decision machine's seam — it must never get this far while paused. */
+  /**
+   * The decision machine's seam. Since S7 (A7.3) the pause no longer stops the
+   * resolver before its TRANSACTION — the 7th-takeover terminal condition must
+   * be evaluated from the committed document plus the private inactivity doc
+   * read under the same lock — but it still stops the DECISION machine: no
+   * hand is ever read, no move is ever resolved, and until the terminal
+   * condition actually holds the pause writes nothing (the two tests below
+   * pin the only runtime-reachable state, where the condition is false).
+   */
   private class PausedTimeoutDb(private val doc: Map<String, Any?>) : TimeoutDb {
-    var transitions = 0
+    var written: Map<String, Any?>? = null
+      private set
+    var writtenInactivity = 0
+      private set
+    var inactivityReads = 0
       private set
 
     override suspend fun readMatch(matchId: String): Map<String, Any?>? = doc
@@ -867,17 +949,32 @@ class DisconnectVoteFlowTest {
     ): Map<String, List<Card>> =
       error("a granted pause must stop the resolver before any hand is read")
 
-    override suspend fun <T> transact(block: suspend (TimeoutDb.TimeoutTx) -> T): T {
-      transitions++
-      error("a granted pause must stop the resolver before its transaction")
-    }
+    override suspend fun <T> transact(block: suspend (TimeoutDb.TimeoutTx) -> T): T =
+      block(object : TimeoutDb.TimeoutTx {
+        override suspend fun readMatch(matchId: String): Map<String, Any?>? = doc
+        override fun updateMatch(matchId: String, updates: Map<String, Any?>) {
+          written = updates
+        }
+        override suspend fun readTimeoutCount(matchId: String, uid: String): Any? = null
+        override suspend fun timeoutCountExists(matchId: String, uid: String): Boolean = false
+        override fun writeTimeoutCount(matchId: String, uid: String, count: Int) = Unit
+        override suspend fun readInactivity(matchId: String, uid: String): Map<String, Any?>? {
+          inactivityReads++
+          return null
+        }
+        override fun writeInactivity(matchId: String, uid: String, fields: Map<String, Any?>) {
+          writtenInactivity++
+        }
+      })
   }
 
   @Test
   fun aGrantedPauseStopsTheDecisionMachineBeforeItsHands() = runTest {
     // The pending estimate (20 s bid window) is LONG expired at this clock —
     // and the pause still owns the table: the resolver answers with the
-    // pause's own remaining millis and touches nothing.
+    // pause's own remaining millis, reads no hands, resolves no decision, and
+    // writes nothing (the S7 read-only evaluation happens inside the
+    // transaction and finds nothing to remove).
     val doc = pendingDoc(pause = grantedWait("p2", endsAt = anchor + 60_000L))
     val db = PausedTimeoutDb(doc)
 
@@ -889,7 +986,13 @@ class DisconnectVoteFlowTest {
       response["retryAfterMillis"],
       "the number is the pause's, and it is the server's",
     )
-    assertEquals(0, db.transitions)
+    assertEquals(
+      0,
+      db.writtenInactivity,
+      "the pause resolved no decision for any seat",
+    )
+    assertNull(db.written, "the pause wrote nothing")
+    assertEquals(1, db.inactivityReads, "the S7 read-only look ran once")
   }
 
   @Test
@@ -903,7 +1006,8 @@ class DisconnectVoteFlowTest {
 
     assertEquals(TimeoutResolution.Reason.NOT_YET_EXPIRED, response["reason"])
     assertEquals(1_000L, response["retryAfterMillis"])
-    assertEquals(0, db.transitions)
+    assertNull(db.written, "the pause resolved nothing and wrote nothing")
+    assertEquals(0, db.writtenInactivity)
   }
 
   @Test

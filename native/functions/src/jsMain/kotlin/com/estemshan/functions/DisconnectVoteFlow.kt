@@ -179,7 +179,7 @@ object DisconnectVoteFlow {
     entries: Map<String, DisconnectVoteState>,
     fields: Map<String, Any?>,
   ): List<Candidate> {
-    val terminated = stringSet(fields["removedUids"]) + stringSet(fields["timeoutRemovedUids"])
+    val terminated = terminatedUids(fields)
     val botSeats = stringSet(fields["botSeats"])
     return seats.entries
       .sortedBy { it.key }
@@ -200,7 +200,7 @@ object DisconnectVoteFlow {
   fun electorateUids(fields: Map<String, Any?>, departedSeatId: String): List<String> {
     val seats = seatsOf(fields)
     val entries = DisconnectVoteState.parseAll(fields[DisconnectVoteState.VOTE_FIELD])
-    val terminated = stringSet(fields["removedUids"]) + stringSet(fields["timeoutRemovedUids"])
+    val terminated = terminatedUids(fields)
     val botSeats = stringSet(fields["botSeats"])
     return seats.entries
       .sortedBy { it.key }
@@ -214,6 +214,17 @@ object DisconnectVoteFlow {
         }
       }
   }
+
+  /**
+   * S7: every uid whose participation has ended — Vote Kick's `removedUids`,
+   * the 15-timeout list, and the 7th takeover's own `takeoverRemovedUids`
+   * (A7.3: a takeover-removed uid cannot be elected to or vote in any later
+   * ballot). Read-side union only, exactly like [TimeoutResolution.botControlledSeats].
+   */
+  private fun terminatedUids(fields: Map<String, Any?>): Set<String> =
+    stringSet(fields["removedUids"]) +
+      stringSet(fields["timeoutRemovedUids"]) +
+      TimeoutResolution.takeoverRemovedUids(fields)
 
   /** The open ballot whose 30 s window has passed, if any — the close is due. */
   fun dueBallot(fields: Map<String, Any?>, nowMillis: Long): DisconnectVoteState? {
@@ -506,6 +517,11 @@ object DisconnectVoteFlow {
       ?: return Restore.NothingHeld
     return when (entry.phase) {
       DisconnectVotePhase.REPLACED -> Restore.Replaced(seat)
+      // A8.2 / Q36: a CANCELLED entry is a dead flow, not a held seat — the
+      // 7th takeover removed the seat and this marker is the leftover. Nothing
+      // is held, nothing is reclaimable, and no path below ever writes a
+      // CANCELLED entry back into a live phase.
+      DisconnectVotePhase.CANCELLED -> Restore.NothingHeld
       DisconnectVotePhase.VOTE -> Restore.Restored(
         seatId = seat,
         marker = DisconnectVoteState.withoutSeat(fields[DisconnectVoteState.VOTE_FIELD], seat),

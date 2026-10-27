@@ -50,6 +50,11 @@ class DisconnectVoteStateTest {
         answeredCount = 2,
         verdict = DisconnectVoteStatus.NO_AGREEMENT,
       )
+      DisconnectVotePhase.CANCELLED -> DisconnectVoteState(
+        seatId = seat,
+        phase = phase,
+        detectedAtMillis = 1_000L,
+      )
     }
 
   // ── detection: the heartbeat's freeze, and nothing else ──────────────
@@ -150,6 +155,23 @@ class DisconnectVoteStateTest {
       "more answers than the table has humans is a contradiction",
       DisconnectVoteState.parse("p1", healthy + (DisconnectVoteState.ANSWERED_FIELD to 4)),
     )
+    // A8.2 / Q36: CANCELLED is the dead-flow terminal shape — no deadline,
+    // no verdict, and either one is a contradiction exactly as a `HOLD` with a
+    // bound is.
+    val cancelled = vote(DisconnectVotePhase.CANCELLED, seat = "p1").toFields()
+    assertEquals(
+      "a clean cancelled entry parses",
+      vote(DisconnectVotePhase.CANCELLED, seat = "p1"),
+      DisconnectVoteState.parse("p1", cancelled),
+    )
+    assertNull(
+      "a cancelled entry with a deadline is a contradiction",
+      DisconnectVoteState.parse("p1", cancelled + (DisconnectVoteState.DEADLINE_FIELD to 5_000L)),
+    )
+    assertNull(
+      "a cancelled entry with a verdict is a contradiction",
+      DisconnectVoteState.parse("p1", cancelled + (DisconnectVoteState.VERDICT_FIELD to "WAIT")),
+    )
   }
 
   @Test
@@ -170,6 +192,24 @@ class DisconnectVoteStateTest {
       setOf("p2"),
       DisconnectVoteState.reclaimableSeats(raw),
     )
+  }
+
+  @Test
+  fun aCancelledEntryIsHeldByNobodyAndReclaimableByNobody() {
+    // A8.2 / Q36: the cancelled ballot is a dead flow. The seat it describes
+    // was removed by the 7th takeover — the removal list, not this marker,
+    // drives it — so the entry must not pace the seat, hold it, or offer it
+    // back. Normal persisted matches never carry one (the removal deletes the
+    // entry); this is the partial/old-write guard.
+    val raw = mapOf(
+      "p1" to vote(DisconnectVotePhase.CANCELLED, seat = "p1").toFields(),
+      "p2" to vote(DisconnectVotePhase.HOLD, seat = "p2").toFields(),
+    )
+
+    assertEquals(setOf("p2"), DisconnectVoteState.heldSeats(raw))
+    assertEquals(setOf("p2"), DisconnectVoteState.reclaimableSeats(raw))
+    assertNull("a cancelled entry is not a pause", DisconnectVoteState.waitDeadlineMillis(raw))
+    assertNull("a cancelled entry is not a live ballot", DisconnectVoteState.liveBallot(raw))
   }
 
   @Test
