@@ -107,12 +107,26 @@ object SeatReclaim {
    * document as it is COMMITTED (the caller re-reads inside its transaction, so a
    * decision that landed a moment ago is seen here, never assumed).
    *
+   * [storedDoc] is the seat's private `inactivity/{uid}` document, read by the
+   * caller INSIDE the same transaction. A reclaim resets the clock and the
+   * cursor, NEVER the seat's takeover history (S7/A7.3: "no counter reset"
+   * when the 7th fires is the same rule as "the count survives a return") —
+   * so the count it carries is carried verbatim into the replacement
+   * document. Defaulted to null so existing fakes/tests (and callers that
+   * model no inactivity state) compile unchanged; a null document has no
+   * count to carry, which is exactly S73's original shape.
+   *
    * The gates run in the order their answers are cheapest and most certain:
    * ownership, then the permanent-bot union, then the marker, then the trick
    * bound — so a seat nobody borrowed answers [Reason.NOT_BORROWED] even when the
    * log that would prove the bound is unreadable.
    */
-  fun decide(fields: Map<String, Any?>, uid: String, nowMillis: Long): Decision {
+  fun decide(
+    fields: Map<String, Any?>,
+    uid: String,
+    nowMillis: Long,
+    storedDoc: Map<String, Any?>? = null,
+  ): Decision {
     val seatId = TimeoutResolution.seatOfUid(fields, uid)
       ?: return noWrite(
         Reason.NOT_OWNER,
@@ -151,7 +165,7 @@ object SeatReclaim {
             Write(
               seatId = seatId,
               marker = InactiveTakeover.withoutTakeover(takeoverRaw, seatId),
-              inactivityFields = zeroedDoc(fields, seatId),
+              inactivityFields = zeroedDoc(fields, seatId, storedDoc),
             ),
           )
         }
@@ -186,12 +200,27 @@ object SeatReclaim {
    * so leaving the pre-takeover cursor stored would make the first window after
    * reclaim look like the player had acted — a reset the player did not earn, and
    * one that would quietly cost the seat the whole 50 s again.
+   *
+   * S7: the takeover COUNT is carried, never reset — a reclaim restarts the
+   * clock and the cursor, not the seat's takeover history ([storedDoc]'s
+   * [TimeoutResolution.INACTIVITY_TAKEOVER_COUNT_FIELD], verbatim). An
+   * untrustworthy count is dropped rather than guessed (a null document, or a
+   * value [TimeoutResolution.storedTakeoverCount] refuses): the count then
+   * reads as 0, the fail-closed reading every other stored value here takes.
    */
-  private fun zeroedDoc(fields: Map<String, Any?>, seatId: String): Map<String, Any?> {
+  private fun zeroedDoc(
+    fields: Map<String, Any?>,
+    seatId: String,
+    storedDoc: Map<String, Any?>? = null,
+  ): Map<String, Any?> {
     val baseline = TimeoutResolution.seatActionCursor(fields, seatId)
-    return InactivityClock().storedFields() +
-      if (baseline == null) emptyMap<String, Any?>()
-      else mapOf(InactiveTakeover.CURSOR_FIELD to baseline)
+    val carriedCount = storedDoc?.let { TimeoutResolution.storedTakeoverCount(it) }
+    val out = LinkedHashMap<String, Any?>(InactivityClock().storedFields())
+    if (baseline != null) out[InactiveTakeover.CURSOR_FIELD] = baseline
+    if (carriedCount != null) {
+      out[TimeoutResolution.INACTIVITY_TAKEOVER_COUNT_FIELD] = carriedCount
+    }
+    return out
   }
 
   private fun noWrite(reason: String, message: String): Decision.NoWrite =

@@ -71,4 +71,35 @@ class LeaveMatchTest {
     assertEquals("returned-allowed = None (no departure)",
       KozCharge.None, LeaveMatch.decideLeave(MatchMode.RANKED, LeaveReason.RETURNED_ALLOWED))
   }
+
+  // ── S7 (A7.3 / Q32): the 7th takeover's own table — standalone, never a
+  // LeaveReason (the four-row decideLeave table above is DepartureContractTest's
+  // pinned contract; the takeover removal is not a departure, A6.12).
+
+  @Test
+  fun seventhTakeoverInRoomRecordsKoz1() {
+    assertEquals("7th takeover ROOM = Koz1 (A7.3: fired immediately, even mid-ballot)",
+      KozCharge.Koz1, seventhTakeoverCharge(MatchMode.ROOM))
+  }
+
+  @Test
+  fun seventhTakeoverInRankedRecordsKoz2() {
+    assertEquals("7th takeover RANKED = Koz2",
+      KozCharge.Koz2, seventhTakeoverCharge(MatchMode.RANKED))
+  }
+
+  @Test
+  fun seventhTakeoverInUnrankedRecordsKoz2() {
+    assertEquals("7th takeover UNRANKED = Koz2",
+      KozCharge.Koz2, seventhTakeoverCharge(MatchMode.UNRANKED))
+  }
+
+  @Test
+  fun theSeventhTakeoverTableHasNoLeaveReasonInput() {
+    // Structural: the removal keeps its own charge WITHOUT passing through
+    // decideLeave — the function takes only the mode, which is what keeps
+    // DepartureContractTest's four-row reason table intact in :services.
+    // The reason table's own rows are unchanged and re-pinned above.
+    assertEquals(KozCharge.Koz1, LeaveMatch.decideLeave(MatchMode.ROOM, LeaveReason.FIFTEEN_TIMEOUT))
+  }
 }

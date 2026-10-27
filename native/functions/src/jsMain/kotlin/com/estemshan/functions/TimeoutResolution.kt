@@ -7,6 +7,7 @@ import com.estemshan.engine.BiddingState
 import com.estemshan.engine.BidType
 import com.estemshan.engine.Card
 import com.estemshan.engine.DEFAULT_SEATS
+import com.estemshan.engine.DisconnectVotePhase
 import com.estemshan.engine.DisconnectVoteState
 import com.estemshan.engine.EmitResult
 import com.estemshan.engine.GameType
@@ -38,7 +39,9 @@ import com.estemshan.engine.initNormalRound
 import com.estemshan.engine.initTable
 import com.estemshan.engine.previewPlay
 import com.estemshan.engine.resolveTrick
+import com.estemshan.engine.seventhTakeoverCharge
 import com.estemshan.engine.trickWinner
+import kotlin.math.floor
 
 /**
  * S61 Stage 1 — the decision-timer authority.
@@ -296,6 +299,139 @@ object TimeoutResolution {
     (fields["mode"] as? String)?.let { runCatching { MatchMode.valueOf(it) }.getOrNull() }
       ?: MatchMode.ROOM
 
+  // ── S7 (A7.3 / A8.2): the per-seat takeover counter and the 7th removal ──
+
+  /**
+   * S7 (A7.3 / Q32): the number of qualifying takeovers at which the seat is
+   * removed permanently — the "bot takeover counter (7th = match removal)" of
+   * the owner ruling. The count lives in the private `inactivity/{uid}`
+   * document as [INACTIVITY_TAKEOVER_COUNT_FIELD], managed HERE and not on
+   * [InactivityClock] — RD20's separation keeps the clock owning exactly its
+   * two fields, and the takeover mechanism owns its own count beside them.
+   */
+  const val TAKEOVER_REMOVAL_THRESHOLD = 7
+
+  /** The lower bound a stored takeover count must satisfy to be trusted. */
+  const val MIN_STORED_TAKEOVER_COUNT = 0
+
+  /**
+   * `inactivity/{uid}.inactiveTakeoverCount` — how many qualifying takeovers
+   * this seat has already earned. It counts TAKEOVER EVENTS (calls where
+   * [inactivityAfterExpiredWindow] returns a non-null takeover), never
+   * ordinary timeouts and never borrow-time expiries: the clock only reaches
+   * its threshold while a human holds the seat, so the counter advances only
+   * on genuine earned takeovers.
+   */
+  const val INACTIVITY_TAKEOVER_COUNT_FIELD = "inactiveTakeoverCount"
+
+  /** `matches/{id}.takeoverRemovedUids` — the takeover mechanism's own removal list. */
+  const val TAKEOVER_REMOVED_UIDS_FIELD = "takeoverRemovedUids"
+
+  /**
+   * `matches/{id}.takeoverRemovedCharges` — the 7th takeover's own charge map,
+   * a SIBLING of S5's `timeoutRemovedCharges` and never a widening of it: uid
+   * → Koz, admin-written on the zero-rules path (no rules entry; the update
+   * dispatch falls through to `false` for clients while `allow get` keeps the
+   * map readable to every seat). Set-by-uid, so a same-uid rewrite is
+   * value-identical, never additive.
+   */
+  const val TAKEOVER_REMOVED_CHARGES_FIELD = "takeoverRemovedCharges"
+
+  /** The takeover mechanism's own persisted removal list (never another mechanism's). */
+  fun takeoverRemovedUids(fields: Map<String, Any?>): Set<String> =
+    ((fields[TAKEOVER_REMOVED_UIDS_FIELD] as? List<*>)?.mapNotNull { it as? String }).orEmpty().toSet()
+
+  /** Parses the 7th-takeover charge map, fail-closed exactly like S5's. */
+  fun takeoverRemovedCharges(fields: Map<String, Any?>): Map<String, Int> =
+    (fields[TAKEOVER_REMOVED_CHARGES_FIELD] as? Map<*, *>)?.entries?.mapNotNull { (k, v) ->
+      val uid = k as? String ?: return@mapNotNull null
+      val koz = (v as? Number)?.toInt() ?: return@mapNotNull null
+      uid to koz
+    }?.toMap() ?: emptyMap()
+
+  /**
+   * The 7th takeover's charge amount from the engine table
+   * ([com.estemshan.engine.seventhTakeoverCharge] — A7.3: ROOM 1, RANKED and
+   * UNRANKED 2). Int form for the persisted map, mirroring
+   * [removalChargeKoz]'s convention: the engine, not this file, is the single
+   * authority on amounts.
+   */
+  fun takeoverRemovalChargeKoz(mode: MatchMode): Int? =
+    when (seventhTakeoverCharge(mode)) {
+      KozCharge.Koz1 -> 1
+      KozCharge.Koz2 -> 2
+      KozCharge.None -> null
+    }
+
+  /** The charge-map write: carried verbatim + this seat SET by uid (never additive). */
+  fun takeoverRemovalChargeWrite(fields: Map<String, Any?>, uid: String, koz: Int): Map<String, Int> =
+    takeoverRemovedCharges(fields) + (uid to koz)
+
+  /**
+   * The stored takeover count: absent ⇒ 0 (no takeovers recorded yet — a
+   * document written before S7), present-but-invalid (non-number, fractional,
+   * negative, above [TAKEOVER_REMOVAL_THRESHOLD]) ⇒ null, the FAIL-CLOSED
+   * outcome in [InactivityClock.fromStored]'s own convention: the caller
+   * writes nothing, takes nobody over, and no malformed state can remove a
+   * player. A stored 7 is VALID — it is the terminal value the removal
+   * itself writes, and the seat it belongs to is bot-held from then on, so it
+   * can never be advanced past 7 by this mechanism.
+   */
+  fun storedTakeoverCount(storedDoc: Map<String, Any?>?): Int? {
+    val raw = storedDoc?.get(INACTIVITY_TAKEOVER_COUNT_FIELD) ?: return 0
+    val number = raw as? Number ?: return null
+    val value = number.toDouble()
+    if (value.isNaN() || value.isInfinite()) return null
+    if (value != floor(value)) return null
+    val count = number.toInt()
+    if (count < MIN_STORED_TAKEOVER_COUNT || count > TAKEOVER_REMOVAL_THRESHOLD) return null
+    return count
+  }
+
+  /**
+   * S7 / A7.3 — whether [seatId]'s 7th takeover is due RIGHT NOW from the
+   * committed documents alone: the stored count sits exactly one below the
+   * threshold AND the stored clock has reached the RD19 threshold at
+   * [nowMillis]. This is the read-only evaluation the resolver runs BEFORE
+   * the S74 pause gate, so a live WAIT cannot defer the removal.
+   *
+   * Fail-closed in every direction that could remove a player: an already
+   * takeover-removed uid answers false (the removal owns the replay), a seat
+   * another mechanism drives answers false, and any untrustworthy stored
+   * value answers false. NOTE the structural honesty documented in the S7
+   * report: every write this code makes stores an accumulation BELOW the
+   * threshold (the expiry that crosses it fires the takeover in the same
+   * write), and the open-window anchor is nulled by every persisted window
+   * close — so on a runtime-produced document this predicate is true only at
+   * the instant the crossing expiry itself resolves, which the ordinary expiry
+   * path already owns. It exists because A7.3 demands the WAIT not defer the
+   * removal; making it reachable during a pause is E4.3's re-architecture,
+   * explicitly out of scope here.
+   */
+  fun seventhTakeoverOverdue(
+    fields: Map<String, Any?>,
+    seatId: String,
+    storedDoc: Map<String, Any?>?,
+    nowMillis: Long,
+  ): Boolean {
+    val uid = seatUid(fields, seatId) ?: return false
+    if (uid in takeoverRemovedUids(fields)) return false
+    if (seatId in botControlledSeats(fields) ||
+      seatId in inactiveTakeoverSeats(fields) ||
+      seatId in disconnectReplacedHeldSeats(fields)
+    ) {
+      return false
+    }
+    val count = storedTakeoverCount(storedDoc) ?: return false
+    if (count != TAKEOVER_REMOVAL_THRESHOLD - 1) return false
+    val clock = InactivityClock.fromStored(
+      accumulatedRaw = storedDoc?.get(InactivityClock.ACCUMULATED_FIELD),
+      windowStartRaw = storedDoc?.get(InactivityClock.OPEN_WINDOW_FIELD),
+      docExists = storedDoc != null,
+    ) ?: return false
+    return clock.takeoverEligibleAt(nowMillis)
+  }
+
   // ── constants mirrored from :services (not visible to :functions) ────
 
   /**
@@ -348,18 +484,21 @@ object TimeoutResolution {
   const val MIN_RETRY_AFTER_MILLIS = 250L
 
   /**
-   * S61 Stage 2: the seats a bot drives, for EITHER reason — Vote Kick's
-   * `botSeats`, or a seat whose uid the 15-timeout counter removed. Mirrors
-   * MatchDoc.botControlledSeats() read-side-only: the two mechanisms keep
-   * separate persisted lists and this never writes either.
+   * S61 Stage 2: the seats a bot drives, for ANY permanent reason — Vote
+   * Kick's `botSeats`, a seat whose uid the 15-timeout counter removed, or a
+   * seat whose uid the 7th takeover removed (S7/A7.3: the takeover removal is
+   * permanent exactly like RD20's). Mirrors MatchDoc.botControlledSeats()
+   * read-side-only: the mechanisms keep separate persisted lists and this
+   * never writes either.
    */
   fun botControlledSeats(fields: Map<String, Any?>): Set<String> {
     val botSeats = (fields["botSeats"] as? List<*>)?.mapNotNull { it as? String }.orEmpty()
     val timeoutRemoved = timeoutRemovedUids(fields)
+    val takeoverRemoved = takeoverRemovedUids(fields)
     val seats = strMap(fields["seats"]) ?: return botSeats.toSet()
     return botSeats.toSet() +
       seats.entries.mapNotNull { (seat, uid) ->
-        if (uid in timeoutRemoved) seat else null
+        if (uid in timeoutRemoved || uid in takeoverRemoved) seat else null
       }
   }
 
@@ -446,6 +585,41 @@ object TimeoutResolution {
     if (remaining <= 0L) return null
     return remaining.coerceAtLeast(DisconnectVoteFlow.MIN_RETRY_AFTER_MILLIS)
   }
+
+  /**
+   * S7 / A7.3: the seat whose granted WAIT pause is live, or null when none
+   * is. The 7th-takeover evaluation the resolver runs before the pause gate
+   * asks about exactly this seat — the pause belongs to its ballot, so the
+   * removal that cancels the ballot is a fact about this seat and no other
+   * ("a 7th takeover of seat A must not cancel seat B's live WAIT").
+   */
+  fun disconnectWaitSeat(fields: Map<String, Any?>): String? {
+    if (!DisconnectVoteFlow.modeEligible(fields)) return null
+    return DisconnectVoteState.parseAll(fields[DisconnectVoteState.VOTE_FIELD])
+      .entries.sortedBy { it.key }
+      .firstOrNull { it.value.phase == DisconnectVotePhase.WAIT }
+      ?.key
+  }
+
+  /**
+   * S7: the disconnect-held seats whose waiting has already ENDED — the
+   * `REPLACED` entries. The inactivity clock keeps its pre-S7 freeze for
+   * these on purpose: the flow has already made the seat permanently the
+   * configured bot's (its own provenance list, its own charge), so letting it
+   * ALSO earn RD19 takeovers would stack a second permanent removal — and at
+   * the 7th, a second charge — on a seat another mechanism already replaced,
+   * against A8.2's no-double-charge. The borrowing phases (`HOLD`/`VOTE`/
+   * `WAIT`) are the ones whose clock accrual S7 lifted; see
+   * [inactivityAfterExpiredWindow].
+   */
+  fun disconnectReplacedHeldSeats(fields: Map<String, Any?>): Set<String> =
+    if (!DisconnectVoteFlow.modeEligible(fields)) {
+      emptySet()
+    } else {
+      DisconnectVoteState.parseAll(fields[DisconnectVoteState.VOTE_FIELD])
+        .filterValues { it.phase == DisconnectVotePhase.REPLACED }
+        .keys
+    }
 
   /**
    * Whether [seatId] is being driven by a bot right now, for any reason:
@@ -590,8 +764,10 @@ object TimeoutResolution {
    */
   data class InactivityUpdate(
     /** The COMPLETE private document — [InactivityClock.storedFieldNames] plus
-     *  [InactiveTakeover.CURSOR_FIELD]. Written as a replacement, never a
-     *  merge, because these three are the only state this mechanism owns. */
+     *  [InactiveTakeover.CURSOR_FIELD], and [INACTIVITY_TAKEOVER_COUNT_FIELD]
+     *  whenever a stored document is being replaced (S7). Written as a
+     *  replacement, never a merge, because these are the only state this
+     *  mechanism owns. */
     val docFields: Map<String, Any?>,
     /** The takeover this window earned, or null. Its marker entry is merged
      *  into the match document by the caller; the entry's own neighbours are
@@ -612,15 +788,37 @@ object TimeoutResolution {
    *
    * Returns null — write NOTHING, take nobody over — when the state cannot be
    * trusted: the seat has no uid to key the document by, the seat is already
-   * bot-driven or already borrowed (a borrowed seat's clock stopped accruing the
-   * moment it was taken over; reclaim owns restarting it), the logs will not
-   * yield a cursor, or the stored clock is present-but-invalid. [InactivityClock.fromStored]
-   * is what makes the last of those a fail-closed read rather than a fresh zero.
+   * permanently bot-driven or already borrowed (a borrowed seat's clock stopped
+   * accruing the moment it was taken over; reclaim owns restarting it), the
+   * logs will not yield a cursor, or the stored clock is present-but-invalid.
+   * [InactivityClock.fromStored] is what makes the last of those a fail-closed
+   * read rather than a fresh zero.
+   *
+   * S7 / A7.3: a disconnect-held seat's clock is deliberately NOT suppressed
+   * here while the hold is a BORROWING (`HOLD`/`VOTE`/`WAIT`) — the one
+   * semantic change of this story. The hold is a borrowing, and RD19's clock
+   * measures the human's absence, not the mechanism's own doing: a seat can
+   * therefore EARN its 7th takeover while a ballot about it is open, which is
+   * exactly what A7.3 demands ("fires immediately, even with a 30 s ballot
+   * open"). A REPLACED hold keeps the pre-S7 freeze ([disconnectReplacedHeldSeats]
+   * — that flow already made the seat permanently its own), the RD20 timeout
+   * counter keeps its own suppression for every held seat (the caller's
+   * `humanHeldSeat`), and a takeover-removed seat is suppressed here through
+   * [botControlledSeats].
    *
    * A takeover zeroes the clock on purpose, and it is load-bearing: an
    * accumulation at or above the threshold is one `fromStored` rejects, so
    * leaving 50 s on the document would kill the clock for that seat permanently
    * and leave it neither re-takeover-able nor able to earn a second one.
+   *
+   * S7 also carries the per-seat takeover count ([INACTIVITY_TAKEOVER_COUNT_FIELD]):
+   * read from [storedDoc] with [storedTakeoverCount]'s fail-closed parse
+   * (invalid ⇒ null ⇒ this whole advance refuses), and written back as
+   * `stored + (1 if this window earned a takeover else 0)` whenever a stored
+   * document is being replaced — the replacement must never erase a count
+   * that is already on it. A first write (no stored document) keeps S73's
+   * exact three-field shape; there is no count to erase, and the field reads
+   * as 0 until the document next replaces.
    */
   fun inactivityAfterExpiredWindow(
     fields: Map<String, Any?>,
@@ -632,7 +830,15 @@ object TimeoutResolution {
   ): InactivityUpdate? {
     val seatId = pending.seatId
     if (seatUid == null) return null
-    if (botHeldSeat(fields, seatId)) return null
+    // S7/A7.3 lifted the BORROWING half of the disconnect hold here on purpose
+    // — see the KDoc. The permanent union, the borrowed set, and a REPLACED
+    // disconnect hold (already permanent by its own mechanism) still suppress.
+    if (seatId in botControlledSeats(fields) ||
+      seatId in inactiveTakeoverSeats(fields) ||
+      seatId in disconnectReplacedHeldSeats(fields)
+    ) {
+      return null
+    }
     val round = num(fields["currentRound"]) ?: return null
     val cursorNow = seatActionCursor(fields, seatId) ?: return null
     val clock = InactivityClock.fromStored(
@@ -640,6 +846,7 @@ object TimeoutResolution {
       windowStartRaw = storedDoc?.get(InactivityClock.OPEN_WINDOW_FIELD),
       docExists = storedDoc != null,
     ) ?: return null
+    val storedTakeovers = storedTakeoverCount(storedDoc) ?: return null
 
     // A cursor the mechanism never wrote is not state to advance from; a cursor
     // that was never written at all is the seat's first window, so it only means
@@ -680,9 +887,18 @@ object TimeoutResolution {
     }
 
     val persisted = if (takeover != null) InactivityClock() else advanced
+    val nextTakeoverCount = (storedTakeovers + if (takeover != null) 1 else 0)
+      .coerceAtMost(TAKEOVER_REMOVAL_THRESHOLD)
     return InactivityUpdate(
       docFields = persisted.storedFields() +
-        (InactiveTakeover.CURSOR_FIELD to cursorAfterWrite(fields, seatId, write, cursorNow)),
+        (InactiveTakeover.CURSOR_FIELD to cursorAfterWrite(fields, seatId, write, cursorNow)) +
+        // Carried/replaced only: a first write (storedDoc == null) keeps S73's
+        // three-field document, and the count reads as 0 until it exists.
+        if (storedDoc != null) {
+          mapOf(INACTIVITY_TAKEOVER_COUNT_FIELD to nextTakeoverCount)
+        } else {
+          emptyMap()
+        },
       takeover = takeover,
     )
   }

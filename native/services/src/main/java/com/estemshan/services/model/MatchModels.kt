@@ -279,6 +279,30 @@ data class MatchDoc(
    */
   val timeoutRemovedUids: List<String> = emptyList(),
   /**
+   * S7 (A7.3 / Q32): uids permanently removed by the 7th inactivity takeover.
+   * This is the takeover mechanism's OWN provenance list — a third sibling,
+   * kept separate from [removedUids] (Vote Kick), [timeoutRemovedUids] (the
+   * 15-timeout counter) and [leftUids] exactly as those are separate from each
+   * other; no path writes another mechanism's field. Recognition is read-side
+   * only: [isRemoved] unions the list and [botControlledSeats] adds these
+   * seats, so the seat is permanently bot-driven, unplayable and unvotable,
+   * with no merged persisted state. Absent in older docs ⇒ nobody
+   * takeover-removed (no migration).
+   */
+  val takeoverRemovedUids: List<String> = emptyList(),
+  /**
+   * S7 (A7.3): the 7th takeover's own charge map — uid → Koz (ROOM 1,
+   * RANKED/UNRANKED 2, `seventhTakeoverCharge`'s table). A SIBLING of S5's
+   * `timeoutRemovedCharges`, never a widening of it: each removal mechanism
+   * records its own charge at its own instant, and the settlement path
+   * consumes the maps separately. Admin-written only (zero-rules path);
+   * malformed entries parse as absent, the fail-closed convention of every
+   * stored-value reader in this model. Absent in older docs ⇒ no charges (no
+   * migration). RECORDED but NOT consumed in S7 — the settlement consumer is a
+   * later story.
+   */
+  val takeoverRemovedCharges: Map<String, Int> = emptyMap(),
+  /**
    * S72 (E6b, RD31): uids who have explicitly left the match via Explicit Leave Match.
    * A left uid can never play, vote, or rejoin this match again — every match write
    * path checks [isLeft], and the seat is taken by the configured bot so the match
@@ -368,13 +392,15 @@ data class MatchDoc(
   fun isPlayer(uid: String): Boolean = uid in players
 
   /**
-   * S60 + S61 Stage 2: permanently removed by EITHER mechanism. The union
-   * is read-side only — [removedUids] (Vote Kick) and [timeoutRemovedUids]
-   * (the 15-timeout counter) stay separate persisted lists and are never
-   * written by the other's path. Both make the seat unplayable, so
-   * [isSeated] gates on this union rather than on either list alone.
+   * S60 + S61 Stage 2 + S7: permanently removed by ANY mechanism. The union
+   * is read-side only — [removedUids] (Vote Kick), [timeoutRemovedUids] (the
+   * 15-timeout counter) and [takeoverRemovedUids] (the 7th takeover) stay
+   * separate persisted lists and are never written by another's path. All
+   * three make the seat unplayable, so [isSeated] gates on this union rather
+   * than on any one list alone.
    */
-  fun isRemoved(uid: String): Boolean = uid in removedUids || uid in timeoutRemovedUids
+  fun isRemoved(uid: String): Boolean =
+    uid in removedUids || uid in timeoutRemovedUids || uid in takeoverRemovedUids
 
   /**
    * S72: explicitly left the match. The seat is taken by the configured bot; the
@@ -398,7 +424,10 @@ data class MatchDoc(
    * which is the opposite of DEC-RD19-04. Ask that set separately.
    */
   fun botControlledSeats(): Set<String> =
-    (botSeats.toSet() + seats.filterValues { it in timeoutRemovedUids }.keys + seats.filterValues { it in leftUids }.keys)
+    (botSeats.toSet() +
+      seats.filterValues { it in timeoutRemovedUids }.keys +
+      seats.filterValues { it in leftUids }.keys +
+      seats.filterValues { it in takeoverRemovedUids }.keys)
 
   /**
    * S73 (RD19): the seats currently borrowed by the configured bot because
@@ -411,20 +440,28 @@ data class MatchDoc(
   /**
    * S74 (DEC-DISC-01): the seats the disconnect flow is driving RIGHT NOW —
    * `HOLD`, `VOTE`, `WAIT` and `REPLACED` alike, because the seat is
-   * bot-played from the instant of detection. Read-side only and never merged
-   * into [botControlledSeats], for [inactiveTakeoverSeats]'s exact reason: a
-   * held seat is still its owner's seat and must keep its Vote Kick slot.
+   * bot-played from the instant of detection. A `CANCELLED` entry (S7 /
+   * A8.2) is NOT held: its seat was removed by the 7th takeover, whose own
+   * removal list — not this marker — is what makes that seat bot-driven.
+   * Read-side only and never merged into [botControlledSeats], for
+   * [inactiveTakeoverSeats]'s exact reason: a held seat is still its owner's
+   * seat and must keep its Vote Kick slot.
    */
-  fun disconnectHeldSeats(): Set<String> = disconnectVote.keys
+  fun disconnectHeldSeats(): Set<String> =
+    disconnectVote.filterValues { it.phase != DisconnectVotePhase.CANCELLED }.keys
 
   /**
    * S74: the held seats their owner can still take BACK — `HOLD`, `VOTE` or
    * `WAIT`, i.e. the whole time the table waits. A `REPLACED` seat is not
    * reclaimable: the waiting ended with no reconnect, and the seat is the
-   * configured bot's for the rest of the match.
+   * configured bot's for the rest of the match. A `CANCELLED` seat (S7 /
+   * A8.2) is not either: the seat was removed outright, so there is nothing
+   * left to take back.
    */
   fun disconnectReclaimableSeats(): Set<String> =
-    disconnectVote.filterValues { it.phase != DisconnectVotePhase.REPLACED }.keys
+    disconnectVote
+      .filterValues { it.phase != DisconnectVotePhase.REPLACED && it.phase != DisconnectVotePhase.CANCELLED }
+      .keys
 
   /**
    * S60: seated AND not removed — the gate every match write path
@@ -507,6 +544,14 @@ data class MatchDoc(
         removedUids = (fields["removedUids"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
         timeoutRemovedUids = (fields["timeoutRemovedUids"] as? List<*>)
           ?.mapNotNull { it as? String } ?: emptyList(),
+        takeoverRemovedUids = (fields["takeoverRemovedUids"] as? List<*>)
+          ?.mapNotNull { it as? String } ?: emptyList(),
+        takeoverRemovedCharges = (fields["takeoverRemovedCharges"] as? Map<*, *>)?.entries
+          ?.mapNotNull { (k, v) ->
+            val key = k as? String ?: return@mapNotNull null
+            val value = (v as? Long)?.toInt() ?: return@mapNotNull null
+            key to value
+          }?.toMap() ?: emptyMap(),
         leftUids = (fields["leftUids"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
         inactiveTakeovers = InactiveTakeover.parseAll(fields["inactiveTakeovers"]),
         disconnectVote = DisconnectVoteState.parseAll(fields["disconnectVote"]),

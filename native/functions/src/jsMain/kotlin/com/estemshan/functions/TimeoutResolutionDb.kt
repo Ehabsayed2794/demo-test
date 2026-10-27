@@ -1,6 +1,7 @@
 package com.estemshan.functions
 
 import com.estemshan.engine.Card
+import com.estemshan.engine.DisconnectVoteState
 import com.estemshan.engine.InactiveTakeover
 import com.estemshan.engine.InactivityClock
 import com.estemshan.engine.RANKS
@@ -109,6 +110,18 @@ interface TimeoutDb {
     fun writeInactivity(matchId: String, uid: String, fields: Map<String, Any?>) {
       // Default: the fake's transaction does not model inactivity.
     }
+
+    /**
+     * S7 (A8.2 / Q36): removes `matches/{id}/disconnectVotes/{uid}` — the
+     * 7th takeover's ballot cancellation, in the SAME transaction as the
+     * removal it belongs to, so no stale ballot can outlive the seat it was
+     * about. The same path `DisconnectVoteDb.Tx.deleteBallot` proved; the
+     * default no-op keeps every existing fake (which models no ballots)
+     * compiling and pinning exactly what it pins today.
+     */
+    suspend fun deleteBallot(matchId: String, uid: String) {
+      // Default: the fake's transaction does not model ballots.
+    }
   }
 }
 
@@ -212,12 +225,23 @@ suspend fun resolveTimeoutOnce(
   // replacement write that ends the pause re-stamps `updatedAt`, which is the
   // decision machine's only anchor, so the pending decision gets a complete
   // window when play resumes — the exact logic the S73 return documents.
-  TimeoutResolution.disconnectPauseRemaining(fields, clock.nowMillis())?.let { remaining ->
-    return noWriteResponse(
-      Reason.NOT_YET_EXPIRED,
-      "resolveDecisionTimeout: the match is paused for a disconnect vote.",
-      retryAfterMillis = remaining,
-    )
+  //
+  // S7 / A7.3: while the pause is live the call now enters the TRANSACTION
+  // instead of answering here, because the 7th-takeover terminal condition
+  // must be evaluated BEFORE the pause gate — read-only, from the committed
+  // document plus the private inactivity document read under the same lock —
+  // and only then does the pause answer exactly as it always has. The cheap
+  // pre-check's answer is unchanged for every document where the condition is
+  // false, which is every document the runtime can produce today (see
+  // [TimeoutResolution.seventhTakeoverOverdue]).
+  if (TimeoutResolution.disconnectPauseRemaining(fields, clock.nowMillis()) != null) {
+    val paused = db.transact { tx ->
+      evaluatePausedTerminal(tx, matchId, clock)
+    }
+    // Null = the pause ended between the pre-check and the transaction: fall
+    // through to the ordinary flow, which re-derives everything from its own
+    // committed read.
+    if (paused != null) return paused
   }
   if (!TimeoutResolution.isExpired(pending, clock.nowMillis())) {
     return noWriteResponse(
@@ -243,16 +267,20 @@ suspend fun resolveTimeoutOnce(
           "resolveDecisionTimeout: match '$matchId' is not waiting on a decision.",
         )
       }
-    // S74: the same pause gate on the committed document — a pause that went
-    // live between the pre-check and this transaction stops the expiry here,
-    // and one that ENDED makes `updatedAt` newer, so this re-anchors the
-    // window instead of resolving against the pre-pause clock.
-    TimeoutResolution.disconnectPauseRemaining(fresh, clock.nowMillis())?.let { remaining ->
-      return@transact noWriteResponse(
-        Reason.NOT_YET_EXPIRED,
-        "resolveDecisionTimeout: the match is paused for a disconnect vote.",
-        retryAfterMillis = remaining,
-      )
+    // S7/A7.3: the same terminal evaluation before the IN-TRANSACTION pause
+    // gate — a pause that went live between the pre-check and this
+    // transaction gets the same read-only look at the WAIT seat's 7th-takeover
+    // condition first; only an undue condition falls through to the pause
+    // answer below.
+    if (TimeoutResolution.disconnectPauseRemaining(fresh, clock.nowMillis()) != null) {
+      evaluatePausedTerminal(tx, matchId, clock, committed = fresh)?.let { return@transact it }
+      TimeoutResolution.disconnectPauseRemaining(fresh, clock.nowMillis())?.let { remaining ->
+        return@transact noWriteResponse(
+          Reason.NOT_YET_EXPIRED,
+          "resolveDecisionTimeout: the match is paused for a disconnect vote.",
+          retryAfterMillis = remaining,
+        )
+      }
     }
     if (!TimeoutResolution.isExpired(freshPending, clock.nowMillis())) {
       return@transact noWriteResponse(
@@ -298,14 +326,27 @@ suspend fun resolveTimeoutOnce(
         // before the hold still counts: it was a genuine human timeout.
         val alreadyDisconnectHeld =
           freshPending.seatId in TimeoutResolution.disconnectHeldSeats(fresh)
+        // The COUNTER's human gate keeps every suppression exactly as S74 drew
+        // it: a disconnect-held seat's expiries are the mechanism's own doing
+        // and must never march RD20's removal.
         val humanHeldSeat =
           seatUid != null && !alreadyBotControlled && !alreadyBorrowed && !alreadyDisconnectHeld
+
+        // S7 / A7.3: the CLOCK's gate is deliberately wider — a disconnect-held
+        // seat keeps ACCRUING inactivity while the ballot about it is open,
+        // because the hold is a borrowing and RD19's clock measures the human's
+        // absence. This is the one semantic change of the story; the inactivity
+        // advance re-checks the permanent union, the borrowed set and the
+        // REPLACED holds itself, so a seat another mechanism drives never
+        // accrues here.
+        val clockHeldSeat =
+          seatUid != null && !alreadyBotControlled && !alreadyBorrowed
 
         // S73 (RD19): the clock is read under the same lock as the decision that
         // advances it, and only for a seat a human still holds. Every read in
         // this transaction happens before every write, as Firestore requires.
         val storedInactivity =
-          if (humanHeldSeat) tx.readInactivity(matchId, seatUid!!) else null
+          if (clockHeldSeat) tx.readInactivity(matchId, seatUid!!) else null
 
         val counter = if (humanHeldSeat) {
           TimeoutCounter.fromStored(
@@ -316,7 +357,7 @@ suspend fun resolveTimeoutOnce(
           null
         }
 
-        val inactivity = if (humanHeldSeat) {
+        val inactivity = if (clockHeldSeat) {
           TimeoutResolution.inactivityAfterExpiredWindow(
             fields = fresh,
             pending = freshPending,
@@ -333,8 +374,26 @@ suspend fun resolveTimeoutOnce(
           tx.writeTimeoutCount(matchId, seatUid!!, counter.nextCount)
         }
 
-        val removal = counter != null && counter.shouldRemove
         val takeover = inactivity?.takeover
+        // S7/A7.3: the takeover this window earned is the TERMINAL one when
+        // the persisted count reaches the threshold. A takeover implies a
+        // stored document (the clock cannot reach 50 s in a single window),
+        // so the count field is present; the advance coerces it at 7, and
+        // after the removal the seat is bot-held so the branch never re-runs.
+        val terminalTakeover = takeover != null && seatUid != null &&
+          ((inactivity.docFields[TimeoutResolution.INACTIVITY_TAKEOVER_COUNT_FIELD] as? Int) ?: 0) >=
+          TimeoutResolution.TAKEOVER_REMOVAL_THRESHOLD
+        // S7/A7.3 precedence (owner ruling 2026-10-27, Q-S7-4): when ONE
+        // expiry is BOTH the 15th timeout and the 7th takeover, the takeover
+        // owns the removal. Exactly one reason and exactly one charge is
+        // recorded — the two charge maps can never name the same uid, so the
+        // owner's "no 4 Koz" invariant holds by construction, not by a
+        // settlement-side dedup. The counter still advances (the 15th timeout
+        // DID happen); only its removal and charge are suppressed, because
+        // the terminal takeover already cancels the ballot and clears the
+        // marker the timeout path never touched.
+        val removal = counter != null && counter.shouldRemove && !terminalTakeover
+        var ballotDeletes: List<String> = emptyList()
         val updates = if (removal || takeover != null) {
           val merged = LinkedHashMap(outcome.write.updates)
           if (removal) {
@@ -361,18 +420,34 @@ suspend fun resolveTimeoutOnce(
                 TimeoutResolution.removalChargeWrite(fresh, seatUid, koz)
             }
           }
-          takeover?.let {
-            // RD19: the takeover rides the SAME write as the decision that
-            // earned it, so no client can ever observe the accumulation without
-            // the seat being borrowed — and no separate write can be lost
-            // between the two. [InactiveTakeover.withTakeover] is surgical: the
-            // other seats' entries are carried verbatim, so one resolver can
-            // never discard another seat's takeover.
-            merged[InactiveTakeover.TAKEOVER_FIELD] = InactiveTakeover.withTakeover(
-              fresh[InactiveTakeover.TAKEOVER_FIELD],
-              freshPending.seatId,
-              it,
+          if (terminalTakeover && seatUid != null) {
+            // S7 / A7.3 + A8.2 (Q36): the 7th takeover removes the seat in the
+            // SAME write as the decision that earned it — no client can
+            // observe the seat borrowed-then-removed — and EXACTLY ONCE: once
+            // this commits, the uid is in `takeoverRemovedUids`, so
+            // botControlledSeats makes every later resolution of the seat skip
+            // the clock branch entirely (the removal's own idempotency proof,
+            // the same shape S5's charge rode). The ballot it leaves behind is
+            // cancelled outright — its marker entry deleted, its ballot
+            // documents removed after this update — never completed by an
+            // expiry verdict and never re-opened.
+            ballotDeletes = mergeSeventhTakeoverRemoval(
+              merged, fresh, freshPending.seatId, seatUid,
             )
+          } else {
+            takeover?.let {
+              // RD19: the takeover rides the SAME write as the decision that
+              // earned it, so no client can ever observe the accumulation without
+              // the seat being borrowed — and no separate write can be lost
+              // between the two. [InactiveTakeover.withTakeover] is surgical: the
+              // other seats' entries are carried verbatim, so one resolver can
+              // never discard another seat's takeover.
+              merged[InactiveTakeover.TAKEOVER_FIELD] = InactiveTakeover.withTakeover(
+                fresh[InactiveTakeover.TAKEOVER_FIELD],
+                freshPending.seatId,
+                it,
+              )
+            }
           }
           merged
         } else {
@@ -384,13 +459,157 @@ suspend fun resolveTimeoutOnce(
           // The clock and the marker commit together with the decision, and the
           // clock it persists is ZEROED whenever the marker is written — an
           // accumulation at or above the threshold is one `fromStored` rejects,
-          // so leaving it behind would kill the seat's clock permanently.
+          // so leaving it behind would kill the seat's clock permanently. On
+          // the terminal branch the same write carries count = 7, the value
+          // the seat keeps forever: it is bot-held from this commit on.
           tx.writeInactivity(matchId, seatUid, inactivity.docFields)
+        }
+        for (voter in ballotDeletes) {
+          // A8.2: no stale ballot can complete later — the seat's own ballot
+          // document and every electorate ballot for it leave with the
+          // removal. Write-side only; other seats' ballots are untouched.
+          tx.deleteBallot(matchId, voter)
         }
         appliedResponse(freshPending, outcome.write, matchId)
       }
     }
   }
+}
+
+// ── S7 (A7.3 / A8.2): the 7th takeover's terminal write and its helpers ───
+
+/**
+ * Merges the 7th takeover's terminal removal into [updates], in place, and
+ * returns the voter uids (the removed seat first, then its electorate) whose
+ * ballot documents must be deleted in the SAME transaction.
+ *
+ * Everything here derives from the committed [fields] the caller read under
+ * the same lock, so a replay re-derives idempotently: the list is
+ * `(stored + uid).distinct()` (append-only, deduplicated), the charge map is
+ * SET by uid (the amount is a pure function of the create-only mode, so a
+ * same-uid rewrite is value-identical, never a second charge), and the marker
+ * entries are removed with the surgical map builders that carry every OTHER
+ * seat's state verbatim — a 7th takeover of seat A cancels A's ballot and A's
+ * markers and nobody else's (the S7 row of T-16).
+ *
+ * `version`/`updatedAt`: the caller's write carries them on the expiry path
+ * (the decision write's own fields); the pause path adds them itself.
+ */
+private fun mergeSeventhTakeoverRemoval(
+  updates: LinkedHashMap<String, Any?>,
+  fields: Map<String, Any?>,
+  seatId: String,
+  seatUid: String,
+): List<String> {
+  updates[TimeoutResolution.TAKEOVER_REMOVED_UIDS_FIELD] =
+    (TimeoutResolution.takeoverRemovedUids(fields) + seatUid).toList()
+  TimeoutResolution.takeoverRemovalChargeKoz(TimeoutResolution.storedMatchMode(fields))?.let { koz ->
+    updates[TimeoutResolution.TAKEOVER_REMOVED_CHARGES_FIELD] =
+      TimeoutResolution.takeoverRemovalChargeWrite(fields, seatUid, koz)
+  }
+  // A8.2: the ballot ends CANCELLED — its marker entry is deleted outright
+  // (every phase, not only VOTE), so no expiry verdict can complete it and no
+  // restore can re-open it. withoutSeat carries the other seats' entries
+  // verbatim, so seat B's live ballot or WAIT is untouched.
+  updates[DisconnectVoteState.VOTE_FIELD] =
+    DisconnectVoteState.withoutSeat(fields[DisconnectVoteState.VOTE_FIELD], seatId)
+  // The seat is REMOVED, not borrowed: its inactiveTakeovers entry leaves with
+  // the same write, or a later reclaim would see a borrowed seat that no
+  // longer exists. Other seats' takeover entries are carried verbatim.
+  updates[InactiveTakeover.TAKEOVER_FIELD] =
+    InactiveTakeover.withoutTakeover(fields[InactiveTakeover.TAKEOVER_FIELD], seatId)
+  return listOf(seatUid) + DisconnectVoteFlow.electorateUids(fields, seatId)
+}
+
+/**
+ * The private inactivity document as the terminal takeover leaves it: the
+ * clock zeroed (there is no seat left to accrue for), the stored cursor
+ * carried verbatim (no decision was projected on the pause path; the value is
+ * the mechanism's own baseline and erasing it would corrupt the next
+ * comparison were the seat ever re-seated), and the count at
+ * [TimeoutResolution.TAKEOVER_REMOVAL_THRESHOLD] — the value the seat keeps
+ * forever, because the seat is bot-held from the removal's commit on.
+ */
+private fun terminalInactivityDoc(storedDoc: Map<String, Any?>?): Map<String, Any?> {
+  val out = LinkedHashMap<String, Any?>(InactivityClock().storedFields())
+  storedDoc?.get(InactiveTakeover.CURSOR_FIELD)?.let { cursor ->
+    out[InactiveTakeover.CURSOR_FIELD] = cursor
+  }
+  out[TimeoutResolution.INACTIVITY_TAKEOVER_COUNT_FIELD] = TimeoutResolution.TAKEOVER_REMOVAL_THRESHOLD
+  return out
+}
+
+/** The pause-path removal's answer. No decision was resolved — the pause held
+ *  for every other purpose — so `resolved` is false and the removal is named
+ *  by its own vocabulary. */
+private fun seventhTakeoverRemovalResponse(matchId: String, seatId: String, seatUid: String): Map<String, Any?> =
+  mapOf(
+    "ok" to true,
+    "resolved" to false,
+    "removed" to true,
+    "reason" to "SEVENTH_TAKEOVER",
+    "matchId" to matchId,
+    "seatId" to seatId,
+    "uid" to seatUid,
+  )
+
+/**
+ * S7 / A7.3 — the read-only-before-it-decides evaluation that runs BEFORE the
+ * S74 pause gate. Asked about the pause's OWN seat (the WAIT entry's), from
+ * the committed document plus the private inactivity document read in the
+ * same transaction.
+ *
+ * Returns the response map when the terminal condition holds (the removal
+ * write and the ballot deletes commit in the caller's transaction); the
+ * pause's ordinary NOT_YET_EXPIRED answer when it does not and the pause is
+ * still live; null when the pause ended between the caller's pre-check and
+ * this read, so the ordinary flow can re-derive everything from a fresh
+ * committed document.
+ *
+ * Reachability honesty (see [TimeoutResolution.seventhTakeoverOverdue]): on a
+ * document the runtime can produce, the stored accumulation is always BELOW
+ * the 50 s threshold — the expiry that crosses it fires the takeover in the
+ * same write — and no persisted document keeps an open window. The predicate
+ * therefore holds only for a stored count of 6 against a clock that a runtime
+ * write never leaves behind; implementing it is A7.3's demand, and making the
+ * condition live during a pause is E4.3's decision-timer re-architecture,
+ * explicitly out of scope for S7.
+ */
+private suspend fun evaluatePausedTerminal(
+  tx: TimeoutDb.TimeoutTx,
+  matchId: String,
+  clock: DecisionClock,
+  committed: Map<String, Any?>? = null,
+): Map<String, Any?>? {
+  val fresh = committed ?: tx.readMatch(matchId)
+    ?: throw HttpsError("not-found", "resolveDecisionTimeout: match '$matchId' was not found.")
+  val waitSeat = TimeoutResolution.disconnectWaitSeat(fresh)
+  if (waitSeat != null) {
+    val waitUid = TimeoutResolution.seatUid(fresh, waitSeat)
+    val stored = waitUid?.let { tx.readInactivity(matchId, it) }
+    if (waitUid != null &&
+      TimeoutResolution.seventhTakeoverOverdue(fresh, waitSeat, stored, clock.nowMillis())
+    ) {
+      val updates = LinkedHashMap<String, Any?>()
+      val deletes = mergeSeventhTakeoverRemoval(updates, fresh, waitSeat, waitUid)
+      updates["version"] = ((fresh["version"] as? Number)?.toInt() ?: 0) + 1
+      updates["updatedAt"] = FieldValue.serverTimestamp()
+      tx.updateMatch(matchId, updates)
+      tx.writeInactivity(matchId, waitUid, terminalInactivityDoc(stored))
+      for (voter in deletes) {
+        tx.deleteBallot(matchId, voter)
+      }
+      return seventhTakeoverRemovalResponse(matchId, waitSeat, waitUid)
+    }
+  }
+  TimeoutResolution.disconnectPauseRemaining(fresh, clock.nowMillis())?.let { remaining ->
+    return noWriteResponse(
+      Reason.NOT_YET_EXPIRED,
+      "resolveDecisionTimeout: the match is paused for a disconnect vote.",
+      retryAfterMillis = remaining,
+    )
+  }
+  return null
 }
 
 private fun extractRound(fields: Map<String, Any?>): Int =
@@ -466,10 +685,12 @@ private fun reclaimedResponse(matchId: String, seatId: String): Map<String, Any?
  * private document is replaced by the zeroed clock and its new baseline cursor,
  * `version` ticks and `updatedAt` is re-stamped — so no client can observe a
  * seat whose chip says INACTIVE while its clock says otherwise, and no delivery
- * can lose half of the return. A reclaim reads NOTHING it does not write: the
- * counter doc is not touched (RD20 — a return is not a timeout) and the stored
- * clock is not read (it is being replaced, and its validity has no bearing on
- * returning control to its own player).
+ * can lose half of the return. A reclaim reads nothing it writes except ONE
+ * document: the counter doc is not touched (RD20 — a return is not a timeout)
+ * and the stored clock is not consulted for its validity (it is being
+ * replaced) — but since S7 the stored inactivity document IS read under the
+ * same lock, because the takeover count it carries must survive the return
+ * (A7.3: the 7th fires on the count's history, never reset by a reclaim).
  *
  * **Why `version` and `updatedAt` move.** The version bump is what makes the
  * removal stick: a client holding a pre-reclaim snapshot fails its own version
@@ -513,7 +734,13 @@ suspend fun reclaimOnce(
   return db.transact { tx ->
     val fresh = tx.readMatch(matchId)
       ?: throw HttpsError("not-found", "reclaimInactiveSeat: match '$matchId' was not found.")
-    when (val decision = SeatReclaim.decide(fresh, uid, clock.nowMillis())) {
+    // S7: the seat's stored inactivity document is read under the same lock as
+    // the write that replaces it, because a reclaim CARRIES the takeover count
+    // (A7.3's "no counter reset") — the one read this path now performs that
+    // it does not write, and the only way the carried count can be the
+    // committed one.
+    val storedInactivity = tx.readInactivity(matchId, uid)
+    when (val decision = SeatReclaim.decide(fresh, uid, clock.nowMillis(), storedInactivity)) {
       is SeatReclaim.Decision.NoWrite -> reclaimNoWrite(
         decision.reason,
         decision.message,
@@ -649,6 +876,16 @@ class AdminTimeoutDb : TimeoutDb {
     override fun writeInactivity(matchId: String, uid: String, fields: Map<String, Any?>) {
       tx.set(inactivityRef(matchId, uid), toPlain(fields))
     }
+
+    /**
+     * S7 (A8.2): the ballot document's tombstone, against the same
+     * admin-only-by-construction path `DisconnectVoteDb` uses — the
+     * subcollection has no rules block at all, so the delete is an admin
+     * action by construction and `firestore.rules` stays byte-identical.
+     */
+    override suspend fun deleteBallot(matchId: String, uid: String) {
+      tx.delete(ballotRef(matchId, uid))
+    }
   }
 
   /** `matches/{matchId}/timeoutCounts/{uid}` — owner-read-only by the rules. */
@@ -668,6 +905,10 @@ class AdminTimeoutDb : TimeoutDb {
    */
   private fun inactivityRef(matchId: String, uid: String): DocRef =
     matchRef(matchId).collection(InactiveTakeover.INACTIVITY_COLLECTION).doc(uid)
+
+  /** `matches/{matchId}/disconnectVotes/{uid}` — S7's ballot cancellation target. */
+  private fun ballotRef(matchId: String, uid: String): DocRef =
+    matchRef(matchId).collection(DisconnectVoteState.BALLOT_COLLECTION).doc(uid)
 
   companion object {
     private val TxScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
