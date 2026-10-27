@@ -340,39 +340,71 @@ class TimeoutResolutionTest {
   }
 
   @Test
-  fun aFirstSeatFastSuperCallIsReplayable() {
-    // Caller p1 is first in bidding order, so CONFIRM completes the auction
-    // with no wiped seat and the document's bids are the final values. p2's
-    // matching 8 SANS is With.
+  fun aFirstSeatFastSuperCallReopensTheReDeclaration() {
+    // Caller p1 is first in bidding order, but a Fast Super Call NEVER ends
+    // the round (T-09): the confirmation wipes every other seat and re-opens
+    // the re-declaration counter-clockwise from the seat after the caller.
+    // The replay therefore stops on p2, and the round is NOT closed — the
+    // With set is derived from the final cycle, which has not happened yet.
     val doc = fastRoundDoc(
       bidsOverride = mapOf("p1" to 8, "p2" to 8, "p3" to 3, "p4" to 2),
       biddingOpen = false,
       biddingLog = listOf(confirmEntry("p1", 8, "SANS", 14)),
     )
     val state = TimeoutResolution.replayBidding(doc, order, 14)!!
-    assertEquals(BiddingPhase.DONE, state.subPhase)
+    assertEquals(BiddingPhase.ESTIMATES, state.subPhase)
+    assertEquals("p2", state.waitingFor)
     assertEquals("p1", state.callerId)
-    assertEquals(listOf("p2"), state.withPlayers)
+    assertTrue(
+      state.withPlayers.isEmpty(),
+      "the With set belongs to the FINAL cycle, not to this one",
+    )
     assertEquals(Suit.SANS, state.declaredTrump)
+    assertEquals(8, state.auctionTop)
     assertEquals(8, state.bids["p1"]?.amount)
     assertEquals(Suit.SANS, state.bids["p1"]?.suit)
+    // The confirmation wiped every other seat: their stored numbers are the
+    // PRE-confirm ones and must not survive as re-declarations.
+    assertNull(state.bids["p2"])
+    assertNull(state.bids["p3"])
+    assertNull(state.bids["p4"])
+
+    // The timeout authority waits for the re-declaration, not for a card.
+    val open = fastRoundDoc(
+      bidsOverride = mapOf("p1" to 8, "p2" to 8, "p3" to 3, "p4" to 2),
+      biddingOpen = true,
+      biddingLog = listOf(confirmEntry("p1", 8, "SANS", 14)),
+    )
+    val pending = TimeoutResolution.pendingDecision(open)!!
+    assertEquals(TimeoutResolution.DecisionPhase.BIDDING, pending.phase)
+    assertEquals("p2", pending.seatId)
   }
 
   @Test
-  fun aFastSuperCallWithWipedSeatsFailsClosedOnTheLiveDocument() {
+  fun aFastSuperCallWithWipedSeatsReportsTheSeatThatMustReDeclare() {
     // p2's confirm wipes p1. The document's bids/p1 still holds p1's
     // PRE-confirm value: submitBid is one value per seat and CONFIRM does not
     // reopen bidding (MatchService.submitBid; firestore.rules), so there is
-    // no authoritative post-confirm value to replay. Fabricating one would
-    // score a stale estimate and could start card play on a wrong auction;
-    // fail closed instead. Archives take the Settlement path, where the
-    // values are final.
+    // no authoritative post-confirm value to replay. The replay therefore
+    // stops ON the confirmation and reports the seat the table waits for —
+    // it never replays a stale estimate as if it were the re-declaration.
+    // Archives take the Settlement path, where the values are final.
     val doc = fastRoundDoc(
       bidsOverride = mapOf("p1" to 2, "p2" to 8, "p3" to 3, "p4" to 2),
       biddingOpen = false,
       biddingLog = listOf(confirmEntry("p2", 8, "SANS", 14)),
     )
-    assertNull(TimeoutResolution.replayBidding(doc, order, 14))
+    val state = TimeoutResolution.replayBidding(doc, order, 14)!!
+    assertEquals(BiddingPhase.ESTIMATES, state.subPhase)
+    assertEquals("p3", state.waitingFor)
+    assertEquals("p2", state.callerId)
+    assertEquals(Suit.SANS, state.declaredTrump)
+    assertEquals(8, state.bids["p2"]?.amount)
+    assertNull(state.bids["p1"])
+    assertNull(state.bids["p3"])
+
+    // The auction is NOT closed, so the card phase must not be assumed.
+    assertNull(TimeoutResolution.pendingDecision(doc))
   }
 
   /**

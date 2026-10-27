@@ -445,13 +445,14 @@ class SettlementTest {
   }
 
   @Test
-  fun fastSuperCallWithNoPreSuperSeatsCompletesAtConfirm() {
-    // The Super Caller is first in bidding order, so no seat is wiped: the
-    // CONFIRM completes the auction and every archived estimate has already
-    // been materialized. p2's matching 8 SANS is With (p1 Caller). Bids
-    // 8/8/3/2 total 21 → Risk ladder 30, Risk player p4 (last estimate).
-    // Won 4/3/3/3: p1 SUPER_CALL misses 4 → −32; p2 WIZZ misses 5 → −15;
-    // p3 sole winner 23; p4 RISK misses 1 → −31.
+  fun fastSuperCallWithNoPreSuperSeatsReopensTheReDeclaration() {
+    // The Super Caller is first in bidding order, but the confirmation still
+    // does NOT end the round (T-09): it re-opens the re-declaration, so p2,
+    // p3 and p4 declare again under the confirmed trump. p2's matching 8
+    // SANS is With (p1 Caller). Bids 8/8/3/2 total 21 → Risk ladder 30,
+    // Risk player p4 (the last re-declaration). Won 4/3/3/3: p1 SUPER_CALL
+    // misses 4 → −32; p2 WIZZ misses 5 → −15; p3 sole winner 23; p4 RISK
+    // misses 1 → −31.
     val winners = listOf(
       "p1", "p1", "p1", "p1",
       "p2", "p2", "p2",
@@ -543,10 +544,12 @@ class SettlementTest {
 
   @Test
   fun fastSuperCallConfirmWithHigherLaterDeclarationFailsClosed() {
-    // Impossible/forged archive: p3 declared 13, so p2's 8 cannot have been
-    // the winning pre-confirm declaration. The caller won the auction, so no
-    // seat after them can hold a higher number; accepting this would replay
-    // p3's 13 as an ordinary bid under a caller who never won.
+    // Impossible/forged archive: p3's re-declaration is 13, which is HIGHER
+    // than p2's confirmed 8 and therefore opens a NEW Super Call cycle. The
+    // archive logs no second CONFIRM, so the new cycle can never complete:
+    // the replay waits for p3 again and fails closed on the unconsumed
+    // re-declaration. A CONFIRM chain that stops before the round ends is
+    // never settled on the caller's number.
     val winners = listOf(
       "p1", "p1", "p1", "p1",
       "p2", "p2", "p2",
@@ -566,14 +569,17 @@ class SettlementTest {
   }
 
   @Test
-  fun fastSuperCallTrumpChangeKeepsOldTrumpSeatOutOfWith() {
+  fun fastSuperCallTrumpChangeMakesEveryRedeclaredSeatWith() {
     // Round 14's fixed trump is SANS. p2's 8 triggers the call and confirms
-    // SPADES; p1 (before p2) re-declares 8 under the new trump and is With.
-    // p3's 8 was declared under SANS and is KEPT, so it is not With even at
-    // the final number. Bids 8/8/8/3 total 27 → Risk ladder 30; risk is p1
-    // (last re-declaration). Won 4/3/3/3: p1 WIZZ_RISK misses 4 → −44;
-    // p2 SUPER_CALL misses 5 → −32; p3 misses 5 → −5; p4 sole winner 23.
-    // If the trump change were ignored, p3 would be With and score −15.
+    // SPADES; the confirmation wipes EVERY other seat's declaration, so p1
+    // (before p2) and p3 (after p2) both re-declare under the new trump.
+    // Their 8s are therefore declared under SPADES and both are With at the
+    // final number and trump; no declaration made under the old SANS
+    // survives. Bids 8/8/8/3 total 27 → Risk ladder 30; risk is p1 (the last
+    // re-declaration). Won 4/3/3/3: p1 WIZZ_RISK misses 4 → −44; p2
+    // SUPER_CALL misses 5 → −32; p3 WIZZ misses 5 → −15 (its With bonus
+    // applies because it re-declared under the final trump); p4 sole winner
+    // 23.
     val winners = listOf(
       "p1", "p1", "p1", "p1",
       "p2", "p2", "p2",
@@ -588,7 +594,204 @@ class SettlementTest {
     )
     val scored = Settlement.scoreRound(shellMatch(), round, "p1", 1, 8)
     assertTrue(scored != null, "a changed-trump fast Super Call must settle")
-    assertEquals(mapOf("p1" to -44, "p2" to -32, "p3" to -5, "p4" to 23), scored.deltas)
+    assertEquals(mapOf("p1" to -44, "p2" to -32, "p3" to -15, "p4" to 23), scored.deltas)
+  }
+
+  // ── T-09: the repeated fast Super Call cycle (archived replays) ──────
+
+  @Test
+  fun twoFastSuperCallCyclesSettleOnTheFinalCallerAndNumber() {
+    // Cycle 1: p2 declares 8 and confirms 8 SANS. The confirmation wipes
+    // every other seat and re-opens the re-declaration; p3 then declares 9,
+    // which is HIGHER than the confirmed 8 and therefore opens the next
+    // cycle; p3 confirms 9 SPADES. Only the LAST cycle settles the round:
+    // the caller is p3 at 9 under SPADES.
+    // Bids 9/8/9/4 total 30 → Risk ladder 30, risk is p2 (the last
+    // re-declaration). Won 9/2/1/1: p3 SUPER_CALL hits 9 → 81 and is the
+    // sole winner (+10) = 91; p2 RISK misses 6 → −(6+30) = −36; p1 WIZZ
+    // (9 under the final trump) misses 8 → −(8+10) = −18; p4 NORMAL misses
+    // 3 → −3.
+    val winners = listOf(
+      "p3", "p3", "p3", "p3", "p3", "p3", "p3", "p3", "p3",
+      "p2", "p2",
+      "p1",
+      "p4",
+    )
+    val round = archived(
+      14, winners, "SPADES",
+      listOf(confirm("p2", 8, "SANS", 14), confirm("p3", 9, "SPADES", 14)),
+      mapOf("p1" to 9, "p2" to 8, "p3" to 9, "p4" to 4),
+      leaderId = "p3",
+    )
+    val scored = Settlement.scoreRound(shellMatch(), round, "p1", 1, 8)
+    assertTrue(scored != null, "a two-cycle fast Super Call must settle")
+    assertEquals(mapOf("p1" to -18, "p2" to -36, "p3" to 91, "p4" to -3), scored.deltas)
+  }
+
+  @Test
+  fun aFastSuperCallWipesEverySeatAndKeepsOnlyTheCallersDeclaration() {
+    // The Super Caller is p3 — neither first nor last in the bidding order.
+    // p3 declares 8 and confirms 8 SPADES; the confirmation wipes EVERY
+    // other seat's declaration, so p1 and p2 (before the caller) and p4
+    // (after it) declare again under SPADES, counter-clockwise from p4.
+    // The caller keeps its own 8. p1 declares 5 and is therefore not With;
+    // p2 and p4 declare 8 under the final trump and ARE With.
+    // Bids 5/8/8/8 total 29 → Risk ladder 30, risk is p2 (the last
+    // re-declaration). Won 8/3/1/1: p3 SUPER_CALL hits 8 → 64 and is the
+    // sole winner (+10) = 74; p2 WIZZ_RISK misses 5 → −(5+10+30) = −45;
+    // p1 NORMAL misses 4 → −4; p4 WIZZ misses 7 → −(7+10) = −17.
+    val winners = listOf(
+      "p3", "p3", "p3", "p3", "p3", "p3", "p3", "p3",
+      "p2", "p2", "p2",
+      "p1",
+      "p4",
+    )
+    val round = archived(
+      14, winners, "SPADES",
+      listOf(confirm("p3", 8, "SPADES", 14)),
+      mapOf("p1" to 5, "p2" to 8, "p3" to 8, "p4" to 8),
+      leaderId = "p3",
+    )
+    val scored = Settlement.scoreRound(shellMatch(), round, "p1", 1, 8)
+    assertTrue(scored != null, "a mid-order fast Super Call must settle")
+    assertEquals(mapOf("p1" to -4, "p2" to -45, "p3" to 74, "p4" to -17), scored.deltas)
+  }
+
+  @Test
+  fun aFirstSeatFastSuperCallDoesNotEndTheRound() {
+    // p1 is the FIRST seat and the Super Caller: its confirmation wipes the
+    // other three seats and re-opens the re-declaration, so the round does
+    // NOT end there. p2 then declares 9 — higher than the confirmed 8 — and
+    // opens the next cycle; p2 confirms 9 SPADES. Only the second cycle
+    // settles the round: the caller is p2 at 9 under SPADES.
+    // Bids 4/9/5/6 total 24 → Risk ladder 30, risk is p1 (the last
+    // re-declaration). Won 9/3/1/0: p2 SUPER_CALL hits 9 → 81 and is the
+    // sole winner (+10) = 91; p1 RISK misses 1 → −(1+30) = −31; p3 NORMAL
+    // misses 4 → −4; p4 NORMAL misses 6 → −6.
+    val winners = listOf(
+      "p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2",
+      "p1", "p1", "p1",
+      "p3",
+    )
+    val round = archived(
+      14, winners, "SPADES",
+      listOf(confirm("p1", 8, "SANS", 14), confirm("p2", 9, "SPADES", 14)),
+      mapOf("p1" to 4, "p2" to 9, "p3" to 5, "p4" to 6),
+      leaderId = "p2",
+    )
+    val scored = Settlement.scoreRound(shellMatch(), round, "p1", 1, 8)
+    assertTrue(scored != null, "a first-seat fast Super Call must settle")
+    assertEquals(mapOf("p1" to -31, "p2" to 91, "p3" to -4, "p4" to -6), scored.deltas)
+  }
+
+  @Test
+  fun aHigherSuperCallDiscardsThePreviousCallersDeclaration() {
+    // Cycle 1: p2 declares 8 and confirms 8 SANS; p1 (before p2) declares
+    // 9, which is higher and opens the next cycle; p1 confirms 9 SPADES.
+    // p2 is NOT retained: the second confirmation wipes every seat but p1,
+    // so the PREVIOUS caller declares again under the new trump — here 4.
+    // Bids 9/4/5/6 total 24 → Risk ladder 30, risk is p4 (the last
+    // re-declaration). Won 9/3/1/0: p1 SUPER_CALL hits 9 → 81 and is the
+    // sole winner (+10) = 91; p2 NORMAL misses 1 → −1; p3 NORMAL misses 4
+    // → −4; p4 RISK misses 6 → −(6+30) = −36.
+    val winners = listOf(
+      "p1", "p1", "p1", "p1", "p1", "p1", "p1", "p1", "p1",
+      "p2", "p2", "p2",
+      "p3",
+    )
+    val round = archived(
+      14, winners, "SPADES",
+      listOf(confirm("p2", 8, "SANS", 14), confirm("p1", 9, "SPADES", 14)),
+      mapOf("p1" to 9, "p2" to 4, "p3" to 5, "p4" to 6),
+      leaderId = "p1",
+    )
+    val scored = Settlement.scoreRound(shellMatch(), round, "p1", 1, 8)
+    assertTrue(scored != null, "a raised fast Super Call must settle")
+    assertEquals(mapOf("p1" to 91, "p2" to -1, "p3" to -4, "p4" to -36), scored.deltas)
+  }
+
+  @Test
+  fun theFinalWithSetComesFromTheFinalNumberAndTheFinalTrump() {
+    // Cycle 1: p2 declares 8 and confirms 8 SANS. Cycle 2: p3 declares 9 and
+    // confirms 9 SPADES. The FINAL cycle decides the With set: p2 and p4
+    // re-declare 9 under SPADES and are With; p1 re-declares 8 — the number
+    // of the PREVIOUS cycle's call — and is NOT With, because the final
+    // number is 9; the caller p3 is never With.
+    // Bids 8/9/9/9 total 35 → Risk ladder 30, risk is p2 (the last
+    // re-declaration). Won 9/3/1/0: p3 SUPER_CALL hits 9 → 81 and is the
+    // sole winner (+10) = 91; p1 NORMAL misses 5 → −5; p2 WIZZ_RISK misses 8
+    // → −(8+10+30) = −48; p4 WIZZ misses 9 → −(9+10) = −19.
+    val winners = listOf(
+      "p3", "p3", "p3", "p3", "p3", "p3", "p3", "p3", "p3",
+      "p1", "p1", "p1",
+      "p2",
+    )
+    val round = archived(
+      14, winners, "SPADES",
+      listOf(confirm("p2", 8, "SANS", 14), confirm("p3", 9, "SPADES", 14)),
+      mapOf("p1" to 8, "p2" to 9, "p3" to 9, "p4" to 9),
+      leaderId = "p3",
+    )
+    val scored = Settlement.scoreRound(shellMatch(), round, "p1", 1, 8)
+    assertTrue(scored != null, "a two-cycle fast Super Call must settle")
+    assertEquals(mapOf("p1" to -5, "p2" to -48, "p3" to 91, "p4" to -19), scored.deltas)
+  }
+
+  @Test
+  fun aFastSuperCallMayConfirmThirteenButNotFourteen() {
+    // The absolute 13-trick maximum holds in EVERY round: the fast
+    // exemption drops only the Caller-relative Call Cap. p2's 13 is a legal
+    // Super Call and settles the round.
+    // Bids 2/13/3/2 total 20 → Risk ladder 30, risk is p1 (the last
+    // re-declaration). p2 takes all 13 tricks: SUPER_CALL hits 13 → 169 and
+    // is the sole winner (+10) = 179; p1 RISK misses 2 → −(2+30) = −32;
+    // p3 NORMAL misses 3 → −3; p4 NORMAL misses 2 → −2.
+    val winners = listOf("p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2")
+    val round = archived(
+      14, winners, "SPADES",
+      listOf(confirm("p2", 13, "SPADES", 14)),
+      mapOf("p1" to 2, "p2" to 13, "p3" to 3, "p4" to 2),
+      leaderId = "p2",
+    )
+    val scored = Settlement.scoreRound(shellMatch(), round, "p1", 1, 8)
+    assertTrue(scored != null, "a 13-trick fast Super Call must settle")
+    assertEquals(mapOf("p1" to -32, "p2" to 179, "p3" to -3, "p4" to -2), scored.deltas)
+  }
+
+  @Test
+  fun aFastSuperCallConfirmingFourteenIsRefusedEverywhere() {
+    // 14 is above the absolute maximum in EVERY round — the fast exemption
+    // drops only the Caller-relative Call Cap. The archive parser refuses a
+    // CONFIRM above 13 outright, so such a round can never be replayed;
+    // and even a hand-built archive fails closed in the replay, because the
+    // engine rejects the confirmation itself.
+    val winners = listOf("p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2")
+    val fields = archiveFields(
+      14,
+      playsFor(winners, "SPADES", 14, "p2"),
+      listOf(confirm("p2", 14, "SPADES", 14)),
+      mapOf("p1" to 2, "p2" to 13, "p3" to 3, "p4" to 2),
+    )
+    assertNull(
+      Settlement.parseArchive("14", fields),
+      "an archived CONFIRM above the absolute 13-trick maximum must be refused",
+    )
+
+    val plays = fields["cardLog"] as List<*>
+    val forged = Settlement.ArchivedRound(
+      14,
+      plays.map { Settlement.parseCard(it)!! },
+      listOf(
+        Settlement.SettledAction(
+          "p2", Settlement.ActionKind.CONFIRM, null, null, 14, Suit.SPADES,
+        ),
+      ),
+      mapOf("p1" to 2, "p2" to 13, "p3" to 3, "p4" to 2),
+    )
+    assertNull(
+      Settlement.scoreRound(shellMatch(), forged, "p1", 1, 8),
+      "a fast Super Call above the absolute 13-trick maximum must fail closed",
+    )
   }
 
   @Test

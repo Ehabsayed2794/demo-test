@@ -61,11 +61,21 @@ Confirmation Phase (Normal Rounds only)
 After winning the auction, the Caller enters a Confirmation Phase. They may: keep the bid; raise the number; or, keeping the same number, switch to a stronger suit.
 ✔ CLARIFIED: Raising the NUMBER frees the suit choice — the Caller may then pick ANY suit, even a weaker one. Keeping the same number requires an equal-or-stronger suit. A weaker suit at the same number is illegal.
 ✔ CLARIFIED: The Confirmation Phase happens ONLY in normal rounds (1–13), including normal-round Super Calls. In fast rounds (14–18) there is NO Confirmation Phase for anyone.
+  > **Pointer, 2026-10-26 (documentation-only; the line above is left verbatim).** Fast rounds do not use the
+  > ordinary Confirmation Phase. **Exception: a Fast Super Call initiates a special trump-selection and
+  > full re-declaration cycle.** Every player except the current Super Caller re-declares counter-clockwise
+  > under the selected trump. Each subsequent higher Super Call repeats the cycle. The final Caller, the
+  > final trump, the estimates and the With set are derived from the final completed cycle
+  > (A6.10 / A6.11; see §3 "The Golden Super Call").
 Super Call
 Definition: bidding 8 tricks or more.
 Normal rounds (1–13): the Super Caller enters the Confirmation Phase and may confirm, raise the number, or change the suit.
 Fast rounds (14–18): instantly overrides the forced trump suit — no Confirmation Phase — and extends the game (see §3).
 If two players Super Call, the higher bid (then stronger suit) wins the right to choose the trump. *(Reaffirmed 2026-10-22 by A7.2 as the governing fast-round tie-break; seat order plays no part, and Sans beats every suit on a tie.)*
+  > **Pointer, 2026-10-26 (documentation-only; the bullets above are left verbatim).** The fast-round
+  > bullet's "no Confirmation Phase" means no ORDINARY Confirmation Phase. A Fast Super Call still has its
+  > own trump-selection step — the Super Caller chooses the trump — followed by its own full
+  > re-declaration cycle. See the pointer under §2's Confirmation Phase and under §3's Golden Super Call.
 2.2.1 “With” (Wazz) Rules
 A player becomes “With” the Caller in one of two ways:
 Auction Alignment: during the auction, a player bid the SAME SUIT as the eventual winning Caller — even if their trick number differed.
@@ -76,6 +86,9 @@ If a group aligned “With” on a suit that then lost to a stronger winning sui
 2.3 Estimation Stage
 After the Caller is finalized (and Confirmation complete in normal rounds), the remaining players estimate their tricks, subject to:
 The Call Cap: no other player may estimate MORE than the Caller's bid (normal rounds). Example: if the Caller won with 5, the maximum estimate for anyone else is 5. (Fast rounds have no cap.)
+  > **Pointer, 2026-10-26 (documentation-only; the bullet above is left verbatim).** "No cap" in fast
+  > rounds means no CALLER-RELATIVE cap only. The absolute 13-trick maximum holds in EVERY round, fast
+  > rounds included: no declaration and no confirmed call may exceed 13.
 Normal Dash: during estimation, more than one player may bid 0 tricks.
 The 13 Rule: the total of all four players' bids may NEVER equal 13.
 The Risk Player & the Rule of 13
@@ -109,6 +122,12 @@ Caller / With: the first player to bid the highest number is the Caller; every o
 The Golden Super Call (Fast Rounds)
 If a player bids a Super Call (8+) in a fast round, the forced suit is immediately cancelled and that player chooses the trump. If outbid, the suit choice goes to the higher bidder. **[Superseded 2026-10-21 — any 8+ declarer may choose the trump: Current Rules §5]**
 Super Call Reset: only players who bid BEFORE the Super Caller must re-estimate (their estimates were under the old forced suit). Players who bid after it keep their estimates. **[Superseded 2026-10-21 — all players except the Super Caller re-declare: Current Rules §5]**
+  > **Pointer, 2026-10-26 (documentation-only; the lines above are left verbatim).** A Fast Super Call is
+  > not the end of the fast round. The Super Caller chooses the trump, and then EVERY player except that
+  > Super Caller re-declares counter-clockwise under the chosen trump — including the players who
+  > declared BEFORE and AFTER the Super Caller. No declaration made under the replaced trump survives.
+  > Each higher Super Call repeats the whole cycle, and the final Caller, the final trump, the estimates
+  > and the With set come from the final completed cycle (A6.10 / A6.11).
 Round Extension
 Any fast-round Super Call that overrides the forced suit adds one extra round to the game (e.g., the game becomes 19 rounds instead of 18). **[Superseded 2026-10-21 — extension only if the Caller succeeds: Current Rules §3]**
 ✔ CLARIFIED: Extension rounds REPEAT the 14–18 forced-suit sequence: Round 19 = Sans, 20 = Spades, 21 = Hearts, 22 = Diamonds, 23 = Clubs, and so on. (This supersedes the older “every extension round is always Sanz” wording.)
@@ -192,6 +211,11 @@ Call Cap: estimators may not exceed the Caller's bid (normal rounds); no cap in 
 Risk applies only to the Risk Player; if that seat is a pre-bid Dash, Risk passes to the previous non-Dash estimator.
 With: by auction suit-alignment (any number) or estimation exact match (number + suit). Fast rounds: all top-number bidders except the Caller are With.
 Fast-round Super Call: overrides the forced suit, no confirmation, extends the game by one round; only preceding players re-estimate.
+  > **Pointer, 2026-10-26 (documentation-only; the line above is left verbatim).** "Only preceding players
+  > re-estimate" was superseded on 2026-10-21: after a Fast Super Call EVERY player except the Super
+  > Caller re-declares, counter-clockwise, and each higher Super Call repeats the cycle (A6.10 / A6.11).
+  > "No confirmation" means no ordinary Confirmation Phase — the Fast Super Call has its own
+  > trump-selection and full re-declaration cycle.
 Extension rounds repeat the 14–18 forced-suit sequence (19=Sans, 20=Spades, ...).
 Sa'ayda multiplier: ×2 → ×4 → ×6 → ×8 (cap), applies to everything, resets on any success; a Round-18 Sa'ayda forces Round 19. **[Superseded 2026-10-21 — Sa'ayda extension: Current Rules §2]**
 Classic Calculations mode (opt-in alternate scoring): Normal=E+13/−miss; Caller/Wizz=E+13+10/−(miss+10 or 20 if TotalBids≤11); Risk=E+13+10/−(miss+10); Wizz-Risk=E+33/−(miss+20); Super Call fixed +42/−20; Dash Call fixed +33/+23 (Under/Over 13) or −20/−10; Normal Dash fixed +23/+13 (Under/Over) or −10/−T; sole winner +10, sole loser doubles capped at −22 — same sole-winner/loser rule as the Official Scoring System.
@@ -616,6 +640,13 @@ the disconnect table may pause for a bounded 90 seconds.**
 - **A6.9 With (owner, 2026-10-21 later):** Normal rounds — With = any other player who bid the final Caller's winning suit at any time; their With number is their last bid in that suit. Fast rounds — With only if the suit matches the final suit and the number equals the highest winning number exactly (≥8 alone is not enough). Supersedes the engine's Super Call With set. Fast-round "suit" meaning: Q28.
 - **A6.10 (owner, later; supersedes A6.9's fast-round part):** any fast-round player declaring 8+ may choose any trump; a Super Caller's suit replaces the forced suit and others re-declare (who: Q29); a higher Super Call repeats this. Fast-round With: highest winning number exactly, plus the estimate made under the final trump if the trump changed. Not every 8+ is With.
 - **A6.11 (owner, later; supersedes line 109's "only players who bid before re-estimate"):** after a fast-round Super Call every player except the Super Caller re-declares, counter-clockwise; repeat for each higher Super Call. Engine differs (`Bidding.kt:577-625`).
+  > **Pointer, 2026-10-26 (documentation-only; the A6.10/A6.11 bullets above are left verbatim).** The
+  > engine now implements A6.10 and A6.11, so the "Engine differs" note above is obsolete. The fast
+  > confirmation wipes every seat but the Super Caller's own declaration (`Bidding.kt` — `emitConfirmCall`,
+  > fast branch), the re-declaration runs counter-clockwise from the seat after the caller
+  > (`Bidding.kt` — `emitFinalEstimate`, fast branch), and a declaration above the confirmed number opens
+  > the NEXT cycle. The settlement and timeout replays follow the same cycle, and the With set is derived
+  > from the final number and the final trump.
 - **A6.12 Departure = VOLUNTARY only (owner, 2026-10-22; narrows A6.6/A6.7 and Current Rules item 7).** The one thing this ruling changes is the **definition** of a departure; every charge value is left exactly where Q14b and Q14d(1) put them on 2026-10-21.
   - **"For any reason" is repealed.** Only a **voluntary** leave is a departure. A **disconnect or app close that is not a voluntary departure charges nothing**, and a **reconnect within the takeover window is never a departure** — which is A5.1's "return when allowed = no penalty" bullet applied to the general case, not a new exception.
   - **A takeover-driven removal is not a *departure* — but it is still charged.** The 15-timeout removal keeps its own A5.1 **2 Koz**, and the 7th takeover keeps item 8's **2 Koz**; neither is *additionally* charged as a leave, so a player is never double-charged for one removal event. Their **ROOM** treatment stays **open (O-03)** — this ruling does not close it. (Reading "not a departure" as "charges nothing" would silently delete both charges; it does not.)
