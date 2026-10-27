@@ -277,22 +277,42 @@ class SettlementTest {
 
   // ── gate ──────────────────────────────────────────────────────────
 
+  /**
+   * Name retained from S6 acceptance criterion 13 (the pre-S6 rule); the
+   * body asserts the stats-only replacement, not the old no-op.
+   *
+   * S6 (A7.5/A8.4, Q38/Q46 — superseding RD28): ROOM and UNRANKED now
+   * settle STATS-ONLY, so the gate hands the seam a StatsOnly decision
+   * carrying the mode, not the pre-S6 NoOp. The old assertion
+   * (`assertIs<SettleDecision.NoOp>`) pinned RD28's "never settle", the
+   * stale rule this task replaces.
+   */
   @Test
   fun roomAndUnrankedAreExplicitNoOps() {
     val base = converged(emptyList())
     val room = Settlement.decide("u1", base.copy(mode = MatchMode.ROOM))
-    assertIs<SettleDecision.NoOp>(room)
+    assertIs<SettleDecision.StatsOnly>(room)
     assertEquals(MatchMode.ROOM, room.mode)
     val unranked = Settlement.decide("u1", base.copy(mode = MatchMode.UNRANKED))
-    assertIs<SettleDecision.NoOp>(unranked)
+    assertIs<SettleDecision.StatsOnly>(unranked)
+    assertEquals(MatchMode.UNRANKED, unranked.mode)
   }
 
+  /**
+   * Name retained from S6 acceptance criterion 14 (the pre-S6 rule); the
+   * body asserts stats-only for an absent mode.
+   *
+   * S43 + S6: an absent (legacy) mode parses as ROOM and therefore takes the
+   * stats-only path.
+   */
   @Test
   fun absentModeParsesAsRoomAndNoOps() {
     val match = Settlement.parseMatch("m1", matchFields(mode = ABSENT))
       ?: throw AssertionError("parse failed")
     assertEquals(MatchMode.ROOM, match.mode)
-    assertIs<SettleDecision.NoOp>(Settlement.decide("u1", match))
+    val decision = Settlement.decide("u1", match)
+    assertIs<SettleDecision.StatsOnly>(decision)
+    assertEquals(MatchMode.ROOM, decision.mode)
   }
 
   @Test
@@ -1262,15 +1282,6 @@ class SettlementTest {
   }
 
   @Test
-  fun noOpResponseShape() {
-    val response = noOpResponse("ROOM")
-    assertEquals(true, response["ok"])
-    assertEquals(false, response["settled"])
-    assertEquals("NOT_RANKED", response["reason"])
-    assertEquals("ROOM", response["mode"])
-  }
-
-  @Test
   fun plainBridgingRoundTrips() {
     val nested: Map<String, Any?> = mapOf("a" to 1, "b" to listOf(1, 2), "c" to mapOf("d" to "x"))
     val plain = toPlain(nested)
@@ -1525,13 +1536,35 @@ class SettlementTest {
     }
   }
 
+  /**
+   * S6: a ROOM settle reads no archives (the recompute is the RANKED
+   * authority path) but DOES open one transaction and settle: four
+   * counter-only profile writes, one claim, `settled: true`, no `you`. The
+   * pre-S6 test of this name asserted the RD28 no-op — zero transactions,
+   * `settled: false` — the stale rule this task replaces.
+   */
   @Test
-  fun nonRankedSkipsReadsAndWrites() = runTest {
+  fun nonRankedSkipsArchivesAndSettlesStatsOnly() = runTest {
     val db = FakeDb(match = matchFields(mode = "ROOM"))
     val response = settleOnce(db, settleRequest("u1", "m1"))
-    assertEquals(false, response["settled"])
-    assertEquals(0, db.archiveReads)
-    assertEquals(0, db.txRuns)
+    assertEquals(true, response["settled"])
+    assertNull(response["you"], "a stats-only settle reports no RP movement")
+    assertEquals(0, db.archiveReads, "the recompute never runs outside RANKED")
+    assertEquals(1, db.txRuns)
+    assertEquals(1, db.claims)
+    assertEquals(4, db.profileWrites.size)
+    db.profileWrites.forEach { (_, fields) ->
+      assertEquals(
+        setOf(
+          "rankedGamesPlayed", "rankedKingCount", "rankedSecondCount",
+          "rankedThirdCount", "rankedKozCount",
+        ),
+        fields.keys,
+        "a stats-only write owns exactly the five counter fields",
+      )
+    }
+    assertEquals(1, db.profileWrites.single { it.first == "u1" }.second["rankedKingCount"])
+    assertEquals(1, db.profileWrites.single { it.first == "u1" }.second["rankedGamesPlayed"])
   }
 
   // -- S62 ledger (fake ports) --------------------------------------
@@ -1658,12 +1691,19 @@ class SettlementTest {
     assertEquals("HISTORY_CORRUPT", db.appends[0]["failureReason"])
   }
 
+  /**
+   * S6 keeps the S62 amplification rule: a stats-only (ROOM/UNRANKED)
+   * settle writes NO ledger document even though it now settles — it moves
+   * no RP, so there is no RP settlement to audit — and a denied attempt
+   * still appends nothing. The pre-S6 ROOM half of this test asserted the
+   * no-op response; the append expectation is the part RD28's repeal kept.
+   */
   @Test
-  fun noOpAndDeniedAttemptsAppendNothing() = runTest {
+  fun statsOnlyAndDeniedAttemptsAppendNothing() = runTest {
     val roomDb = FakeDb(match = matchFields(mode = "ROOM"))
     val response = settleOnce(roomDb, settleRequest("u1", "m1"))
-    assertEquals(false, response["settled"])
-    assertEquals(0, roomDb.appendAttempts)
+    assertEquals(true, response["settled"], "a ROOM match settles stats-only")
+    assertEquals(0, roomDb.appendAttempts, "a stats-only settle never appends to the ledger")
 
     val deniedDb = FakeDb(match = matchFields())
     try {

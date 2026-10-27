@@ -3,6 +3,7 @@ package com.estemshan.functions
 import com.estemshan.engine.GameType
 import com.estemshan.engine.LadderRank
 import com.estemshan.engine.MatchMode
+import com.estemshan.engine.MatchOutcome
 import com.estemshan.engine.PlacementState
 import com.estemshan.engine.RankedProfile
 import com.estemshan.engine.RankedStats
@@ -133,14 +134,6 @@ interface SettlementDb {
 private const val CLAIM_PATH = "settlement"
 private const val CLAIM_DOC = "settle"
 
-/** Callable response when the mode gate declines (ROOM/UNRANKED never settle). */
-fun noOpResponse(mode: String): Map<String, Any?> = mapOf(
-  "ok" to true,
-  "settled" to false,
-  "reason" to "NOT_RANKED",
-  "mode" to mode,
-)
-
 private fun executedResponse(
   recomputed: Settlement.RecomputedMatch,
   matchId: String,
@@ -156,6 +149,31 @@ private fun executedResponse(
   "claimedWinners" to recomputed.claimedWinners,
   "rounds" to recomputed.rounds,
 )
+
+/**
+ * The claim-replay answer shared by both settlement paths: the recorded
+ * outcome, `replayed = true`, and THIS caller's `you` slice when the claim
+ * carries movements (RD13 — one claim is replayed by four different clients,
+ * and each sees only its own numbers). A claim recorded before progression
+ * existed has no `movements`, so the replay answers with no `you` and no
+ * crash. A malformed claim fails closed.
+ */
+private fun replayClaim(
+  existing: Map<String, Any?>,
+  uid: String,
+  matchId: String,
+): Map<String, Any?> {
+  @Suppress("UNCHECKED_CAST")
+  val recorded = existing["outcome"] as? Map<String, Any?>
+    ?: throw HttpsError(
+      "failed-precondition",
+      "settleMatch: settlement record for '$matchId' is malformed.",
+    )
+  val replayed = recorded.toMutableMap()
+  replayed["replayed"] = true
+  youOf(existing["movements"], uid)?.let { replayed["you"] = it }
+  return replayed
+}
 
 private fun claimRecord(
   uid: String,
@@ -460,6 +478,36 @@ private fun parseRankedSeat(seat: SeatInput, matchId: String): ParsedSeat =
   )
 
 /**
+ * The stats-only seat parse: the five stored counters plus the ONE profile
+ * field the fold reads — placement state. The RP/rank/season/shield fields
+ * are deliberately NOT parsed or validated here: a ROOM/UNRANKED settlement
+ * writes none of them, and a corrupt Ranked-progression field must not block
+ * a match that never touches RP. The [RankedProfile] built below is inert
+ * except for [RankedProfile.placementState]; [accumulateRankedStat] reads no
+ * other field.
+ */
+private fun parseStatsOnlySeat(seat: SeatInput, matchId: String): ParsedSeat {
+  val placementState = when (val value = seat.profile["placementState"]) {
+    null -> PlacementState.NOT_STARTED
+    is String -> PlacementState.entries.firstOrNull { it.name == value }
+      ?: failClosed(
+        seat.uid, matchId,
+        "a players/placementState ('$value') that is not a placement state",
+      )
+    else -> failClosed(seat.uid, matchId, "a non-string players/placementState ($value)")
+  }
+  return ParsedSeat(
+    uid = seat.uid,
+    seat = seat.seat,
+    profile = RankedProfile(
+      seasonId = DEFAULT_SEASON_ID,
+      placementState = placementState,
+    ),
+    stats = parseRankedStats(seat.uid, matchId, seat.profile),
+  )
+}
+
+/**
  * The RAW stored `seasonId` — the value the lazy-reset decision needs, taken
  * from the stored map because [parseRankedProfile] stores the
  * DEFAULT_SEASON_ID bootstrap literal for a missing season, and that default
@@ -639,13 +687,18 @@ private suspend fun readSeatInputs(
   fields: Map<String, Any?>,
   order: List<String>,
   matchId: String,
+  onlyUids: Set<String>? = null,
 ): List<SeatInput> {
   val seats = Settlement.parseSeats(fields)
-  return order.map { seat ->
+  return order.mapNotNull { seat ->
     val uid = seats?.get(seat) ?: throw HttpsError(
       "failed-precondition",
       "settleMatch: seat '$seat' of match '$matchId' is not seated to a uid.",
     )
+    // S6: a seat whose occupant is not in `players` is a bot seat. The
+    // stats-only path passes `onlyUids` so it skips that seat BEFORE reading
+    // a profile; the RANKED path passes null and reads every seat.
+    if (onlyUids != null && uid !in onlyUids) return@mapNotNull null
     val profile = tx.readProfile(uid) ?: throw HttpsError(
       "failed-precondition",
       "settleMatch: seated player '$uid' of match '$matchId' has no players/ profile — " +
@@ -838,12 +891,11 @@ suspend fun settleOnce(db: SettlementDb, request: CallableRequest): Map<String, 
       "settleMatch: match '$matchId' is not a match document.",
     )
   when (val gate = Settlement.decide(uid, parsed)) {
-    is SettleDecision.NoOp -> {
-      // S62 decision: ROOM/UNRANKED no-ops are console-only - no ledger
-      // document (not a settlement outcome; the ledger stays free of
-      // routine traffic), cheap structured line for retry forensics.
-      console.log(SettlementLedger.noOpLine(matchId, gate.mode.name))
-      return noOpResponse(gate.mode.name)
+    is SettleDecision.StatsOnly -> {
+      // S6: ROOM/UNRANKED settles stats-only. Console line only — no ledger
+      // document (no RP moved, so there is no RP settlement to audit).
+      console.log(SettlementLedger.statsOnlyLine(matchId, gate.mode.name))
+      return settleStatsOnly(db, parsed, fields, matchId, uid)
     }
     is SettleDecision.Failed -> {
       // S62 decision: a denied attempt is console-only (no write - an
@@ -888,22 +940,7 @@ suspend fun settleOnce(db: SettlementDb, request: CallableRequest): Map<String, 
   val settled = db.transact { tx ->
     val existing = tx.readClaim(matchId)
     if (existing != null) {
-      @Suppress("UNCHECKED_CAST")
-      val recorded = existing["outcome"] as? Map<String, Any?>
-        ?: throw HttpsError(
-          "failed-precondition",
-          "settleMatch: settlement record for '$matchId' is malformed.",
-        )
-      val replayed = recorded.toMutableMap()
-      replayed["replayed"] = true
-      // A replay re-awards nothing (no profile read, no profile write) and
-      // slices THIS caller's movement out of the claimed movements: one claim
-      // is replayed by four different clients, and each sees only its own
-      // numbers (RD13). A claim recorded before progression existed has no
-      // `movements` — then the replay answers exactly as it always did, with
-      // no `you` and no crash.
-      youOf(existing["movements"], uid)?.let { replayed["you"] = it }
-      return@transact replayed
+      return@transact replayClaim(existing, uid, matchId)
     }
 
     // Reads before writes, all four seats, inside this transaction: two racers
@@ -956,6 +993,143 @@ suspend fun settleOnce(db: SettlementDb, request: CallableRequest): Map<String, 
     SettlementLedger.recordSettlement(db, parsed, recomputed, uid)
   }
   return settled
+}
+
+/**
+ * S6 (A7.5 / A8.4, Q34 / Q38, Q46) — the ROOM/UNRANKED stats-only
+ * settlement. One transaction, the claim as the once-only record, and
+ * exactly five profile fields per ATTRIBUTED human seat:
+ * `rankedGamesPlayed`, `rankedKingCount`, `rankedSecondCount`,
+ * `rankedThirdCount`, `rankedKozCount`.
+ *
+ * What this path never does, by construction: no `recompute`, no archive
+ * read, no `seasons/current` read or write (no season alignment — a
+ * ROOM/UNRANKED match carries no season stake), no RP/rank/shield/Highest
+ * Rank/placement write, no correction write, no RP ledger document. The
+ * already-converged document's own `finalScores`/`winnerIds` are the
+ * authority, validated for shape and never re-derived: a stats-only settle
+ * invents no score.
+ *
+ * Per seat, in canonical order: resolve the uid from `seats`; a uid that is
+ * not in `players` is a pure bot seat and contributes nothing to any human
+ * profile (A7.5); a missing `players/{uid}` document fails the whole
+ * settlement closed (the claim stays absent, so the match stays settleable
+ * once repaired). The outcome is the seat's placement in the claimed totals
+ * — EXCEPT that a uid in the document's departure provenance
+ * ([Settlement.ConvergedMatch.departedUids]: left / 15-timeout / Vote Kick /
+ * 7th-takeover) is forced to KOZ even when the bot playing their seat
+ * finished as King (A7.5). The fold is the engine's own
+ * [accumulateRankedStat]: Games Played +1 and exactly one outcome counter,
+ * unchanged for a placement profile (RD10). The forced KOZ is the ONLY
+ * record for a departed human here — no departure charge is also folded, or
+ * the same departure would count twice. This is a cross-task contract: a
+ * later S5/S7 charge consumer must NOT add a second Koz for a departure this
+ * path already forced to KOZ; the separate departure-charge mechanism stays
+ * unconsumed for ROOM/UNRANKED until that integration is designed.
+ *
+ * The response is the executed shape with `settled: true` and NO `you`
+ * (counters only, never RP); the claim records an EMPTY movements map, so a
+ * replay answers `replayed: true` with no `you` for every caller.
+ */
+private suspend fun settleStatsOnly(
+  db: SettlementDb,
+  parsed: Settlement.ConvergedMatch,
+  fields: Map<String, Any?>,
+  matchId: String,
+  uid: String,
+): Map<String, Any?> {
+  return db.transact { tx ->
+    // The claim first, exactly like the RANKED path: an existing claim
+    // replays and nothing below runs — no validation, no read, no write.
+    val existing = tx.readClaim(matchId)
+    if (existing != null) {
+      return@transact replayClaim(existing, uid, matchId)
+    }
+
+    // The already-converged document, validated for shape — the same
+    // completeness rules recompute applies, judged on the claim because this
+    // path replays no history. Fail closed: nothing writes, the match stays
+    // settleable, and no score is ever invented.
+    val claimedScores = parsed.claimedScores
+    val claimedWinners = parsed.claimedWinners
+    if (parsed.status != "complete") {
+      throw HttpsError(
+        "failed-precondition",
+        "settleMatch: match '$matchId' is not complete.",
+      )
+    }
+    if (parsed.completedRound + 1 <= parsed.maxRounds) {
+      throw HttpsError(
+        "failed-precondition",
+        "settleMatch: completedRound ${parsed.completedRound} does not end " +
+          "a ${parsed.maxRounds}-round match.",
+      )
+    }
+    if (claimedScores == null || claimedWinners == null) {
+      throw HttpsError(
+        "failed-precondition",
+        "settleMatch: a complete match with no claimed result cannot be settled.",
+      )
+    }
+    if (claimedScores.keys.sorted() != parsed.order.sorted()) {
+      throw HttpsError(
+        "failed-precondition",
+        "settleMatch: claimed finalScores do not cover exactly the match seats.",
+      )
+    }
+    if (claimedWinners.any { it !in parsed.order }) {
+      throw HttpsError(
+        "failed-precondition",
+        "settleMatch: claimed winnerIds name a seat that is not in the match.",
+      )
+    }
+
+    // Reads before writes, inside this transaction. The seats map is the
+    // same authority the RANKED path resolves uid links through; a seat
+    // held by a uid that is not in `players` is a bot seat — skipped, never
+    // attributed (A7.5). `readSeatInputs` enforces the same seat/uid shape
+    // as the RANKED path, including the HttpsError for a malformed seat.
+    val inputs = readSeatInputs(
+      tx, fields, parsed.order, matchId,
+      onlyUids = parsed.players.toSet(),
+    )
+    // The stats-only typed parse, before the first write: the five counters
+    // and the placement state, never the RP contract (see parseStatsOnlySeat).
+    val seated = inputs.map { parseStatsOnlySeat(it, matchId) }
+
+    // A response-shape carrier: this path replays no history, so the shared
+    // builder's "recomputed" input is only the claimed result restated.
+    val executed = Settlement.RecomputedMatch(
+      finalScores = claimedScores,
+      winnerIds = claimedWinners,
+      rounds = parsed.completedRound,
+      corrected = false,
+      claimedScores = claimedScores,
+      claimedWinners = claimedWinners,
+    )
+    val response = executedResponse(executed, matchId)
+    seated.forEach { seat ->
+      val placement = placementOutcome(claimedScores, seat.seat)
+      // A7.5: a departed human is KOZ whatever the seat's bot finished as —
+      // the placement is overridden, never mixed with it.
+      val outcome = if (seat.uid in parsed.departedUids) MatchOutcome.KOZ else placement
+      val stats = accumulateRankedStat(seat.stats, outcome, seat.profile, parsed.mode)
+      tx.writeProfile(
+        seat.uid,
+        linkedMapOf(
+          "rankedGamesPlayed" to stats.gamesPlayed,
+          "rankedKingCount" to stats.kingCount,
+          "rankedSecondCount" to stats.secondCount,
+          "rankedThirdCount" to stats.thirdCount,
+          "rankedKozCount" to stats.kozCount,
+        ),
+      )
+    }
+    // Empty movements: the claim's once-only property still makes the
+    // counter writes exactly-once, and no caller ever has a `you` to slice.
+    tx.writeClaim(matchId, claimRecord(uid, response, emptyMap()))
+    response
+  }
 }
 
 /** Admin-SDK implementation. Reads normalize through dynamicToKotlin;
