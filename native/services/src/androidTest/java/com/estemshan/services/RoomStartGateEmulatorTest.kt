@@ -142,7 +142,8 @@ class RoomStartGateEmulatorTest {
     val seating = clients("p1", "p2")
     val code = seatedRoom(seating, creator = "p1", guests = listOf("p2"))
     val guest = roomServiceFor(seating, "p2").setReady(code, seating.getValue("p2").uid, true)
-    assertNull("a guest's setReady never attempts a start", guest.matchStart)
+    assertFalse("a guest's setReady never starts the match", guest.matchStart!!.started)
+    assertNull("a guest's setReady links no match", guest.matchStart!!.matchId)
 
     // The creator readies LAST — the exact precondition that used to start
     // a 2-player match through maybeStartMatch.
