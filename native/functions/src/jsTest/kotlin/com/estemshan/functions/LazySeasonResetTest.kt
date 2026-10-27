@@ -33,7 +33,19 @@ class LazySeasonResetTest {
   private val archives = mapOf("1" to SettlementFixtures.round1ArchiveFields())
 
   /** The current season's singleton document, as the Admin Tx would parse it. */
-  private fun seasonDoc(id: String): Map<String, Any?> = linkedMapOf("seasonId" to id)
+  private fun seasonDoc(id: String): Map<String, Any?> =
+    linkedMapOf("seasonId" to id, "status" to "ACTIVE")
+
+  /**
+   * A reset IN FLIGHT: the outgoing season is still `seasonId` (the board
+   * keeps serving it) while the bulk sweep moves profiles into [target].
+   */
+  private fun runningSeasonDoc(from: String, target: String): Map<String, Any?> =
+    linkedMapOf(
+      "seasonId" to from,
+      "status" to "RUNNING",
+      "targetSeasonId" to target,
+    )
 
   /**
    * A complete, fully-migrated profile parked in [season] at Gold II / 732 RP
@@ -552,6 +564,125 @@ class LazySeasonResetTest {
     assertEquals(null, db.claim)
   }
 
+  // ── 9. a RUNNING reset is never planned backwards ────────────────────
+
+  /**
+   * The window the guard closes: the bulk sweep has stamped some/all profiles
+   * with the TARGET season while `seasons/current` still reads the outgoing
+   * `seasonId` with `status = RUNNING`. The board must keep serving the
+   * outgoing season; the lazy paths must serve the in-flight target, or every
+   * profile the sweep just moved would be reset `target -> outgoing` — a
+   * BACKWARDS demotion of an irreversible migration (R27).
+   */
+  @Test
+  fun aRunningResetIsNeverPlannedBackwardsOnTheReadPath() = runTest {
+    // Already at the target: CURRENT, served untouched, no write at all.
+    val atTarget = FakeProfileDb(staleableProfile("s3"), runningSeasonDoc("s2", "s3"))
+    val served = loadOnce(atTarget, fakeRequest("u1"))
+    assertEquals(false, served["migrated"])
+    assertEquals("s3", section(served, "profile")["seasonId"])
+    assertEquals(732, section(served, "profile")["rp"])
+    assertEquals(0, atTarget.writes)
+    assertEquals(0, atTarget.merges.size)
+
+    // Still in the outgoing season: ONE forward reset into the target.
+    val atOutgoing = FakeProfileDb(staleableProfile("s2"), runningSeasonDoc("s2", "s3"))
+    val reset = loadOnce(atOutgoing, fakeRequest("u1"))
+    assertEquals(true, reset["migrated"])
+    assertEquals("s3", section(reset, "profile")["seasonId"])
+    assertEquals(450, section(reset, "profile")["rp"])
+    assertEquals(1, atOutgoing.writes)
+  }
+
+  @Test
+  fun aRunningResetNeverFoldsASweptSeatBackIntoTheOutgoingSeason() = runTest {
+    // u1 is already at the in-flight TARGET (Silver I), the rung u2-u4 will
+    // land on after their one reset (Gold II -> Silver I, the existing
+    // goldens), so the whole table folds on one rung. Judging u1 against the
+    // outgoing season would reset it BACKWARDS (Silver I -> Bronze) and fold
+    // it there; the guard folds it where it is.
+    val db = FakeSettleDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = mapOf(
+        "u1" to staleableProfile("s3").apply {
+          put("tier", "Silver")
+          put("division", "I")
+          put("rp", 450)
+        },
+        "u2" to staleableProfile("s2"),
+        "u3" to staleableProfile("s2"),
+        "u4" to staleableProfile("s2"),
+      ),
+      currentSeason = runningSeasonDoc("s2", "s3"),
+    )
+
+    val response = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+
+    assertEquals(true, response["settled"])
+    assertTrue(
+      db.profileWrites.all { (_, fields) -> fields["seasonId"] == "s3" },
+      "no seat may land in the outgoing season while the target is in flight",
+    )
+    // u1 kept its rung and folded from Silver I / 450 — the SAME fold an
+    // all-reset table gets, because it was not reset a second time backwards.
+    assertEquals(foldedWrite(490, "Silver", "I", king = 5), db.writeFor("u1"))
+    // The other three took exactly ONE reset into the target, then folded.
+    assertEquals(foldedWrite(475, "Silver", "I", second = 4), db.writeFor("u4"))
+    assertEquals(foldedWrite(450, "Silver", "I", third = 4), db.writeFor("u3"))
+    assertEquals(foldedWrite(440, "Silver", "II", koz = 3), db.writeFor("u2"))
+  }
+
+  @Test
+  fun aRunningResetWithNoUsableTargetFailsClosedOnBothPaths() = runTest {
+    // A RUNNING document always names its target; an absent/blank/non-string
+    // one is an unreadable transition, never a season to guess (the bulk job
+    // refuses the same document as NOT_CONFIGURED).
+    val noTarget = linkedMapOf<String, Any?>("seasonId" to "s2", "status" to "RUNNING")
+
+    val read = FakeProfileDb(staleableProfile("s2"), noTarget)
+    assertEquals(
+      "failed-precondition",
+      thrownCode { loadOnce(read, fakeRequest("u1")) },
+    )
+    assertEquals(0, read.writes)
+    assertEquals(0, read.merges.size)
+
+    val settle = FakeSettleDb(
+      match = SettlementFixtures.matchFields(uids),
+      archives = archives,
+      profiles = uids.associateWith { staleableProfile("s2") },
+      currentSeason = noTarget,
+    )
+    assertEquals(
+      "failed-precondition",
+      thrownCode { settleOnce(settle, SettlementFixtures.settleRequest("u1", "m1")) },
+    )
+    assertEquals(0, settle.profileWrites.size)
+    assertEquals(null, settle.claim)
+  }
+
+  @Test
+  fun anUnreadableTransitionStatusFailsClosedOnRead() = runTest {
+    // No status at all: the document cannot say whether a reset is in flight,
+    // so it cannot say which season a profile belongs to — fail closed with
+    // nothing written.
+    val db = FakeProfileDb(
+      staleableProfile("s2"),
+      currentSeason = linkedMapOf<String, Any?>("seasonId" to "s2"),
+    )
+    assertEquals(
+      "failed-precondition",
+      thrownCode { loadOnce(db, fakeRequest("u1")) },
+    )
+    assertTrue(
+      "seasons/current has no known status." in
+        thrownMessage { loadOnce(db, fakeRequest("u1")) },
+    )
+    assertEquals(0, db.writes)
+    assertEquals(0, db.merges.size)
+  }
+
   // ── the read-path fake ───────────────────────────────────────────────
 
   /**
@@ -576,10 +707,10 @@ class LazySeasonResetTest {
           return doc
         }
 
-        override suspend fun currentSeasonId(): String? {
+        override suspend fun currentLazyResetSeason(): String? {
           events += "season"
           if (currentSeason == null) return null
-          return currentSeasonIdOf(exists = true, data = currentSeason)
+          return lazyResetSeasonOf(exists = true, data = currentSeason)
         }
 
         override fun merge(uid: String, fields: Map<String, Any?>) {
@@ -624,8 +755,8 @@ class LazySeasonResetTest {
       block(object : SettlementDb.SettlementTx {
         override suspend fun readClaim(matchId: String): Map<String, Any?>? = claim
 
-        override suspend fun currentSeasonId(): String? =
-          currentSeason?.let { currentSeasonIdOf(exists = true, data = it) }
+        override suspend fun currentLazyResetSeason(): String? =
+          currentSeason?.let { lazyResetSeasonOf(exists = true, data = it) }
 
         override suspend fun readProfile(uid: String): Map<String, Any?>? {
           events += "read-profile:$uid"
@@ -697,8 +828,8 @@ class LazySeasonResetTest {
         block(object : RankedProfileDb.Tx {
           override suspend fun read(uid: String): Map<String, Any?>? = players[uid]
 
-          override suspend fun currentSeasonId(): String =
-            currentSeasonIdOf(exists = true, data = currentSeason)
+          override suspend fun currentLazyResetSeason(): String? =
+            lazyResetSeasonOf(exists = true, data = currentSeason)
 
           override fun merge(uid: String, fields: Map<String, Any?>) {
             merges += fields
@@ -718,8 +849,8 @@ class LazySeasonResetTest {
         block(object : SettlementDb.SettlementTx {
           override suspend fun readClaim(matchId: String): Map<String, Any?>? = claim
 
-          override suspend fun currentSeasonId(): String =
-            currentSeasonIdOf(exists = true, data = currentSeason)
+          override suspend fun currentLazyResetSeason(): String? =
+            lazyResetSeasonOf(exists = true, data = currentSeason)
 
           override suspend fun readProfile(uid: String): Map<String, Any?>? = players[uid]
 

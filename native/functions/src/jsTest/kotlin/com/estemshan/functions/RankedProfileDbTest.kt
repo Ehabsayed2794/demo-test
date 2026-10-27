@@ -211,7 +211,7 @@ class RankedProfileDbTest {
   fun aLegacyProfileWithoutASeasonAdoptsTheCurrentSeasonUnderALazyMerge() = runTest {
     val db = FakeDb(
       validProfile().apply { remove("seasonId") },
-      currentSeasonDoc = linkedMapOf<String, Any?>("seasonId" to "s2"),
+      currentSeasonDoc = linkedMapOf<String, Any?>("seasonId" to "s2", "status" to "ACTIVE"),
     )
 
     val response = loadOnce(db, fakeRequest("u1"))
@@ -233,7 +233,7 @@ class RankedProfileDbTest {
   fun aProfileOnTheCurrentSeasonIsServedWithoutAnySeasonWrite() = runTest {
     val db = FakeDb(
       validProfile().apply { put("seasonId", "s2") },
-      currentSeasonDoc = linkedMapOf<String, Any?>("seasonId" to "s2"),
+      currentSeasonDoc = linkedMapOf<String, Any?>("seasonId" to "s2", "status" to "ACTIVE"),
     )
 
     val response = loadOnce(db, fakeRequest("u1"))
@@ -249,7 +249,7 @@ class RankedProfileDbTest {
   fun aStaleProfileSeasonIsLazilyResetOnceIntoTheCurrentSeason() = runTest {
     val db = FakeDb(
       validProfile(), // carries seasonId = "s1"
-      currentSeasonDoc = linkedMapOf<String, Any?>("seasonId" to "s2"),
+      currentSeasonDoc = linkedMapOf<String, Any?>("seasonId" to "s2", "status" to "ACTIVE"),
     )
 
     val response = loadOnce(db, fakeRequest("u1"))
@@ -294,7 +294,7 @@ class RankedProfileDbTest {
   fun aBlankProfileSeasonFailsClosedAndMergesNothing() = runTest {
     val db = FakeDb(
       validProfile().apply { put("seasonId", "   ") },
-      currentSeasonDoc = linkedMapOf<String, Any?>("seasonId" to "s2"),
+      currentSeasonDoc = linkedMapOf<String, Any?>("seasonId" to "s2", "status" to "ACTIVE"),
     )
 
     assertEquals("failed-precondition", thrownCode { loadOnce(db, fakeRequest("u1")) })
@@ -307,7 +307,7 @@ class RankedProfileDbTest {
     // lazy re-stamp on it and silently rewrite a corrupt field.
     val nonString = FakeDb(
       validProfile().apply { put("seasonId", 7) },
-      currentSeasonDoc = linkedMapOf<String, Any?>("seasonId" to "s2"),
+      currentSeasonDoc = linkedMapOf<String, Any?>("seasonId" to "s2", "status" to "ACTIVE"),
     )
     assertEquals("failed-precondition", thrownCode { loadOnce(nonString, fakeRequest("u1")) })
     assertEquals(0, nonString.writes)
@@ -565,10 +565,10 @@ class RankedProfileDbTest {
           return doc
         }
 
-        override suspend fun currentSeasonId(): String? {
+        override suspend fun currentLazyResetSeason(): String? {
           events += "season"
-          if (currentSeasonDoc == NO_SEASON_DOC) return super<RankedProfileDb.Tx>.currentSeasonId()
-          return currentSeasonIdOf(exists = true, data = dynamicToKotlin(currentSeasonDoc))
+          if (currentSeasonDoc == NO_SEASON_DOC) return super<RankedProfileDb.Tx>.currentLazyResetSeason()
+          return lazyResetSeasonOf(exists = true, data = dynamicToKotlin(currentSeasonDoc))
         }
 
         override fun merge(uid: String, fields: Map<String, Any?>) {

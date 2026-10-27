@@ -84,12 +84,20 @@ interface SettlementDb {
     suspend fun readClaim(matchId: String): Map<String, Any?>?
 
     /**
-     * The current season, read ONCE inside the settlement transaction and
-     * before any write (Q22, V1-C10): every seated profile is judged against
-     * exactly the season this transaction commits into, so a seat that missed
-     * the bulk sweep is reset here — exactly once, before its RP is folded —
-     * and no settlement can leave a profile behind the current season. The
-     * recompute and the claim never consult it; a replay returns before it.
+     * The season a stale seat is lazily reset into, read ONCE inside the
+     * settlement transaction and before any write (Q22, V1-C10): every seated
+     * profile is judged against exactly the season this transaction commits
+     * into, so a seat that missed the bulk sweep is reset here — exactly once,
+     * before its RP is folded — and no settlement can leave a profile behind
+     * the current season. The recompute and the claim never consult it; a
+     * replay returns before it.
+     *
+     * This is NOT the board's current season while a reset is `RUNNING`: the
+     * sweep stamps profiles with the target before the season job flips
+     * `seasonId`, so judging them against the outgoing season would reset the
+     * players the sweep just moved BACKWARDS, irreversibly (R27). The Admin
+     * implementation answers with [lazyResetSeasonOf], which serves the
+     * in-flight target for exactly that window.
      *
      * NULL means the singleton does not exist — the fresh-deployment
      * bootstrap: the Admin implementation answers null, the alignment serves
@@ -100,9 +108,9 @@ interface SettlementDb {
      * existing fake compiling and preserves the pre-Q22 fold, where a missing
      * `seasonId` parsed as `s1` — and an EXISTING document is authoritative,
      * read from the S59 singleton (`seasons/current`) in-transaction through
-     * [currentSeasonIdOf], failing closed on a malformed document.
+     * [lazyResetSeasonOf], failing closed on a malformed document.
      */
-    suspend fun currentSeasonId(): String? = DEFAULT_SEASON_ID
+    suspend fun currentLazyResetSeason(): String? = DEFAULT_SEASON_ID
 
     /**
      * The seated player's own `players/{uid}` document, or null when it does
@@ -512,9 +520,9 @@ private fun parseStatsOnlySeat(seat: SeatInput, matchId: String): ParsedSeat {
  * from the stored map because [parseRankedProfile] stores the
  * DEFAULT_SEASON_ID bootstrap literal for a missing season, and that default
  * is indistinguishable from a recorded one once parsed. Null means the field
- * is absent (the caller adopts the CURRENT season). A present seasonId must
- * be a String and non-string already fails closed in the parse; a
- * present-but-blank one fails closed HERE, mirroring the read path's corrupt
+ * is absent (the caller adopts the effective lazy-reset season). A present
+ * seasonId must be a String and non-string already fails closed in the parse;
+ * a present-but-blank one fails closed HERE, mirroring the read path's corrupt
  * branch — a season is adopted or reset, never guessed.
  */
 private fun rawSeasonIdOf(uid: String, matchId: String, raw: Map<String, Any?>): String? =
@@ -527,18 +535,21 @@ private fun rawSeasonIdOf(uid: String, matchId: String, raw: Map<String, Any?>):
 
 /**
  * Q22's lazy season reset, settlement side (E5.2, V1-C10): every seated
- * profile is aligned to the current season BEFORE the fold, inside the same
- * transaction, so settlement can never leave a profile in a dead season —
- * RP accrued into a stale `seasonId` would be progression the current
- * leaderboard cannot see.
+ * profile is aligned to the season the lazy reset must land in BEFORE the
+ * fold, inside the same transaction, so settlement can never leave a profile
+ * in a dead season — RP accrued into a stale `seasonId` would be progression
+ * the current leaderboard cannot see.
  *
- * Per seat, from the RAW stored map ([currentSeasonId] null = no singleton):
+ * Per seat, from the RAW stored map ([lazyResetSeason] null = no singleton):
  *
  * - `seasonId` absent ⇒ ADOPT the effective season with no reset — the read
  *   path's lazy merge, mirrored. The parse had defaulted the field to the
  *   bootstrap literal, which would be a fabricated stale season once s2+ is
  *   live, so the adoption is applied to the parsed copy before anything else.
  * - present, equal to the effective season ⇒ untouched (today's behaviour).
+ *   During a `RUNNING` reset this is the seat the bulk sweep already moved to
+ *   the in-flight TARGET: it is current, not stale, and must never be reset
+ *   BACKWARDS into the outgoing season the board still serves (R27).
  * - present and different, WITH a singleton ⇒ ONE reset, planned with the
  *   bulk sweep's own fail-closed [planSeasonReset] so the demotion math and
  *   the from-season guard can never drift between the sweep and this path.
@@ -558,19 +569,20 @@ private fun rawSeasonIdOf(uid: String, matchId: String, raw: Map<String, Any?>):
  */
 private fun alignSeatedProfilesToSeason(
   seatInputs: List<SeatInput>,
-  currentSeasonId: String?,
+  lazyResetSeason: String?,
   matchId: String,
 ): List<ParsedSeat> {
   val parsed = seatInputs.map { parseRankedSeat(it, matchId) }
 
-  // The season every seat is judged against: the read singleton, or the
-  // bootstrap literal when no singleton exists at all.
-  val effectiveSeasonId = currentSeasonId ?: DEFAULT_SEASON_ID
+  // The season every seat is judged against: the read singleton — the
+  // in-flight TARGET while a reset is RUNNING — or the bootstrap literal when
+  // no singleton exists at all.
+  val effectiveSeasonId = lazyResetSeason ?: DEFAULT_SEASON_ID
 
   val adopted = parsed.mapIndexed { index, seat ->
     val recorded = rawSeasonIdOf(seat.uid, matchId, seatInputs[index].profile)
     when {
-      currentSeasonId == null && recorded != null && recorded != DEFAULT_SEASON_ID ->
+      lazyResetSeason == null && recorded != null && recorded != DEFAULT_SEASON_ID ->
         failClosed(
           seat.uid, matchId,
           "a players/seasonId ('$recorded') from beyond the bootstrap season while " +
@@ -945,18 +957,19 @@ suspend fun settleOnce(db: SettlementDb, request: CallableRequest): Map<String, 
 
     // Reads before writes, all four seats, inside this transaction: two racers
     // that both read absent cannot both write, and the profile a racer reads
-    // is the one its claim commits against. The season is read ONCE before the
-    // seats (Q22, V1-C10) — null when the singleton does not exist, which the
-    // alignment treats as the bootstrap season and guards with fail-closed —
-    // so every profile is judged, reset and folded against exactly the season
-    // this transaction commits into. The typed contract parse — and the lazy
-    // reset it feeds — runs after the reads and before the first write, so a
-    // corrupt profile field still fails the whole settlement closed with
-    // nothing behind it.
-    val currentSeasonId = tx.currentSeasonId()
+    // is the one its claim commits against. The lazy-reset season is read ONCE
+    // before the seats (Q22, V1-C10) — null when the singleton does not exist,
+    // which the alignment treats as the bootstrap season and guards with
+    // fail-closed — so every profile is judged, reset and folded against
+    // exactly the season this transaction commits into. During a RUNNING reset
+    // that season is the in-flight target, never the outgoing one the board
+    // still serves. The typed contract parse — and the lazy reset it feeds —
+    // runs after the reads and before the first write, so a corrupt profile
+    // field still fails the whole settlement closed with nothing behind it.
+    val lazyResetSeason = tx.currentLazyResetSeason()
     val seated = alignSeatedProfilesToSeason(
       seatInputs = readSeatInputs(tx, fields, parsed.order, matchId),
-      currentSeasonId = currentSeasonId,
+      lazyResetSeason = lazyResetSeason,
       matchId = matchId,
     )
     val progression = foldRankedProgression(
@@ -1242,13 +1255,14 @@ class AdminSettlementDb : SettlementDb {
      * cannot stamp a profile with a season the write did not land in. Absent
      * answers NULL — the fresh-deployment bootstrap the alignment guards —
      * while an existing document is authoritative and parsed by
-     * [currentSeasonIdOf]'s, the one parser the leaderboard and profile paths
-     * already resolve through (malformed fails closed).
+     * [lazyResetSeasonOf]: the in-flight TARGET while a reset is RUNNING (a
+     * seat the sweep already moved must not be reset backwards), otherwise
+     * the outgoing `seasonId` the board still serves (malformed fails closed).
      */
-    override suspend fun currentSeasonId(): String? {
+    override suspend fun currentLazyResetSeason(): String? {
       val snap = tx.get(db.collection(SEASONS_COLLECTION).doc(CURRENT_SEASON_DOC)).await()
       if (!snap.exists) return null
-      return currentSeasonIdOf(exists = true, data = dynamicToKotlin(snap.data()))
+      return lazyResetSeasonOf(exists = true, data = dynamicToKotlin(snap.data()))
     }
 
     override fun writeCorrection(

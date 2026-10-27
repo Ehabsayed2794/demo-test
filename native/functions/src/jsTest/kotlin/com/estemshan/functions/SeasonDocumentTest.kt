@@ -5,14 +5,20 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * S59/S64 — the season singleton's parser, in isolation.
+ * S59/S64 — the season singleton's parsers, in isolation.
  *
- * `seasons/current` is one document, and every current-season read — the
- * leaderboard's and the Ranked profile's — must answer identically from the
- * same bytes, so [currentSeasonIdOf] carries the whole contract and this class
- * pins it on plain Kotlin fixtures: no Firestore, no port, no dynamic.
+ * `seasons/current` is one document with two readers that need different
+ * answers from the same bytes:
  *
- * The three clauses of the contract, each its own test:
+ * - [currentSeasonIdOf] is the BOARD's answer: `seasonId`, verbatim. During a
+ *   reset (`status` RUNNING) the board stays on the outgoing season until the
+ *   job commits the new one;
+ * - [lazyResetSeasonOf] is the LAZY RESET's answer: the season a stale profile
+ *   must be moved into. During a reset that is the in-flight TARGET, because
+ *   the sweep stamps profiles with it before `seasonId` flips — serving the
+ *   outgoing season there would reset moved players BACKWARDS (R27).
+ *
+ * The board contract's three clauses, each its own test:
  * - an ABSENT document is the ONLY bootstrap (season one, and not an error);
  * - an existing document is authoritative — its non-blank `String`
  *   `seasonId` is served verbatim (case-sensitive, never normalized, never
@@ -21,6 +27,10 @@ import kotlin.test.assertTrue
  * - everything else fails closed with `failed-precondition` and a fixed
  *   message that never echoes the malformed value — a read-time error is not
  *   a place to broadcast a client-controllable datum into every log collector.
+ *
+ * The lazy-reset contract adds one clause: an existing document must carry a
+ * known [SeasonStatus] name, `RUNNING` must name a usable target, and
+ * everything else fails closed the same fixed-literal way.
  */
 class SeasonDocumentTest {
 
@@ -126,6 +136,132 @@ class SeasonDocumentTest {
     )
     assertTrue(
       "the-most-readable-value" !in thrownMessage { currentSeasonIdOf(exists = true, data = "the-most-readable-value") },
+    )
+  }
+
+  // ── the lazy-reset season: the in-flight target, never the board's ──
+
+  @Test
+  fun anAbsentDocumentIsTheBootstrapForLazyResetsToo() {
+    assertEquals(null, lazyResetSeasonOf(exists = false, data = null))
+    // `exists` decides on its own, exactly as the board's parser does.
+    assertEquals(
+      null,
+      lazyResetSeasonOf(exists = false, data = linkedMapOf<String, Any?>("seasonId" to "s9", "status" to "ACTIVE")),
+    )
+  }
+
+  @Test
+  fun aSettledDocumentServesItsSeasonIdToLazyResetsVerbatim() {
+    assertEquals(
+      "s2",
+      lazyResetSeasonOf(
+        exists = true,
+        data = linkedMapOf<String, Any?>("seasonId" to "s2", "status" to "ACTIVE"),
+      ),
+    )
+    // COMPLETE is terminal and `seasonId` already names the landed season.
+    assertEquals(
+      "s3",
+      lazyResetSeasonOf(
+        exists = true,
+        data = linkedMapOf<String, Any?>("seasonId" to "s3", "status" to "COMPLETE"),
+      ),
+    )
+    // Case-sensitive and untrimmed here too: the id is the identity (RD24).
+    assertEquals(
+      "  S1 ",
+      lazyResetSeasonOf(
+        exists = true,
+        data = linkedMapOf<String, Any?>("seasonId" to "  S1 ", "status" to "ACTIVE"),
+      ),
+    )
+  }
+
+  @Test
+  fun aRunningResetServesTheTargetSeasonToLazyResets() {
+    // The sweep stamps profiles with the target BEFORE the job flips
+    // `seasonId`; judging those profiles against the outgoing season would
+    // reset them BACKWARDS (R27). The lazy paths therefore serve the target —
+    // while the board keeps serving the outgoing season, unchanged.
+    val running = linkedMapOf<String, Any?>(
+      "seasonId" to "s2",
+      "status" to "RUNNING",
+      "targetSeasonId" to "s3",
+      "nextSeasonId" to "s3",
+    )
+    assertEquals("s3", lazyResetSeasonOf(exists = true, data = running))
+    assertEquals("s2", currentSeasonIdOf(exists = true, data = running))
+  }
+
+  @Test
+  fun aRunningResetWithNoUsableTargetFailsClosed() {
+    for (broken in listOf<Any?>(
+      // Absent, blank, non-string: a RUNNING claim always names its target,
+      // so anything else is an unreadable transition, not a season to guess.
+      null,
+      "",
+      "   ",
+      7,
+    )) {
+      val running = linkedMapOf<String, Any?>(
+        "seasonId" to "s2",
+        "status" to "RUNNING",
+        "targetSeasonId" to broken,
+      )
+      assertEquals("failed-precondition", thrownCode { lazyResetSeasonOf(exists = true, data = running) })
+    }
+    // Fixed literal, and it never echoes the malformed value.
+    val message = thrownMessage {
+      lazyResetSeasonOf(
+        exists = true,
+        data = linkedMapOf<String, Any?>("seasonId" to "s2", "status" to "RUNNING"),
+      )
+    }
+    assertEquals("seasons/current is RUNNING with no usable targetSeasonId.", message)
+    assertTrue("7" !in message)
+  }
+
+  @Test
+  fun aDocumentWithNoKnownStatusFailsClosedForLazyResets() {
+    for (broken in listOf<Any?>(
+      // No status at all: the bulk job reads the same document as
+      // NOT_CONFIGURED rather than guessing which season is authoritative.
+      linkedMapOf<String, Any?>("seasonId" to "s2"),
+      linkedMapOf<String, Any?>("seasonId" to "s2", "status" to ""),
+      linkedMapOf<String, Any?>("seasonId" to "s2", "status" to "PAUSED"),
+      linkedMapOf<String, Any?>("seasonId" to "s2", "status" to 3),
+    )) {
+      assertEquals("failed-precondition", thrownCode { lazyResetSeasonOf(exists = true, data = broken) })
+    }
+    assertEquals(
+      "seasons/current has no known status.",
+      thrownMessage {
+        lazyResetSeasonOf(exists = true, data = linkedMapOf<String, Any?>("seasonId" to "s2"))
+      },
+    )
+  }
+
+  @Test
+  fun anExistingDocumentWithoutAUsableSeasonIdFailsClosedForLazyResetsToo() {
+    for (broken in listOf<Any?>(
+      linkedMapOf<String, Any?>("status" to "ACTIVE"),
+      linkedMapOf<String, Any?>("seasonId" to "", "status" to "ACTIVE"),
+      linkedMapOf<String, Any?>("seasonId" to "   ", "status" to "ACTIVE"),
+      linkedMapOf<String, Any?>("seasonId" to 7, "status" to "ACTIVE"),
+      linkedMapOf<String, Any?>("other" to "s2", "status" to "ACTIVE"),
+      null,
+      "s2",
+      listOf<Any?>("seasonId" to "s2", "status" to "ACTIVE"),
+    )) {
+      assertEquals("failed-precondition", thrownCode { lazyResetSeasonOf(exists = true, data = broken) })
+    }
+    // One document, one diagnostic: the same literal the board's parser uses.
+    assertEquals(
+      "seasons/current has no usable seasonId.",
+      thrownMessage {
+        lazyResetSeasonOf(exists = true, data = linkedMapOf<String, Any?>("status" to "ACTIVE"))
+      },
     )
   }
 }

@@ -109,6 +109,15 @@ private const val PLAYERS_COLLECTION = "players"
 private const val SEASON_FIELD = "seasonId"
 
 /**
+ * The transition bookkeeping `seasons/current` carries beside [SEASON_FIELD]:
+ * the one-way lifecycle status and the season an in-flight reset is moving
+ * profiles toward. Read only by [lazyResetSeasonOf]; [currentSeasonIdOf]
+ * deliberately never consults them (see its KDoc).
+ */
+private const val SEASON_STATUS_FIELD = "status"
+private const val SEASON_TARGET_SEASON_ID_FIELD = "targetSeasonId"
+
+/**
  * The bootstrap season — the answer when `seasons/current` does not exist.
  *
  * Absent is a normal request shape, not a mistake — and which season is
@@ -137,9 +146,10 @@ internal const val SEASONS_COLLECTION = "seasons"
 internal const val CURRENT_SEASON_DOC = "current"
 
 /**
- * The current season, as S59's singleton carries it — the one parser every
- * current-season read resolves through, so the board's answer and the
- * profile's answer can never disagree about the same document.
+ * The current season as the BOARD serves it: S59's singleton carries it, and
+ * this is the parser the leaderboard path resolves through. The two lazy-reset
+ * reads use [lazyResetSeasonOf] instead, and may deliberately disagree with
+ * this answer while a season reset is RUNNING (see its KDoc).
  *
  * - No document (`exists = false`) is THE bootstrap: [DEFAULT_SEASON_ID].
  *   That is the only thing a missing document can produce (a fresh
@@ -173,6 +183,55 @@ internal fun currentSeasonIdOf(exists: Boolean, data: Any?): String {
   val raw = (data as? Map<*, *>)?.get(SEASON_FIELD)
   if (raw is String && raw.isNotBlank()) return raw
   throw HttpsError("failed-precondition", "seasons/current has no usable seasonId.")
+}
+
+/**
+ * The season a LAZY reset judges a profile against — [currentSeasonIdOf]'s
+ * sibling for the two writer-side reads (the Ranked profile's and the
+ * settlement's), never for the board.
+ *
+ * The board keeps serving [currentSeasonIdOf]'s answer, and it must: while the
+ * season job is `RUNNING`, the live leaderboard stays on the OUTGOING season
+ * until the job commits the target as `seasonId`. A lazy reset has the
+ * opposite need. The bulk sweep stamps every profile with the TARGET season
+ * BEFORE the job flips `seasonId`, so in that window [currentSeasonIdOf] still
+ * answers the outgoing season while the profiles already carry the target.
+ * Judging them against it would plan `target -> outgoing` — a BACKWARDS reset
+ * that demotes every player the sweep just moved, irreversibly (R27).
+ *
+ * So:
+ * - No document (`exists = false`) answers NULL: the bootstrap, the same
+ *   absence [currentSeasonIdOf] resolves to [DEFAULT_SEASON_ID]. The caller
+ *   decides whether a profile may adopt the bootstrap season or must fail
+ *   closed instead.
+ * - An existing document's non-blank `String` `seasonId` is authoritative and
+ *   served VERBATIM (case-sensitive, never trimmed), exactly as
+ *   [currentSeasonIdOf] serves it — EXCEPT while `status` is `RUNNING`, when
+ *   a non-blank `targetSeasonId` is the season actually in flight and is
+ *   served instead.
+ * - A `status` that is absent or names no [SeasonStatus] fails closed, and so
+ *   does a `RUNNING` document with no usable `targetSeasonId`: the season job
+ *   writes exactly one of those states, so anything else is an unreadable
+ *   transition, never a season to guess at. The bulk job refuses to run from
+ *   the same document for the same reason (`NOT_CONFIGURED`).
+ * - Every malformed shape fails closed with a fixed literal that never echoes
+ *   the value. The missing/unusable-`seasonId` failure reuses
+ *   [currentSeasonIdOf]'s exact literal: one document, one diagnostic.
+ */
+internal fun lazyResetSeasonOf(exists: Boolean, data: Any?): String? {
+  if (!exists) return null
+  val fields = data as? Map<*, *>
+  val seasonId = (fields?.get(SEASON_FIELD) as? String)?.takeIf { it.isNotBlank() }
+    ?: throw HttpsError("failed-precondition", "seasons/current has no usable seasonId.")
+  val statusName = fields[SEASON_STATUS_FIELD] as? String
+  val status = SeasonStatus.values().firstOrNull { it.name == statusName }
+    ?: throw HttpsError("failed-precondition", "seasons/current has no known status.")
+  if (status != SeasonStatus.RUNNING) return seasonId
+  return (fields[SEASON_TARGET_SEASON_ID_FIELD] as? String)?.takeIf { it.isNotBlank() }
+    ?: throw HttpsError(
+      "failed-precondition",
+      "seasons/current is RUNNING with no usable targetSeasonId.",
+    )
 }
 
 /**
