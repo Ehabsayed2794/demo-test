@@ -38,6 +38,10 @@ const EXPECTED_NAMES = [
   "scheduledSeasonReset",
   "joinRankDownRoom",
   "operatorSeasonResetDryRun",
+  // S56 - the Ranked matchmaking callables.
+  "enqueueSearch",
+  "pollSearch",
+  "cancelSearch",
 ].sort();
 
 let failures = 0;
@@ -166,16 +170,16 @@ check(
     : "extra in manifest: " + extraInManifest.join(", "),
 );
 
-// --- 5. Exact match against the canonical 12 -------------------------------
+// --- 5. Exact match against the canonical 15 -------------------------------
 const manifestArray = [...manifestKeys].sort();
 check(
-  "Kotlin @JsName set equals canonical 12",
+  "Kotlin @JsName set equals canonical 15",
   kotlinArray.join(",") === EXPECTED_NAMES.join(",") &&
     kotlinArray.length === EXPECTED_NAMES.length,
   kotlinArray.join(", "),
 );
 check(
-  "manifest key set equals canonical 12",
+  "manifest key set equals canonical 15",
   manifestArray.join(",") === EXPECTED_NAMES.join(",") &&
     manifestArray.length === EXPECTED_NAMES.length,
   manifestArray.join(", "),
