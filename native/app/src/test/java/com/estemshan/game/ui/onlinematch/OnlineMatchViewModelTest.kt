@@ -2881,6 +2881,14 @@ class OnlineMatchViewModelTest {
     val extendCalls = AtomicInteger(0)
     val endCalls = AtomicInteger(0)
 
+    /** R1: the extension transaction fails the way an offline/denied write does. */
+    var failExtensions: Boolean = false
+
+    /** R1 race: this snapshot predates a write another seat already committed.
+     *  MatchService answers with Ok(alreadyComplete/alreadyExtended), never a throw. */
+    var completeOnExtend: Boolean = false
+    var alreadyExtendedOnExtend: Boolean = false
+
     /** T-09: the `expectedCycle` each write carried, in call order. */
     val bidCycles = mutableListOf<Int?>()
     val actionCycles = mutableListOf<Int?>()
@@ -3130,6 +3138,23 @@ class OnlineMatchViewModelTest {
       reason: String,
     ): ExtendResult {
       extendCalls.incrementAndGet()
+      if (failExtensions) throw RuntimeException("offline")
+      // MatchService's order (extendMatchRounds): completed match first, then
+      // the extendedRounds idempotence check.
+      if (completeOnExtend) {
+        doc = doc.copy(
+          status = MatchDoc.STATUS_COMPLETE,
+          completedRound = completedRound,
+          version = doc.version + 1,
+        )
+        return ExtendResult.alreadyComplete(matchId, doc.maxRounds)
+      }
+      if (alreadyExtendedOnExtend) return ExtendResult.alreadyExtended(matchId, doc.maxRounds)
+      // MatchService is idempotent on extendedRounds: the race loser gets
+      // ALREADY_EXTENDED and the ceiling never moves twice.
+      if (completedRound in doc.extendedRounds) {
+        return ExtendResult.alreadyExtended(matchId, doc.maxRounds)
+      }
       doc = doc.copy(
         maxRounds = doc.maxRounds + 1,
         extendedRounds = doc.extendedRounds + completedRound,
@@ -3222,31 +3247,43 @@ class OnlineMatchViewModelTest {
     val doc: MatchDoc,
   )
 
-  private fun fastRoundCompleteFixture(roundNumber: Int): FastRoundCompleteFixture {
-    // Deal deterministically and play all 13 tricks. Every seat bids 4; we
-    // need every seat to miss its bid (won != 4) → all fail → Sa'ayda.
-    // Must match the FakeMatchStore's seed so the local hand lines up.
-    val hands = Dealer.dealHands(1L)
+  /** A fast round played out on the real engines: the auction's own outcome,
+   *  the deal it was played on, and the 52-card log the document carries. */
+  private data class PlayedFastRound(
+    val outcome: BiddingOutcome,
+    val hands: Map<String, List<Card>>,
+    val table: TableState,
+    val cardLog: List<CardLogEntry>,
+  )
+
+  /**
+   * Drive [intents] through the real bidding engine, then play all 13 tricks
+   * on the real table engine — every number the document carries is derived,
+   * never hand-set. A round with no >=8 declaration closes on the plain
+   * estimates; a >=8 one walks INTO the Super Call CONFIRM, so its intent
+   * list must confirm and re-declare.
+   */
+  private fun playFastRound(
+    roundNumber: Int,
+    seed: Long,
+    intents: List<BiddingIntent>,
+  ): PlayedFastRound {
+    val hands = Dealer.dealHands(seed)
     var state = initFastRound(round = roundNumber, dealer = seats.first(), seats = seats)
     var outcome: BiddingOutcome? = null
-    var guard = 0
-    while (state.subPhase != BiddingPhase.DONE && guard < 40) {
-      guard++
-      val actor = state.waitingFor ?: error("no seat waiting in ${state.subPhase}")
-      val intent = BiddingIntent.FinalEstimate(actor, 4)
+    for (intent in intents) {
       state = when (val result = emit(state, intent)) {
         is EmitResult.Applied -> result.state
         is EmitResult.Completed -> {
           outcome = result.outcome
           result.state
         }
-        is EmitResult.Rejected -> error("fast-round estimate rejected: ${result.reason}")
+        is EmitResult.Rejected -> error("fast-round intent rejected: $intent ${result.reason}")
         is EmitResult.GeneralPass -> error("unexpected general pass in fast round")
       }
     }
     val done = outcome ?: error("fast-round auction never closed")
 
-    // Play all 13 tricks through the real table engine.
     var table = initTable(
       RoundCfg(
         round = roundNumber,
@@ -3276,36 +3313,69 @@ class OnlineMatchViewModelTest {
         if (table.phase == TablePhase.RESOLVING) table = resolveTrick(table)
       }
     }
+    return PlayedFastRound(done, hands, table, cardLog.toList())
+  }
+
+  /** The document shape every online delivery reads: the closed auction's
+   *  numbers, the 52 plays, and — for a Super Call round — the confirm log
+   *  and cycle count `restoreFastBiddingCycle` rebuilds the cycle from. */
+  private fun fastRoundDoc(
+    played: PlayedFastRound,
+    roundNumber: Int,
+    maxRounds: Int,
+    gameType: GameType = GameType.FULL,
+    extendedRounds: List<Int> = emptyList(),
+    biddingCycle: Int = 0,
+    biddingLog: List<BiddingLogEntry> = emptyList(),
+  ): MatchDoc = MatchDoc(
+    roomId = "room-1",
+    players = seatUids.values.toList(),
+    status = MatchDoc.STATUS_STARTING,
+    currentRound = roundNumber,
+    maxRounds = maxRounds,
+    extendedRounds = extendedRounds,
+    dealer = seatUids.getValue(seats.first()),
+    turn = null,
+    seats = seatUids,
+    version = 1,
+    biddingOpen = false,
+    bids = played.outcome.estimates.entries.associate { it.key to (it.value as Int?) },
+    lastBidSeat = seats.last(),
+    cardLog = played.cardLog,
+    lastCardSeat = played.cardLog.last().seatId,
+    cardPhase = MatchDoc.CARD_PHASE_PLAY,
+    biddingLog = biddingLog,
+    gameState = GameState(initialized = true, dealtRound = roundNumber),
+    gameType = gameType,
+    biddingCycle = biddingCycle,
+  )
+
+  /** `succeeded` is an exact-match rule, so a fixture pins the dealt result it
+   *  relies on rather than assuming it. */
+  private fun PlayedFastRound.assertWonExactly(seat: String, tricks: Int) {
+    assertEquals("the fixture deal leaves $seat on exactly $tricks tricks", tricks, table.tricksWon.getValue(seat))
+  }
+
+  private fun fastRoundCompleteFixture(roundNumber: Int): FastRoundCompleteFixture {
+    // Deal deterministically and play all 13 tricks. Every seat bids 4; we
+    // need every seat to miss its bid (won != 4) → all fail → Sa'ayda.
+    // Must match the FakeMatchStore's seed so the local hand lines up.
+    val played = playFastRound(
+      roundNumber, 1L, seats.map { BiddingIntent.FinalEstimate(it, 4) },
+    )
 
     // All four bid 4. If anyone won exactly 4, this isn't a Sa'ayda — pick a
     // different seed. (Verified: seed 1L yields all-miss at rounds 14, 18, 19.)
-    val tricksWon = table.tricksWon
+    val tricksWon = played.table.tricksWon
     val allMiss = seats.all { tricksWon.getValue(it) != 4 }
     if (!allMiss) {
       error("seed 1L did not produce a Sa'ayda at round $roundNumber: tricksWon=$tricksWon bids=4/4/4/4")
     }
 
-    val doc = MatchDoc(
-      roomId = "room-1",
-      players = seatUids.values.toList(),
-      status = MatchDoc.STATUS_STARTING,
-      currentRound = roundNumber,
-      maxRounds = 18,
-      extendedRounds = emptyList(),
-      dealer = seatUids.getValue(seats.first()),
-      turn = null,
-      seats = seatUids,
-      version = 1,
-      biddingOpen = false,
-      bids = done.estimates.entries.associate { it.key to (it.value as Int?) },
-      lastBidSeat = seats.last(),
-      cardLog = cardLog.toList(),
-      lastCardSeat = cardLog.last().seatId,
-      cardPhase = MatchDoc.CARD_PHASE_PLAY,
-      biddingLog = emptyList(),
-      gameState = GameState(initialized = true, dealtRound = roundNumber),
+    return FastRoundCompleteFixture(
+      played.outcome, played.hands, played.table,
+      fastRoundDoc(played, roundNumber, maxRounds = 18),
     )
-    return FastRoundCompleteFixture(done, hands, table, doc)
   }
 
   /**
@@ -3415,5 +3485,311 @@ class OnlineMatchViewModelTest {
     } finally {
       Dispatchers.resetMain()
     }
+  }
+
+  // ==========================================================================
+  //  S2-D1 + R1 — the online extension must read the locked number, and a
+  //  failed extension write must block the round transition
+  // ==========================================================================
+
+  /**
+   * R3 (the D1 regression): an ORDINARY in-window caller — locked number
+   * below [com.estemshan.engine.SUPER_CALL_MIN_BID] — who meets that number
+   * is not a Super Call. Without the amount the engine keeps its legacy
+   * "any caller is a Super Call" reading and adds a phantom round.
+   *
+   * MINI round 6 is the reachable shape online: the session seeds the fast
+   * round with the FULL trump ladder (HEARTS), which is NOT the MINI fixed
+   * trump (SANS), so the trump guard alone cannot suppress the extension —
+   * only the locked number can.
+   */
+  @Test
+  fun onlineOrdinaryCallerBelowSuperMinDoesNotExtend() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      val round = 6
+      val intents = seats.map { BiddingIntent.FinalEstimate(it, 4) }
+      val played = playFastRound(round, ORDINARY_CALLER_SEED, intents)
+      played.assertWonExactly("p1", 4)
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(ORDINARY_CALLER_SEED))
+      store.doc = fastRoundDoc(
+        played,
+        round, maxRounds = 10, gameType = GameType.MINI,
+      )
+      val vm = makeVm(seatUids.getValue("p1"), Dispatchers.Main)
+      vm.start("m-ordinary-6")
+      broadcast("m-ordinary-6")
+
+      assertEquals("an ordinary caller never extends", 0, store.extendCalls.get())
+      assertEquals("the MINI ceiling stays at 10", 10, store.doc.maxRounds)
+      assertTrue("extendedRounds stays empty", store.doc.extendedRounds.isEmpty())
+      assertEquals("the round still advances normally", 7, store.doc.currentRound)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * The positive control for the regression above: the SAME shape with a
+   * genuine Super Call — p1 locks 8, confirms CLUBS, and meets it — must
+   * extend exactly once. Without this, "never extend online" passes R3.
+   */
+  @Test
+  fun onlineGenuineSuperCallExtendsExactlyOnce() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      val round = 6
+      val intents = listOf(
+        BiddingIntent.FinalEstimate("p1", 8),
+        BiddingIntent.FinalEstimate("p2", 4),
+        BiddingIntent.FinalEstimate("p3", 4),
+        BiddingIntent.FinalEstimate("p4", 4),
+        BiddingIntent.ConfirmCall("p1", 8, Suit.CLUBS),
+        BiddingIntent.FinalEstimate("p2", 4),
+        BiddingIntent.FinalEstimate("p3", 4),
+        BiddingIntent.FinalEstimate("p4", 4),
+      )
+      val played = playFastRound(round, SUPER_CALL_SEED, intents)
+      played.assertWonExactly("p1", 8)
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(SUPER_CALL_SEED))
+      store.doc = fastRoundDoc(
+        played,
+        round, maxRounds = 10, gameType = GameType.MINI,
+        biddingCycle = 1,
+        biddingLog = listOf(
+          BiddingLogEntry(
+            seatId = "p1",
+            actionType = BiddingLogEntry.ACTION_CONFIRM_CALL,
+            tricks = 8,
+            suit = Suit.CLUBS.name,
+            round = round,
+          ),
+        ),
+      )
+      val vm = makeVm(seatUids.getValue("p1"), Dispatchers.Main)
+      vm.start("m-super-6")
+      broadcast("m-super-6")
+
+      assertEquals("a genuine Super Call extends exactly once", 1, store.extendCalls.get())
+      assertEquals("the MINI ceiling moves past its base", 11, store.doc.maxRounds)
+      assertEquals("extendedRounds records round 6", listOf(6), store.doc.extendedRounds)
+      assertEquals("the round advances after the extension", 7, store.doc.currentRound)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * R1 gate: when the extension write fails, no transition may follow —
+   * endMatch/advance would run against a document whose ceiling never moved
+   * and desync this client from the server.
+   */
+  @Test
+  fun failedExtensionWriteBlocksTheRoundTransition() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(1))
+      store.doc = fastRoundCompleteFixture(14).doc
+      store.failExtensions = true
+      val vm = makeVm(seatUids.getValue("p1"), Dispatchers.Main)
+      vm.start("m-gate-14")
+      broadcast("m-gate-14")
+
+      assertEquals("the extension was attempted", 1, store.extendCalls.get())
+      assertEquals("no advance may follow a failed extension", 0, store.advanceCalls.get())
+      assertEquals("no end may follow a failed extension", 0, store.endCalls.get())
+      assertEquals("the document stayed on the scored round", 14, store.doc.currentRound)
+      assertEquals("the ceiling never moved", 18, store.doc.maxRounds)
+      assertFalse("the match did not complete", store.doc.isComplete)
+      assertEquals("the failure is surfaced, not swallowed", "offline", rejectionOf(vm.state.value))
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * R1 race: another seat already extended this round, so the document's
+   * ceiling includes it. The local engine still says "this round extends";
+   * the replica must end at the TRUE final round instead of advancing past
+   * a ceiling it wrongly believed was one higher.
+   */
+  @Test
+  fun alreadyExtendedRoundStillEndsTheMatch() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(1))
+      store.doc = fastRoundCompleteFixture(19).doc.copy(
+        maxRounds = 19,
+        extendedRounds = listOf(19),
+      )
+      val vm = makeVm(seatUids.getValue("p1"), Dispatchers.Main)
+      vm.start("m-race-19")
+      broadcast("m-race-19")
+
+      assertEquals("the recorded extension is never written twice", 0, store.extendCalls.get())
+      assertEquals("the true final round ends the match", 1, store.endCalls.get())
+      assertEquals("no advance past the final round", 0, store.advanceCalls.get())
+      assertTrue("the match completed", store.doc.isComplete)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * Another seat ended the match before this transaction read it: the store
+   * answers MATCH_ALREADY_COMPLETE. The terminal document is the next
+   * authority, so this replica must not chase it with a transition write.
+   */
+  @Test
+  fun extendAgainstACompletedMatchIssuesNoTransition() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(1))
+      store.doc = fastRoundCompleteFixture(14).doc
+      store.completeOnExtend = true
+      val vm = makeVm(seatUids.getValue("p1"), Dispatchers.Main)
+      vm.start("m-race-complete-14")
+      broadcast("m-race-complete-14")
+
+      assertEquals("the extension was attempted", 1, store.extendCalls.get())
+      assertEquals("a closed match never advances", 0, store.advanceCalls.get())
+      assertEquals("a closed match never gets a second endMatch", 0, store.endCalls.get())
+      assertTrue("the terminal document is the authority", store.doc.isComplete)
+      assertNull("MATCH_ALREADY_COMPLETE is terminal, not an error", rejectionOf(vm.state.value))
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * The extension race's losing side: another seat's write already recorded
+   * this round, so the store answers ALREADY_EXTENDED. That is SUCCESS — the
+   * ceiling did move, and this replica must still advance.
+   */
+  @Test
+  fun storeRaceLoserStillAdvancesTheRound() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(1))
+      store.doc = fastRoundCompleteFixture(14).doc
+      store.alreadyExtendedOnExtend = true
+      val vm = makeVm(seatUids.getValue("p1"), Dispatchers.Main)
+      vm.start("m-race-loser-14")
+      broadcast("m-race-loser-14")
+
+      assertEquals("the extension was attempted", 1, store.extendCalls.get())
+      assertEquals("ALREADY_EXTENDED is success, not a stall", 1, store.advanceCalls.get())
+      assertEquals("no endMatch for a non-final round", 0, store.endCalls.get())
+      assertEquals("the round advances", 15, store.doc.currentRound)
+      assertNull("the lost race is not an error", rejectionOf(vm.state.value))
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * extendedRounds is a HISTORY: an earlier round's extension must not make
+   * this round look already recorded. Round 19 is the actual final round and
+   * a Sa'ayda there repeats past it (ceiling 19 → 20, then advance).
+   */
+  @Test
+  fun anEarlierExtensionDoesNotSuppressThisRound() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(1))
+      store.doc = fastRoundCompleteFixture(19).doc.copy(
+        maxRounds = 19,
+        extendedRounds = listOf(14),
+      )
+      val vm = makeVm(seatUids.getValue("p1"), Dispatchers.Main)
+      vm.start("m-race-history-19")
+      broadcast("m-race-history-19")
+
+      assertEquals("round 19 is not already recorded", 1, store.extendCalls.get())
+      assertEquals("the ceiling moves 19 -> 20", 20, store.doc.maxRounds)
+      assertEquals("both extensions are recorded", listOf(14, 19), store.doc.extendedRounds)
+      assertEquals("round 19 advances past the moved ceiling", 20, store.doc.currentRound)
+      assertEquals("no endMatch past a ceiling that moved", 0, store.endCalls.get())
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  /**
+   * The locked number belongs to the CALLER, not to a fixed seat. p2 makes the
+   * Super Call while p1 — the first seat, and this client's own — estimated 4;
+   * reading a hardcoded seat's amount sees 4 and drops a real extension.
+   */
+  @Test
+  fun theLockedNumberIsReadFromTheCallerNotTheFirstSeat() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      val round = 6
+      val intents = listOf(
+        BiddingIntent.FinalEstimate("p1", 4),
+        BiddingIntent.FinalEstimate("p2", 8),
+        BiddingIntent.FinalEstimate("p3", 4),
+        BiddingIntent.FinalEstimate("p4", 4),
+        BiddingIntent.ConfirmCall("p2", 8, Suit.CLUBS),
+        BiddingIntent.FinalEstimate("p3", 4),
+        BiddingIntent.FinalEstimate("p4", 4),
+        BiddingIntent.FinalEstimate("p1", 4),
+      )
+      val played = playFastRound(round, CALLER_P2_SEED, intents)
+      played.assertWonExactly("p2", 8)
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(CALLER_P2_SEED))
+      store.doc = fastRoundDoc(
+        played,
+        round, maxRounds = 10, gameType = GameType.MINI,
+        biddingCycle = 1,
+        biddingLog = listOf(
+          BiddingLogEntry(
+            seatId = "p2",
+            actionType = BiddingLogEntry.ACTION_CONFIRM_CALL,
+            tricks = 8,
+            suit = Suit.CLUBS.name,
+            round = round,
+          ),
+        ),
+      )
+      val vm = makeVm(seatUids.getValue("p1"), Dispatchers.Main)
+      vm.start("m-caller-p2-6")
+      broadcast("m-caller-p2-6")
+
+      assertEquals("the CALLER's locked number extends", 1, store.extendCalls.get())
+      assertEquals("the MINI ceiling moves past its base", 11, store.doc.maxRounds)
+      assertEquals("extendedRounds records round 6", listOf(6), store.doc.extendedRounds)
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
+  private companion object {
+    /** Pinned by seed search: MINI round 6, bids 4/4/4/4 — p1 wins exactly 4. */
+    const val ORDINARY_CALLER_SEED = 3L
+
+    /** Pinned by seed search: MINI round 6, p1 Super Calls 8 into CLUBS and
+     *  wins exactly 8. */
+    const val SUPER_CALL_SEED = 20L
+
+    /** Pinned by seed search: MINI round 6, P2 Super Calls 8 into CLUBS and
+     *  wins exactly 8 while p1 — not the caller — estimated 4. */
+    const val CALLER_P2_SEED = 1L
   }
 }

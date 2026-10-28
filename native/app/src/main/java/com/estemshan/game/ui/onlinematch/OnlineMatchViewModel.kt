@@ -1006,10 +1006,20 @@ class OnlineMatchViewModel(
    * the result immediately; if a write fails, the next snapshot self-heals —
    * another seat's successful advance or endMatch moves the document, and
    * this VM follows it.
+   *
+   * The extension write is a PRECONDITION of the transition, not a sibling:
+   * endMatch/advance against a document whose ceiling never moved desyncs
+   * this client from the server. A failed extension stops the round here;
+   * another seat's successful write moves the document and this VM follows.
    */
   private suspend fun scoreAndAdvance(doc: MatchDoc, table: TableState) {
     val id = matchId ?: return
     val cfg = table.cfg
+    // D1: a Super Call is decided by the LOCKED NUMBER, the same amount rule
+    // normalRoleFor applies to the role. Without it the engine's legacy
+    // reading treats every caller as a Super Call and an ordinary successful
+    // in-window round adds a phantom round.
+    val callerBidAmount = cfg.callerId?.let { cfg.estimates[it] }
     val result = calculateRoundScore(
       RoundScoreInput(
         round = cfg.round,
@@ -1033,6 +1043,7 @@ class OnlineMatchViewModel(
     val extension = computeRoundExtension(
       cfg.round, doc.maxRounds, cfg.callerId, cfg.trump, callerSucceeded, result.isSaayda,
       gameType = doc.gameType,
+      callerBidAmount = callerBidAmount,
     )
 
     val totals = accumulateMatchScores(session.getMatchScores(), result.deltas)
@@ -1041,7 +1052,11 @@ class OnlineMatchViewModel(
     session.setWinnerIds(computeWinner(totals))
     session.completeRound(table.tricksWon, result.nextMultiplier)
 
-    val maxRounds = if (extension.extend) doc.maxRounds + 1 else doc.maxRounds
+    // R1: the document is the ceiling's authority. Adding +1 to a round it
+    // ALREADY records makes this replica believe the match runs one round
+    // longer, so it advances instead of ending.
+    val alreadyExtended = cfg.round in doc.extendedRounds
+    val maxRounds = if (alreadyExtended || !extension.extend) doc.maxRounds else doc.maxRounds + 1
     val isLastRound = cfg.round + 1 > maxRounds
     val saaydaSeats = if (result.isSaayda) session.getRoom().seats.toSet() else emptySet()
 
@@ -1051,9 +1066,24 @@ class OnlineMatchViewModel(
       isLastRound = isLastRound,
     )
 
-    if (extension.extend) {
-      runCatching { store.extendMatchRounds(id, cfg.round, extension.reason!!.name) }
+    if (extension.extend && !alreadyExtended) {
+      val written = runCatching {
+        store.extendMatchRounds(id, cfg.round, extension.reason!!.name)
+      }
         .onFailure { setRejection(it.message, doc.version) }
+        .getOrNull()
+      if (written == null) {
+        // R1: the round is stalled here and the document may never move again,
+        // so the rejection cannot wait for the next snapshot — and the
+        // standings have no rejection slot. The DONE table is what carries it.
+        boundSeat?.let {
+          _state.value = MatchUiState.Table(session.getPlayState() ?: table, it, rejection)
+        }
+        return
+      }
+      // The match completed under this write: the terminal document is the
+      // next authority, and a second endMatch would chase a closed match.
+      if (written.reason == Reasons.MATCH_ALREADY_COMPLETE) return
     }
     if (isLastRound) {
       runCatching { store.endMatch(id, cfg.round, totals, computeWinner(totals)) }
