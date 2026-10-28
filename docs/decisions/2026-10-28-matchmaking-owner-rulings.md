@@ -33,11 +33,9 @@ auto-created table"). The other two Q26 clauses stand: the joiner/creator tier
 rule is the RD29 band, and the joiner sees the table's settings before joining.
 
 **What it changes downstream.** The Ranked UI story must present the choice and
-must define the Auto Match waiting state. **Still open, deliberately not
-invented here:** whether Auto Match presses Ready automatically or shows the
-table for an explicit Ready. That is a UI-story decision, not a backend one —
-the backend already writes `readyPlayers = []` and leaves Ready to the clients,
-which works for either answer.
+must define the Auto Match waiting state. **Ready is manual on both paths**
+(ruled the same day, see §4): the backend writes `readyPlayers = []` and leaves
+Ready to the clients, which is exactly what the UI will show.
 
 ## 2. O-15 — the band is symmetric: one tier, up or down
 
@@ -84,17 +82,42 @@ behaviour: a player who walked away is not kept in the queue, and a player who
 comes back re-enters. The client's own wait budget (120 s) is unchanged and is
 still the bound on how long a spinner may run.
 
+## 4. Created games award RP, and Ready is always a manual press
+
+**Rulings (given the same day, after §1 was written).**
+
+1. **A game the player creates counts for RP.** The reason is informed
+   consent: everyone who joins has seen the game's settings (bot difficulty,
+   personality, play time) **before** joining — Q26 clause (2) — so a Ranked
+   table is not a surprise opponent, and there is no reason to withhold RP from
+   it.
+2. **Pressing Ready is manual.** There is no auto-Ready on either path, Auto
+   Match included. This also keeps Q26 clause (2) honest: a player cannot be
+   seated and started before they have seen what they joined.
+
+**What this settles.** The "created games vs Ranked RP" question is **closed in
+favour of RP**. The UI story no longer needs to decide it; it only needs to add
+the Ranked choice to Create Game and wire the existing Ready flow to both
+paths. Nothing in S56's backend changes: resolver tables are `RANKED` with the
+RD21 defaults, and created tables keep whatever `mode` the creator chose.
+
+**The residual risk, stated rather than hidden.** The informed-consent argument
+is about *human* joiners. A Ranked table that fills its empty seats with the
+**creator's chosen bots** is a different case — a player could pick the easiest
+bot and still be paid RP. Ranked-with-bots RP is already contemplated by the
+existing rules (T-20's "RP with bots" row computes strength from the humans
+only), so this is not new, but it is the one place where "I saw the settings"
+does not apply. If it ever shows up in the wild, the cheapest bound is a
+minimum of one human opponent for RP — a later, separate decision, not a change
+to this ruling.
+
 ## Consequences recorded now, not implemented here
 
-- **The next UI story must offer Create Game vs Auto Match** and decide the
-  Auto Match Ready semantics (§1).
-- **Created games and Ranked RP: open, flagged.** `CreateGameViewModel` exposes
-  GameType, Calculation, the RD21 bot trio and the timer — no `MatchMode`
-  choice — so a created game currently reads as `ROOM` mode. Whether a player
-  may create a **Ranked** game with player-chosen bots (and therefore farm RP
-  against a difficulty they picked) must be answered before the Create Game
-  path is wired to Ranked. The resolver's own tables are `RANKED` and use the
-  RD21 defaults, which is a different thing.
+- **The next UI story must offer Create Game vs Auto Match**, with **manual
+  Ready** on both (§1, §4) and RP on created games (§4).
+- **`CreateGameViewModel` still has no `MatchMode` choice** — it exposes
+  GameType, Calculation, the RD21 bot trio and the timer, so a created game
+  currently reads as `ROOM`. Adding the Ranked choice is the UI story's work.
 - **Resolver-created rooms have no abandonment/TTL path yet.** A pair whose
   players never press Ready leaves a `waiting` room behind. The 30 s lease
   bounds the *search*, not the *table*; the lobby's own timeout story owns
