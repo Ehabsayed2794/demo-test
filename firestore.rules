@@ -422,6 +422,18 @@ service cloud.firestore {
       return m in ['ROOM', 'RANKED', 'UNRANKED'] ? m : 'ROOM';
     }
 
+    // S71 (RD28): Vote Kick is present in RANKED and UNRANKED and absent
+    // in ROOM — a Room is filled by invitation, so no vote may be opened
+    // there. An absent mode (a pre-S43 doc) reads as ROOM, so a legacy
+    // match keeps its ROOM denial. The three Vote Kick gates — the
+    // cooldown write, the removal write and the open shape — all ask this
+    // one question, so they ask it the same way, and they ask it with the
+    // same comparison the RANKED-only gate used.
+    function isVoteKickMode(data) {
+      let m = data.get('mode', 'ROOM');
+      return m == 'RANKED' || m == 'UNRANKED';
+    }
+
     // RD21: the room/match bot configuration — skill tier, style, and the
     // per-decision timer. Same absent-ok contract as isValidGameType: a doc
     // written before the trio's persistence has none of these fields and
@@ -1723,12 +1735,13 @@ service cloud.firestore {
       // tally math itself stays services-side (the eligible denominator
       // moves with botSeats, which CEL cannot count) — these validators
       // check mode, shape, membership, and monotonicity only.
+      // S71: the mode gate admits UNRANKED as well as RANKED (RD28).
       function isValidVoteKickCooldownWrite() {
         let oldData = resource.data;
         let newData = request.resource.data;
         return request.auth != null
                && request.auth.uid in oldData.players
-               && oldData.get('mode', 'ROOM') == 'RANKED'
+               && isVoteKickMode(oldData)
                && newData.diff(oldData).affectedKeys().hasOnly(
                     ['failedVoteKickCooldown', 'version', 'updatedAt'])
                && newData.version == oldData.version + 1
@@ -1743,7 +1756,7 @@ service cloud.firestore {
         let newData = request.resource.data;
         return request.auth != null
                && request.auth.uid in oldData.players
-               && oldData.get('mode', 'ROOM') == 'RANKED'
+               && isVoteKickMode(oldData)
                && newData.diff(oldData).affectedKeys().hasOnly(
                     ['botSeats', 'removedUids', 'version', 'updatedAt'])
                && newData.version == oldData.version + 1
@@ -2429,6 +2442,8 @@ service cloud.firestore {
       // the target is frozen at open and never re-derived, the target's
       // slot is structurally absent from `votes` (never null-valued),
       // bot-held seats hold no slot (D7), terminal statuses are final.
+      // S71: Ranked-only is now Ranked-or-Unranked (RD28) — a Room match
+      // still refuses the vote.
       // Majority math stays services-side (the eligible denominator moves
       // with botSeats, which CEL cannot count) — these validators check
       // mode, round gate, shape, membership, immutability, and terminal
@@ -2446,7 +2461,7 @@ service cloud.firestore {
         function isValidVoteKickOpenShape(data) {
           let parent = parentMatch();
           return voteId == 'current'
-                 && parent.get('mode', 'ROOM') == 'RANKED'
+                 && isVoteKickMode(parent)
                  && parent.currentRound >= 8
                  && data.matchId == matchId
                  && data.status == 'OPEN'
