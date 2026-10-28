@@ -24,11 +24,11 @@ sealed interface MatchmakingUiState {
   data class Searching(val elapsedMillis: Long = 0L) : MatchmakingUiState
 
   /**
-   * A table formed. Transitioning into [matchId] is a separate screen that the
+   * A table formed. Transitioning into [tableId] is a separate screen that the
    * S55/S56 design does not draw, so this state is the handoff: whoever shows
-   * it navigates into the match.
+   * it navigates into the table.
    */
-  data class MatchFound(val matchId: String) : MatchmakingUiState
+  data class MatchFound(val tableId: String) : MatchmakingUiState
 
   /** S56 — no players were found for the pool in time. Try again, or cancel. */
   data object TimedOut : MatchmakingUiState

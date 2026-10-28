@@ -27,9 +27,9 @@ import kotlinx.coroutines.launch
  * is — so a JVM unit test reaches a terminal state without advancing a clock,
  * and the real clock stays off the test scheduler.
  *
- * There is no production [MatchmakingPort] yet, so the port is
- * constructor-injected with no default; nothing wires one in until the pool
- * resolver lands.
+ * The port is constructor-injected with no default, so a JVM test can stand in
+ * for it; the production one is [com.estemshan.services.CallableMatchmaking],
+ * wired in `OnlineServices`.
  */
 class MatchmakingViewModel(
   private val matchmaking: MatchmakingPort,
@@ -71,7 +71,7 @@ class MatchmakingViewModel(
       }
       matchmaking.search(playerId, type).collect { event ->
         _state.value = when (event) {
-          is MatchmakingEvent.Matched -> MatchmakingUiState.MatchFound(event.matchId)
+          is MatchmakingEvent.Matched -> MatchmakingUiState.MatchFound(event.tableId)
           MatchmakingEvent.TimedOut -> MatchmakingUiState.TimedOut
           MatchmakingEvent.Failed -> MatchmakingUiState.Failed
         }

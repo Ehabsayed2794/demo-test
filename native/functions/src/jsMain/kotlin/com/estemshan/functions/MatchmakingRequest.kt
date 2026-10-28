@@ -3,6 +3,18 @@ package com.estemshan.functions
 import com.estemshan.engine.GameType
 
 /**
+ * The stable `details.reason` tokens this guard refuses with.
+ *
+ * S56 hosts the guard behind `enqueueSearch`, and its own two callables carry
+ * the same tokens — so the client switches on ONE vocabulary across the whole
+ * queue, instead of a code plus a message it has to re-derive per callable.
+ */
+internal object RequestReason {
+  const val INVALID_ARGUMENT = "INVALID_ARGUMENT"
+  const val FORBIDDEN_KEY = "FORBIDDEN_KEY"
+}
+
+/**
  * S57 — the Ranked search-request guard (RD9).
  *
  * **What this is.** A Ranked solo search request, parsed and validated at the
@@ -56,8 +68,12 @@ private const val FIELD_GAME_TYPE = "gameType"
  * ("Tier", "UID") is not in this set, so it is refused one step later as an
  * unknown field — still refused, never accepted, which is the property that
  * matters; only the code the client sees differs.
+ *
+ * `internal`, not `private`: S56's `pollSearch` and `cancelSearch` carry no
+ * field at all, and they refuse the same identity/tier keys with the same
+ * code — one list, so the two callables cannot drift apart.
  */
-private val FORBIDDEN_REQUEST_KEYS: Set<String> = setOf(
+internal val FORBIDDEN_REQUEST_KEYS: Set<String> = setOf(
   "uid",
   "playerId",
   "tier",
@@ -111,15 +127,17 @@ fun parseRankedSearchRequest(data: Any?): RankedSearchRequest {
   // JS array becomes a list, a string stays a string — so the map check below
   // rejects every non-object shape in one place.
   val fields = dynamicToKotlin(data) as? Map<*, *>
-    ?: throw HttpsError(
+    ?: throw refusal(
       "invalid-argument",
+      RequestReason.INVALID_ARGUMENT,
       "rankedSearch: request data must be an object carrying a 'gameType' field.",
     )
 
   val names = fields.keys.map { key ->
     key as? String
-      ?: throw HttpsError(
+      ?: throw refusal(
         "invalid-argument",
+        RequestReason.INVALID_ARGUMENT,
         "rankedSearch: request field names must be strings.",
       )
   }
@@ -129,8 +147,9 @@ fun parseRankedSearchRequest(data: Any?): RankedSearchRequest {
   //    it carries no prefix of its own.
   for (name in names) {
     if (name in FORBIDDEN_REQUEST_KEYS) {
-      throw HttpsError(
+      throw refusal(
         "permission-denied",
+        RequestReason.FORBIDDEN_KEY,
         "identity and tier are server-derived; '$name' is not accepted.",
       )
     }
@@ -140,22 +159,43 @@ fun parseRankedSearchRequest(data: Any?): RankedSearchRequest {
   //    cannot slip through as "a field we do not know yet".
   for (name in names) {
     if (name != FIELD_GAME_TYPE) {
-      throw HttpsError("invalid-argument", "rankedSearch: unknown field '$name'.")
+      throw refusal(
+        "invalid-argument",
+        RequestReason.INVALID_ARGUMENT,
+        "rankedSearch: unknown field '$name'.",
+      )
     }
   }
 
   // 3. Only now is the value read.
   if (!fields.containsKey(FIELD_GAME_TYPE)) {
-    throw HttpsError("invalid-argument", "rankedSearch: 'gameType' is required.")
+    throw refusal(
+      "invalid-argument",
+      RequestReason.INVALID_ARGUMENT,
+      "rankedSearch: 'gameType' is required.",
+    )
   }
   val raw = fields[FIELD_GAME_TYPE]
   if (raw !is String) {
-    throw HttpsError("invalid-argument", GAME_TYPE_MESSAGE)
+    throw refusal("invalid-argument", RequestReason.INVALID_ARGUMENT, GAME_TYPE_MESSAGE)
   }
   // Exactly the enum names: "FULL" or "MINI". A lowercase spelling is a
   // different string, not a forgiving alias.
   val gameType = GameType.values().firstOrNull { it.name == raw }
-    ?: throw HttpsError("invalid-argument", GAME_TYPE_MESSAGE)
+    ?: throw refusal("invalid-argument", RequestReason.INVALID_ARGUMENT, GAME_TYPE_MESSAGE)
 
   return RankedSearchRequest(gameType)
 }
+
+/**
+ * A refusal with a stable reason.
+ *
+ * `details` is a PLAIN object: `JSON.stringify` of a Kotlin map yields `{}`,
+ * so an unconverted map would reach the client as an empty object and the
+ * reason would be lost exactly where the client needs it.
+ */
+private fun refusal(code: String, reason: String, message: String): HttpsError = HttpsError(
+  code,
+  message,
+  toPlain(linkedMapOf<String, Any?>("reason" to reason)),
+)

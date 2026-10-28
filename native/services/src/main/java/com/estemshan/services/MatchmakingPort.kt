@@ -26,9 +26,11 @@ import kotlinx.coroutines.flow.Flow
  * is a Ranked format in its own right — do not segregate it or imply it is
  * unranked.
  *
- * There is no production implementation yet — the pool resolver is a later
- * E6b story — so this interface ships behind a test fake, the same way S17's
- * MatchStore did. Nothing in :app constructs one until the resolver exists.
+ * The production implementation is [CallableMatchmaking], over the
+ * `enqueueSearch` / `pollSearch` / `cancelSearch` callables. It sends a
+ * GameType and nothing else: the uid the server acts on is the callable's
+ * verified identity, so `playerId` never reaches the wire — a request that
+ * could name a player is a request that could name the WRONG one.
  */
 interface MatchmakingPort {
 
@@ -58,8 +60,15 @@ interface MatchmakingPort {
  * search ends the moment one arrives.
  */
 sealed interface MatchmakingEvent {
-  /** A table formed; the player transitions into [matchId]. */
-  data class Matched(val matchId: String) : MatchmakingEvent
+  /**
+   * A table formed; the player transitions into [tableId].
+   *
+   * The id is the TABLE's id, not a match's: the resolver seats a pair in a
+   * room, and the match is created by the existing room→match path once that
+   * table is ready — so there is no match id to hand over yet, and calling a
+   * room id a match id would be a promise the server has not made.
+   */
+  data class Matched(val tableId: String) : MatchmakingEvent
 
   /** No players were found for the pool in time (S56). */
   data object TimedOut : MatchmakingEvent

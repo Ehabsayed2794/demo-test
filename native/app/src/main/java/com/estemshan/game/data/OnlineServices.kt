@@ -3,15 +3,18 @@ package com.estemshan.game.data
 import com.estemshan.engine.GameSession
 import com.estemshan.services.CoroutineMatchScheduler
 import com.estemshan.services.CallableDecisionTimeout
+import com.estemshan.services.CallableMatchmaking
 import com.estemshan.services.CallableRankDownJoin
 import com.estemshan.services.CallableSeatReclaim
 import com.estemshan.services.CallableSettlement
 import com.estemshan.services.DecisionTimeoutPort
+import com.estemshan.services.FirebaseMatchmakingTransport
 import com.estemshan.services.Heartbeat
 import com.estemshan.services.MatchAdapter
 import com.estemshan.services.MatchListenerFactory
 import com.estemshan.services.MatchScheduler
 import com.estemshan.services.MatchService
+import com.estemshan.services.MatchmakingPort
 import com.estemshan.services.PlayerHeartbeat
 import com.estemshan.services.PlayerPort
 import com.estemshan.services.RankDownJoinPort
@@ -134,6 +137,18 @@ object OnlineServices {
    */
   val settlements: SettlementPort by lazy {
     CallableSettlement(FirebaseModule.functions)
+  }
+
+  /**
+   * S56 — the Ranked solo-queue seam, the `enqueueSearch` / `pollSearch` /
+   * `cancelSearch` callables. The eligible tier pool is derived server-side
+   * (RD9), so this port sends a GameType and nothing else — no tier, no
+   * division, no RP value and no identity ever reaches the wire. Lazy for the
+   * same reason as [timeouts]: it reads [FirebaseModule.functions], a computed
+   * getter over the Firebase singleton MainActivity initializes.
+   */
+  val matchmaking: MatchmakingPort by lazy {
+    CallableMatchmaking(FirebaseMatchmakingTransport(FirebaseModule.functions))
   }
 
   /**
