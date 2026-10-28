@@ -195,6 +195,7 @@ The full design narrative, the contradiction register, and the per-screen UI imp
 
 - **RD21** One Create Game screen for Rooms and Ranked. Replacement-bot difficulty Easy/Medium/Hard/Expert; personality from the existing four only (reuse the Kotlin implementation, invent none); decision timer 5/10/15/20. **Dash/Bidding/Estimates = base + 5; Card Play = base** (15 → 20/20/20/15). **Defaults: Medium bot, the approved default personality, 15 s timer.** (The default-personality constant is a one-line addition at port time — the value is the existing `BALANCED` literal; `BotPersonality.DEFAULT` does not exist yet.)
 - **RD28** **`mode` is three values: `ROOM`, `RANKED`, or `UNRANKED` (amended 2026-10-06; originally two).** Rank-down (formerly Private/Password Ranked) is **NOT a mode** — it is `RANKED` plus a private/password access flag, still awards RP and stats, and allows any tier mix **within RD29** (amended 2026-10-06). `mode` is the authority key that gates voice, Vote Kick, disconnect vote, settlement, and Ranked statistics; the private flag only gates access. **Unranked IS a first-class `mode: UNRANKED` value** (owner decision, 2026-10-06 — repealing this amendment's original "Unranked is `mode: ROOM` + a marker" framing). Every `mode` switch site therefore has an explicit `UNRANKED` branch: voice absent, **Vote Kick present** (corrected 2026-10-17 — the 2026-10-06 enumeration had it absent), disconnect vote present, settlement absent, statistics absent.
+  > **RD28 — pointer, 2026-10-22 (text above left unchanged).** The trailing **"statistics absent"** is **superseded**: an `UNRANKED` completion increments **Games Played** and the seat's **King / 2nd / 3rd / Koz** outcome counters, exactly as a `ROOM` or `RANKED` completion does (Q46 / N-1). Only **RP, tier and division** stay Ranked-only. The voice / Vote Kick / disconnect-vote / settlement branches above are unchanged. See `docs/decisions/2026-10-22-final-decision-sync.md` (N-1) and `docs/decisions/2026-10-21-server-authority-and-owner-rulings.md` (§P).
 - **RD22** Voice is **`ROOM`-only** (PTT, press-and-hold, Waiting Room + Rooms match). **Never in Ranked, and never in Unranked** (amended 2026-10-06 — Unranked is a first-class mode, not a Room, so it does not inherit a Room's voice).
 - **RD23** **Exactly 9 career stats:** Games Played, King count, King %, 2nd count, 2nd %, 3rd count, 3rd %, Koz count, Koz %. (**Never "10 values."**) Include Public + Private Ranked; **exclude Placement**. Long-press shows **SHORT stats only**: Rank, Games, King %, 2nd %, 3rd %, Koz %. **No player-facing match history for MVP**; an internal RP audit ledger IS required. Profile records **Highest Rank ever**, never erased by seasonal demotion.
   > **RD23 — pointer, 2026-10-21 (text above left unchanged).** Statistics scope changed: from V1, ROOM and RANKED results combine in the same King/Second/Third/Koz counters; UNRANKED was first excluded, then (later the same day) included — RP stays Ranked-only (decision record §P). Open: Q14, Q16, Q17. See `docs/decisions/2026-10-21-server-authority-and-owner-rulings.md`.
@@ -608,6 +609,7 @@ Per the owner, **Create Game (S36) presents a match-type choice of three entries
 1. **Ranked** — the normal Ranked match (solo Auto-Match, RD9 rules unchanged).
 2. **Rank-down** (the owner's product name for the entry formerly called Private/Password Ranked) — the Ranked mode that admits the permitted tier difference (RD29). Still `mode: RANKED` + access flag, still a true Ranked match. **A configuration of Ranked, never a mode of its own.**
 3. **Unranked** — **`mode: UNRANKED`, a first-class independent mode.** **Ignores rank completely.** A King, Diamond, Gold, or Bronze may all enter the same Unranked match. Remaining seats fill from the shared Unranked pool; **no RP, no Ranked progression, no Ranked statistics, no voice; Vote Kick present** (corrected 2026-10-17 — `ROOM` alone excludes it).
+  > **Pointer (owner ruling, 2026-10-22 — Q46 / N-1; the item above is left unchanged).** The **"no Ranked statistics"** clause is **superseded**: an `UNRANKED` completion increments **Games Played** and the seat's **King / 2nd / 3rd / Koz** outcome counters, exactly as a `ROOM` or `RANKED` completion does. Only **RP, tier and division** stay Ranked-only — so **"no RP"** and **"no Ranked progression"** still stand, as do "no voice" and "Vote Kick present". See `docs/decisions/2026-10-22-final-decision-sync.md` (N-1) and `docs/decisions/2026-10-21-server-authority-and-owner-rulings.md` (§P).
 
 **Authority layer: `mode ∈ {ROOM, RANKED, UNRANKED}` (RD28 as amended 2026-10-06).**
 
@@ -631,6 +633,14 @@ Per the owner, **Create Game (S36) presents a match-type choice of three entries
 > of the switch-site list above it are corrected: **Vote Kick is present in `UNRANKED`** —
 > `ROOM` is the only mode without it. RD18 and the five-paths table carry the same
 > correction. See `docs/decisions/2026-10-17-unranked-scope-owner-clarification.md`.
+
+> **Pointer (owner ruling, 2026-10-22 — Q46 / N-1; the table above is left unchanged).** The
+> **"RP / stats"** cell of the **`UNRANKED`** row reads "**none**", and the **stats** half of
+> that is **superseded**: an `UNRANKED` completion increments **Games Played** and the seat's
+> **King / 2nd / 3rd / Koz** outcome counters, exactly as a `ROOM` or `RANKED` completion does.
+> Only **RP, tier and division** stay Ranked-only — so the cell's **RP** half still stands, and
+> so do every other cell of the row. See `docs/decisions/2026-10-22-final-decision-sync.md` (N-1)
+> and `docs/decisions/2026-10-21-server-authority-and-owner-rulings.md` (§P).
 
 **The invite-only Room is a fourth product path** — code-shared, fills no seat from any pool, keeps push-to-talk, and starts only when four seated players are all ready (owner decision 2026-10-26, superseding the earlier 2–3 start). It is deliberately **not** one of the three match types: some friend groups want no strangers, and removing a designed path would violate "do not invent." S08's "no AI seat is fabricated to fill gaps" rule survives scoped to this path only.
 
@@ -677,6 +687,15 @@ Two new stories, added to **E6b** (they extend the Ranked ruleset and the room f
 | — | Documents: `CANONICAL_RULES.md` A3, `UI_UX_ROADMAP.md` amendments, architecture/spec notes | 4 | — |
 | **E6b addition** | | **44** | |
 
+> **Pointer (owner ruling, 2026-10-22 — Q46 / N-1; the story table above is left unchanged).** The
+> **S71** row's assertion **"no Ranked statistics"** is **superseded**: an `UNRANKED` completion
+> increments **Games Played** and the seat's **King / 2nd / 3rd / Koz** outcome counters, exactly
+> as a `ROOM` or `RANKED` completion does. Only **RP, tier and division** stay Ranked-only — so
+> **"no RP"** still stands, and so do S71's other assertions (**Vote Kick present**, **no
+> push-to-talk voice**, **disconnect vote present**, rank-blind mixing). See
+> `docs/decisions/2026-10-22-final-decision-sync.md` (N-1) and
+> `docs/decisions/2026-10-21-server-authority-and-owner-rulings.md` (§P).
+
 **E6b becomes 432h (388 + 44). The critical path is unchanged** — S70 depends only on S42/S44, and S71 reuses the S56 search-lifecycle shape rather than adding a new queue discipline, so both run parallel to the Ranked core.
 
 ### Estimate impact
@@ -694,6 +713,7 @@ Two new stories, added to **E6b** (they extend the Ranked ruleset and the room f
 ### New risks
 
 - **R30** **Unranked cannibalizes Ranked party play.** If Unranked is the easier way to play with friends, players stop climbing together and the Ranked pool thins. *Mitigation:* Unranked awards **no RP and no Ranked statistics** (RD15/RD23 via `mode: UNRANKED`) and carries **no voice**, so a Ranked party keeps its full feature set; Ranked keeps the RD5/RD6 asymmetry and the full progression loop — the incentive to play Ranked together is preserved by what it awards, not by blocking the alternative.
+  > **R30 — pointer, 2026-10-22 (text above left unchanged).** The **"no Ranked statistics"** half of the mitigation is **superseded**: an `UNRANKED` completion increments **Games Played** and the seat's **King / 2nd / 3rd / Koz** outcome counters, exactly as a `ROOM` or `RANKED` completion does (Q46 / N-1). Only **RP, tier and division** stay Ranked-only, so **"no RP"** still stands — and with it the risk's shape: Unranked awards no progression, so it still cannot replace a Ranked party's climb. See `docs/decisions/2026-10-22-final-decision-sync.md` (N-1).
 - **R32** **The three-value mode model increases the surface of every `mode` switch site (added 2026-10-06).** Making `UNRANKED` first-class (rather than `ROOM` + a marker) means each gate — voice, Vote Kick, disconnect vote, settlement, statistics — now has an explicit third branch instead of inheriting a Room's behaviour. *Mitigation:* the switch-site audit is a first-class deliverable of S70/S71 and its checklist is an assertion in the testing plan; a gate that silently treats `UNRANKED` as `ROOM` or `RANKED` is a bug, and the disconnect-vote-present assertion catches the most likely collapse (a match where the vote is wrongly unavailable, or wrongly unavailable in Ranked).
 - **R31** **The rank-blind Unranked pool produces lopsided tables.** A King and a Bronze at the same table is **by design** (the owner's explicit rule), but a one-sided match can read as a bug to the players in it. *Mitigation:* present Unranked as rank-blind on S36 and in the waiting room, and never surface a "mismatched" warning — it is the mode's definition, not a malfunction.
 - **R28 — amended (scope narrowed, not removed).** Mixed-tier RP asymmetry now applies only to **public matchmaking** and **within-one-tier private matches** (RD6 as amended). The communication fix (S57 shows the delta and the reason) is unchanged.
@@ -1021,6 +1041,16 @@ The 13 canonical phases, adjusted to this project's reality:
 | 12 | Play Store Preparation | Signing, icon, strings (EN+AR), policy, listing, IARC |
 | 13 | Final Release | Closed track → staged rollout |
 
+> **Pointer (owner ruling, 2026-10-28 — S71; the row above is left unchanged).** `firestore.rules` is
+> **no longer byte-identical**: the owner approved exactly **one** rules change for this story — the
+> three `RANKED`-only **Vote Kick** gates now admit `UNRANKED` as well, through one shared
+> `isVoteKickMode(data)` helper (`ROOM` stays the only exclusion, and an absent mode still reads as
+> `ROOM`). The pin is re-stamped: `firestore.rules.sha256` =
+> `bf6584dcc5c7a5746f7ba859096e2c4fdbe5f050a300d042f8b1550e34d700df`. **Nothing else in
+> `firestore.rules` changed**, and the Functions remain the only legitimate write path — including
+> for the Unranked bot seat, whose match the **server** creates. See
+> `docs/decisions/2026-10-28-s71-unranked-owner-rulings.md` §5.
+
 **Structural change vs. the template:** Phase 6 (Backend) collapses to "don't break the frozen rules," and a new **Phase 0b — Toolchain unblock** must precede everything, because `targetSdk 34` is a submission blocker today.
 
 ---
@@ -1167,6 +1197,16 @@ Verified against `origin/main` before designing this — these facts drove every
 
 ---
 
+> **Pointer (owner ruling, 2026-10-28 — S71; the row above is left unchanged).** `firestore.rules` is
+> **no longer byte-identical**: the owner approved exactly **one** rules change for this story — the
+> three `RANKED`-only **Vote Kick** gates now admit `UNRANKED` as well, through one shared
+> `isVoteKickMode(data)` helper (`ROOM` stays the only exclusion, and an absent mode still reads as
+> `ROOM`). The pin is re-stamped: `firestore.rules.sha256` =
+> `bf6584dcc5c7a5746f7ba859096e2c4fdbe5f050a300d042f8b1550e34d700df`. **Nothing else in
+> `firestore.rules` changed**, and the Functions remain the only legitimate write path — including
+> for the Unranked bot seat, whose match the **server** creates. See
+> `docs/decisions/2026-10-28-s71-unranked-owner-rulings.md` §5.
+
 # 4. Timeline
 
 One engineer + AI agents, ~22 productive engineering days/month (allowing for review, rework, non-coding days).
@@ -1264,6 +1304,14 @@ Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.
 | **R33** | **The inactivity clock's cumulative semantics are derived, not owner-specified (2026-10-14).** DEC-RD19-01 chose "decision-point inactivity" but the plan derives — from RD21's 25 s longest window — that 50 s must therefore accumulate *across* consecutive ignored decision windows, spanning the MEDIUM resolutions between them | A player briefly AFK is taken over by a bot and reads it as a bug; or, at the other extreme, a genuinely absent player is never taken over because each window resets the clock | The derivation is documented as the only arithmetic-coherent reading rather than implemented silently, and S73's acceptance criteria pin it explicitly. The reset rule — any genuine interaction in one's own decision window resets the clock — is the answer to the first failure mode; a playtest at the M11 gate is the answer to the second |
 | **R34** | **Half of S74 cannot be built yet (2026-10-14).** DEC-DISC-01 fixed the CONTINUE-with-bot default and the 30-second window and deliberately left the WAIT half open (OPEN-5: agreement threshold, what a WAIT does now that D9's pause mechanics are superseded, and the permanent-replacement condition) | S74 stalls at implementation, or a developer invents WAIT behaviour the owner did not approve | S74 is sized on the decided half and may **split**: disconnect detection + immediate configured-bot takeover + the 30-second vote + the no-agreement default land first; WAIT semantics land as an amendment once OPEN-5 is answered. Do not build WAIT behaviour speculatively |
 | **R35** | **OPEN-4/OPEN-5 can grow S72 and S74 (2026-10-14).** The three new stories are estimated against the scope the eleven decisions actually fixed; the 2-Koz bookkeeping (OPEN-4) may demand a distinct result value S50 settlement consumes, and the WAIT mechanics (OPEN-5) may demand a pause state | Contingency is silently spent on scope growth rather than on bugs | Neither answer is guessed. The 2026-10-14 arithmetic note states that a scope growth **re-estimates the affected story and amends the note** rather than being absorbed; this row exists so the contingency budget is not spent on it without being noticed |
+
+> **Pointer (owner ruling, 2026-10-22 — Q46 / N-1; the risk table above is left unchanged).** The
+> **R30** row's mitigation clause **"no Ranked statistics"** is **superseded**: an `UNRANKED`
+> completion increments **Games Played** and the seat's **King / 2nd / 3rd / Koz** outcome
+> counters, exactly as a `ROOM` or `RANKED` completion does. Only **RP, tier and division** stay
+> Ranked-only — so **"no RP"** still stands, and with it the risk's shape: Unranked awards no
+> progression, so it still cannot replace a Ranked party's climb. See
+> `docs/decisions/2026-10-22-final-decision-sync.md` (N-1).
 
 > **R34/R35 — 2026-10-16 pointer.** OPEN-4 is CLOSED as **option (a)** (career Koz count +2;
 > no forced placement; the bot seat is separate from the player; Vote Kick **1 Koz final**; no
@@ -1363,6 +1411,16 @@ Everything above + voice (2.5) + voice device matrix (0.5) + instrumented QA (1.
 
 **What is NOT included.** EXPERT Monte-Carlo bots and adaptive difficulty (post-launch); **voice in Ranked — never (RD22)**; shop and missions (no economy to sell into — **seasons ARE in scope, RD24**); rewarded video (nothing to reward yet); true presence/abandonment (blocked by frozen rules — **amended 2026-10-14: RD19 inactivity IS now in v1 scope as story S73, detected from the player's OWN app's activity signal on their own match-player data per DEC-RD19-02 — no rules revision, no permissions widened; what stays excluded is TRUE cross-player presence, which R7 keeps blocked**); custom analytics events beyond crash reporting; full i18n beyond EN/AR; **a dedicated always-on game server (D3 amended — lightweight Cloud Functions are in, a server is not, RD11)**; any **Firestore rules revision** — `firestore.rules` stays frozen and byte-identical, the Functions are the only legitimate Ranked write path; **no TURN server in v1** (STUN-only, symmetric-NAT limitation accepted and disclosed, coturn on a free VM reserved for v1.1); **no recording, transcription, or server-side audio storage of any kind**; no open-mic / always-on voice; no foreground-service background voice; **no player-facing Ranked match history for MVP (RD23 — the profile carries the 9 career statistics instead)**; **no separate seasonal trophy system (RD24)**. Also excluded: re-estimating the ~460 hours of work already merged to `main`.
 
+> **Pointer (owner ruling, 2026-10-28 — S71; the paragraph above is left unchanged).** The exclusion
+> **"any Firestore rules revision — `firestore.rules` stays frozen and byte-identical"** is narrowed
+> to **one** approved exception: the three `RANKED`-only **Vote Kick** gates now admit `UNRANKED`
+> as well, through one shared `isVoteKickMode(data)` helper (`ROOM` stays the only exclusion, and an
+> absent mode still reads as `ROOM`). The pin is re-stamped: `firestore.rules.sha256` =
+> `bf6584dcc5c7a5746f7ba859096e2c4fdbe5f050a300d042f8b1550e34d700df`. **Nothing else in
+> `firestore.rules` changed** — no permission widened, no other gate touched — and the Functions
+> remain the only legitimate write path, including for the Unranked bot seat, whose match the
+> **server** creates. See `docs/decisions/2026-10-28-s71-unranked-owner-rulings.md` §5.
+
 **One decision for management.** Start the AdMob/Play Console/RevenueCat account activations **today** — they're external clocks, and they — not the code — determine the launch date. **RD26's 19 RP threshold numbers are now CLOSED (2026-10-05) — the last owner input on the Ranked critical path is in, and nothing on that path is waiting on a decision anymore.**
 
 > **Pointer, 2026-10-28 (owner ruling, FINAL):** v1 ships without ads, so the AdMob and
@@ -1460,6 +1518,16 @@ One epic per phase; stories sized in hours; `S/M/L` from §2. Critical path mark
 | | **PM overhead** | 40 | — |
 | | **Contingency 15%** | 179 | — |
 | | **TOTAL** | **1,377** | |
+
+> **Pointer (owner ruling, 2026-10-22 — Q46 / N-1; the story table above is left unchanged).** The
+> **S71** row's assertion **"no Ranked stats"** (and the same clause in the E6b story table
+> earlier in this document) is **superseded**: an `UNRANKED` completion increments **Games
+> Played** and the seat's **King / 2nd / 3rd / Koz** outcome counters, exactly as a `ROOM` or
+> `RANKED` completion does. Only **RP, tier and division** stay Ranked-only — so **"no RP"**
+> still stands, and so do S71's other assertions (**Vote Kick present**, **no voice**,
+> **disconnect vote present**, rank-blind mixing). See
+> `docs/decisions/2026-10-22-final-decision-sync.md` (N-1) and
+> `docs/decisions/2026-10-21-server-authority-and-owner-rulings.md` (§P).
 
 > Story-table arithmetic, stated rather than hidden. **Pre-amendment (for traceability):** the 30 non-voice stories summed to **444h** (the 29 pre-voice stories at **432h** — a +10h decomposition granularity, since S7 is sized 26 vs its feature row's 24 and S13 is split out separately — plus S41 at **12h**) against §2's 434h feature line. The 11 voice stories summed to exactly **170h**, matching §2/§3 (158 voice + 12 policy deltas). PM (40) + 15% contingency (97) landed the table at **751**, against the §9 headline of **741** — the 10h difference was precisely that story-vs-feature drift, absorbed by contingency.
 >
