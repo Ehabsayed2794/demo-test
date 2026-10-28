@@ -1,6 +1,7 @@
 package com.estemshan.functions
 
 import com.estemshan.engine.GameType
+import com.estemshan.engine.MatchMode
 
 /**
  * The stable `details.reason` tokens this guard refuses with.
@@ -12,18 +13,36 @@ import com.estemshan.engine.GameType
 internal object RequestReason {
   const val INVALID_ARGUMENT = "INVALID_ARGUMENT"
   const val FORBIDDEN_KEY = "FORBIDDEN_KEY"
+
+  /** The client asked for a mode that does not pool (S71). */
+  const val UNSUPPORTED_MODE = "UNSUPPORTED_MODE"
 }
 
 /**
- * S57 — the Ranked search-request guard (RD9).
+ * S57/S71 — the search-request guard (RD9), for the MODE-AWARE queue.
  *
- * **What this is.** A Ranked solo search request, parsed and validated at the
- * callable boundary, *before* anything is queued. RD9 makes the eligible tier
- * pool **server-derived**: the client may ask to be matched, and it may say
- * which GameType it wants to play (GM5 — the GameType rides along and is
+ * **What this is.** A search request, parsed and validated at the callable
+ * boundary, *before* anything is queued. RD9 makes the eligible tier pool
+ * **server-derived**: the client may ask to be matched, and it may say which
+ * GameType it wants to play (GM5 — the GameType rides along and is
  * orthogonal to the pool; the pool rule never widens or narrows for Mini).
  * It may never name a tier, a division, a rank, an RP value, a pool, or an
  * identity.
+ *
+ * S71 adds the second thing the client MAY say: the **mode** it wants to
+ * play. `RANKED` and `UNRANKED` are both poolable, so both are accepted;
+ * `ROOM` is not — a Room is filled by invitation, never by a queue — so it is
+ * refused rather than silently queued into a pool that can never seat it.
+ *
+ * **Why the mode is the client's to choose.** The mode is the PLAYER's choice
+ * of what to play, not a claim about their standing: `UNRANKED` awards no RP
+ * — the tier, the division and the RP stay Ranked-only — while its results
+ * count towards the career counters (Q46/N-1, 2026-10-22), and `RANKED` still
+ * derives the tier from the caller's own profile inside the enqueue
+ * transaction. Choosing the mode
+ * therefore buys no privilege a Ranked searcher does not already have, and
+ * the rank-blind pool is rank-blind precisely because no rank is ever read
+ * for it — the Unranked enqueue reads NO profile at all.
  *
  * Those keys are not *ignored* — they are refused with `permission-denied`.
  * A silently-ignored key is a key a client can keep sending while believing
@@ -38,11 +57,10 @@ internal object RequestReason {
  * and no callable. It is the **pre-queue guard** in front of S56's pool
  * derivation.
  *
- * **Identity.** [RankedSearchRequest] carries no uid and no tier: the caller
+ * **Identity.** [MatchSearchRequest] carries no uid and no tier: the caller
  * is whoever the callable runtime authenticated, and the identity is read at
  * the callable boundary with `CallableAuth.requireUid(request)` — the
- * Firebase-verified uid, never a client-supplied one. The callable that will
- * host this guard is **not** part of S57; this is its pure, testable part.
+ * Firebase-verified uid, never a client-supplied one.
  *
  * **Why the values are never echoed.** The error messages name the offending
  * *key* and never the offending *value*: a client cannot use the error
@@ -50,14 +68,18 @@ internal object RequestReason {
  *
  * @see S57 — "Matchmaking anti-abuse: no client tier selection, no opt-up,
  *   pool authority (RD9)" in `docs/NATIVE_V1_PLAN_AND_ESTIMATE.md`.
+ * @see S71 — the rank-blind shared Unranked pool, the third `mode` value.
  */
-data class RankedSearchRequest(val gameType: GameType)
+data class MatchSearchRequest(val mode: MatchMode, val gameType: GameType)
 
 /** The one field a Ranked search request may carry (GM5). */
 private const val FIELD_GAME_TYPE = "gameType"
 
+/** The mode field S71's mode-aware queue reads (RD28 as amended). */
+private const val FIELD_MODE = "mode"
+
 /**
- * The identity/tier keys a Ranked search may never carry (RD9).
+ * The identity/tier keys a search may never carry (RD9).
  *
  * `uid`/`playerId` are the caller's identity, `tier`/`division`/`rank`/`rp`
  * are the caller's standing, and `pool`/`minTier`/`maxTier`/`optUp`/
@@ -94,10 +116,21 @@ internal val FORBIDDEN_REQUEST_KEYS: Set<String> = setOf(
  * is never echoed (see the file KDoc).
  */
 private const val GAME_TYPE_MESSAGE =
-  "rankedSearch: 'gameType' must be the string \"FULL\" or \"MINI\"."
+  "search: 'gameType' must be the string \"FULL\" or \"MINI\"."
 
 /**
- * Parses and validates a Ranked search request.
+ * The one message every unusable `mode` gets — a missing field, a null, a
+ * non-string, a lowercase spelling, an unknown name, or `ROOM`.
+ *
+ * `ROOM` is named rather than lumped in with the malformed values because it
+ * is a real mode that this queue cannot serve: an invite-only Room is filled
+ * by its code, never by a pool.
+ */
+private const val MODE_MESSAGE =
+  "search: 'mode' must be the string \"RANKED\" or \"UNRANKED\"."
+
+/**
+ * Parses and validates a search request.
  *
  * The runtime hands a callable a **plain JS object**, never a Kotlin map
  * (S61's lesson — see `CallablePayloadBridgingTest`), so the boundary
@@ -106,11 +139,11 @@ private const val GAME_TYPE_MESSAGE =
  * all `invalid-argument`.
  *
  * **The order of the checks is the contract.** The keys are validated
- * *before* the `gameType` value is read, so a request that carries a
- * forbidden identity/tier key, or any field this callable does not know, is
- * refused on the key — it is never silently ignored, and a forged tier claim
- * is never traded for a "your gameType is wrong" message that would let the
- * client believe the tier part was merely malformed.
+ * *before* the `gameType` and `mode` values are read, so a request that
+ * carries a forbidden identity/tier key, or any field this callable does not
+ * know, is refused on the key — it is never silently ignored, and a forged
+ * tier claim is never traded for a "your gameType is wrong" message that
+ * would let the client believe the tier part was merely malformed.
  *
  * Refusal order among the keys themselves: a forbidden key first
  * (`permission-denied` — an abuse attempt, not a typo), then an unknown key
@@ -118,11 +151,12 @@ private const val GAME_TYPE_MESSAGE =
  * client happened to serialise its keys in.
  *
  * @param data the raw `request.data` of a callable, in any JS shape.
- * @return the validated request — the requested [GameType] and nothing else.
+ * @return the validated request — the requested [MatchMode] and [GameType],
+ *   and nothing else.
  * @throws HttpsError `permission-denied` for an identity/tier key,
  *   `invalid-argument` for every other malformed request.
  */
-fun parseRankedSearchRequest(data: Any?): RankedSearchRequest {
+fun parseSearchRequest(data: Any?): MatchSearchRequest {
   // The boundary conversion. A plain JS object becomes a Kotlin map here; a
   // JS array becomes a list, a string stays a string — so the map check below
   // rejects every non-object shape in one place.
@@ -130,7 +164,7 @@ fun parseRankedSearchRequest(data: Any?): RankedSearchRequest {
     ?: throw refusal(
       "invalid-argument",
       RequestReason.INVALID_ARGUMENT,
-      "rankedSearch: request data must be an object carrying a 'gameType' field.",
+      "search: request data must be an object carrying a 'gameType' and a 'mode' field.",
     )
 
   val names = fields.keys.map { key ->
@@ -138,7 +172,7 @@ fun parseRankedSearchRequest(data: Any?): RankedSearchRequest {
       ?: throw refusal(
         "invalid-argument",
         RequestReason.INVALID_ARGUMENT,
-        "rankedSearch: request field names must be strings.",
+        "search: request field names must be strings.",
       )
   }
 
@@ -158,21 +192,21 @@ fun parseRankedSearchRequest(data: Any?): RankedSearchRequest {
   // 2. Unknown keys. Refused rather than ignored, so a renamed tier claim
   //    cannot slip through as "a field we do not know yet".
   for (name in names) {
-    if (name != FIELD_GAME_TYPE) {
+    if (name != FIELD_GAME_TYPE && name != FIELD_MODE) {
       throw refusal(
         "invalid-argument",
         RequestReason.INVALID_ARGUMENT,
-        "rankedSearch: unknown field '$name'.",
+        "search: unknown field '$name'.",
       )
     }
   }
 
-  // 3. Only now is the value read.
+  // 3. Only now are the values read.
   if (!fields.containsKey(FIELD_GAME_TYPE)) {
     throw refusal(
       "invalid-argument",
       RequestReason.INVALID_ARGUMENT,
-      "rankedSearch: 'gameType' is required.",
+      "search: 'gameType' is required.",
     )
   }
   val raw = fields[FIELD_GAME_TYPE]
@@ -184,7 +218,30 @@ fun parseRankedSearchRequest(data: Any?): RankedSearchRequest {
   val gameType = GameType.values().firstOrNull { it.name == raw }
     ?: throw refusal("invalid-argument", RequestReason.INVALID_ARGUMENT, GAME_TYPE_MESSAGE)
 
-  return RankedSearchRequest(gameType)
+  if (!fields.containsKey(FIELD_MODE)) {
+    throw refusal(
+      "invalid-argument",
+      RequestReason.INVALID_ARGUMENT,
+      "search: 'mode' is required.",
+    )
+  }
+  val rawMode = fields[FIELD_MODE]
+  if (rawMode !is String) {
+    throw refusal("invalid-argument", RequestReason.INVALID_ARGUMENT, MODE_MESSAGE)
+  }
+  // Exactly the enum names, and only the two poolable ones. `ROOM` is a real
+  // mode that this queue does not serve — it is filled by invitation — so it
+  // is refused by NAME, with its own reason token, and never queued.
+  val mode = MatchMode.values().firstOrNull { it.name == rawMode }
+  if (mode == null || mode == MatchMode.ROOM) {
+    throw refusal(
+      "invalid-argument",
+      if (mode == MatchMode.ROOM) RequestReason.UNSUPPORTED_MODE else RequestReason.INVALID_ARGUMENT,
+      MODE_MESSAGE,
+    )
+  }
+
+  return MatchSearchRequest(mode, gameType)
 }
 
 /**

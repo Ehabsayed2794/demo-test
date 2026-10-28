@@ -2,15 +2,16 @@ package com.estemshan.functions
 
 import com.estemshan.engine.GameType
 import com.estemshan.engine.MatchMode
+import com.estemshan.engine.MatchPoolKey
 import com.estemshan.engine.MatchmakingSession
 import com.estemshan.engine.ScoringMode
+import com.estemshan.engine.UNRANKED_FILL_MILLIS
 import com.estemshan.engine.bot.BotPersonality
 import com.estemshan.engine.bot.BotTier
-import com.estemshan.engine.isPoolEligible
+import com.estemshan.engine.isPoolCompatible
 import com.estemshan.engine.isSearchCompatible
 import com.estemshan.engine.poolTierOrder
 import com.estemshan.engine.rankAt
-import com.estemshan.engine.rankLadder
 
 /**
  * S56 — the Ranked queue: the server-only search document, the bounded
@@ -33,11 +34,38 @@ import com.estemshan.engine.rankLadder
  * so `firestore.rules` stays byte-identical for S56.
  *
  * ------------------------------------------------------------------------
+ * ONE QUEUE, TWO MODES (S71)
+ *
+ * The owner ruled ONE mode-aware queue, not two queues: the Unranked pool is
+ * the same queue with a different mode on the document, so a player who
+ * searches Unranked and a player who searches Ranked share one collection,
+ * one pass and one lifecycle.
+ *
+ * The mode is SERVER-DERIVED per search and written on the document, and it
+ * is the only thing that separates the two pools:
+ *
+ *   RANKED   the document carries the tier the server derived from the
+ *            caller's own profile, and the pool is the tiered one (RD9).
+ *   UNRANKED the document carries NO tier at all — the pool is rank-blind,
+ *            so there is no field to hold a rank. A document that carried
+ *            one is a document this server cannot read, and the parse
+ *            refuses it rather than ignoring it.
+ *
+ * That absence is structural, not a convention: the Unranked branch never
+ * reads a profile, so a player with no ranked profile may still play
+ * Unranked, and a bug that consulted a rank would have nothing to consult.
+ *
+ * A document written before S71 carries no `mode`: the queue's only mode
+ * then was RANKED, so an absent mode reads as RANKED — a legacy document,
+ * not a corrupt one. ROOM never pools, so a ROOM document is corrupt.
+ *
+ * ------------------------------------------------------------------------
  * THE DOCUMENT, AND WHY IT HAS EXACTLY THESE FIELDS
  *
  * `rankedSearches/{uid}`:
  *   uid         the searching player — equal to the document id, always
- *   tier        the server-derived tier the pool is computed from
+ *   mode        RANKED | UNRANKED — the pool this search belongs to
+ *   tier        the server-derived tier — RANKED searches only
  *   gameType    the search's own GameType (GM5 — orthogonal to the pool)
  *   status      WAITING | RESOLVED
  *   enqueuedAt  the server's arrival stamp — the queue's ordering key
@@ -49,17 +77,27 @@ import com.estemshan.engine.rankLadder
  * wait estimate, and a field nobody reads is a field that can only rot.
  *
  * ------------------------------------------------------------------------
- * THE TABLE, AND WHY NO MATCH IS EVER CREATED HERE
+ * THE TABLE, AND WHO CREATES THE MATCH
  *
  * A pair forms a TABLE (`rooms/{roomId}`), written in the exact field shape
  * `RoomService.createRoom` writes — same collection, same keys, same values,
  * same defaults — so the frozen room schema, the client's own room parser and
- * `MatchService.startMatch` all accept it unchanged. The MATCH is created by
- * that existing path and by nothing else: `isValidNewMatch()` demands a room
- * whose every player is ready and whose `matchId` is bound in the same
- * write, which a resolver that seats two players cannot honestly satisfy. A
- * server-created match would be a match the existing validation rejects, so
- * this file creates none.
+ * `MatchService.startMatch` all accept it unchanged.
+ *
+ * The MATCH is created by `MatchService.startMatch` — by the client path, and
+ * by nothing else. `isValidNewMatch()` demands a room whose every player is
+ * ready and whose `matchId` is bound in the same write, which a resolver that
+ * seats two players cannot honestly satisfy. A server-created match would be
+ * a match the existing validation rejects, so the RANKED branch creates none.
+ *
+ * The UNRANKED branch is the ONE exception, and it exists because of what a
+ * bot seat is: `isValidSeatMap()` demands `seats.keys().size() ==
+ * players.size()` and every seat's uid to be one of the `players`, so a bot
+ * seat cannot be written by a client at all. When an Unranked table's fill
+ * window shuts with fewer than four humans, the CONFIGURED BOTS take the free
+ * seats — and only the Admin SDK, which the rules do not bind, can write
+ * them. The server therefore writes that match itself, at the close
+ * ([UnrankedFill]).
  *
  * ------------------------------------------------------------------------
  * DIRECTIONALITY — CLOSED 2026-10-28 (O-15): THE BAND IS SYMMETRIC
@@ -94,6 +132,7 @@ import com.estemshan.engine.rankLadder
 // ── the queue document's fields ───────────────────────────────────────────
 
 internal const val QUEUE_FIELD_UID = "uid"
+internal const val QUEUE_FIELD_MODE = "mode"
 internal const val QUEUE_FIELD_TIER = "tier"
 internal const val QUEUE_FIELD_GAME_TYPE = "gameType"
 internal const val QUEUE_FIELD_STATUS = "status"
@@ -181,11 +220,14 @@ internal object QueueReason {
  * One queue document, parsed.
  *
  * The parsed form carries the tier as a TIER NAME, never a division: RD9
- * writes the band in tiers, and divisions never enter the pool math.
+ * writes the band in tiers, and divisions never enter the pool math. The
+ * tier is NULL for an UNRANKED search — the rank-blind pool has no tier to
+ * read, so there is no field to hold one — and non-null for a RANKED one.
  */
-private data class QueuedSearch(
+internal data class QueuedSearch(
   val uid: String,
-  val tier: String,
+  val mode: MatchMode,
+  val tier: String?,
   val gameType: GameType,
   val enqueuedAtMillis: Long,
   val heartbeatAtMillis: Long,
@@ -208,12 +250,17 @@ internal data class SearchPassSummary(
 /**
  * `enqueueSearch` — asks the server to find a table.
  *
- * The request may carry a GameType and nothing else; the tier is derived from
- * the caller's own profile inside the same transaction that writes the search,
- * so a client can neither claim a tier nor be told one. The write is the
- * caller's own search document — one live search per player — and the pass
- * that follows is the queue's own matcher, not a special favour for whoever
- * just asked.
+ * The request may carry a GameType and a mode and nothing else; the tier is
+ * derived from the caller's own profile inside the same transaction that
+ * writes the search, so a client can neither claim a tier nor be told one.
+ * The write is the caller's own search document — one live search per
+ * player — and the pass that follows is the queue's own matcher, not a
+ * special favour for whoever just asked.
+ *
+ * The mode decides whether a profile is read at all: a RANKED search reads
+ * the caller's profile (the tier IS the pool), an UNRANKED search reads
+ * nothing (the pool is rank-blind), and a ROOM search never reaches here —
+ * the request guard refuses it.
  */
 suspend fun enqueueSearchOnce(
   db: MatchmakingSearchDb,
@@ -221,38 +268,46 @@ suspend fun enqueueSearchOnce(
   clock: DecisionClock,
 ): Map<String, Any?> {
   val uid = CallableAuth.requireUid(request)
-  // The pre-queue guard (S57): a forbidden identity/tier key is REFUSED with
-  // permission-denied, never ignored, and an unknown key is refused too.
-  val search = parseRankedSearchRequest(request.data)
+  // The pre-queue guard (S57/S71): a forbidden identity/tier key is REFUSED
+  // with permission-denied, never ignored, and an unknown key is refused too.
+  val search = parseSearchRequest(request.data)
 
   db.transact { tx ->
-    // Reads before writes, and the profile read is the first of them: the tier
-    // is the pool's input, so a profile that cannot be read must stop the
-    // enqueue before a search document exists.
-    val profile = tx.readProfile(uid)
-      ?: throw refusal(
-        "failed-precondition",
-        QueueReason.PROFILE_UNAVAILABLE,
-        "enqueueSearch: no ranked profile exists for this account.",
-      )
-    val tier = tierOf(profile)
-      ?: throw refusal(
-        "failed-precondition",
-        QueueReason.PROFILE_UNAVAILABLE,
-        "enqueueSearch: the ranked profile for this account cannot be read.",
-      )
+    // Reads before writes, and the profile read is the first of them — but
+    // only for a RANKED search. The Unranked pool is rank-blind, so there is
+    // no tier to derive: a profile that cannot be read must not stop an
+    // Unranked search, because a player with no ranked profile may still
+    // play Unranked.
+    val tier = if (search.mode == MatchMode.RANKED) {
+      val profile = tx.readProfile(uid)
+        ?: throw refusal(
+          "failed-precondition",
+          QueueReason.PROFILE_UNAVAILABLE,
+          "enqueueSearch: no ranked profile exists for this account.",
+        )
+      tierOf(profile)
+        ?: throw refusal(
+          "failed-precondition",
+          QueueReason.PROFILE_UNAVAILABLE,
+          "enqueueSearch: the ranked profile for this account cannot be read.",
+        )
+    } else {
+      null
+    }
     val now = clock.nowMillis()
-    tx.putSearch(
-      uid,
-      linkedMapOf<String, Any?>(
-        QUEUE_FIELD_UID to uid,
-        QUEUE_FIELD_TIER to tier,
-        QUEUE_FIELD_GAME_TYPE to search.gameType.name,
-        QUEUE_FIELD_STATUS to QUEUE_STATUS_WAITING,
-        QUEUE_FIELD_ENQUEUED_AT to now,
-        QUEUE_FIELD_HEARTBEAT_AT to now,
-      ),
+    val fields = linkedMapOf<String, Any?>(
+      QUEUE_FIELD_UID to uid,
+      QUEUE_FIELD_MODE to search.mode.name,
+      QUEUE_FIELD_GAME_TYPE to search.gameType.name,
+      QUEUE_FIELD_STATUS to QUEUE_STATUS_WAITING,
+      QUEUE_FIELD_ENQUEUED_AT to now,
+      QUEUE_FIELD_HEARTBEAT_AT to now,
     )
+    // The tier is OMITTED for an Unranked search, never written as a null: a
+    // document that carried a tier could not be rank-blind, and the parse
+    // refuses one.
+    if (tier != null) fields[QUEUE_FIELD_TIER] = tier
+    tx.putSearch(uid, fields)
   }
 
   val pass = runSearchPass(db, clock)
@@ -337,12 +392,54 @@ private data class CancelAnswer(
 // ── the resolver pass ─────────────────────────────────────────────────────
 
 /**
+ * The pass's shared budget.
+ *
+ * One cap spans both mode branches: a pass that spent its whole budget on
+ * Unranked tables has none left for Ranked, and vice versa. The cap counts
+ * TRANSACTIONS — a transaction is the pass's real work, two reads and up to
+ * three writes — so it is what actually bounds the pass, and the pairs cap
+ * alone does not.
+ */
+internal class PassBudget(private val maxAttempts: Int) {
+
+  /** How many transactions this pass has attempted. */
+  var attempts: Int = 0
+    private set
+
+  /** How many tables this pass has formed. */
+  var formed: Int = 0
+    private set
+
+  /** The uids this pass has seated — a search is seated at most once. */
+  val seated: MutableSet<String> = mutableSetOf()
+
+  /** Whether another transaction may be attempted. */
+  fun allowsAnotherAttempt(): Boolean =
+    attempts < maxAttempts && formed < MAX_PAIRS_PER_PASS
+
+  /** Records one attempted transaction — a failed one costs its attempt too. */
+  fun spendAttempt() {
+    attempts++
+  }
+
+  /** Records one formed table. */
+  fun recordTable() {
+    formed++
+  }
+}
+
+/**
  * One bounded resolver pass over the queue.
  *
  * The pass reads the queue, pairs what the policy allows, and forms one table
  * per pair. Every decision is re-derived INSIDE the transaction that writes
  * it, so a pass that races another pass finds the work already done and
  * writes nothing: the second table never happens.
+ *
+ * The pass is split by MODE (S71): the two pools are separate, and a search
+ * is only ever seated with searches of its own mode. The Unranked branch
+ * runs first — an open Unranked room carries a running fill window, while
+ * the pool's own tables have nobody waiting on them yet.
  *
  * The work is capped — [MAX_SCANNED_SEARCHES] documents read,
  * [MAX_PAIRS_PER_PASS] pairs formed, [MAX_RESOLVE_ATTEMPTS_PER_PASS]
@@ -376,41 +473,67 @@ internal suspend fun runSearchPass(
   // pairs — the resolver has no randomness in it at all.
   val ordered = waiting.sortedWith(compareBy({ it.enqueuedAtMillis }, { it.uid }))
 
-  var formed = 0
-  var attempts = 0
-  val taken = HashSet<String>()
-  for (hostIndex in ordered.indices) {
-    if (attempts >= MAX_RESOLVE_ATTEMPTS_PER_PASS) break
-    val host = ordered[hostIndex]
-    if (host.uid in taken) continue
-    // Every later search is a candidate. The pair is considered exactly once,
-    // with the earlier half becoming the table's creator (O-15: which half is
-    // earlier no longer decides whether the pair is legal).
-    for (guestIndex in hostIndex + 1 until ordered.size) {
-      if (attempts >= MAX_RESOLVE_ATTEMPTS_PER_PASS) break
-      val guest = ordered[guestIndex]
-      if (guest.uid in taken) continue
-      if (!isPairable(host, guest, now)) continue
-      attempts++
-      val tableId = resolvePair(db, host, guest, now)
-      if (tableId == null) continue
-      formed++
-      taken += host.uid
-      taken += guest.uid
-      break
-    }
-    if (formed >= MAX_PAIRS_PER_PASS) break
-  }
+  val budget = PassBudget(MAX_RESOLVE_ATTEMPTS_PER_PASS)
 
-  val capped = formed >= MAX_PAIRS_PER_PASS ||
+  // The Unranked branch: the open rooms' free seats first, then the pool's
+  // own tables.
+  resolveUnrankedPool(
+    db,
+    ordered.filter { it.mode == MatchMode.UNRANKED },
+    now,
+    budget,
+  )
+
+  // The Ranked branch: the pair loop, unchanged in every rule it applies.
+  resolveRankedPairs(
+    db,
+    ordered.filter { it.mode == MatchMode.RANKED },
+    now,
+    budget,
+  )
+
+  val capped = budget.formed >= MAX_PAIRS_PER_PASS ||
     documents.size >= MAX_SCANNED_SEARCHES ||
-    attempts >= MAX_RESOLVE_ATTEMPTS_PER_PASS
+    budget.attempts >= MAX_RESOLVE_ATTEMPTS_PER_PASS
   return SearchPassSummary(
-    pairsFormed = formed,
+    pairsFormed = budget.formed,
     scanned = documents.size,
     capped = capped,
     nextRetryAfterMillis = if (capped) CAPPED_RETRY_MILLIS else SEARCH_RETRY_MILLIS,
   )
+}
+
+/**
+ * The RANKED branch of one pass — the pair loop.
+ *
+ * Every later search is a candidate. The pair is considered exactly once,
+ * with the earlier half becoming the table's creator (O-15: which half is
+ * earlier no longer decides whether the pair is legal).
+ */
+private suspend fun resolveRankedPairs(
+  db: MatchmakingSearchDb,
+  ranked: List<QueuedSearch>,
+  now: Long,
+  budget: PassBudget,
+) {
+  for (hostIndex in ranked.indices) {
+    if (!budget.allowsAnotherAttempt()) break
+    val host = ranked[hostIndex]
+    if (host.uid in budget.seated) continue
+    for (guestIndex in hostIndex + 1 until ranked.size) {
+      if (!budget.allowsAnotherAttempt()) break
+      val guest = ranked[guestIndex]
+      if (guest.uid in budget.seated) continue
+      if (!isPairable(host, guest, now)) continue
+      budget.spendAttempt()
+      val tableId = resolvePair(db, host, guest, now)
+      if (tableId == null) continue
+      budget.recordTable()
+      budget.seated += host.uid
+      budget.seated += guest.uid
+      break
+    }
+  }
 }
 
 /**
@@ -447,11 +570,10 @@ private suspend fun reclaimExpired(
  * absolute band.
  *
  * O-15 (closed 2026-10-28) makes the band SYMMETRIC: the same tier, or
- * exactly one tier up OR down, and never two. [tiersAreAdjacent] is that
- * rule stated in one place, as the union of RD9's own directional policy —
- * a Gold searcher's pool admits a Silver and a Silver searcher's pool admits
- * a Gold — so the policy function keeps its no-opt-up meaning and the
- * resolver owns the table rule.
+ * exactly one tier up OR down, and never two. The engine owns that rule
+ * ([isPoolCompatible], over the two searches' mode-aware pool keys), so the
+ * resolver does not restate it: there is exactly one definition of "one
+ * tier" in the codebase.
  *
  * The session's [MatchmakingSession.bandAccepts] is the same distance
  * condition applied to the seats already at the table, so the two rules
@@ -460,32 +582,29 @@ private suspend fun reclaimExpired(
  * GM5 rides alongside and is orthogonal: the GameType never widens or narrows
  * the tier pool, it only decides whether two searches may be in the same
  * table at all — exact equality, so a Full and a Mini never resolve together.
+ *
+ * The tier is null only for an UNRANKED search, and an Unranked search never
+ * reaches this rule — the Unranked branch is a table of up to four, not a
+ * pair. The null is refused rather than guessed, so a bug that sent an
+ * Unranked search here would form no table instead of a wrong one.
  */
 private fun isPairable(host: QueuedSearch, guest: QueuedSearch, now: Long): Boolean {
   // Never a player with itself.
   if (host.uid == guest.uid) return false
   // GM5: exact GameType equality.
   if (!isSearchCompatible(host.gameType, guest.gameType)) return false
+  val hostTier = host.tier ?: return false
+  val guestTier = guest.tier ?: return false
   // The absolute band: the table may span at most one tier.
-  val session = MatchmakingSession.open(host.uid, host.tier, now)
-  if (session.join(guest.uid, guest.tier, now).humans.size < 2) return false
-  // O-15: one tier apart is a pair in either direction.
-  return tiersAreAdjacent(host.tier, guest.tier)
+  val session = MatchmakingSession.open(host.uid, hostTier, now)
+  if (session.join(guest.uid, guestTier, now).humans.size < 2) return false
+  // O-15: one tier apart is a pair in either direction, and two searches in
+  // different modes never pair — the engine's own rule.
+  return isPoolCompatible(
+    MatchPoolKey.Tiered(hostTier),
+    MatchPoolKey.Tiered(guestTier),
+  )
 }
-
-/**
- * O-15's symmetric band: [a] and [b] are the same tier, or exactly one tier
- * apart in EITHER direction.
- *
- * Written as the union of RD9's directional pool rule rather than as a new
- * arithmetic, so there is exactly one definition of "one tier" in the
- * codebase ([isPoolEligible]) and the symmetry is visible where it is
- * decided. A foreign tier fails loudly inside [isPoolEligible], which is
- * unreachable here because both tiers were validated when their queue
- * documents were parsed.
- */
-private fun tiersAreAdjacent(a: String, b: String): Boolean =
-  isPoolEligible(rungOf(a), rungOf(b)) || isPoolEligible(rungOf(b), rungOf(a))
 
 /**
  * Forms one table for a pair, inside one transaction.
@@ -514,7 +633,7 @@ private suspend fun resolvePair(
     val freshGuest = parseSearchDocument(guest.uid, guestDocument) ?: return@transact null
     if (!isPairable(freshHost, freshGuest, now)) return@transact null
 
-    tx.createRoom(tableId, tableFields(freshHost, freshGuest))
+    tx.createRoom(tableId, rankedTableFields(freshHost, freshGuest))
     tx.resolveSearch(freshHost.uid, tableId)
     tx.resolveSearch(freshGuest.uid, tableId)
     tableId
@@ -522,7 +641,8 @@ private suspend fun resolvePair(
 }
 
 /**
- * The table a pair forms, in `RoomService.createRoom`'s exact field shape.
+ * The table a RANKED pair forms, in `RoomService.createRoom`'s exact field
+ * shape.
  *
  * Same collection, same keys, same values, same defaults — so the frozen
  * room schema, the client's own room parser and `MatchService.startMatch`
@@ -530,7 +650,7 @@ private suspend fun resolvePair(
  * writer. RD21's bot trio and GM7's scoring mode are the defaults the
  * existing path already uses; the GameType is the search's own.
  */
-private fun tableFields(host: QueuedSearch, guest: QueuedSearch): Map<String, Any?> = linkedMapOf(
+private fun rankedTableFields(host: QueuedSearch, guest: QueuedSearch): Map<String, Any?> = linkedMapOf(
   "name" to null,
   "status" to "waiting",
   "creator" to host.uid,
@@ -572,9 +692,6 @@ private fun tierOf(profile: Map<String, Any?>): String? {
   return rpTier
 }
 
-/** A ladder rung for a tier name — the pool math is in tiers, never divisions. */
-private fun rungOf(tier: String) = rankLadder.first { it.tier == tier }
-
 // ── parsing the queue ─────────────────────────────────────────────────────
 
 /**
@@ -587,7 +704,7 @@ private fun rungOf(tier: String) = rankLadder.first { it.tier == tier }
  * had to invent. The abort carries a fixed message — never a stored value and
  * never a player's identity.
  */
-private fun parseSearchDocument(id: String, fields: Map<String, Any?>): QueuedSearch? {
+internal fun parseSearchDocument(id: String, fields: Map<String, Any?>): QueuedSearch? {
   val status = statusOf(fields)
   if (status == QUEUE_STATUS_RESOLVED) return null
 
@@ -599,8 +716,34 @@ private fun parseSearchDocument(id: String, fields: Map<String, Any?>): QueuedSe
   // loudly on it — so it is refused here, with the queue's own refusal.
   if (uid.isBlank()) corruptQueue()
 
-  val tier = fields[QUEUE_FIELD_TIER] as? String ?: corruptQueue()
-  if (tier !in poolTierOrder) corruptQueue()
+  // The mode. A document written before S71 carries none: the queue's only
+  // mode then was RANKED, so an absent mode reads as RANKED — a legacy
+  // document, not a corrupt one. A mode this server does not know is a
+  // document it cannot read, and so is ROOM, which never pools.
+  val mode = when (val raw = fields[QUEUE_FIELD_MODE]) {
+    null -> MatchMode.RANKED
+    is String -> MatchMode.values().firstOrNull { it.name == raw }
+      ?.takeIf { it != MatchMode.ROOM }
+      ?: corruptQueue()
+    else -> corruptQueue()
+  }
+
+  // The tier. A RANKED document carries the tier the server derived; an
+  // UNRANKED document carries NONE — the rank-blind pool has no tier, and a
+  // document that carried one could not be rank-blind, so it is refused
+  // rather than ignored.
+  val tier = when (mode) {
+    MatchMode.RANKED -> {
+      val stored = fields[QUEUE_FIELD_TIER] as? String ?: corruptQueue()
+      if (stored !in poolTierOrder) corruptQueue()
+      stored
+    }
+    MatchMode.UNRANKED -> {
+      if (fields.containsKey(QUEUE_FIELD_TIER)) corruptQueue()
+      null
+    }
+    MatchMode.ROOM -> corruptQueue()
+  }
 
   val gameTypeName = fields[QUEUE_FIELD_GAME_TYPE] as? String ?: corruptQueue()
   val gameType = GameType.values().firstOrNull { it.name == gameTypeName } ?: corruptQueue()
@@ -610,6 +753,7 @@ private fun parseSearchDocument(id: String, fields: Map<String, Any?>): QueuedSe
 
   return QueuedSearch(
     uid = uid,
+    mode = mode,
     tier = tier,
     gameType = gameType,
     enqueuedAtMillis = enqueuedAt,
@@ -663,12 +807,33 @@ private fun answerOf(document: Map<String, Any?>?, retryAfterMillis: Long): Map<
       "tableId" to tableIdOf(document),
     )
 
-    else -> linkedMapOf(
-      "ok" to true,
-      "status" to ANSWER_SEARCHING,
-      "retryAfterMillis" to retryAfterMillis,
-    )
+    else -> {
+      val answer = linkedMapOf<String, Any?>(
+        "ok" to true,
+        "status" to ANSWER_SEARCHING,
+        "retryAfterMillis" to retryAfterMillis,
+      )
+      fillDeadlineOf(document)?.let { answer["fillDeadlineMillis"] = it }
+      answer
+    }
   }
+}
+
+/**
+ * The deadline this search's seat is filled by — its own arrival plus the
+ * Unranked fill window.
+ *
+ * It is the SEARCH's own window, and it is a bound and not an estimate: the
+ * table this search joins may fill SOONER (a table's window is anchored on
+ * its first searcher, so a table this search joins second closes earlier),
+ * never later. A RANKED search has no such deadline — the Ranked queue forms
+ * a table of two, and the fill window is not its rule — so none is
+ * published.
+ */
+private fun fillDeadlineOf(document: Map<String, Any?>): Long? {
+  if (document[QUEUE_FIELD_MODE] != MatchMode.UNRANKED.name) return null
+  val enqueuedAt = timestampToMillis(document[QUEUE_FIELD_ENQUEUED_AT]) ?: return null
+  return enqueuedAt + UNRANKED_FILL_MILLIS
 }
 
 // ── the request guard for the callables that take no fields ───────────────

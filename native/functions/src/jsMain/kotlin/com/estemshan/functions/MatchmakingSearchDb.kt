@@ -1,5 +1,6 @@
 package com.estemshan.functions
 
+import com.estemshan.engine.MatchMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -50,6 +51,18 @@ interface MatchmakingSearchDb {
   suspend fun listWaitingSearches(limit: Int): List<SearchDocument>
 
   /**
+   * The open UNRANKED rooms — the tables whose free seats the shared pool
+   * may fill (S71).
+   *
+   * One equality filter on the mode, so Firestore's automatic single-field
+   * index answers it and no composite index is needed — `firebase.json`
+   * declares no indexes artifact at all. The status filter is applied by the
+   * caller in memory, because a second equality filter on another field is
+   * exactly what would need one.
+   */
+  suspend fun listUnrankedRooms(limit: Int): List<RoomDocument>
+
+  /**
    * A fresh, unguessable id for the table a pair forms.
    *
    * The Admin SDK's own auto-id, for one reason: a client that could predict
@@ -57,6 +70,15 @@ interface MatchmakingSearchDb {
    * ids are therefore not a client-computable value.
    */
   fun newRoomId(): String
+
+  /**
+   * A fresh, unguessable id for the match the server creates (S71).
+   *
+   * The Admin SDK's own auto-id, for the same reason as [newRoomId]: the
+   * match a bot-filled table becomes is written by the server alone, and an
+   * id a client could predict is an id a client could pre-create.
+   */
+  fun newMatchId(): String
 
   suspend fun <T> transact(block: suspend (Tx) -> T): T
 
@@ -67,6 +89,14 @@ interface MatchmakingSearchDb {
 
     /** `players/{uid}` — the profile the eligible tier is derived from. */
     suspend fun readProfile(uid: String): Map<String, Any?>?
+
+    /**
+     * `rooms/{roomId}` — the room's own fields.
+     *
+     * Read INSIDE the transaction, so a room that changed between the scan
+     * and the write is judged on what it is now, not on what it was.
+     */
+    suspend fun readRoom(roomId: String): Map<String, Any?>?
 
     /**
      * Writes the search document's COMPLETE state.
@@ -108,11 +138,50 @@ interface MatchmakingSearchDb {
      * it, once the table is ready.
      */
     fun createRoom(roomId: String, fields: Map<String, Any?>)
+
+    /**
+     * Creates the match a bot-filled Unranked table becomes (S71).
+     *
+     * The Admin SDK is the ONLY writer that may do this: a bot seat is a seat
+     * no client may write (`isValidSeatMap` demands every seat's uid to be
+     * one of the `players` at creation), so the configured bots can only ever
+     * take a seat through a writer the rules do not bind.
+     *
+     * The fields are the match's own shape, field for field
+     * (`buildInitialMatchFields`), with the two the mode's own: `players` are
+     * the humans alone, and `botSeats` names the seats the bots took.
+     */
+    fun createMatch(matchId: String, fields: Map<String, Any?>)
+
+    /**
+     * Binds the room to the match it became: `status` → `in_game` and
+     * `matchId` → the new match.
+     *
+     * The same two writes `MatchService.startMatch` makes, in the same
+     * transaction as the match's own creation — so a room that has a match
+     * can never be a room that is still waiting, and a second pass finds
+     * the binding already there and writes nothing.
+     */
+    fun bindRoomToMatch(roomId: String, matchId: String)
+
+    /**
+     * Seats a player into an open Unranked room (S71).
+     *
+     * The room's WHOLE `players` list is written, never an array-union: the
+     * server owns the roster, so it decides who is seated and writes the
+     * list it decided on. A client could do this too — the room rules let a
+     * member add itself — but then two clients racing for the last seat
+     * would each believe they won it.
+     */
+    fun seatPlayers(roomId: String, players: List<String>)
   }
 }
 
 /** One queue document: its id and its fields. */
 data class SearchDocument(val id: String, val fields: Map<String, Any?>)
+
+/** One room document: its id and its fields. */
+data class RoomDocument(val id: String, val fields: Map<String, Any?>)
 
 /**
  * The queue's collection.
@@ -122,6 +191,12 @@ data class SearchDocument(val id: String, val fields: Map<String, Any?>)
  * catch-all deny makes it admin-only by construction.
  */
 internal const val SEARCH_COLLECTION = "rankedSearches"
+
+/** The rooms collection — the tables the resolver forms and fills. */
+private const val ROOMS_COLLECTION = "rooms"
+
+/** The matches collection — the match a bot-filled table becomes (S71). */
+private const val MATCHES_COLLECTION = "matches"
 
 /** Admin-SDK implementation. Reads normalize through dynamicToKotlin; writes
  *  normalize through toPlain. */
@@ -155,7 +230,21 @@ class AdminMatchmakingSearchDb : MatchmakingSearchDb {
     }
   }
 
+  override suspend fun listUnrankedRooms(limit: Int): List<RoomDocument> {
+    val snap = db.collection(ROOMS_COLLECTION)
+      .where(ROOM_FIELD_MODE, "==", MatchMode.UNRANKED.name)
+      .limit(limit)
+      .get()
+      .await()
+    return snap.docs.map { doc ->
+      @Suppress("UNCHECKED_CAST")
+      RoomDocument(doc.id, dynamicToKotlin(doc.data()) as? Map<String, Any?> ?: emptyMap())
+    }
+  }
+
   override fun newRoomId(): String = db.collection("rooms").doc().id
+
+  override fun newMatchId(): String = db.collection(MATCHES_COLLECTION).doc().id
 
   override suspend fun <T> transact(block: suspend (MatchmakingSearchDb.Tx) -> T): T {
     val outcome = db.runTransaction { tx ->
@@ -175,6 +264,13 @@ class AdminMatchmakingSearchDb : MatchmakingSearchDb {
 
     override suspend fun readProfile(uid: String): Map<String, Any?>? {
       val snap = tx.get(playerRef(uid)).await()
+      if (!snap.exists) return null
+      @Suppress("UNCHECKED_CAST")
+      return dynamicToKotlin(snap.data()) as? Map<String, Any?>
+    }
+
+    override suspend fun readRoom(roomId: String): Map<String, Any?>? {
+      val snap = tx.get(db.collection(ROOMS_COLLECTION).doc(roomId)).await()
       if (!snap.exists) return null
       @Suppress("UNCHECKED_CAST")
       return dynamicToKotlin(snap.data()) as? Map<String, Any?>
@@ -214,7 +310,41 @@ class AdminMatchmakingSearchDb : MatchmakingSearchDb {
       val room = LinkedHashMap(fields)
       room["createdAt"] = FieldValue.serverTimestamp()
       room["updatedAt"] = FieldValue.serverTimestamp()
-      tx.set(db.collection("rooms").doc(roomId), toPlain(room))
+      tx.set(db.collection(ROOMS_COLLECTION).doc(roomId), toPlain(stamped(room)))
+    }
+
+    override fun seatPlayers(roomId: String, players: List<String>) {
+      tx.update(
+        db.collection(ROOMS_COLLECTION).doc(roomId),
+        toPlain(
+          linkedMapOf<String, Any?>(
+            "players" to players,
+            "updatedAt" to FieldValue.serverTimestamp(),
+          ),
+        ),
+      )
+    }
+
+    override fun createMatch(matchId: String, fields: Map<String, Any?>) {
+      // The match's own creation stamp is the Admin SDK's server timestamp —
+      // the server's clock, never a client's, exactly as
+      // `MatchService.startMatch` stamps the match it creates.
+      val match = LinkedHashMap(fields)
+      match["createdAt"] = FieldValue.serverTimestamp()
+      tx.set(db.collection(MATCHES_COLLECTION).doc(matchId), toPlain(match))
+    }
+
+    override fun bindRoomToMatch(roomId: String, matchId: String) {
+      tx.update(
+        db.collection(ROOMS_COLLECTION).doc(roomId),
+        toPlain(
+          linkedMapOf<String, Any?>(
+            "status" to ROOM_STATUS_IN_GAME,
+            "matchId" to matchId,
+            "updatedAt" to FieldValue.serverTimestamp(),
+          ),
+        ),
+      )
     }
   }
 
@@ -229,11 +359,14 @@ class AdminMatchmakingSearchDb : MatchmakingSearchDb {
  *
  * A real timestamp is what an index orders and what `timestampToMillis` reads
  * back, and the millis on the seam keep the resolver's lease arithmetic
- * exact — the same number the writer stamped and the reader compares.
+ * exact — the same number the writer stamped and the reader compares. The
+ * Unranked room's pool stamp travels the same way: it is a window anchor,
+ * and an anchor read back as a Firestore Timestamp is the only shape the
+ * reader can compare against a server clock.
  */
 private fun stamped(fields: Map<String, Any?>): Map<String, Any?> {
   val out = LinkedHashMap<String, Any?>(fields)
-  for (key in listOf(QUEUE_FIELD_ENQUEUED_AT, QUEUE_FIELD_HEARTBEAT_AT)) {
+  for (key in listOf(QUEUE_FIELD_ENQUEUED_AT, QUEUE_FIELD_HEARTBEAT_AT, ROOM_FIELD_POOL_OPENED_AT)) {
     val millis = out[key] as? Long ?: continue
     out[key] = Timestamp.fromMillis(millis.toDouble())
   }

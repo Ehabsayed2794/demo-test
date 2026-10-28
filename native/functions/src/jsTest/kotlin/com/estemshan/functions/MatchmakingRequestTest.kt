@@ -1,6 +1,7 @@
 package com.estemshan.functions
 
 import com.estemshan.engine.GameType
+import com.estemshan.engine.MatchMode
 import kotlin.js.json
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -9,27 +10,32 @@ import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /**
- * S57 — the Ranked search-request guard (RD9).
+ * S71 — the mode-aware search-request guard (RD9 + RD28 as amended).
  *
  * The guard is the anti-abuse boundary in front of S56's pool derivation: the
- * client may say which GameType it wants to play, and it may say nothing
- * else. These tests pin three things.
+ * client may say which GameType it wants to play and WHICH MODE it wants to
+ * play, and it may say nothing else. These tests pin four things.
  *
- *  1. **The accepted shape** — one field, `gameType`, whose value is exactly
- *     `"FULL"` or `"MINI"`, in both shapes the boundary actually sees: a
- *     Kotlin map (what a test fixture builds) and a **plain JS object** (what
- *     the Functions runtime delivers — see `CallablePayloadBridgingTest`).
+ *  1. **The accepted shape** — two fields, `gameType` and `mode`, whose values
+ *     are exactly `"FULL"`/`"MINI"` and `"RANKED"`/`"UNRANKED"`, in both
+ *     shapes the boundary actually sees: a Kotlin map (what a test fixture
+ *     builds) and a **plain JS object** (what the Functions runtime delivers —
+ *     see `CallablePayloadBridgingTest`).
  *  2. **The refusal matrix** — a missing/null/non-object/array payload, a
- *     missing/null/malformed `gameType`, an unknown key, and each of the
- *     twelve forbidden identity/tier keys.
- *  3. **The two ordering rules** that make the guard worth having: a
- *     forbidden or unknown key is refused *before* the `gameType` value is
- *     read, and no error message ever echoes the value the client sent.
+ *     missing/null/malformed `gameType`, a missing/null/malformed `mode`, an
+ *     unknown key, and each of the twelve forbidden identity/tier keys.
+ *  3. **The mode rules** — `ROOM` is a real mode that this queue does not
+ *     serve, so it is refused BY NAME with its own reason token; the refusal
+ *     is `invalid-argument` (a malformed request), and the reason tells the
+ *     client which of the two it was.
+ *  4. **The two ordering rules** that make the guard worth having: a
+ *     forbidden or unknown key is refused *before* the `gameType` and `mode`
+ *     values are read, and no error message ever echoes a value the client
+ *     sent.
  *
  * The returned type is asserted to carry no identity at all: the request is
- * the GameType and nothing else, because the caller's uid comes from
- * `CallableAuth.requireUid(request)` at the callable boundary — which S57
- * does not implement.
+ * the mode and the GameType and nothing else, because the caller's uid comes
+ * from `CallableAuth.requireUid(request)` at the callable boundary.
  */
 class MatchmakingRequestTest {
 
@@ -62,43 +68,69 @@ class MatchmakingRequestTest {
     return message
   }
 
+  /** The reason token carried in the error's plain `details` object. */
+  private fun thrownReason(block: () -> Any?): String? {
+    try {
+      block()
+    } catch (e: Throwable) {
+      return e.asDynamic().details?.reason as? String
+    }
+    throw AssertionError("expected an HttpsError")
+  }
+
   /** The exact denial sentence the S57 contract fixes for a forbidden key. */
   private fun expectedForbiddenMessage(key: String): String =
     "identity and tier are server-derived; '$key' is not accepted."
+
+  /** A Ranked request — the shape every pre-S71 client already sends. */
+  private fun ranked(vararg extra: Pair<String, Any?>): Map<String, Any?> =
+    linkedMapOf<String, Any?>("gameType" to "FULL", "mode" to "RANKED").apply {
+      for ((k, v) in extra) put(k, v)
+    }
 
   // ── the accepted request ────────────────────────────────────────────
 
   @Test
   fun aKotlinMapRequestingFullIsAccepted() {
-    val request = parseRankedSearchRequest(mapOf("gameType" to "FULL"))
+    val request = parseSearchRequest(ranked())
 
     assertSame(GameType.FULL, request.gameType)
+    assertSame(MatchMode.RANKED, request.mode)
   }
 
   @Test
   fun aKotlinMapRequestingMiniIsAccepted() {
-    val request = parseRankedSearchRequest(mapOf("gameType" to "MINI"))
+    val request = parseSearchRequest(ranked("gameType" to "MINI"))
 
     assertSame(GameType.MINI, request.gameType)
   }
 
   @Test
+  fun anUnrankedRequestIsAccepted() {
+    val request = parseSearchRequest(ranked("mode" to "UNRANKED"))
+
+    assertSame(MatchMode.UNRANKED, request.mode)
+    assertSame(GameType.FULL, request.gameType)
+  }
+
+  @Test
   fun aPlainJavascriptObjectRequestingFullIsAccepted() {
     // The runtime shape: an object literal is NOT a kotlin.collections.Map.
-    val payload: Any? = js("({ gameType: 'FULL' })")
+    val payload: Any? = js("({ gameType: 'FULL', mode: 'RANKED' })")
 
-    val request = parseRankedSearchRequest(payload)
+    val request = parseSearchRequest(payload)
 
     assertSame(GameType.FULL, request.gameType)
+    assertSame(MatchMode.RANKED, request.mode)
   }
 
   @Test
   fun aPlainJavascriptObjectRequestingMiniIsAccepted() {
     // kotlin.js.json builds the other plain-object shape the runtime can
     // deliver.
-    val payload: Any? = json("gameType" to "MINI")
+    val payload: Any? = json("gameType" to "MINI", "mode" to "RANKED")
 
-    val request = parseRankedSearchRequest(payload)
+    val request = parseSearchRequest(payload)
 
     assertSame(GameType.MINI, request.gameType)
   }
@@ -108,19 +140,31 @@ class MatchmakingRequestTest {
     assertEquals("FULL", GameType.FULL.name)
     assertEquals("MINI", GameType.MINI.name)
 
-    assertSame(GameType.FULL, parseRankedSearchRequest(mapOf("gameType" to "FULL")).gameType)
-    assertSame(GameType.MINI, parseRankedSearchRequest(mapOf("gameType" to "MINI")).gameType)
+    assertSame(GameType.FULL, parseSearchRequest(ranked()).gameType)
+    assertSame(GameType.MINI, parseSearchRequest(ranked("gameType" to "MINI")).gameType)
   }
 
   @Test
   fun theAcceptedRequestCarriesNoIdentity() {
     // The data class prints every property it holds, so the string is the
     // proof that a uid (or a tier) is not in there: the guard's output is the
-    // GameType, and the caller's identity is the callable's to read.
-    val request = parseRankedSearchRequest(mapOf("gameType" to "FULL"))
+    // mode and the GameType, and the caller's identity is the callable's to
+    // read.
+    val request = parseSearchRequest(ranked())
 
-    assertEquals("RankedSearchRequest(gameType=FULL)", request.toString())
+    assertEquals("MatchSearchRequest(mode=RANKED, gameType=FULL)", request.toString())
     assertFalse(request.toString().contains("uid", ignoreCase = true))
+  }
+
+  @Test
+  fun theAcceptedRequestCarriesNoTier() {
+    // The Unranked pool is rank-blind: the request that names a mode never
+    // names a rank, and the parsed request holds no tier field to hold one.
+    val request = parseSearchRequest(ranked("mode" to "UNRANKED"))
+
+    assertEquals("MatchSearchRequest(mode=UNRANKED, gameType=FULL)", request.toString())
+    assertFalse(request.toString().contains("tier", ignoreCase = true))
+    assertFalse(request.toString().contains("rank=", ignoreCase = true))
   }
 
   // ── a payload that is not an object ─────────────────────────────────
@@ -129,7 +173,7 @@ class MatchmakingRequestTest {
   fun aRequestWithNoDataIsRejected() {
     // A callable that was called with no payload at all.
     val message = assertDenied("invalid-argument") {
-      parseRankedSearchRequest(null)
+      parseSearchRequest(null)
     }
 
     assertTrue(message.contains("object"), "the message should say what was expected: $message")
@@ -138,28 +182,28 @@ class MatchmakingRequestTest {
   @Test
   fun aStringPayloadIsRejected() {
     assertDenied("invalid-argument") {
-      parseRankedSearchRequest("FULL")
+      parseSearchRequest("FULL")
     }
   }
 
   @Test
   fun aNumberPayloadIsRejected() {
     assertDenied("invalid-argument") {
-      parseRankedSearchRequest(7)
+      parseSearchRequest(7)
     }
   }
 
   @Test
   fun aBooleanPayloadIsRejected() {
     assertDenied("invalid-argument") {
-      parseRankedSearchRequest(true)
+      parseSearchRequest(true)
     }
   }
 
   @Test
   fun aKotlinListPayloadIsRejected() {
     assertDenied("invalid-argument") {
-      parseRankedSearchRequest(listOf("FULL"))
+      parseSearchRequest(listOf("FULL"))
     }
   }
 
@@ -168,14 +212,14 @@ class MatchmakingRequestTest {
     val payload: Any? = js("(['FULL'])")
 
     assertDenied("invalid-argument") {
-      parseRankedSearchRequest(payload)
+      parseSearchRequest(payload)
     }
   }
 
   @Test
   fun anEmptyObjectIsRejected() {
     val message = assertDenied("invalid-argument") {
-      parseRankedSearchRequest(mapOf<String, Any?>())
+      parseSearchRequest(mapOf<String, Any?>())
     }
 
     assertTrue(message.contains("gameType"), "the message should name the field: $message")
@@ -186,7 +230,7 @@ class MatchmakingRequestTest {
   @Test
   fun aRequestWithoutAGameTypeFieldIsRejected() {
     val message = assertDenied("invalid-argument") {
-      parseRankedSearchRequest(mapOf<String, Any?>())
+      parseSearchRequest(mapOf<String, Any?>("mode" to "RANKED"))
     }
 
     assertTrue(message.contains("'gameType'"), "the message should name the field: $message")
@@ -195,21 +239,21 @@ class MatchmakingRequestTest {
   @Test
   fun aNullGameTypeIsRejected() {
     assertDenied("invalid-argument") {
-      parseRankedSearchRequest(mapOf("gameType" to null))
+      parseSearchRequest(ranked("gameType" to null))
     }
   }
 
   @Test
   fun aNonStringGameTypeIsRejected() {
     assertDenied("invalid-argument") {
-      parseRankedSearchRequest(mapOf("gameType" to 7))
+      parseSearchRequest(ranked("gameType" to 7))
     }
   }
 
   @Test
   fun aBooleanGameTypeIsRejected() {
     assertDenied("invalid-argument") {
-      parseRankedSearchRequest(mapOf("gameType" to true))
+      parseSearchRequest(ranked("gameType" to true))
     }
   }
 
@@ -218,7 +262,7 @@ class MatchmakingRequestTest {
     // "full" is a different string from "FULL" — the enum names are the
     // contract, not a forgiving alias.
     val message = assertDenied("invalid-argument") {
-      parseRankedSearchRequest(mapOf("gameType" to "full"))
+      parseSearchRequest(ranked("gameType" to "full"))
     }
 
     assertFalse(message.contains("full"), "the raw value must not be echoed: $message")
@@ -227,8 +271,94 @@ class MatchmakingRequestTest {
   @Test
   fun anUnrecognisedGameTypeIsRejected() {
     assertDenied("invalid-argument") {
-      parseRankedSearchRequest(mapOf("gameType" to "TRIO"))
+      parseSearchRequest(ranked("gameType" to "TRIO"))
     }
+  }
+
+  // ── the mode field (S71) ────────────────────────────────────────────
+
+  @Test
+  fun aRequestWithoutAModeFieldIsRejected() {
+    val message = assertDenied("invalid-argument") {
+      parseSearchRequest(mapOf<String, Any?>("gameType" to "FULL"))
+    }
+
+    assertTrue(message.contains("'mode'"), "the message should name the field: $message")
+  }
+
+  @Test
+  fun aNullModeIsRejected() {
+    assertDenied("invalid-argument") {
+      parseSearchRequest(ranked("mode" to null))
+    }
+  }
+
+  @Test
+  fun aNonStringModeIsRejected() {
+    assertDenied("invalid-argument") {
+      parseSearchRequest(ranked("mode" to 7))
+    }
+  }
+
+  @Test
+  fun aBooleanModeIsRejected() {
+    assertDenied("invalid-argument") {
+      parseSearchRequest(ranked("mode" to true))
+    }
+  }
+
+  @Test
+  fun aLowercaseModeIsRejected() {
+    val message = assertDenied("invalid-argument") {
+      parseSearchRequest(ranked("mode" to "ranked"))
+    }
+
+    assertFalse(message.contains("ranked"), "the raw value must not be echoed: $message")
+  }
+
+  @Test
+  fun anUnrecognisedModeIsRejected() {
+    assertDenied("invalid-argument") {
+      parseSearchRequest(ranked("mode" to "CASUAL"))
+    }
+  }
+
+  @Test
+  fun theRoomModeIsRefusedBecauseTheQueueDoesNotServeIt() {
+    // ROOM is a real mode — the third value of MatchMode — and this queue
+    // does not serve it: a Room is filled by invitation, never by a pool. It
+    // is refused by name, with its own reason token, so the client can tell
+    // "wrong mode for this queue" from "malformed request".
+    val error = thrownError {
+      parseSearchRequest(ranked("mode" to "ROOM"))
+    }
+
+    assertEquals("invalid-argument", error.first)
+    assertTrue(error.second.contains("mode"), "the message should name the field: ${error.second}")
+  }
+
+  @Test
+  fun theRoomModeIsRefusedWithTheUnsupportedModeReason() {
+    // The reason token is what tells the client "this queue does not serve
+    // ROOM" apart from "your request was malformed" — the two are both
+    // invalid-argument at the HTTP level, but only one is a wrong-mode
+    // request.
+    val reason = thrownReason {
+      parseSearchRequest(ranked("mode" to "ROOM"))
+    }
+
+    assertEquals(RequestReason.UNSUPPORTED_MODE, reason)
+  }
+
+  @Test
+  fun anUnrecognisedModeIsRefusedWithTheInvalidArgumentReason() {
+    // Not a mode the queue knows at all — that is malformed, not a mode the
+    // queue declines to serve. The two must not share a reason.
+    val reason = thrownReason {
+      parseSearchRequest(ranked("mode" to "CASUAL"))
+    }
+
+    assertEquals(RequestReason.INVALID_ARGUMENT, reason)
   }
 
   // ── the forbidden identity/tier keys (RD9) ──────────────────────────
@@ -256,7 +386,7 @@ class MatchmakingRequestTest {
 
     for (key in forbidden) {
       val message = assertDenied("permission-denied") {
-        parseRankedSearchRequest(mapOf("gameType" to "FULL", key to "Gold"))
+        parseSearchRequest(ranked(key to "Gold"))
       }
       assertEquals(expectedForbiddenMessage(key), message)
     }
@@ -265,7 +395,7 @@ class MatchmakingRequestTest {
   @Test
   fun aForbiddenKeyIsRefusedWithTheContractSentence() {
     val message = assertDenied("permission-denied") {
-      parseRankedSearchRequest(mapOf("gameType" to "MINI", "tier" to "Gold"))
+      parseSearchRequest(ranked("gameType" to "MINI", "tier" to "Gold"))
     }
 
     assertEquals("identity and tier are server-derived; 'tier' is not accepted.", message)
@@ -276,7 +406,18 @@ class MatchmakingRequestTest {
     // The key rules run first: a forged tier claim beside a malformed
     // gameType is an abuse attempt (permission-denied), not a typo.
     val message = assertDenied("permission-denied") {
-      parseRankedSearchRequest(mapOf("gameType" to "not-a-game-type", "tier" to "Gold"))
+      parseSearchRequest(ranked("gameType" to "not-a-game-type", "tier" to "Gold"))
+    }
+
+    assertEquals(expectedForbiddenMessage("tier"), message)
+  }
+
+  @Test
+  fun aForbiddenKeyIsRefusedBeforeTheModeValueIsRead() {
+    // The same order holds for the mode: a forged tier claim is reported as
+    // the abuse attempt, not as "your mode was malformed".
+    val message = assertDenied("permission-denied") {
+      parseSearchRequest(ranked("mode" to "ROOM", "tier" to "Gold"))
     }
 
     assertEquals(expectedForbiddenMessage("tier"), message)
@@ -285,7 +426,7 @@ class MatchmakingRequestTest {
   @Test
   fun aForbiddenKeyIsRefusedEvenWhenTheGameTypeIsValid() {
     assertDenied("permission-denied") {
-      parseRankedSearchRequest(mapOf("gameType" to "FULL", "uid" to "someone-else"))
+      parseSearchRequest(ranked("uid" to "someone-else"))
     }
   }
 
@@ -294,8 +435,8 @@ class MatchmakingRequestTest {
     // Refusal order among keys does not depend on the order the client
     // serialised them in: the abuse attempt is reported as the abuse.
     val message = assertDenied("permission-denied") {
-      parseRankedSearchRequest(
-        linkedMapOf("mystery" to 1, "gameType" to "FULL", "optUp" to true),
+      parseSearchRequest(
+        linkedMapOf("mystery" to 1, "gameType" to "FULL", "mode" to "RANKED", "optUp" to true),
       )
     }
 
@@ -308,7 +449,7 @@ class MatchmakingRequestTest {
     // it — but it is still refused, one step later, as a field nobody knows.
     // The property that matters is that it is never accepted.
     val message = assertDenied("invalid-argument") {
-      parseRankedSearchRequest(mapOf("gameType" to "FULL", "Tier" to "Gold"))
+      parseSearchRequest(ranked("Tier" to "Gold"))
     }
 
     assertTrue(message.contains("'Tier'"), "the message should name the key: $message")
@@ -319,7 +460,7 @@ class MatchmakingRequestTest {
   @Test
   fun anUnknownExtraKeyIsRefused() {
     val message = assertDenied("invalid-argument") {
-      parseRankedSearchRequest(mapOf("gameType" to "FULL", "seasonId" to "s1"))
+      parseSearchRequest(ranked("seasonId" to "s1"))
     }
 
     assertTrue(message.contains("'seasonId'"), "the message should name the key: $message")
@@ -328,7 +469,7 @@ class MatchmakingRequestTest {
   @Test
   fun anUnknownKeyIsRefusedBeforeTheGameTypeValueIsRead() {
     val message = assertDenied("invalid-argument") {
-      parseRankedSearchRequest(mapOf("gameType" to "not-a-game-type", "seasonId" to "s1"))
+      parseSearchRequest(ranked("gameType" to "not-a-game-type", "seasonId" to "s1"))
     }
 
     assertTrue(message.contains("'seasonId'"), "the message should name the key: $message")
@@ -337,7 +478,7 @@ class MatchmakingRequestTest {
   @Test
   fun aNonStringFieldNameIsRefused() {
     assertDenied("invalid-argument") {
-      parseRankedSearchRequest(mapOf(1 to "FULL"))
+      parseSearchRequest(mapOf(1 to "FULL"))
     }
   }
 
@@ -346,7 +487,7 @@ class MatchmakingRequestTest {
   @Test
   fun aForbiddenKeyValueIsNeverEchoedInTheError() {
     val message = assertDenied("permission-denied") {
-      parseRankedSearchRequest(mapOf("gameType" to "FULL", "tier" to "SENTINEL_TIER_VALUE"))
+      parseSearchRequest(ranked("tier" to "SENTINEL_TIER_VALUE"))
     }
 
     assertFalse(message.contains("SENTINEL_TIER_VALUE"), "the value must not be echoed: $message")
@@ -356,7 +497,7 @@ class MatchmakingRequestTest {
   @Test
   fun anUnknownKeyValueIsNeverEchoedInTheError() {
     val message = assertDenied("invalid-argument") {
-      parseRankedSearchRequest(mapOf("gameType" to "FULL", "seasonId" to "SENTINEL_UNKNOWN_VALUE"))
+      parseSearchRequest(ranked("seasonId" to "SENTINEL_UNKNOWN_VALUE"))
     }
 
     assertFalse(message.contains("SENTINEL"), "the value must not be echoed: $message")
@@ -366,7 +507,7 @@ class MatchmakingRequestTest {
   @Test
   fun anInvalidGameTypeValueIsNeverEchoedInTheError() {
     val message = assertDenied("invalid-argument") {
-      parseRankedSearchRequest(mapOf("gameType" to "SENTINEL_GAME_TYPE"))
+      parseSearchRequest(ranked("gameType" to "SENTINEL_GAME_TYPE"))
     }
 
     assertFalse(message.contains("SENTINEL"), "the value must not be echoed: $message")
@@ -375,12 +516,22 @@ class MatchmakingRequestTest {
   @Test
   fun aNonStringGameTypeValueIsNeverEchoedInTheError() {
     val message = assertDenied("invalid-argument") {
-      parseRankedSearchRequest(mapOf("gameType" to 123456))
+      parseSearchRequest(ranked("gameType" to 123456))
     }
 
     assertFalse(message.contains("123456"), "the value must not be echoed: $message")
     // Absence alone is not enough: the message must still tell the client
     // which field is wrong.
     assertTrue(message.contains("'gameType'"), "the message should name the field: $message")
+  }
+
+  @Test
+  fun anInvalidModeValueIsNeverEchoedInTheError() {
+    val message = assertDenied("invalid-argument") {
+      parseSearchRequest(ranked("mode" to "SENTINEL_MODE"))
+    }
+
+    assertFalse(message.contains("SENTINEL"), "the value must not be echoed: $message")
+    assertTrue(message.contains("'mode'"), "the message should name the field: $message")
   }
 }

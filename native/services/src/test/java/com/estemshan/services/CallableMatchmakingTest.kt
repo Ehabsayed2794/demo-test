@@ -1,16 +1,18 @@
 package com.estemshan.services
 
 import com.estemshan.engine.GameType
+import com.estemshan.engine.MatchMode
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * S56 — the production [MatchmakingPort] over the Ranked queue, and the
- * answer vocabulary it is read in.
+ * S56/S71 — the production [MatchmakingPort] over the solo queue, Ranked and
+ * Unranked, and the answer vocabulary it is read in.
  *
  * Two things are proven here, and neither of them can be proven against the
  * Functions emulator:
@@ -26,10 +28,17 @@ import org.junit.Test
  *     carries a tier changes nothing, an unknown status is refused rather than
  *     guessed at, and a `MATCH_FOUND` without a table id is not a match.
  *
+ * S71 adds the third thing this file proves: **the mode is the player's own
+ * choice and nothing more.** It rides along on the wire, a Room is refused
+ * before anything reaches the wire at all, the budget it earns outlasts the
+ * fill window the server promised it, and the one number the server publishes
+ * for a waiting Unranked search — its fill deadline — reaches the screen
+ * without the client inventing a countdown of its own.
+ *
  * The wire vocabulary (`MATCH_FOUND`, `SEARCHING`, `IDLE`, `tableId`,
- * `retryAfterMillis`) and the transport codes' names are repeated here as
- * literals because `:services` cannot see `:functions` — the same unavoidable
- * duplication `DisconnectVoteResponseTest` documents.
+ * `retryAfterMillis`, `fillDeadlineMillis`) and the transport codes' names are
+ * repeated here as literals because `:services` cannot see `:functions` — the
+ * same unavoidable duplication `DisconnectVoteResponseTest` documents.
  *
  * What is NOT here: the server's own decision of who is seated with whom
  * (RD9's pool, GM5's GameType, the resolver pass), which is pinned by
@@ -55,8 +64,8 @@ class CallableMatchmakingTest {
     val calls = mutableListOf<String>()
     var cancels = 0
 
-    override suspend fun enqueue(gameType: GameType): MatchmakingState {
-      calls += "enqueue:${gameType.name}"
+    override suspend fun enqueue(gameType: GameType, mode: MatchMode): MatchmakingState {
+      calls += "enqueue:${gameType.name}:${mode.name}"
       return enqueueAnswer
     }
 
@@ -76,16 +85,19 @@ class CallableMatchmakingTest {
 
   private fun port(
     transport: MatchmakingTransport,
-    budgetMillis: Long = 1_000L,
+    budgetMillis: Long? = null,
   ): MatchmakingPort = CallableMatchmaking(
     transport,
     pollIntervalMillis = 10L,
     searchBudgetMillis = budgetMillis,
   )
 
-  private suspend fun search(port: MatchmakingPort): List<MatchmakingEvent> {
+  private suspend fun search(
+    port: MatchmakingPort,
+    mode: MatchMode = MatchMode.RANKED,
+  ): List<MatchmakingEvent> {
     val events = mutableListOf<MatchmakingEvent>()
-    port.search("uid-player", GameType.FULL).collect { events += it }
+    port.search("uid-player", GameType.FULL, mode).collect { events += it }
     return events
   }
 
@@ -98,7 +110,7 @@ class CallableMatchmakingTest {
 
     search(port)
 
-    assertTrue("the GameType rides along", transport.calls.contains("enqueue:FULL"))
+    assertTrue("the GameType rides along", transport.calls.contains("enqueue:FULL:RANKED"))
     for (call in transport.calls) {
       assertFalse("no identity reaches the wire: $call", call.contains("uid"))
       assertFalse("no tier reaches the wire: $call", call.contains("tier", ignoreCase = true))
@@ -386,5 +398,170 @@ class CallableMatchmakingTest {
         MatchmakingResponse.forCodeName(code),
       )
     }
+  }
+
+  // ── S71: the mode, the budget it earns, and the deadline it publishes ──
+
+  @Test
+  fun theModeRidesAlongOnTheWire() = runTest {
+    val transport = FakeTransport(enqueueAnswer = MatchmakingState.Searching(10))
+    val port = port(transport, budgetMillis = 50)
+
+    search(port, MatchMode.UNRANKED)
+
+    assertTrue(
+      "the Unranked search says so",
+      transport.calls.contains("enqueue:FULL:UNRANKED"),
+    )
+  }
+
+  @Test
+  fun aRoomIsRefusedRatherThanQueued() {
+    // A Room is filled by invitation, never by a queue: a search for one
+    // would sit in a pool that can never seat it.
+    val transport = FakeTransport(enqueueAnswer = MatchmakingState.Searching(10))
+    val port = port(transport)
+
+    val failure = assertThrows(IllegalArgumentException::class.java) {
+      port.search("uid-player", GameType.FULL, MatchMode.ROOM)
+    }
+
+    assertTrue(
+      "the refusal names the mode: ${failure.message}",
+      failure.message!!.contains("ROOM"),
+    )
+    assertTrue("nothing reaches the wire", transport.calls.isEmpty())
+  }
+
+  @Test
+  fun aRankedSearchGivesUpAfterTheRankedBudget() = runTest {
+    val transport = FakeTransport(
+      enqueueAnswer = MatchmakingState.Searching(1_000),
+      pollAnswers = List(400) { MatchmakingState.Searching(1_000) },
+    )
+    val port = port(transport)
+
+    val started = testScheduler.currentTime
+    val events = search(port, MatchMode.RANKED)
+    val waited = testScheduler.currentTime - started
+
+    assertEquals(listOf<MatchmakingEvent>(MatchmakingEvent.TimedOut), events)
+    assertEquals("the Ranked budget is two minutes", 120_000L, waited)
+  }
+
+  @Test
+  fun anUnrankedSearchWaitsOutTheFillWindow() = runTest {
+    // The client must outlast the server's own promise — the four-minute
+    // fill window — or it would cancel a search the server was about to fill.
+    val transport = FakeTransport(
+      enqueueAnswer = MatchmakingState.Searching(1_000),
+      pollAnswers = List(400) { MatchmakingState.Searching(1_000) },
+    )
+    val port = port(transport)
+
+    val started = testScheduler.currentTime
+    val events = search(port, MatchMode.UNRANKED)
+    val waited = testScheduler.currentTime - started
+
+    assertEquals(listOf<MatchmakingEvent>(MatchmakingEvent.TimedOut), events)
+    assertTrue(
+      "the client waited out the four-minute fill window: $waited",
+      waited >= 240_000L,
+    )
+    assertEquals("the window plus a grace for the last round trip", 300_000L, waited)
+  }
+
+  @Test
+  fun anUnrankedSearchPublishesTheServersFillDeadline() = runTest {
+    val transport = FakeTransport(
+      enqueueAnswer = MatchmakingState.Searching(10, fillDeadlineMillis = 300_000L),
+    )
+    val port = port(transport, budgetMillis = 50)
+
+    val events = search(port, MatchMode.UNRANKED)
+
+    // The deadline is published, and the search goes on: the event is
+    // progress, not an outcome.
+    assertEquals(
+      listOf<MatchmakingEvent>(
+        MatchmakingEvent.Searching(300_000L),
+        MatchmakingEvent.TimedOut,
+      ),
+      events,
+    )
+  }
+
+  @Test
+  fun aRankedSearchNeverPublishesAFillDeadline() = runTest {
+    // A Ranked table is a pair, not a window: the port never invents a
+    // deadline, even if a skewed server published one.
+    val transport = FakeTransport(
+      enqueueAnswer = MatchmakingState.Searching(10, fillDeadlineMillis = 300_000L),
+    )
+    val port = port(transport, budgetMillis = 50)
+
+    val events = search(port, MatchMode.RANKED)
+
+    assertEquals(listOf<MatchmakingEvent>(MatchmakingEvent.TimedOut), events)
+  }
+
+  @Test
+  fun theDeadlineIsPublishedOnceHoweverOftenTheServerRepeatsIt() = runTest {
+    val transport = FakeTransport(
+      enqueueAnswer = MatchmakingState.Searching(10, fillDeadlineMillis = 300_000L),
+      pollAnswers = List(10) { MatchmakingState.Searching(10, fillDeadlineMillis = 300_000L) },
+    )
+    val port = port(transport, budgetMillis = 50)
+
+    val events = search(port, MatchMode.UNRANKED)
+
+    assertEquals(
+      "the deadline is a fact, not a per-poll event",
+      1,
+      events.count { it is MatchmakingEvent.Searching },
+    )
+  }
+
+  @Test
+  fun theAnswerCarriesTheServersFillDeadline() {
+    assertEquals(
+      MatchmakingState.Searching(750, 300_000L),
+      MatchmakingResponse.forData(
+        mapOf(
+          "status" to "SEARCHING",
+          "retryAfterMillis" to 750,
+          "fillDeadlineMillis" to 300_000L,
+        ),
+        10,
+      ),
+    )
+  }
+
+  @Test
+  fun anAnswerWithNoDeadlineIsNoDeadline() {
+    // A Ranked search's normal answer: no deadline, and no invented one.
+    assertEquals(
+      MatchmakingState.Searching(10, null),
+      MatchmakingResponse.forData(mapOf("status" to "SEARCHING"), 10),
+    )
+  }
+
+  @Test
+  fun aDeadlineThatIsNotANumberIsNoDeadline() {
+    // A number the client cannot count down is not a deadline it may show.
+    assertEquals(
+      MatchmakingState.Searching(10, null),
+      MatchmakingResponse.forData(
+        mapOf("status" to "SEARCHING", "fillDeadlineMillis" to "soon"),
+        10,
+      ),
+    )
+    assertEquals(
+      MatchmakingState.Searching(10, null),
+      MatchmakingResponse.forData(
+        mapOf("status" to "SEARCHING", "fillDeadlineMillis" to 0),
+        10,
+      ),
+    )
   }
 }
