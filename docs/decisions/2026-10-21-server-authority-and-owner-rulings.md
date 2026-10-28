@@ -189,7 +189,7 @@ is deferred to a later, explicitly approved environment.
 
 ### O. Fifth-batch owner rulings (2026-10-21, later) [D unless marked]
 - **Q2e — Vote Kick with a shared Koz [D].** **No Vote Kick if the Koz is shared.** Vote Kick exists to stop one player spoiling the game, so the target must be a **unique** Koz (RD18 unchanged). **Open [Q2f]:** how RP placement treats players in a shared Koz (not answered).
-- **Q26 — Auto-Match [D].** (1) The tier rule between a joiner and the creator's table is the **RD29 band (at most one tier apart)**. (2) The joiner **sees the table settings (timer, bots) before joining**. (3) If no waiting table exists, show **"no tables right now" plus a Create Table button** (no waiting, no auto-created table).
+- **Q26 — Auto-Match [D].** (1) The tier rule between a joiner and the creator's table is the **RD29 band (at most one tier apart)**. (2) The joiner **sees the table settings (timer, bots) before joining**. (3) If no waiting table exists, show **"no tables right now" plus a Create Table button** (no waiting, no auto-created table). **Superseded 2026-10-28 (Q26 re-ruled) — clause (3) only:** the server may form a private table for Auto Match and both players press Ready, and the player must be offered **both** paths (Create Game or Auto Match). Clauses (1) and (2) stand. See `docs/decisions/2026-10-28-matchmaking-owner-rulings.md`.
 - **Q14b — departure charges, rewritten [D].** **Supersedes** the earlier Q14 line, A5.1's charge table (ROOM none; Vote Kick 1 Koz) and the 2026-10-17 UNRANKED reading, **where they differ**:
   - **ROOM:** a player who leaves **for any reason** is charged **1 Koz** (not 2).
   - **RANKED and UNRANKED:** leaving **for any reason** is charged **2 Koz**.

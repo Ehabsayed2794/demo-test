@@ -13,13 +13,20 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 |---|---|---|---|---|---|
 | O-12 | P2 | What voice provider, protocol, transport, moderation and permission model does V1 use, and what does it cost? | Voice is **in V1 scope** for Rooms and the Waiting Room (O-08), but no provider means no estimate and no implementation. | Needs the owner. **No recommendation recorded.** | Q42; 2026-10-23 record §4 |
 | O-13 | P2 | Which ads provider and consent-management choice does V1 use, and where may ads appear? | Ads are in V1 scope (O-09); no provider, consent flow or placement policy exists, and none may be invented. | Needs the owner. **No recommendation recorded.** | Q43; 2026-10-23 record §4 |
-| O-15 | P2 | O-07 says the Ranked pool is shared and players more than one tier apart are never paired. Does that require **symmetric** one-tier pairing both ways, or does RD9's no-opt-up rule stay (Gold may never be paired into Platinum)? | `isPoolEligible` is directional today: same tier or exactly one tier **below**, never one above (`MatchmakingPool.kt:82-91`). A symmetric reading changes matchmaking; an asymmetric reading leaves the code as-is. | (a) symmetric absolute band; (b) keep no-opt-up. **Recommendation (not approved): (a)**, because "shared pool" reads as a pairwise distance. | O-07; `MatchmakingPool.kt:65-91`; C-5 |
+| O-15 | P2 | O-07 says the Ranked pool is shared and players more than one tier apart are never paired. Does that require **symmetric** one-tier pairing both ways, or does RD9's no-opt-up rule stay (Gold may never be paired into Platinum)? | `isPoolEligible` is directional today: same tier or exactly one tier **below**, never one above (`MatchmakingPool.kt:82-91`). A symmetric reading changes matchmaking; an asymmetric reading leaves the code as-is. | **(a) — CLOSED 2026-10-28 (owner ruling): symmetric absolute band, exactly one tier up or down, never two.** `isPoolEligible` keeps its per-searcher direction; the resolver composes both. See `docs/decisions/2026-10-28-matchmaking-owner-rulings.md`. | O-07; `MatchmakingPool.kt:65-91`; C-5; S56 |
 | O-16 | P2 | Is Stage 0 the next work item, or does IAP stay planned-but-blocked until a runtime is approved? | Play Billing verification needs a backend; Firebase Spark cannot host it and Cloudflare Workers is not approved (O-06). No purchase code can ship either way. | (a) run Stage 0 next; (b) keep IAP blocked. **Recommendation (not approved): (b).** | O-06; plan V2 §5.9; N-5 |
 | O-17 | P2 | In what order should the implementation sprints run? | The order changes delivery sequence and review load, not the rules. | Proposed: S1 → S2/S4 → S3 → S5/S6 → S7 → S8. **Recommendation (not approved): as proposed**, because S2 depends on S1's round progression. | plan V2 §5.10 |
 | O-18 | P2 | Does the owner supply Arabic prose for the new rule text, or do the rule documents stay English with Arabic only in the app? | The R-07 localization gate applies to user-facing text; the rule documents are English today. | (a) English rule documents, Arabic app labels only; (b) owner supplies Arabic rule prose. **Recommendation (not approved): (a).** | 2026-10-23 record §5; R-07 |
 
-> All six rows are **open**. Every recommendation is explicitly **not approved**. The Arabic wording of any
+> **Five rows are open** — O-15 was **CLOSED 2026-10-28** (symmetric one-tier band; see
+> `docs/decisions/2026-10-28-matchmaking-owner-rulings.md`). Every remaining recommendation is
+> explicitly **not approved**. The Arabic wording of any
 > future rule text remains the owner's to supply (the plan's R-07 localization gate still holds).
+>
+> **Pointer, 2026-10-28 (owner ruling): Q26 clause (3) is SUPERSEDED.** The server may form a
+> private table for Auto Match (both players press Ready), and the player must be offered
+> **both** paths — Create Game or Auto Match. The Q26 row in §C and the "direction still open"
+> notes beside Q41 are historical. See `docs/decisions/2026-10-28-matchmaking-owner-rulings.md`.
 
 ## B. Resolved / decided / deferred (no question needed)
 

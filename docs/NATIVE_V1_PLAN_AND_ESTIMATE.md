@@ -1435,7 +1435,7 @@ One epic per phase; stories sized in hours; `S/M/L` from §2. Critical path mark
 | | S53 Placement service: 3 scripted matches (Easy+Med / Med+Hard / Hard+Expert), system-controlled bots | 16 | S44 |
 | | S54 Placement scoring: engine-derived signals, 10/20/70 weights, Platinum ceiling, division lower-bound start | 20 | S53, S47 |
 | | S55 Ranked statistics accumulator: the 9 values, Public+Private, Placement excluded | 14 | S51, S44 |
-| | S56 Matchmaking: server-side eligible-pool derivation (own tier / one below), queue, search lifecycle; **`gameType` carried on the search, orthogonal to the tier pool (GM5 — the pool rule never widens or narrows for Mini)** | 30 | S44 |
+| | S56 Matchmaking: server-side eligible-pool derivation (own tier / one below), queue, search lifecycle; **`gameType` carried on the search, orthogonal to the tier pool (GM5 — the pool rule never widens or narrows for Mini)**. **Pointer, 2026-10-28:** the server-side band is **symmetric** (one tier up or down — O-15 closed) and the search lease is **30 s**; see `docs/decisions/2026-10-28-matchmaking-owner-rulings.md` | 30 | S44 |
 | | S57 Matchmaking anti-abuse: no client tier selection, no opt-up, pool authority (RD9) | 12 | S56 |
 | | S58 **Rank-down** (formerly Private/Password Ranked): **cross-tier within RD29 only** — one tier from the creator or less, enforced by the S70 join gate; password gate, Ranked integrity retained | 14 | S50, S48 |
 | | S59 Seasons: 3-month cycle, season ID, two-step reset with ladder floor, **King → Royal I**, Highest Rank preserved | 20 | S44, S49 |

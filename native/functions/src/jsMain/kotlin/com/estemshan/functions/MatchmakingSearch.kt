@@ -62,19 +62,24 @@ import com.estemshan.engine.rankLadder
  * this file creates none.
  *
  * ------------------------------------------------------------------------
- * DIRECTIONALITY — THE ONE OPEN QUESTION THIS FILE DOES NOT CLOSE
+ * DIRECTIONALITY — CLOSED 2026-10-28 (O-15): THE BAND IS SYMMETRIC
  *
- * RD9's pool is directional: a Gold searcher's pool admits a Silver
- * candidate, and a Silver searcher's pool never admits a Gold one. The
- * resolver composes the engine's own two rules — `isPoolEligible(searcher,
- * candidate)` and the session's absolute band — with the EARLIER searcher (in
- * the deterministic queue order) as the pool owner, which is the composition
- * `MatchmakingSession`'s own KDoc prescribes. A Gold who searched first is
- * served a Silver; a Silver who searched first is never served a Gold.
+ * The owner ruled the pairing band **symmetric, exactly one tier, up or
+ * down** — `docs/decisions/2026-10-28-matchmaking-owner-rulings.md`. So the
+ * table rule here is absolute distance: the same tier, or exactly one tier
+ * above or below, and never two. A Silver who searched first is served a
+ * Gold exactly as a Gold who searched first is served a Silver.
  *
- * That is the "leaves the code as-is" branch of O-15, the open question
- * whether the band is symmetric. An owner ruling of "symmetric" changes ONE
- * composition site (which searcher owns the pool) and nothing else here.
+ * This does NOT relax RD9. `isPoolEligible` keeps its downward direction and
+ * still answers "which tiers may a searcher of tier T be served from" — the
+ * player never picks a higher pool. The resolver composes BOTH directions
+ * ([tiersAreAdjacent]), which is the server forming the mixed match RD9
+ * already permits ("do not write 'Gold players can only be matched in
+ * Gold'"). The session's own absolute band stays the distance condition, so
+ * the two rules agree by construction.
+ *
+ * Arrival order still decides the table's creator and the deterministic
+ * order of the pass; it no longer decides whether a pair is legal.
  *
  * ------------------------------------------------------------------------
  * IDEMPOTENCY
@@ -117,8 +122,15 @@ private const val ANSWER_MATCH_FOUND = "MATCH_FOUND"
  * paired into a table it will never join. A client that polls renews it; a
  * client that stopped is simply not there any more, and the pass reclaims
  * its document.
+ *
+ * 30 s is the owner's ruling (2026-10-28): long enough that a normal poll
+ * cadence of 3 s survives a slow round trip or a brief hiccup, short enough
+ * that a dead seat does not strand a live partner for a minute. The boundary
+ * is exact — exactly 30 s of silence is still a live search, 30 s and 1 ms is
+ * not (`>`, not `>=`), pinned by
+ * `theSearchLeaseIsThirtySecondsAndTheBoundaryIsExact`.
  */
-private const val SEARCH_LEASE_MILLIS = 60_000L
+private const val SEARCH_LEASE_MILLIS = 30_000L
 
 /**
  * The cadence the server hands a waiting client: how long until it should
@@ -371,9 +383,9 @@ internal suspend fun runSearchPass(
     if (attempts >= MAX_RESOLVE_ATTEMPTS_PER_PASS) break
     val host = ordered[hostIndex]
     if (host.uid in taken) continue
-    // The pool owner is the EARLIER searcher, so only the searches that came
-    // after it are candidates: a pair is considered exactly once, with its
-    // earlier half owning the pool.
+    // Every later search is a candidate. The pair is considered exactly once,
+    // with the earlier half becoming the table's creator (O-15: which half is
+    // earlier no longer decides whether the pair is legal).
     for (guestIndex in hostIndex + 1 until ordered.size) {
       if (attempts >= MAX_RESOLVE_ATTEMPTS_PER_PASS) break
       val guest = ordered[guestIndex]
@@ -431,13 +443,19 @@ private suspend fun reclaimExpired(
 }
 
 /**
- * The pairing rule — RD9's pool, GM5's GameType, and the absolute band.
+ * The pairing rule — RD9's pool (both directions), GM5's GameType, and the
+ * absolute band.
  *
- * The EARLIER searcher owns the pool: its pool must admit the later one.
- * That is the directionality RD9 states — a Gold searcher may be served a
- * Silver, a Silver searcher is never served a Gold — and it is the
- * composition `MatchmakingSession`'s own KDoc prescribes:
- * `isPoolEligible(searcher, candidate) && session.bandAccepts(candidate.tier)`.
+ * O-15 (closed 2026-10-28) makes the band SYMMETRIC: the same tier, or
+ * exactly one tier up OR down, and never two. [tiersAreAdjacent] is that
+ * rule stated in one place, as the union of RD9's own directional policy —
+ * a Gold searcher's pool admits a Silver and a Silver searcher's pool admits
+ * a Gold — so the policy function keeps its no-opt-up meaning and the
+ * resolver owns the table rule.
+ *
+ * The session's [MatchmakingSession.bandAccepts] is the same distance
+ * condition applied to the seats already at the table, so the two rules
+ * cannot disagree.
  *
  * GM5 rides alongside and is orthogonal: the GameType never widens or narrows
  * the tier pool, it only decides whether two searches may be in the same
@@ -451,9 +469,23 @@ private fun isPairable(host: QueuedSearch, guest: QueuedSearch, now: Long): Bool
   // The absolute band: the table may span at most one tier.
   val session = MatchmakingSession.open(host.uid, host.tier, now)
   if (session.join(guest.uid, guest.tier, now).humans.size < 2) return false
-  // RD9's direction: the pool owner's pool must admit the candidate.
-  return isPoolEligible(rungOf(host.tier), rungOf(guest.tier))
+  // O-15: one tier apart is a pair in either direction.
+  return tiersAreAdjacent(host.tier, guest.tier)
 }
+
+/**
+ * O-15's symmetric band: [a] and [b] are the same tier, or exactly one tier
+ * apart in EITHER direction.
+ *
+ * Written as the union of RD9's directional pool rule rather than as a new
+ * arithmetic, so there is exactly one definition of "one tier" in the
+ * codebase ([isPoolEligible]) and the symmetry is visible where it is
+ * decided. A foreign tier fails loudly inside [isPoolEligible], which is
+ * unreachable here because both tiers were validated when their queue
+ * documents were parsed.
+ */
+private fun tiersAreAdjacent(a: String, b: String): Boolean =
+  isPoolEligible(rungOf(a), rungOf(b)) || isPoolEligible(rungOf(b), rungOf(a))
 
 /**
  * Forms one table for a pair, inside one transaction.

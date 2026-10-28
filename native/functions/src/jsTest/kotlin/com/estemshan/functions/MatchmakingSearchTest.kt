@@ -22,9 +22,11 @@ import kotlin.test.assertTrue
  *  1. **A client cannot name a tier, a pool or a player.** The request guard
  *     refuses those keys; it does not ignore them. A silently-ignored key is
  *     a key a client keeps sending while believing it works.
- *  2. **Directionality.** A Gold searcher may be served a Silver; a Silver
- *     searcher is never served a Gold. RD9 states it as a property of the
- *     POOL, and the pool belongs to whoever searched first.
+ *  2. **The band is symmetric — one tier, up or down.** A Gold searcher is
+ *     served a Silver and a Silver searcher is served a Gold; two tiers apart
+ *     never pair in either direction. RD9's pool stays directional (the
+ *     player never picks a higher pool); the server owns the table rule, and
+ *     the owner closed O-15 on 2026-10-28 as symmetric.
  *  3. **GM5 is exact equality.** A Full search and a Mini search never share
  *     a table, and the GameType never widens the tier band.
  *  4. **A search resolves AT MOST ONCE.** Re-running the pass over the same
@@ -329,53 +331,68 @@ class MatchmakingSearchTest {
     assertEquals(emptyList(), db.events)
   }
 
-  // ── 2. the direction of the pool ─────────────────────────────────────
+  // ── 2. the band is symmetric: one tier, up or down ───────────────────
 
   @Test
   fun aGoldSearcherIsServedASilver() = runTest {
     val db = db()
     val clock = TestClock()
 
-    // The Gold search arrives first, so the Gold pool owns the pairing.
+    // The Gold search arrives first, so it creates the table.
     enqueue(db, gold, clock = clock)
     clock.now += 1_000
     enqueue(db, silver, clock = clock)
 
-    assertEquals(1, db.rooms.size, "a Gold pool admits a Silver")
+    assertEquals(1, db.rooms.size, "a Gold searcher is served a Silver")
     val table = db.rooms.values.first()
     assertEquals(listOf(gold, silver), table["players"])
+    assertEquals(gold, table["creator"], "the earlier arrival created the table")
     assertEquals("RESOLVED", db.searches.getValue(gold)["status"])
     assertEquals("RESOLVED", db.searches.getValue(silver)["status"])
     assertEquals(db.searches.getValue(gold)["tableId"], db.searches.getValue(silver)["tableId"])
   }
 
   @Test
-  fun aSilverSearcherIsNeverServedAGold() = runTest {
+  fun aSilverSearcherIsServedAGold() = runTest {
     val db = db()
     val clock = TestClock()
 
-    // The Silver search arrives first, so the SILVER pool owns the pairing —
-    // and a Silver pool never admits a Gold.
+    // O-15 (closed 2026-10-28): the band is symmetric, so the reverse order
+    // pairs too. The Silver arrives first and creates the table; arrival
+    // order decides the creator, never the legality of the pair.
     enqueue(db, silver, clock = clock)
     clock.now += 1_000
     enqueue(db, gold, clock = clock)
 
-    assertTrue(db.rooms.isEmpty(), "a Silver searcher must never be served a Gold")
-    assertEquals("WAITING", db.searches.getValue(silver)["status"])
-    assertEquals("WAITING", db.searches.getValue(gold)["status"])
+    assertEquals(1, db.rooms.size, "a Silver searcher is served a Gold under the symmetric band")
+    val table = db.rooms.values.first()
+    assertEquals(listOf(silver, gold), table["players"])
+    assertEquals(silver, table["creator"], "the earlier arrival created the table")
+    assertEquals("RESOLVED", db.searches.getValue(silver)["status"])
+    assertEquals("RESOLVED", db.searches.getValue(gold)["status"])
   }
 
   @Test
   fun twoTiersApartNeverShareATable() = runTest {
-    val db = db()
-    val clock = TestClock()
-    db.profiles["uid-platinum"] = profile("Platinum", 1000)
+    // Symmetry is one tier, never two — asserted in BOTH directions, because
+    // a rule that only looked down would pass the first half alone.
+    val downward = db()
+    downward.profiles["uid-platinum"] = profile("Platinum", 1000)
+    val downClock = TestClock()
+    enqueue(downward, "uid-platinum", clock = downClock)
+    downClock.now += 1_000
+    enqueue(downward, silver, clock = downClock)
+    assertTrue(downward.rooms.isEmpty(), "Platinum then Silver: two tiers apart, no table")
 
-    enqueue(db, "uid-platinum", clock = clock)
-    clock.now += 1_000
-    enqueue(db, silver, clock = clock)
-
-    assertTrue(db.rooms.isEmpty(), "the band is one tier, never two")
+    val upward = db()
+    upward.profiles["uid-platinum"] = profile("Platinum", 1000)
+    val upClock = TestClock()
+    enqueue(upward, silver, clock = upClock)
+    upClock.now += 1_000
+    enqueue(upward, "uid-platinum", clock = upClock)
+    assertTrue(upward.rooms.isEmpty(), "Silver then Platinum: two tiers apart, no table")
+    assertEquals("WAITING", upward.searches.getValue(silver)["status"])
+    assertEquals("WAITING", upward.searches.getValue("uid-platinum")["status"])
   }
 
   @Test
@@ -687,14 +704,15 @@ class MatchmakingSearchTest {
   @Test
   fun theQueueOrderIsArrivalThenUidAndNeverRandom() = runTest {
     // 1. The ARRIVAL stamp comes first: a later arrival with an earlier uid
-    //    still queues second, and the Gold that arrived first owns the pool.
+    //    still queues second and creates nothing, while the earlier arrival
+    //    creates the table.
     val byArrival = db()
     byArrival.searches["uid-z"] = waiting("uid-z", "Gold", enqueuedAt = 1_000L)
     byArrival.searches["uid-a"] = waiting("uid-a", "Silver", enqueuedAt = 2_000L)
 
     runSearchPass(byArrival, TestClock())
 
-    assertEquals(1, byArrival.rooms.size, "the earlier arrival owns the pool")
+    assertEquals(1, byArrival.rooms.size, "the earlier arrival creates the table")
     assertEquals(
       listOf("uid-a", "uid-z"),
       (byArrival.rooms.values.first()["players"] as List<*>).map { it as String }.sorted(),
@@ -702,15 +720,17 @@ class MatchmakingSearchTest {
     assertEquals("uid-z", byArrival.rooms.values.first()["creator"], "the earlier arrival created the table")
 
     // 2. The UID only breaks a TIE: at the same arrival stamp the Silver
-    //    sorts first, so the SILVER pool owns the pairing — and a Silver pool
-    //    never admits a Gold.
+    //    sorts first, so the Silver creates the table. The order is a
+    //    property of the queue; O-15's symmetry means the tiers no longer
+    //    decide whether the pair is legal, so the assertion is WHO is first.
     val byUid = db()
     byUid.searches["uid-a"] = waiting("uid-a", "Silver", enqueuedAt = 1_000L)
     byUid.searches["uid-z"] = waiting("uid-z", "Gold", enqueuedAt = 1_000L)
 
     runSearchPass(byUid, TestClock())
 
-    assertTrue(byUid.rooms.isEmpty(), "the uid tie-break put the Silver first, so it owns the pool")
+    assertEquals(1, byUid.rooms.size, "the uid tie-break is the only tie-break")
+    assertEquals("uid-a", byUid.rooms.values.first()["creator"], "the uid tie-break put the Silver first")
   }
 
   // ── 9. the pass's work is bounded ────────────────────────────────────
@@ -850,6 +870,24 @@ class MatchmakingSearchTest {
     assertNull(db.searches[gold], "an expired lease is reclaimed")
     assertNotNull(db.searches[silver], "a live search stays")
     assertTrue(db.rooms.isEmpty(), "a reclaimed search is never paired")
+  }
+
+  @Test
+  fun theSearchLeaseIsThirtySecondsAndTheBoundaryIsExact() = runTest {
+    // The owner's 30 s ruling, pinned at the boundary: exactly 30 s of
+    // silence is still a live search, 30 s and 1 ms is not. A 60 s lease
+    // (the earlier value) fails the second assertion, which is the point.
+    val db = db()
+    val clock = TestClock(now = 0L)
+    db.searches[gold] = waiting(gold, "Gold", enqueuedAt = 0L, heartbeatAt = 0L)
+
+    clock.now = 30_000L
+    runSearchPass(db, clock)
+    assertNotNull(db.searches[gold], "exactly 30 s of silence is still a live search")
+
+    clock.now = 30_001L
+    runSearchPass(db, clock)
+    assertNull(db.searches[gold], "past 30 s the seat is reclaimed")
   }
 
   @Test

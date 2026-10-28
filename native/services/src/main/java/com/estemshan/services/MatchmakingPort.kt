@@ -18,7 +18,9 @@ import kotlinx.coroutines.flow.Flow
  * exactly one below) is resolved server-side, so [search] deliberately carries
  * **no tier parameter** — a caller cannot request a pool even by accident. A
  * lower-tier player cannot opt up, and the server may still form a
- * mixed-tier match.
+ * mixed-tier match. Since O-15 closed (2026-10-28) the *table* rule is
+ * symmetric — the same tier or exactly one tier up **or** down, never two —
+ * while this per-searcher pool rule keeps its downward direction.
  *
  * **GM5 — Game Type rides along and is orthogonal to the pool.** The search
  * carries the player's Full/Mini choice and the server forms matches for it,

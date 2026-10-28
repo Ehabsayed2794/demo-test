@@ -33,6 +33,15 @@ package com.estemshan.engine
  * searching Gold). The symmetric consent rule is RD29's, lives in
  * PartyEligibility.kt for parties, and never applies to solo Auto-Match.
  *
+ * **O-15 CLOSED 2026-10-28 (owner ruling): the table rule is SYMMETRIC —
+ * one tier, up or down.** This file is unchanged by that ruling: the pool
+ * still answers per searcher, and the resolver composes BOTH directions
+ * (`isPoolEligible(a, b) || isPoolEligible(b, a)`) to form the table. So
+ * "no opt-up" survives as the player's own choice (a client still cannot
+ * name a higher pool) while a server-formed Gold/Silver table is legal in
+ * either arrival order. See
+ * `docs/decisions/2026-10-28-matchmaking-owner-rulings.md`.
+ *
  * Engineering judgment inside that closed envelope, pinned by
  * MatchmakingPoolTest:
  *

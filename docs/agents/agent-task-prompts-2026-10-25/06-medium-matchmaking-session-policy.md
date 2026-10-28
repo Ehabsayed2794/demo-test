@@ -7,6 +7,12 @@ file-disjoint write scope. Do not touch any file outside it.
 it is accidentally settling **O-15** (band directionality) or encoding a vote rule the owner did not
 approve. Stay inside the policy slice described below.
 
+> **Pointer, 2026-10-28 — this prompt is historical.** **O-15 is CLOSED**: the owner ruled the
+> band **symmetric, exactly one tier up or down, never two**. The instruction below to "not assert
+> a direction" was correct for this task at the time and no longer describes the resolver; the
+> engine files named here were not changed by the ruling (the resolver composes both directions).
+> See `docs/decisions/2026-10-28-matchmaking-owner-rulings.md`.
+
 ## 1. Read first, in this order
 
 1. `AGENTS.md`.
