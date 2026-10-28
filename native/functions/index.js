@@ -36,6 +36,7 @@ const exported = {
   enqueueSearch: kotlin.enqueueSearch,
   pollSearch: kotlin.pollSearch,
   cancelSearch: kotlin.cancelSearch,
+  playUnranked: kotlin.playUnranked,
 };
 
 for (const [name, fn] of Object.entries(exported)) {

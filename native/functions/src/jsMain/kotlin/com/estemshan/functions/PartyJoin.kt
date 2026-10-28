@@ -53,13 +53,6 @@ private const val KEY_MODE = "mode"
 private const val KEY_RANK_DOWN = "rankDown"
 
 private const val ROOM_STATUS_CLOSED = "closed"
-private const val ROOM_STATUS_IN_GAME = "in_game"
-
-/** The room's public shape. Every other field on the document stays server-side. */
-private val ROOM_PROJECTION = listOf(
-  KEY_ROOM_ID, "name", KEY_STATUS, KEY_CREATOR, KEY_PLAYERS, "readyPlayers",
-  KEY_MODE, KEY_RANK_DOWN, "gameType", "scoringMode", "matchId",
-)
 
 /**
  * Keys a client is never allowed to send. Each one is either an identity the
@@ -255,18 +248,18 @@ private fun refusal(code: String, reason: String, message: String): HttpsError =
  * leave, not what may not. No rank, RP, season, placement, shield, email, coin
  * or token is reachable from this list, and [PartyJoinTest] searches the whole
  * flattened payload for every one of those words.
+ *
+ * The allow-list itself lives in [ROOM_PUBLIC_FIELDS], shared with S71's
+ * conversion: two copies of a projection that decides what may leave the
+ * authority layer are two lists that drift, and the field a later story adds
+ * to one of them is a leak in exactly one of the two.
  */
 private fun joined(
   roomId: String,
   room: Map<String, Any?>,
   players: List<String>,
 ): Map<String, Any?> {
-  val projected = LinkedHashMap<String, Any?>()
-  for (key in ROOM_PROJECTION) projected[key] = room[key]
-  // The id the read used, always: an auto-ID room carries its id nowhere in its
-  // own fields, and the client keys its room state on it.
-  projected[KEY_ROOM_ID] = roomId
-  projected[KEY_PLAYERS] = players
+  val projected = projectRoom(room + (KEY_PLAYERS to players), roomId)
   return linkedMapOf("joined" to true, "room" to projected)
 }
 

@@ -109,3 +109,80 @@ fun isPoolEligible(searcher: LadderRank, candidate: LadderRank): Boolean {
  * stays the resolver's business.
  */
 fun isSearchCompatible(a: GameType, b: GameType): Boolean = a == b
+
+/**
+ * S71 — the pool a search belongs to, as a MODE-AWARE key.
+ *
+ * A RANKED search carries the tier the server derived (RD9's band). An
+ * UNRANKED search carries NOTHING: the rank-blind pool has no tier to
+ * read, so there is no field to hold one. Making the key a sealed type
+ * rather than a nullable tier is what makes that structural — a
+ * [MatchPoolKey.RankBlind] cannot be handed a rank even by accident, and
+ * a [MatchPoolKey.Tiered] cannot be built without one.
+ */
+sealed interface MatchPoolKey {
+  /** A RANKED search, keyed by the tier the server derived for it. */
+  data class Tiered(val tier: String) : MatchPoolKey
+
+  /** An UNRANKED search — rank-blind, no tier, by construction. */
+  data object RankBlind : MatchPoolKey
+}
+
+/**
+ * The pool key for a search in [mode].
+ *
+ * RANKED needs the tier the server derived, and fails loudly without one —
+ * an enqueue that reached this point with no profile has a bug upstream,
+ * and the repo's convention is to fail loud rather than silently refuse.
+ * UNRANKED needs no profile at all, which is the point: a player with no
+ * ranked profile can still play. ROOM never pools, so it has no key.
+ */
+fun poolKeyOf(mode: MatchMode, tier: String?): MatchPoolKey? {
+  return when (mode) {
+    MatchMode.RANKED -> {
+      require(tier != null) {
+        "A RANKED search needs the tier the server derived for it"
+      }
+      MatchPoolKey.Tiered(tier)
+    }
+    MatchMode.UNRANKED -> MatchPoolKey.RankBlind
+    MatchMode.ROOM -> null
+  }
+}
+
+/**
+ * The mode-aware pairing rule (S71). Two RANKED searches pair by RD9's
+ * symmetric one-tier band (O-15, closed 2026-10-28: the same tier, or one
+ * above or below, never two). Two UNRANKED searches pair ALWAYS — the
+ * pool is rank-blind, so a King and a Bronze share a table without
+ * consulting a rank, because neither search carries one.
+ *
+ * Two searches in DIFFERENT modes never pair: the pools are separate, and
+ * a table's mode is the mode of the searches that formed it.
+ */
+fun isPoolCompatible(a: MatchPoolKey, b: MatchPoolKey): Boolean = when {
+  a is MatchPoolKey.Tiered && b is MatchPoolKey.Tiered -> tiersAreAdjacent(a.tier, b.tier)
+  a is MatchPoolKey.RankBlind && b is MatchPoolKey.RankBlind -> true
+  else -> false
+}
+
+/**
+ * RD9's band, composed in BOTH directions — the symmetric table rule O-15
+ * closed on 2026-10-28. The same tier, or exactly one tier above or
+ * below, never two. The composition is expressed through [isPoolEligible]
+ * so RD9's own definition stays the single source of the band; a foreign
+ * tier fails loudly there.
+ */
+fun tiersAreAdjacent(a: String, b: String): Boolean {
+  val rungA = rungOfTier(a)
+  val rungB = rungOfTier(b)
+  return isPoolEligible(rungA, rungB) || isPoolEligible(rungB, rungA)
+}
+
+private fun rungOfTier(tier: String): LadderRank {
+  val order = poolTierOrder
+  require(order.contains(tier)) {
+    "The matchmaking band needs a rung of the single ladder, was tier '$tier'"
+  }
+  return rankLadder.first { it.tier == tier }
+}

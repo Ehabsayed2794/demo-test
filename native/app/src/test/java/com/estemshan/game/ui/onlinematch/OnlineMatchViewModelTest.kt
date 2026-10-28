@@ -2672,6 +2672,41 @@ class OnlineMatchViewModelTest {
     }
   }
 
+  /**
+   * S71 / RD28: an UNRANKED match never settles either — it carries no
+   * standing, so there is nothing for the settler to move. The trigger
+   * names UNRANKED in its own branch (not by falling out of a RANKED
+   * test), and this is what pins that branch: the settler is never called,
+   * while the plain standings still reach the screen.
+   */
+  @Test
+  fun unrankedComplete_speaksNoSettlementWord() = runTest {
+    Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+    try {
+      factory = BroadcastFactory()
+      players = FakePlayers()
+      store = FakeMatchStore(Dealer.dealHands(11))
+      store.doc = completeRankedDoc().copy(mode = MatchMode.UNRANKED)
+      val settlements = ScriptedSettlements(
+        SettlementPort.SettlementOutcome.Settled(replayed = false, you = theMovement()),
+      )
+      val vm = makeVm("uid-a", Dispatchers.Main, settlements = settlements)
+      vm.start("m-unranked")
+      broadcast("m-unranked")
+      advanceUntilIdle()
+
+      assertEquals("an UNRANKED match never asks the settler", 0, settlements.calls.get())
+      val complete = vm.state.value as MatchUiState.MatchComplete
+      assertNull("no reveal — there is no ranked movement to show", complete.ranked)
+      assertEquals(
+        buildStandings(mapOf("p1" to 120, "p2" to 98, "p3" to 134, "p4" to 77)),
+        complete.standings,
+      )
+    } finally {
+      Dispatchers.resetMain()
+    }
+  }
+
   // ==========================================================================
   //  The hermetic stand-ins
   // ==========================================================================

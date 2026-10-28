@@ -42,6 +42,8 @@ const EXPECTED_NAMES = [
   "enqueueSearch",
   "pollSearch",
   "cancelSearch",
+  // S71 - the host-only "Play Unranked" conversion.
+  "playUnranked",
 ].sort();
 
 let failures = 0;
@@ -170,16 +172,16 @@ check(
     : "extra in manifest: " + extraInManifest.join(", "),
 );
 
-// --- 5. Exact match against the canonical 15 -------------------------------
+// --- 5. Exact match against the canonical 16 -------------------------------
 const manifestArray = [...manifestKeys].sort();
 check(
-  "Kotlin @JsName set equals canonical 15",
+  "Kotlin @JsName set equals canonical 16",
   kotlinArray.join(",") === EXPECTED_NAMES.join(",") &&
     kotlinArray.length === EXPECTED_NAMES.length,
   kotlinArray.join(", "),
 );
 check(
-  "manifest key set equals canonical 15",
+  "manifest key set equals canonical 16",
   manifestArray.join(",") === EXPECTED_NAMES.join(",") &&
     manifestArray.length === EXPECTED_NAMES.length,
   manifestArray.join(", "),

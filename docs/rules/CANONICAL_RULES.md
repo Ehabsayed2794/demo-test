@@ -577,6 +577,17 @@ Every rule in §§1–5 — the deal, the auction, both Game Types, both Calcula
    `UNRANKED` is `RANKED` in every rule except RP (frozen both ways). The former fallback — "if
    the owner intends Unranked to charge nothing" — is **closed**; A5.1's `UNRANKED` column
    stands as written. See `docs/decisions/2026-10-17-unranked-scope-owner-clarification.md`.
+
+   > **Pointer (owner clarification, 2026-10-22; the sentence above is left verbatim as
+   > history).** The clause "A3.5 and RD28 state that Unranked accumulates **no Ranked
+   > statistics**" is **superseded by N-1 · Q46**: profile career result statistics include
+   > **ROOM, RANKED and UNRANKED**, and `UNRANKED` is included. **Ranked RP stays separate
+   > and Ranked-only** — the tier, the division and the RP move no farther for an Unranked
+   > result. Nothing else in item 3 changes: the 2-Koz `UNRANKED` charge and the
+   > "career Koz counter is a plain departure counter" reading are unaffected, because a
+   > counter that moves no tier and no RP was never Ranked progression. The canonical text
+   > already said this (item 11, A6.7, `Q14c`, `Q17`); the drift was in the CODE — see
+   > `docs/decisions/2026-10-22-final-decision-sync.md` §2 (N-1).
 4. **The 90-second WAIT pause must not be read as re-opening OPEN-2. — RATIFIED (owner,
    2026-10-17).** He walked the disconnect scenario end-to-end and confirmed it: the 30-second
    vote runs over a live table, nothing pauses while the ballot is open, the pause happens only

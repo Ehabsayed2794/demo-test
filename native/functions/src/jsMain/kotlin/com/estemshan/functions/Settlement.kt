@@ -560,10 +560,16 @@ object Settlement {
         "settleMatch: you are not a player in this match.",
       )
     }
-    if (match.mode != MatchMode.RANKED) {
-      return SettleDecision.StatsOnly(match.mode)
+    return when (match.mode) {
+      MatchMode.RANKED -> SettleDecision.Proceed
+      // RD28 asks every mode switch site for an explicit UNRANKED branch:
+      // an UNRANKED completion records the career counters and never RP —
+      // the same stats-only answer a ROOM match gets, named apart so that
+      // neither mode is forgotten the day UNRANKED gains an outcome of its
+      // own.
+      MatchMode.UNRANKED -> SettleDecision.StatsOnly(match.mode)
+      MatchMode.ROOM -> SettleDecision.StatsOnly(match.mode)
     }
-    return SettleDecision.Proceed
   }
 
   // ── recompute ─────────────────────────────────────────────────────

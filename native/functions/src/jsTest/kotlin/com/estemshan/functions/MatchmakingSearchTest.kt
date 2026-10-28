@@ -1,5 +1,6 @@
 package com.estemshan.functions
 
+import com.estemshan.engine.MatchMode
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -47,124 +48,6 @@ class MatchmakingSearchTest {
   private val gold = "uid-gold"
   private val silver = "uid-silver"
 
-  /** A mutable clock, so a lease can be aged without waiting for it. */
-  private class TestClock(var now: Long = 1_000L) : DecisionClock {
-    override fun nowMillis(): Long = now
-  }
-
-  /**
-   * The queue's Firestore seam, on a fake.
-   *
-   * The writes are BUFFERED and applied only when the transaction completes,
-   * so a transaction that throws leaves nothing behind — the same guarantee
-   * Firestore gives, and the reason "a corrupt document writes nothing" is a
-   * real assertion here and not an artefact of the fake.
-   *
-   * The event log records every touch in order, so read-before-write is
-   * assertable rather than assumed, and [lastTransaction] isolates the
-   * transaction under inspection from the ones around it.
-   */
-  private class FakeSearchDb(
-    val searches: MutableMap<String, Map<String, Any?>> = mutableMapOf(),
-    val profiles: MutableMap<String, Map<String, Any?>> = mutableMapOf(),
-  ) : MatchmakingSearchDb {
-
-    val events = mutableListOf<String>()
-    val rooms = mutableMapOf<String, Map<String, Any?>>()
-    private var roomCounter = 0
-
-    /**
-     * Uids that VANISH the moment a transaction reads them.
-     *
-     * This is the race the resolver is written for: the pass saw the document
-     * in its scan, and by the time the transaction read it the other player
-     * had already been seated elsewhere. The read answers "no document", the
-     * pass is told "no table", and it must move on rather than spin.
-     */
-    val vanishInsideTransaction = mutableSetOf<String>()
-
-    /** The events of the most recent transaction, and nothing after it. */
-    var lastTransaction: List<String> = emptyList()
-      private set
-
-    /** How many transactions the pass opened. */
-    val transactionCount: Int get() = events.count { it == "tx" }
-
-    val writes: Int get() = events.count { it.startsWith("write") || it.startsWith("resolve") || it.startsWith("delete") }
-
-    override suspend fun readSearch(uid: String): Map<String, Any?>? {
-      events += "read:$uid"
-      return searches[uid]
-    }
-
-    override suspend fun listWaitingSearches(limit: Int): List<SearchDocument> {
-      events += "list"
-      return searches.entries
-        .filter { it.value["status"] == "WAITING" }
-        .take(limit)
-        .map { SearchDocument(it.key, it.value) }
-    }
-
-    override fun newRoomId(): String {
-      roomCounter += 1
-      return "room-$roomCounter"
-    }
-
-    override suspend fun <T> transact(block: suspend (MatchmakingSearchDb.Tx) -> T): T {
-      val start = events.size
-      events += "tx"
-      val pending = mutableListOf<() -> Unit>()
-      val outcome = block(object : MatchmakingSearchDb.Tx {
-        override suspend fun readSearch(uid: String): Map<String, Any?>? {
-          events += "read:$uid"
-          if (vanishInsideTransaction.remove(uid)) {
-            searches.remove(uid)
-            return null
-          }
-          return searches[uid]
-        }
-
-        override suspend fun readProfile(uid: String): Map<String, Any?>? {
-          events += "profile:$uid"
-          return profiles[uid]
-        }
-
-        override fun putSearch(uid: String, fields: Map<String, Any?>) {
-          events += "write-search:$uid"
-          pending += { searches[uid] = fields }
-        }
-
-        override fun renewSearch(uid: String, heartbeatMillis: Long) {
-          events += "renew:$uid"
-          pending += {
-            searches[uid] = (searches[uid] ?: emptyMap()) + ("heartbeatAt" to heartbeatMillis)
-          }
-        }
-
-        override fun resolveSearch(uid: String, tableId: String) {
-          events += "resolve:$uid"
-          pending += {
-            searches[uid] = (searches[uid] ?: emptyMap()) +
-              ("status" to "RESOLVED") + ("tableId" to tableId)
-          }
-        }
-
-        override fun deleteSearch(uid: String) {
-          events += "delete:$uid"
-          pending += { searches.remove(uid) }
-        }
-
-        override fun createRoom(roomId: String, fields: Map<String, Any?>) {
-          events += "write-room:$roomId"
-          pending += { rooms[roomId] = fields }
-        }
-      })
-      lastTransaction = events.subList(start, events.size).toList()
-      for (apply in pending) apply()
-      return outcome
-    }
-  }
-
   /**
    * A profile exactly as S50's write path stores one: the rung and its `rp`
    * agree (RD3), because a fixture that breaks that is indistinguishable at
@@ -180,24 +63,6 @@ class MatchmakingSearchTest {
   private fun db(): FakeSearchDb = FakeSearchDb().apply {
     profiles[gold] = profile("Gold", 575)
     profiles[silver] = profile("Silver", 250)
-  }
-
-  private fun request(
-    uid: String,
-    fields: Map<String, Any?> = linkedMapOf("gameType" to "FULL"),
-  ): CallableRequest {
-    val data: dynamic = js("({})")
-    for ((key, value) in fields) data[key] = value
-    return object : CallableRequest {
-      override val data: Any? = data
-      override val auth: AuthData? = object : AuthData {
-        override val uid: String = uid
-        override val token: AuthToken? = null
-      }
-      override val instanceIdToken: String? = null
-      override val rawRequest: Any? = null
-      override val app: Any? = null
-    }
   }
 
   /** A refusal, sampled from ONE call. */
@@ -218,10 +83,10 @@ class MatchmakingSearchTest {
     db: FakeSearchDb,
     uid: String,
     gameType: String = "FULL",
-    clock: TestClock = TestClock(),
+    clock: FakeSearchClock = FakeSearchClock(),
   ): Map<String, Any?> = enqueueSearchOnce(
     db,
-    request(uid, linkedMapOf("gameType" to gameType)),
+    fakeRequest(uid, linkedMapOf("gameType" to gameType, "mode" to "RANKED")),
     clock,
   )
 
@@ -251,12 +116,12 @@ class MatchmakingSearchTest {
 
     for ((key, value) in forbidden) {
       val db = db()
-      val clock = TestClock()
+      val clock = FakeSearchClock()
 
       val refusal = refused {
         enqueueSearchOnce(
           db,
-          request(gold, linkedMapOf("gameType" to "FULL", key to value)),
+          fakeRequest(gold, linkedMapOf("gameType" to "FULL", key to value)),
           clock,
         )
       }
@@ -280,9 +145,9 @@ class MatchmakingSearchTest {
 
       val refusal = refused {
         if (callable == "pollSearch") {
-          pollSearchOnce(db, request(gold, linkedMapOf("uid" to "somebody-else")), TestClock())
+          pollSearchOnce(db, fakeRequest(gold, linkedMapOf("uid" to "somebody-else")), FakeSearchClock())
         } else {
-          cancelSearchOnce(db, request(gold, linkedMapOf("tier" to "Gold")))
+          cancelSearchOnce(db, fakeRequest(gold, linkedMapOf("tier" to "Gold")))
         }
       }
 
@@ -301,9 +166,9 @@ class MatchmakingSearchTest {
 
       val refusal = refused {
         if (callable == "pollSearch") {
-          pollSearchOnce(db, request(gold, linkedMapOf("seasonId" to "s1")), TestClock())
+          pollSearchOnce(db, fakeRequest(gold, linkedMapOf("seasonId" to "s1")), FakeSearchClock())
         } else {
-          cancelSearchOnce(db, request(gold, linkedMapOf("seasonId" to "s1")))
+          cancelSearchOnce(db, fakeRequest(gold, linkedMapOf("seasonId" to "s1")))
         }
       }
 
@@ -325,7 +190,7 @@ class MatchmakingSearchTest {
       override val app: Any? = null
     }
 
-    val refusal = refused { enqueueSearchOnce(db, anonymous, TestClock()) }
+    val refusal = refused { enqueueSearchOnce(db, anonymous, FakeSearchClock()) }
 
     assertEquals("unauthenticated", refusal.code)
     assertEquals(emptyList(), db.events)
@@ -336,7 +201,7 @@ class MatchmakingSearchTest {
   @Test
   fun aGoldSearcherIsServedASilver() = runTest {
     val db = db()
-    val clock = TestClock()
+    val clock = FakeSearchClock()
 
     // The Gold search arrives first, so it creates the table.
     enqueue(db, gold, clock = clock)
@@ -355,7 +220,7 @@ class MatchmakingSearchTest {
   @Test
   fun aSilverSearcherIsServedAGold() = runTest {
     val db = db()
-    val clock = TestClock()
+    val clock = FakeSearchClock()
 
     // O-15 (closed 2026-10-28): the band is symmetric, so the reverse order
     // pairs too. The Silver arrives first and creates the table; arrival
@@ -378,7 +243,7 @@ class MatchmakingSearchTest {
     // a rule that only looked down would pass the first half alone.
     val downward = db()
     downward.profiles["uid-platinum"] = profile("Platinum", 1000)
-    val downClock = TestClock()
+    val downClock = FakeSearchClock()
     enqueue(downward, "uid-platinum", clock = downClock)
     downClock.now += 1_000
     enqueue(downward, silver, clock = downClock)
@@ -386,7 +251,7 @@ class MatchmakingSearchTest {
 
     val upward = db()
     upward.profiles["uid-platinum"] = profile("Platinum", 1000)
-    val upClock = TestClock()
+    val upClock = FakeSearchClock()
     enqueue(upward, silver, clock = upClock)
     upClock.now += 1_000
     enqueue(upward, "uid-platinum", clock = upClock)
@@ -398,7 +263,7 @@ class MatchmakingSearchTest {
   @Test
   fun aPlayerIsNeverPairedWithItself() = runTest {
     val db = db()
-    val clock = TestClock()
+    val clock = FakeSearchClock()
 
     enqueue(db, gold, clock = clock)
 
@@ -411,7 +276,7 @@ class MatchmakingSearchTest {
   @Test
   fun aFullSearchAndAMiniSearchNeverResolveTogether() = runTest {
     val db = db()
-    val clock = TestClock()
+    val clock = FakeSearchClock()
 
     enqueue(db, gold, gameType = "FULL", clock = clock)
     clock.now += 1_000
@@ -427,7 +292,7 @@ class MatchmakingSearchTest {
     // A Mini Gold and a Mini Silver are exactly as pairable as a Full Gold
     // and a Full Silver: GM5 is orthogonal to the pool.
     val db = db()
-    val clock = TestClock()
+    val clock = FakeSearchClock()
 
     enqueue(db, gold, gameType = "MINI", clock = clock)
     clock.now += 1_000
@@ -442,7 +307,7 @@ class MatchmakingSearchTest {
   @Test
   fun aSecondPassOverTheSameQueueStateFormsNoSecondTable() = runTest {
     val db = db()
-    val clock = TestClock()
+    val clock = FakeSearchClock()
 
     enqueue(db, gold, clock = clock)
     clock.now += 1_000
@@ -461,14 +326,14 @@ class MatchmakingSearchTest {
   @Test
   fun rePollingIsIdempotentAndAnswersTheSameTable() = runTest {
     val db = db()
-    val clock = TestClock()
+    val clock = FakeSearchClock()
 
     enqueue(db, gold, clock = clock)
     clock.now += 1_000
     enqueue(db, silver, clock = clock)
 
-    val first = pollSearchOnce(db, request(gold, emptyMap()), clock)
-    val second = pollSearchOnce(db, request(gold, emptyMap()), clock)
+    val first = pollSearchOnce(db, fakeRequest(gold, emptyMap()), clock)
+    val second = pollSearchOnce(db, fakeRequest(gold, emptyMap()), clock)
 
     assertEquals("MATCH_FOUND", first["status"])
     assertEquals("MATCH_FOUND", second["status"])
@@ -479,14 +344,14 @@ class MatchmakingSearchTest {
   @Test
   fun aResolvedSearchIsNotGivenAFreshLease() = runTest {
     val db = db()
-    val clock = TestClock()
+    val clock = FakeSearchClock()
 
     enqueue(db, gold, clock = clock)
     clock.now += 1_000
     enqueue(db, silver, clock = clock)
 
     val heartbeatBefore = db.searches.getValue(gold)["heartbeatAt"]
-    pollSearchOnce(db, request(gold, emptyMap()), clock)
+    pollSearchOnce(db, fakeRequest(gold, emptyMap()), clock)
 
     val document = db.searches.getValue(gold)
     assertEquals("RESOLVED", document["status"])
@@ -499,10 +364,10 @@ class MatchmakingSearchTest {
   @Test
   fun cancellingAWaitingSearchRemovesIt() = runTest {
     val db = db()
-    val clock = TestClock()
+    val clock = FakeSearchClock()
     enqueue(db, gold, clock = clock)
 
-    val answer = cancelSearchOnce(db, request(gold, emptyMap()))
+    val answer = cancelSearchOnce(db, fakeRequest(gold, emptyMap()))
 
     assertEquals(true, answer["cancelled"])
     assertEquals("IDLE", answer["status"])
@@ -512,11 +377,11 @@ class MatchmakingSearchTest {
   @Test
   fun cancellingIsIdempotent() = runTest {
     val db = db()
-    val clock = TestClock()
+    val clock = FakeSearchClock()
     enqueue(db, gold, clock = clock)
 
-    val first = cancelSearchOnce(db, request(gold, emptyMap()))
-    val second = cancelSearchOnce(db, request(gold, emptyMap()))
+    val first = cancelSearchOnce(db, fakeRequest(gold, emptyMap()))
+    val second = cancelSearchOnce(db, fakeRequest(gold, emptyMap()))
 
     assertEquals(true, first["cancelled"])
     assertEquals(true, second["cancelled"])
@@ -526,13 +391,13 @@ class MatchmakingSearchTest {
   @Test
   fun cancellingAResolvedSearchDoesNotUnResolveIt() = runTest {
     val db = db()
-    val clock = TestClock()
+    val clock = FakeSearchClock()
     enqueue(db, gold, clock = clock)
     clock.now += 1_000
     enqueue(db, silver, clock = clock)
     val tableId = db.searches.getValue(gold)["tableId"]
 
-    val answer = cancelSearchOnce(db, request(gold, emptyMap()))
+    val answer = cancelSearchOnce(db, fakeRequest(gold, emptyMap()))
 
     assertEquals(false, answer["cancelled"], "a formed table cannot be un-formed")
     assertEquals("MATCH_FOUND", answer["status"])
@@ -581,7 +446,7 @@ class MatchmakingSearchTest {
       db.searches[gold] = document
       db.searches[silver] = waiting(silver, "Silver", enqueuedAt = 2_000L)
 
-      val refusal = refused { runSearchPass(db, TestClock()) }
+      val refusal = refused { runSearchPass(db, FakeSearchClock()) }
 
       assertEquals("failed-precondition", refusal.code, label)
       assertEquals("QUEUE_UNREADABLE", refusal.reason, label)
@@ -607,7 +472,7 @@ class MatchmakingSearchTest {
     )
     db.searches[silver] = waiting(silver, "Silver", enqueuedAt = 2_000L)
 
-    val summary = runSearchPass(db, TestClock())
+    val summary = runSearchPass(db, FakeSearchClock())
 
     assertEquals(0, summary.pairsFormed, "an unreadable status is never paired")
     assertTrue(db.rooms.isEmpty())
@@ -616,7 +481,7 @@ class MatchmakingSearchTest {
     // The owner of that document is still refused, with the same fixed
     // message: the client's own state it cannot read is a closed door, not a
     // guess.
-    val refusal = refused { pollSearchOnce(db, request(gold, emptyMap()), TestClock()) }
+    val refusal = refused { pollSearchOnce(db, fakeRequest(gold, emptyMap()), FakeSearchClock()) }
 
     assertEquals("failed-precondition", refusal.code)
     assertEquals("QUEUE_UNREADABLE", refusal.reason)
@@ -624,6 +489,59 @@ class MatchmakingSearchTest {
       "The ranked queue holds a document this server cannot read.",
       refusal.message,
     )
+  }
+
+  // ── the queue document's mode (S71) ─────────────────────────────────
+
+  @Test
+  fun aDocumentWrittenBeforeS71ReadsAsRanked() = runTest {
+    // The queue's only pre-S71 mode was RANKED, so a document that carries
+    // no mode is a LEGACY document, not a corrupt one — refusing it would
+    // strand every search that was already waiting when the mode arrived.
+    val legacy = linkedMapOf<String, Any?>(
+      "uid" to gold, "tier" to "Gold", "gameType" to "FULL",
+      "status" to "WAITING", "enqueuedAt" to 1_000L, "heartbeatAt" to 1_000L,
+    )
+
+    val parsed = parseSearchDocument(gold, legacy)
+
+    assertNotNull(parsed, "a legacy document must still be readable")
+    assertEquals(MatchMode.RANKED, parsed.mode)
+    assertEquals("Gold", parsed.tier)
+  }
+
+  @Test
+  fun aDocumentThatNamesAModeThisQueueDoesNotServeIsUnreadable() = runTest {
+    val corrupt = listOf(
+      "the ROOM mode" to linkedMapOf<String, Any?>(
+        "uid" to gold, "mode" to "ROOM", "tier" to "Gold", "gameType" to "FULL",
+        "status" to "WAITING", "enqueuedAt" to 1_000L, "heartbeatAt" to 1_000L,
+      ),
+      "an unknown mode" to linkedMapOf<String, Any?>(
+        "uid" to gold, "mode" to "CASUAL", "tier" to "Gold", "gameType" to "FULL",
+        "status" to "WAITING", "enqueuedAt" to 1_000L, "heartbeatAt" to 1_000L,
+      ),
+      "a mode that is not a string" to linkedMapOf<String, Any?>(
+        "uid" to gold, "mode" to 7, "tier" to "Gold", "gameType" to "FULL",
+        "status" to "WAITING", "enqueuedAt" to 1_000L, "heartbeatAt" to 1_000L,
+      ),
+      "an Unranked document that carries a tier" to linkedMapOf<String, Any?>(
+        "uid" to gold, "mode" to "UNRANKED", "tier" to "Gold", "gameType" to "FULL",
+        "status" to "WAITING", "enqueuedAt" to 1_000L, "heartbeatAt" to 1_000L,
+      ),
+    )
+
+    for ((label, document) in corrupt) {
+      val refusal = refused { parseSearchDocument(gold, document) }
+
+      assertEquals("failed-precondition", refusal.code, label)
+      assertEquals("QUEUE_UNREADABLE", refusal.reason, label)
+      assertEquals(
+        "The ranked queue holds a document this server cannot read.",
+        refusal.message,
+        "$label must carry the fixed message",
+      )
+    }
   }
 
   // ── 7. no stored value and no other player's identity in a message ────
@@ -637,7 +555,7 @@ class MatchmakingSearchTest {
     )
     db.searches[silver] = waiting(silver, "Silver", enqueuedAt = 2_000L)
 
-    val refusal = refused { runSearchPass(db, TestClock()) }
+    val refusal = refused { runSearchPass(db, FakeSearchClock()) }
 
     for (leak in listOf("Obsidian", gold, silver, "uid-silver")) {
       assertFalse(refusal.message.contains(leak), "the refusal leaks '$leak': ${refusal.message}")
@@ -647,13 +565,13 @@ class MatchmakingSearchTest {
   @Test
   fun theAnswerCarriesTheCallersOwnStateAndNoBodyElses() = runTest {
     val db = db()
-    val clock = TestClock()
+    val clock = FakeSearchClock()
 
     enqueue(db, gold, clock = clock)
     clock.now += 1_000
     enqueue(db, silver, clock = clock)
 
-    val answer = pollSearchOnce(db, request(gold, emptyMap()), clock)
+    val answer = pollSearchOnce(db, fakeRequest(gold, emptyMap()), clock)
 
     assertEquals(setOf("ok", "status", "tableId"), answer.keys)
     assertEquals("MATCH_FOUND", answer["status"])
@@ -684,8 +602,8 @@ class MatchmakingSearchTest {
       it.searches.putAll(documents.reversed().associateBy { it["uid"] as String })
     }
 
-    runSearchPass(forward, TestClock())
-    runSearchPass(backward, TestClock())
+    runSearchPass(forward, FakeSearchClock())
+    runSearchPass(backward, FakeSearchClock())
 
     assertEquals(2, forward.rooms.size, "two compatible pairs")
     assertEquals(pairsOf(forward), pairsOf(backward), "the same queue state must form the same pairs")
@@ -710,7 +628,7 @@ class MatchmakingSearchTest {
     byArrival.searches["uid-z"] = waiting("uid-z", "Gold", enqueuedAt = 1_000L)
     byArrival.searches["uid-a"] = waiting("uid-a", "Silver", enqueuedAt = 2_000L)
 
-    runSearchPass(byArrival, TestClock())
+    runSearchPass(byArrival, FakeSearchClock())
 
     assertEquals(1, byArrival.rooms.size, "the earlier arrival creates the table")
     assertEquals(
@@ -727,7 +645,7 @@ class MatchmakingSearchTest {
     byUid.searches["uid-a"] = waiting("uid-a", "Silver", enqueuedAt = 1_000L)
     byUid.searches["uid-z"] = waiting("uid-z", "Gold", enqueuedAt = 1_000L)
 
-    runSearchPass(byUid, TestClock())
+    runSearchPass(byUid, FakeSearchClock())
 
     assertEquals(1, byUid.rooms.size, "the uid tie-break is the only tie-break")
     assertEquals("uid-a", byUid.rooms.values.first()["creator"], "the uid tie-break put the Silver first")
@@ -743,7 +661,7 @@ class MatchmakingSearchTest {
     // transaction per candidate pair in its window and could outlast the
     // function's own deadline.
     val db = db()
-    val clock = TestClock()
+    val clock = FakeSearchClock()
     val uids = (0 until 30).map { "uid-gold-$it" }
     for (uid in uids) {
       db.profiles[uid] = profile("Gold", 575)
@@ -767,7 +685,7 @@ class MatchmakingSearchTest {
   @Test
   fun aPassThatIsNotCappedAsksForTheFullCadence() = runTest {
     val db = db()
-    val clock = TestClock()
+    val clock = FakeSearchClock()
     enqueue(db, gold, clock = clock)
     clock.now += 1_000
     enqueue(db, silver, clock = clock)
@@ -783,16 +701,17 @@ class MatchmakingSearchTest {
   @Test
   fun theSearchDocumentCarriesExactlyTheFieldsTheResolverReads() = runTest {
     val db = db()
-    val clock = TestClock()
+    val clock = FakeSearchClock()
 
     enqueue(db, gold, clock = clock)
 
     val document = db.searches.getValue(gold)
     assertEquals(
-      setOf("uid", "tier", "gameType", "status", "enqueuedAt", "heartbeatAt"),
+      setOf("uid", "mode", "tier", "gameType", "status", "enqueuedAt", "heartbeatAt"),
       document.keys,
     )
     assertEquals(gold, document["uid"])
+    assertEquals("RANKED", document["mode"])
     assertEquals("Gold", document["tier"])
     assertEquals("FULL", document["gameType"])
     assertEquals("WAITING", document["status"])
@@ -802,7 +721,7 @@ class MatchmakingSearchTest {
   @Test
   fun theTableIsWrittenInTheRoomsOwnShape() = runTest {
     val db = db()
-    val clock = TestClock()
+    val clock = FakeSearchClock()
 
     enqueue(db, gold, clock = clock)
     clock.now += 1_000
@@ -859,7 +778,7 @@ class MatchmakingSearchTest {
   @Test
   fun anExpiredLeaseIsReclaimedSoAVanishedClientCannotHoldTheQueue() = runTest {
     val db = db()
-    val clock = TestClock()
+    val clock = FakeSearchClock()
     // A search whose client stopped polling long ago, beside a live one.
     db.searches[gold] = waiting(gold, "Gold", enqueuedAt = 1_000L, heartbeatAt = 1_000L)
     db.searches[silver] = waiting(silver, "Silver", enqueuedAt = 120_000L, heartbeatAt = 120_000L)
@@ -878,7 +797,7 @@ class MatchmakingSearchTest {
     // silence is still a live search, 30 s and 1 ms is not. A 60 s lease
     // (the earlier value) fails the second assertion, which is the point.
     val db = db()
-    val clock = TestClock(now = 0L)
+    val clock = FakeSearchClock(now = 0L)
     db.searches[gold] = waiting(gold, "Gold", enqueuedAt = 0L, heartbeatAt = 0L)
 
     clock.now = 30_000L
@@ -893,7 +812,7 @@ class MatchmakingSearchTest {
   @Test
   fun everyTransactionReadsBeforeItWrites() = runTest {
     val db = db()
-    val clock = TestClock()
+    val clock = FakeSearchClock()
 
     enqueue(db, gold, clock = clock)
     clock.now += 1_000
@@ -924,6 +843,7 @@ class MatchmakingSearchTest {
     gameType: String = "FULL",
   ): Map<String, Any?> = linkedMapOf(
     "uid" to uid,
+    "mode" to "RANKED",
     "tier" to tier,
     "gameType" to gameType,
     "status" to "WAITING",

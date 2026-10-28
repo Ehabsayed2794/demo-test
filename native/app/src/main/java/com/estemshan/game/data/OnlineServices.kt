@@ -140,11 +140,16 @@ object OnlineServices {
   }
 
   /**
-   * S56 — the Ranked solo-queue seam, the `enqueueSearch` / `pollSearch` /
+   * S56/S71 — the solo-queue seam, the `enqueueSearch` / `pollSearch` /
    * `cancelSearch` callables. The eligible tier pool is derived server-side
-   * (RD9), so this port sends a GameType and nothing else — no tier, no
-   * division, no RP value and no identity ever reaches the wire. Lazy for the
-   * same reason as [timeouts]: it reads [FirebaseModule.functions], a computed
+   * (RD9), so this port sends a GameType and a mode and nothing else — no
+   * tier, no division, no RP value and no identity ever reaches the wire.
+   * The mode is the player's own choice of what to play: it separates the
+   * Ranked and Unranked pools and buys no privilege, because an Unranked
+   * search awards no RP — the tier, the division and the RP stay
+   * Ranked-only — while its results count towards the career counters like
+   * any other mode's (Q46/N-1, 2026-10-22). Lazy for the same
+   * reason as [timeouts]: it reads [FirebaseModule.functions], a computed
    * getter over the Firebase singleton MainActivity initializes.
    */
   val matchmaking: MatchmakingPort by lazy {

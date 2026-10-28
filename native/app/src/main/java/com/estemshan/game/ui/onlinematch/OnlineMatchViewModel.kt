@@ -1125,10 +1125,19 @@ class OnlineMatchViewModel(
    */
   private fun maybeSettle(doc: MatchDoc) {
     if (settlementAttempted) return
-    if (doc.mode != MatchMode.RANKED) return
-    val id = matchId ?: return
-    settlementAttempted = true
-    settlementJob = viewModelScope.launch(worker) { runSettlement(id, doc) }
+    when (doc.mode) {
+      MatchMode.RANKED -> {
+        val id = matchId ?: return
+        settlementAttempted = true
+        settlementJob = viewModelScope.launch(worker) { runSettlement(id, doc) }
+      }
+      // RD28: an UNRANKED match carries no standing, so it never settles —
+      // the plain standings are the whole story. A ROOM match is private by
+      // invitation and never settles either. The two are named separately
+      // so that neither is forgotten the day UNRANKED grows an outcome.
+      MatchMode.UNRANKED -> return
+      MatchMode.ROOM -> return
+    }
   }
 
   /**

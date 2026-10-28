@@ -1,10 +1,11 @@
 package com.estemshan.services
 
 import com.estemshan.engine.GameType
+import com.estemshan.engine.MatchMode
 
 /**
- * S56 — the transport seam under the Ranked queue, and the vocabulary the
- * queue's answers are read in.
+ * S56/S71 — the transport seam under the solo queue, Ranked and Unranked,
+ * and the vocabulary the queue's answers are read in.
  *
  * **Why a seam.** This repo ships no Firebase fake by design, so the seam IS
  * the test hook: the poll loop — how long it waits, when it gives up, what a
@@ -12,15 +13,22 @@ import com.estemshan.engine.GameType
  * transport, while the one class that touches the Firebase SDK
  * ([FirebaseMatchmakingTransport]) stays a single round trip per call.
  *
- * **What crosses it.** A GameType and nothing else. The uid the server acts on
- * is the callable's verified identity, so no transport method takes a player
- * id: a request that could name a player is a request that could name the
- * wrong one, and the server has no reason to trust it.
+ * **What crosses it.** A GameType, a mode, and nothing else. The uid the
+ * server acts on is the callable's verified identity, so no transport method
+ * takes a player id: a request that could name a player is a request that
+ * could name the wrong one, and the server has no reason to trust it. The
+ * mode is the player's own choice of WHAT TO PLAY (S71), not a claim about
+ * their standing — it buys no privilege, because an Unranked search awards no
+ * RP (the tier, the division and the RP stay Ranked-only) while its results
+ * count towards the career counters (Q46/N-1, 2026-10-22). The tier stays the
+ * server's: an
+ * Unranked search reads no profile at all, so there is no tier to send, and
+ * none to read back.
  */
 interface MatchmakingTransport {
 
-  /** `enqueueSearch` — asks the server to find a table for [gameType]. */
-  suspend fun enqueue(gameType: GameType): MatchmakingState
+  /** `enqueueSearch` — asks the server to find a table for [gameType] in [mode]. */
+  suspend fun enqueue(gameType: GameType, mode: MatchMode): MatchmakingState
 
   /** `pollSearch` — the caller's own state, and the queue's heartbeat. */
   suspend fun poll(): MatchmakingState
@@ -45,8 +53,19 @@ sealed interface MatchmakingState {
    * [retryAfterMillis] is the SERVER's own next-due instant — the cadence the
    * client re-arms on, instead of a local guess that would drift with clock
    * skew. RD9 publishes no wait estimate, so this is a delay, never an ETA.
+   *
+   * [fillDeadlineMillis] is the S71 fill window's close for THIS search, in
+   * the server's epoch millis: the instant by which the seat is filled (by
+   * humans, or by the configured bots when the window closes). It is a bound
+   * and never an estimate — the table may fill sooner — and it is present
+   * only for an Unranked search, because a Ranked table is a pair rather than
+   * a window. A null here means the server published no deadline, which for a
+   * Ranked search is the normal case and never means "no deadline exists".
    */
-  data class Searching(val retryAfterMillis: Long) : MatchmakingState
+  data class Searching(
+    val retryAfterMillis: Long,
+    val fillDeadlineMillis: Long? = null,
+  ) : MatchmakingState
 
   /** A table formed; [tableId] is the caller's own table. */
   data class Matched(val tableId: String) : MatchmakingState
@@ -96,7 +115,11 @@ object MatchmakingResponse {
    * match, and answering "found" without it would hand the screen an id that
    * opens nothing. `SEARCHING` takes the server's retry delay when it carries
    * one and [fallbackRetryMillis] when it does not — a version-skew answer
-   * still paces the poll, and a missing number is not a zero.
+   * still paces the poll, and a missing number is not a zero. The S71 fill
+   * deadline is read the same way: a number when the server published one, and
+   * nothing at all when it did not — a missing deadline is a Ranked search's
+   * normal answer, not a failure, and a deadline that is not a number is not a
+   * deadline the client may count down.
    *
    * Anything else — a payload that is not a map, an unknown status, a missing
    * table id — is [MatchmakingState.Denied]: the fail-closed direction.
@@ -112,7 +135,11 @@ object MatchmakingResponse {
 
       STATUS_SEARCHING -> {
         val retry = (fields[RETRY_AFTER] as? Number)?.toLong()
-        MatchmakingState.Searching(retry?.takeIf { it > 0 } ?: fallbackRetryMillis)
+        val deadline = (fields[FILL_DEADLINE] as? Number)?.toLong()
+        MatchmakingState.Searching(
+          retry?.takeIf { it > 0 } ?: fallbackRetryMillis,
+          deadline?.takeIf { it > 0 },
+        )
       }
 
       STATUS_IDLE -> MatchmakingState.Idle
@@ -144,6 +171,7 @@ object MatchmakingResponse {
   private const val STATUS = "status"
   private const val TABLE_ID = "tableId"
   private const val RETRY_AFTER = "retryAfterMillis"
+  private const val FILL_DEADLINE = "fillDeadlineMillis"
 
   private const val STATUS_IDLE = "IDLE"
   private const val STATUS_SEARCHING = "SEARCHING"
