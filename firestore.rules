@@ -2184,8 +2184,8 @@ service cloud.firestore {
       // Seat-count asymmetry fix (plan V2 section 5.10): "every card play"
       // is 13 * this match's REAL seat count, derived from the same source
       // the pass branch proves its window against (parent.seats --
-      // immutable after creation, and isValidSeatMap requires
-      // seats.keys().size() == players.size() from creation onward). That
+      // immutable after creation: it appears in no update allowlist, and
+      // an S71 bot table's seats outnumber its `players`). That
       // is the exact 13 * seats factor Settlement.replayTricks and
       // TimeoutResolution.cardTotal already settle on. 13 * 4 == 52 for a
       // four-seat table, so the four-seat behaviour is identical to the
