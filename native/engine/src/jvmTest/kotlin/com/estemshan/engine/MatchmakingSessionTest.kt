@@ -15,7 +15,9 @@ import org.junit.Test
  * rejecting; a late tick catching up in one call; four humans filling
  * without a vote; the leaver removed from the denominator and both vote
  * sets; terminal immutability; the ABSOLUTE one-tier band (A8.6 / Q41) —
- * asserted as distance only, never a pairing direction (O-15); humans-only
+ * asserted as the ABSOLUTE distance condition — and O-15 (closed
+ * 2026-10-28) settles the direction as symmetric (one tier, up or down),
+ * which is exactly what the band already encodes; humans-only
  * strength tiers; a foreign tier failing loudly. Every time value is a
  * literal parameter, so nothing here reads a clock.
  */
@@ -237,8 +239,8 @@ class MatchmakingSessionTest {
 
   @Test
   fun twoTiersApartIsNeverWithinTheBand() {
-    // Distance only, never direction (O-15): two tiers away is outside
-    // the band in whichever arrangement the pair is read.
+    // O-15 CLOSED 2026-10-28: the band is symmetric, one tier up or down,
+    // never two — asserted here in every arrangement.
     val gold = MatchmakingSession.open("u1", "Gold", 0L)
     assertFalse(gold.bandAccepts("Bronze"))
     assertFalse(gold.bandAccepts("Diamond"))

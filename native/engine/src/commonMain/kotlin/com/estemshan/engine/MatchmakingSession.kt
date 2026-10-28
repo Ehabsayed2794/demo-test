@@ -22,13 +22,14 @@ package com.estemshan.engine
  *   humans plus the candidate may span at most one tier of
  *   [poolTierOrder], and the answer never depends on the session's age.
  *   It does not widen after 180 s; there is no widening code path at all.
- * - **O-15 is deliberately untouched.** [MatchmakingSession.bandAccepts]
- *   is a necessary DISTANCE condition, not a pairing decision: it never
- *   says which direction pairs. The resolver composes
- *   `isPoolEligible(searcher, candidate) && session.bandAccepts(candidate.tier)`;
- *   MatchmakingPool.isPoolEligible keeps its downward direction and is not
- *   edited here. No code or test in this file asserts Gold→Platinum or
- *   Platinum→Gold pairing.
+ * - **O-15 CLOSED 2026-10-28: the band is symmetric, one tier, up or
+ *   down.** [MatchmakingSession.bandAccepts] stays a necessary DISTANCE
+ *   condition and never decides direction on its own; the resolver now
+ *   composes BOTH directions of `isPoolEligible` (a Gold may be served a
+ *   Silver and a Silver a Gold, never two tiers apart). MatchmakingPool's
+ *   own downward policy is unchanged — RD9's no-opt-up is about the player
+ *   never choosing a higher pool, not about which tables the server may
+ *   form. See `docs/decisions/2026-10-28-matchmaking-owner-rulings.md`.
  * - RP strength (T-20 "RP with bots" row): [MatchmakingSession.strengthTiers]
  *   exposes the seated HUMANS' tiers only, in join order. The session never
  *   stores a bot tier, so a bot can never enter the strength source. The
@@ -149,10 +150,10 @@ data class MatchmakingSession(
    * ms, 150 000 ms, 180 000 ms, 180 001 ms and every later tick.
    *
    * This is a necessary distance condition, NOT a pairing decision: the
-   * resolver composes `isPoolEligible(searcher, candidate) &&
-   * session.bandAccepts(candidate.tier)`, and which direction pairs stays
-   * O-15. Divisions never enter (tiers only, like the whole band family).
-   * A foreign tier fails loudly.
+   * resolver composes it with BOTH directions of `isPoolEligible`, and
+   * since O-15 closed (2026-10-28) the pairing rule is symmetric — one
+   * tier, up or down, never two. Divisions never enter (tiers only, like
+   * the whole band family). A foreign tier fails loudly.
    */
   fun bandAccepts(candidateTier: String): Boolean {
     val order = poolTierOrder

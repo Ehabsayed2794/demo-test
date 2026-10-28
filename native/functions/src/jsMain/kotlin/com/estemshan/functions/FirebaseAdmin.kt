@@ -42,6 +42,13 @@ external interface FirestoreDb {
 
 external interface CollectionRef {
   fun doc(id: String): DocRef
+  /**
+   * S56: the Admin SDK's own auto-id — `collection.doc()` with no argument
+   * mints a fresh, unguessable document id. The Ranked resolver mints the
+   * table's id this way, so a client that could predict it could create that
+   * room first and take it over.
+   */
+  fun doc(): DocRef
   fun get(): Promise<QuerySnapshot>
   /**
    * S62: a bounded, recency-ordered window for the RP audit ledger's repeat
@@ -82,6 +89,8 @@ external interface CollectionRef {
 external interface DocRef {
   fun collection(path: String): CollectionRef
   fun get(): Promise<DocSnapshot>
+  /** S56: the document id the reference points at. */
+  val id: String
 }
 
 external interface DocSnapshot {

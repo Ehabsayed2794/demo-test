@@ -33,6 +33,9 @@ const exported = {
   scheduledSeasonReset: kotlin.scheduledSeasonReset,
   joinRankDownRoom: kotlin.joinRankDownRoom,
   operatorSeasonResetDryRun: kotlin.operatorSeasonResetDryRun,
+  enqueueSearch: kotlin.enqueueSearch,
+  pollSearch: kotlin.pollSearch,
+  cancelSearch: kotlin.cancelSearch,
 };
 
 for (const [name, fn] of Object.entries(exported)) {
