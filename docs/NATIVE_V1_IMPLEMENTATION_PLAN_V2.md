@@ -921,7 +921,7 @@ recommendation; the owner approves or rejects the runtime through a new ADR (O-0
 
 | Milestone | Definition of done |
 |---|---|
-| M0 | Baseline accepted. **DONE on the decisions half: O-01…O-04 decided 2026-10-22 (A7.1–A7.5 / Q30–Q34) and their four residues closed 2026-10-23 (A8.1–A8.4 / Q35–Q38); O-05…O-11 are recorded by the 2026-10-22/23 rulings and O-12/O-13/O-15/O-16/O-17/O-18 stay open.** M0 still needs the baseline confirmation itself |
+| M0 | Baseline accepted. **DONE on the decisions half: O-01…O-04 decided 2026-10-22 (A7.1–A7.5 / Q30–Q34) and their four residues closed 2026-10-23 (A8.1–A8.4 / Q35–Q38); O-05…O-11 are recorded by the 2026-10-22/23 rulings and O-12/O-13/O-15/O-16/O-17/O-18 stay open.** Baseline confirmed 2026-10-29 at `ab7e8cb`: 617/298/242/760 = 1,917 tests, 0 failures, rules pin pair intact — `docs/decisions/2026-10-29-m0-baseline-confirmation.md` |
 | M1 | Stage 0 memo: every experiment has a result, a blocker, or a measured “no” |
 | M2 | Engine rule freeze: §5.3 engine vectors green; rule documents unchanged except recorded defects |
 | M3 | Ranked runtime and settlement accepted: exactly-once and recovery evidence |
