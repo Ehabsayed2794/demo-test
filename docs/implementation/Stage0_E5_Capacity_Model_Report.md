@@ -6,6 +6,21 @@ model" — pass criterion "Model exists; capacity at target usage computed".
 
 Branch `stage0/e5-capacity-model`, base `64bd2e9` (main after PR #189).
 
+> **Addendum, 2026-10-29 (owner rulings A–G; the sections below are left verbatim).** After this
+> report was measured, the owner ruled on the design assumptions it was built under
+> (`docs/decisions/2026-10-29-stage0-capacity-persistence-transport-failover.md`): persistence
+> per **completed Trick** (conditional on E9's recovery validation) with the auction still
+> per-action; **bots inside the authoritative server** (not counted as inbound client requests);
+> **WebSocket transport preferred**; a **100 / 125 / 150 matches-per-day planning range**; the
+> **90% quota guardrail** with backup failover for new matches; and **Cloudflare preferred on
+> cost grounds** (O-06 unchanged). Consequence: **§3–§5 below are the preliminary
+> action-count-based model.** The ≈ 1,135 requests/match figure and the ≈ 1,135 writes/match
+> (and its ×2 bound) are **not** confirmed production values — the requests figure is the
+> measured engine action stream of an all-bot replay, and the writes are modelled. E6 must
+> recalculate for the WebSocket + server-side-bot design across the three target scenarios, and
+> label every input measured, modelled, unknown, or needing a real Cloudflare experiment
+> (record §8).
+
 ## 1. What the experiment is
 
 One question: **what does one complete match cost the proposed runtime in requests, CPU and

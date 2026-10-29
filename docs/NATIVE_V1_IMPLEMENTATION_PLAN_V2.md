@@ -970,6 +970,33 @@ defines what would count as a result; it does not report one.
 > `docs/implementation/Stage0_E3_Vector_Parity_Report.md`,
 > `docs/implementation/Stage0_E5_Capacity_Model_Report.md`; ADR skeleton:
 > `docs/adr/0003-runtime-choice.md` (the O-06 decision is still an open slot).
+>
+> **Pointer, 2026-10-29 (owner rulings A–G; the E5/E6/E9/E12 rows above are left verbatim).**
+> The owner has ruled on the design assumptions the capacity work must now assume
+> (`docs/decisions/2026-10-29-stage0-capacity-persistence-transport-failover.md`):
+> **(A)** persistence per **completed Trick** for card play — **conditional on E9's recovery
+> validation**, auction still persisted per action; **(B)** bots execute **inside the
+> authoritative server** — internal work, not inbound client requests, but still counted for
+> CPU, writes, timers and storage; **(C)** **WebSocket transport preferred** for the
+> authoritative runtime — E5/E6 must account the actual request/message paths (the free-plan
+> WebSocket metering is unverified; E12 confirms); **(D)** the planning target is the range
+> **100 / 125 / 150 completed matches per day** as three labelled scenarios, not a forecast;
+> **(E)** at **90% of a binding daily quota** the primary stops starting new matches and
+> preserves the reserve for ongoing matches — each quota monitored independently, ongoing
+> matches never terminated; **(F)** new matches move to the **backup server** per Q13 while
+> existing matches complete — with the explicit flag that the plan's "backup" is today a
+> backup/restore discipline (E7/G4) and **no independent, quota-isolated secondary-server
+> architecture exists yet**: that is an implementation prerequisite, and a backup copy must
+> never be silently renamed into a failover authority; **(G)** **Cloudflare is preferred on
+> cost grounds** — a preference, not an approval: O-06 and the no-Blaze/$0 constraint are
+> unchanged, and no paid plan is authorized. Consequences for the model: E5's ≈ 1,135
+> requests/match and ≈ 1,135 writes/match are the **preliminary action-count-based model**, not
+> confirmed production values; E6 recalculates for the WebSocket + server-side-bot design
+> across the 100/125/150 scenarios and reports the binding quota, headroom and whether the
+> 90% guardrail protects ongoing matches; E9 validates the interrupted-Trick recovery protocol,
+> durable intent/replay/idempotency, and ongoing-match behaviour at quota; E12 validates
+> WebSocket billing, hibernation, duration and reconnects. No experiment's acceptance criterion
+> is changed by these rulings.
 
 | ID | Experiment | Question answered | Method | Pass / decision criterion | Blocks |
 |---|---|---|---|---|---|

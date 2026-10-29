@@ -151,6 +151,20 @@ target usage, so capacity is presented per meter; the target is owner input E6 n
 > **SLOT — the owner's reading of these numbers**, in particular whether the free tier's
 > ≈ 88–230 matches/day is sufficient for V1's primary scenario, and which write granularity
 > the recovery criteria (E9) should bless.
+>
+> **Pointer, 2026-10-29 (owner rulings A–G; the SLOT above stays open for O-06).** The owner
+> has ruled on the assumptions this model must now use
+> (`docs/decisions/2026-10-29-stage0-capacity-persistence-transport-failover.md`): persistence
+> per **completed Trick** for card play, **conditional on E9's recovery validation** (the
+> auction stays per-action); **bots inside the authoritative server**; **WebSocket transport
+> preferred**; a **100 / 125 / 150 completed-matches-per-day planning range** (three labelled
+> scenarios, not a forecast); the **90% quota guardrail** with new matches moving to the backup
+> server per Q13 (the independent quota-isolated secondary-server architecture is flagged as
+> missing — an implementation prerequisite); and **Cloudflare preferred on cost grounds** — a
+> preference, **not** an O-06 approval, with the no-Blaze/$0 constraint and no-paid-plan
+> position unchanged. E5's ≈ 1,135 requests/match and ≈ 1,135 writes/match are the preliminary
+> action-count-based model; E6 recalculates for the WebSocket + server-side-bot design across
+> the three scenarios.
 
 ### What is still NOT measured
 
@@ -195,9 +209,10 @@ broken at the most satisfying moment in the game".
 Stage 0 E1–E5 above are the evidence gathered so far, and they are positive.
 
 **What it needs before it can be adopted:**
-- E6 — the free-tier headroom against a **numeric target usage** (E5 measured the
-  per-match cost model and the per-meter capacity the target is applied to;
-  the target itself is still an owner input).
+- E6 — the free-tier headroom against the owner's **100 / 125 / 150 completed-matches-per-day
+  planning range** (ruled 2026-10-29), applied at the 90% operating level with the intended
+  WebSocket + server-side-bot design. E5 measured the per-match cost model and the per-meter
+  capacity the range is applied to.
 - E9 — a Durable Object's state is per-object and single-threaded, which is a
   *better* fit for exactly-once settlement than a Firestore transaction, but it
   is a different durability story and has to be demonstrated, not assumed.
