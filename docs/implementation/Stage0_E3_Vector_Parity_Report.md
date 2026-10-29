@@ -325,25 +325,34 @@ This is the defect the plan already names elsewhere (`Bidding.kt:710`, the `bidd
 seat-order tie-break) — it is a **known S4 gap**, not a new finding. E3 confirms that the gap is
 present in the server runtime exactly as it is on the JVM.
 
-### 4.2 T-24 s5 — a third Dash Call is converted to a PASS, not rejected
+### 4.2 T-24 s5 — a third Dash Call is converted to a PASS — the ruled behaviour [D]
 
-Plan: the maximum number of Dash Calls is 2; the third is **rejected**.
+The plan's one-line summary ("the third is **rejected**") is stale. The owner ruled this on
+2026-10-24 in `docs/decisions/2026-10-24-f1-mixed-dash-general-pass.md` §2: "A third Dash ATTEMPT
+after two effective ones is ineffective: it persists `declaredDashCall = false`" (that record's
+contract case 2). The decision is **not open**: it is **[D]** owner-confirmed.
 
-Measured: the engine does not reject the third Dash Call — it **converts it to a PASS**. The cap of 2
-still holds (only two Dash callers exist in the state), but the mechanism differs from the plan's
-wording. Same on both runtimes.
+Measured: the engine **implements the ruling** — it does not reject the third Dash Call, it converts
+it to a PASS and keeps that seat active in the auction. The cap of 2 still holds (only two Dash
+callers exist in the state). Same on both runtimes. This is a plan-wording defect to fix, not an
+engine change and not a decision to re-open.
 
-### 4.3 T-24 s7 — the 13-rule force starts one step earlier than the plan says
+### 4.3 T-24 s7 — the engine follows the rulebook; the plan's one-line summary is the narrow one
 
-Plan: when the other declarations sum to 12, there is **no** force on the last estimator.
+The rulebook (`docs/rules/CANONICAL_RULES.md` §2.3) is absolute: "the total of all four players' bids
+may NEVER equal 13", and the Risk Player "is forced to choose a number that makes the total ≠ 13".
+That means **no bid may make the total exactly 13**: the forbidden number is `13 − sum of the others`,
+so when the others sum to 12 the last estimator is already forbidden from picking 1 (which would make
+the total exactly 13). The force therefore starts when the others sum to 12 — not only at 13.
 
-Measured: the engine forbids the last estimator from picking 1 (which would make the total exactly
-13), so the force is **one step earlier** than the plan states. The plan's own row for the sum-13
-case (`t24.s6`) and the sum-14 case (`t24.s8`) match the engine exactly.
+Plan: its one-line summary says the force applies "only when the first three sum to 13"; that is the
+**narrow** reading. It is the plan's summary that is imprecise, not the engine.
 
-The engine's own rule is `forbiddenEstimateFor = 13 − otherSum`, so the forbidden number is 1 when
-the others sum to 12, 0 when they sum to 13, and nothing when they sum to 14 — which is exactly what
-the three measured rows show. The plan's scope sentence, not the engine, is the odd one out.
+Measured: the engine follows the rulebook exactly — `forbiddenEstimateFor = 13 − otherSum`, so the
+forbidden number is 1 when the others sum to 12, 0 when they sum to 13, and nothing when they sum to
+14. The plan's own rows for the sum-13 case (`t24.s6`) and the sum-14 case (`t24.s8`) match the engine;
+the sum-12 row (`t24.s7`) is the one where the plan's scope sentence is narrow. Same on both runtimes.
+This is a plan-wording defect to fix, not an engine change.
 
 ## 5. The 14 NOT IMPLEMENTED cases — out of scope for engine parity
 
@@ -495,9 +504,11 @@ was touched. A T-ID was added only where the test genuinely covers that vector.
   `:engine` code runs there, which is what makes the JVM leg meaningful.
 - The vectors exercise the engine's rules directly. A change to the engine can move many values;
   the numbers above are reproducible only against the same commit and the same vector table.
-- The plan's own expected values are not always reachable as written. Two rows in §4 are the plan
-  being imprecise rather than the engine being wrong, and one (T-11 r5) is the known S4 defect.
-  None of them is a runtime disagreement — that count is **zero**.
+- The plan's own expected values are not always reachable as written. Of the three deviating rows in
+  §4, two are documentation fixes — the plan being imprecise rather than the engine being wrong (T-24
+  s5 is already owner-ruled **[D]**; T-24 s7 follows `CANONICAL_RULES.md` §2.3) — and one (T-11 r5)
+  is the known S4 defect, which is engine work. None of them is a runtime disagreement — that count
+  is **zero**.
 - E4's numbers are from one laptop, one network path and `wrangler dev --local`. See §6.3.
 
 ## 9. How to reproduce
@@ -530,13 +541,13 @@ from.
 
 E3 is a measurement; it closes the evidence question and opens three small ones.
 
-1. **The three deviations (§4).** T-11 r5 is the known S4 defect and needs the S4 story, not a
-   ruling. T-24 s5 (a third Dash Call converted to a PASS rather than rejected) and T-24 s7 (the
-   13-rule force starting one step earlier) are places where **the plan's wording and the engine's
-   behaviour disagree** — one of the two has to change. The engine's behaviour is self-consistent in
-   both cases and the 13-rule behaviour matches the engine's own `13 − otherSum` formula, so the
-   cheaper reading is that the plan's sentences are imprecise; but that is the owner's call, not
-   the report's.
+1. **The three deviating rows (§4) — not three open decisions.** T-11 r5 is the known **S4** defect
+   and needs the S4 story: **engine work**, not a ruling. The other two are **documentation fixes**:
+   T-24 s5 is already **[D]**-ruled (2026-10-24,
+   `docs/decisions/2026-10-24-f1-mixed-dash-general-pass.md` §2 — the engine implements it; the
+   plan's "rejected" sentence is stale), and T-24 s7 is the plan's narrow summary against
+   `CANONICAL_RULES.md` §2.3 — the engine follows the rulebook (`forbidden = 13 − otherSum`), so the
+   plan's sentence is what changes.
 2. **The 14 NOT IMPLEMENTED rows (§5).** Each names a service-side rule. They are not engine gaps
    to be filled in `:engine`; they are either already implemented in `:services`/`:functions` (and
    need their own evidence, not engine parity) or genuinely missing. The owner may want a

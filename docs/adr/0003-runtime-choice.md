@@ -95,12 +95,15 @@ wait, the 15-timeout counter, a fast declaration carrying its own suit). Each
 names the missing behaviour and where the behaviour actually lives. Full table:
 `docs/implementation/Stage0_E3_Vector_Parity_Report.md` §5.
 
-On the plan's own wording, 3 of the 153 rows **deviate**: the seat order decides an
-equal-highest fast call (the known S4 gap), a third Dash Call is converted to a
-PASS rather than rejected, and the 13-rule force starts one step earlier than the
-plan says. All three are the two runtimes agreeing with each other; they are
-reported, not fixed, and the owner has to decide whether the plan's sentences or
-the engine's behaviour should change. Detail: the report §4.
+On the plan's own wording, 3 of the 153 rows **deviate** — three deviating rows, not three
+open decisions. One is **engine work**: the seat order decides an equal-highest fast call (the
+known S4 gap), which needs the S4 story. Two are **documentation fixes**: a third Dash Call is
+converted to a PASS, which the owner already ruled on 2026-10-24
+(`docs/decisions/2026-10-24-f1-mixed-dash-general-pass.md` §2, **[D]**; the engine implements
+the ruling and the plan's "rejected" sentence is stale), and the 13-rule force starts when the
+others sum to 12, where the engine follows `CANONICAL_RULES.md` §2.3 and the plan's one-line
+summary is the narrow reading. All three are the two runtimes agreeing with each other; they are
+reported, not fixed, and none re-opens an owner decision. Detail: the report §4.
 
 ### E4 — does the bundle fit the platform, and how fast does it start? ✅ MEASURED
 

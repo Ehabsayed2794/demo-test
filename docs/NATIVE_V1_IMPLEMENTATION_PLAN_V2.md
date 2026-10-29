@@ -471,20 +471,29 @@ Legend for expected values:
 > (`docs/implementation/Stage0_E3_Vector_Parity_Report.md`) exercised every vector named in this
 > table's "Positive tests" / "Negative / edge-case tests" columns that falls in E3's scope
 > (T-01…T-16, T-22, T-24) — **153 cases, 139 IDENTICAL, 0 DIFFERENT, 14 NOT IMPLEMENTED**; the
-> JVM and workerd renderings are byte-identical. **Two acceptance sentences in the T-24 row are
-> contradicted by the measurement**, and this pointer is the correction — the engine's behaviour
-> is the measured one, and the row's wording is left as it was:
+> JVM and workerd renderings are byte-identical. **Three rows deviate from this table's wording**
+> (three deviating rows, not three open decisions), and this pointer is the correction — the
+> engine's behaviour is the measured one, and the row's wording is left as it was:
 >
-> - "a third pre-bid Dash is **rejected**" — the engine does not reject it, it **converts it to a
->   PASS**. The cap of two Dash callers still holds; the mechanism does not match the sentence.
-> - "the 13 Rule forces 1–13 **only when the first three sum to 13**" — the engine's rule is
->   `forbidden = 13 − sum of the others`, so the force **starts one step earlier**: when the other
->   three sum to 12 the last estimator is already forbidden from picking 1. At a sum of 13 the
->   forbidden number is 0 and at a sum of 14 there is no force, both matching the row.
+> - "a third pre-bid Dash is **rejected**" — **stale.** The owner ruled on 2026-10-24
+>   (`docs/decisions/2026-10-24-f1-mixed-dash-general-pass.md` §2, contract case 2) that a third
+>   Dash ATTEMPT after two effective ones is ineffective and persists `declaredDashCall = false`;
+>   that ruling is **[D]** and is not open. The engine **implements the ruling** — it converts the
+>   third attempt to a PASS and keeps that seat active. The cap of two Dash callers still holds.
+>   This is a doc fix: replace the row's "rejected" wording with the ruling.
+> - "the 13 Rule forces 1–13 **only when the first three sum to 13**" — **the narrow reading.** The
+>   rulebook (`docs/rules/CANONICAL_RULES.md` §2.3) says the total may NEVER equal 13, so the
+>   engine's rule is `forbidden = 13 − sum of the others`: the force **starts when the others sum to
+>   12** (the last estimator is forbidden from picking 1), is 0 when they sum to 13, and does not
+>   apply at 14. The engine follows the rulebook; this is a doc fix to widen the row's one-line
+>   summary.
+> - The third deviation is in T-11: the seat order decides an equal-highest fast call, which is the
+>   already-named **S4** defect. That one is **engine work** (the S4 story), not a doc fix and not an
+>   open decision.
 >
-> One further deviation is in T-11: the seat order decides an equal-highest fast call, which is the
-> already-named S4 defect. The 14 NOT IMPLEMENTED rows are service-side rules with no engine value
-> to compare; the report §5 names each one and where the behaviour actually lives.
+> So the deviation count is **3**: one engine task (S4) and two documentation fixes. The 14 NOT
+> IMPLEMENTED rows are service-side rules with no engine value to compare; the report §5 names each
+> one and where the behaviour actually lives.
 
 ### 5.3.3 Rule and scoring vectors
 
@@ -941,10 +950,14 @@ defines what would count as a result; it does not report one.
 > NOT IMPLEMENTED rows are **service-side** rules (settlement, departure charges, abandonment,
 > takeover counters and timers) that the backend decides and never asks the engine about, so
 > they have no engine value to compare; each names the missing behaviour and where it lives.
-> Three rows **deviate from the plan's wording** while agreeing with each other (the seat-order
-> tie-break in the equal-highest fast call, the third Dash Call converted to a PASS, and the
-> 13-rule force starting one step earlier) — reported, not fixed; the owner has to decide
-> whether the plan or the engine changes. Evidence:
+> Three rows **deviate from the plan's wording** while agreeing with each other. That is **three
+> deviating rows, not three open decisions**: one is engine work (the seat-order tie-break in the
+> equal-highest fast call — the known S4 defect), and two are documentation fixes (the third Dash
+> Call converted to a PASS, ruled **[D]** on 2026-10-24 in
+> `docs/decisions/2026-10-24-f1-mixed-dash-general-pass.md` §2, and the 13-rule force, where the
+> engine follows `CANONICAL_RULES.md` §2.3 and the plan's one-line summary is the narrow reading).
+> The status paragraph above still stands: only **E1–E4** have been run; **E5–E13** have not.
+> Evidence:
 > `docs/implementation/Stage0_E3_Vector_Parity_Report.md`; ADR skeleton:
 > `docs/adr/0003-runtime-choice.md` (the O-06 decision is still an open slot).
 
