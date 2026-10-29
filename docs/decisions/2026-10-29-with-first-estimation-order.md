@@ -51,20 +51,30 @@ forbidden number, so it always has a legal choice. Seed 194 round 5 now complete
   seed 194 shape end to end.
 - `native/engine/src/jvmTest/kotlin/com/estemshan/engine/WithFloorSuitAwareTest.kt` — the two floor tests that
   drove the old order now drive the new one; what they prove (suit-aware floor, floor acceptance) is unchanged.
+- `native/engine/src/commonMain/kotlin/com/estemshan/engine/bot/BidBrain.kt` — the bot now reads the same
+  suit-aware floor through the new public `withFloorFor(state, pId)` instead of the suit-blind
+  `withFloorFor(actionHistory, pId)`. The engine never floored on a bid in another suit, so the bot's own
+  guard was raising a With estimate above the number the engine accepts; the brain had been compensating
+  with a rejection it then silently corrected. Pinned by
+  `BidBrainTest.aWithEstimateRaisesToTheWinningSuitBidNotTheLastBidOverall`. No bot decision in the 800-match
+  corpus changed — the corpus output is byte-identical before and after.
 - `docs/rules/CANONICAL_RULES.md` §2.3 — in-place pointer note; the superseded paragraph is left verbatim.
 
 ## 4. Evidence (2026-10-29)
 
-- `:engine:jvmTest` 621 tests, 0 failures (baseline 617 + the 4 new order tests).
+- `:engine:jvmTest` 622 tests, 0 failures (baseline 617 + the 4 new order tests + the one brain floor test).
 - `:services:testDebugUnitTest` 298, `:app:testDebugUnitTest` 242, `:functions:jsNodeTest` 760 — all green.
 - E2 corpus re-run, JVM and workerd (wrangler 4.155.0 / workerd 2026-10-23, Node 22.14.0): 200 seeds per
   column, **0 failures** in all four; FULL 3,600 rounds and MINI 2,000 rounds per column; JVM output and
   workerd output **byte-identical** in all four columns
   (sha256 `4c9aa66a…`, `7ae36e7a…`, `a6c04773…`, `6a84a2e5…`).
-- Mutation proof: dropping the With partition from `estimationQueue` (plain counter-clockwise walk) fails
-  three of the four new tests — the two queue tests and the seed 194 test — while the fast-round pin still
-  passes, as it must. The source was restored byte-identically (sha256
-  `4be99b21632fca9f3d2b0728c46f8a157a374edf16a4b53d8acbb3a177e45843`).
+- Mutation proof (re-run against the final file): dropping the With partition from `estimationQueue` (plain
+  counter-clockwise walk) fails three of the four order tests — `theCallerAndSeatsAlreadyHoldingABidAreNotInTheQueue`
+  (`expected:<[p3, p2]> but was:<[p2, p3]>`), `withSeatsAreAskedFirstThenTheRest…`
+  (`expected:<[p4, p1, p3]> but was:<[p3, p4, p1]>`) and `aWithSeatIsNeverTheLastEstimatorInTheSeed194Shape`
+  (`expected:<p[3]> but was:<p[2]>`) — while the fast-round pin still passes, as it must. `Bidding.kt` was
+  restored byte-identically (sha256 `2dbb2d64bf577f82a65b3a43ffabaf35592e927932db059b794d63211ee934af`,
+  `git diff` empty).
 
 ## 5. Not changed
 
