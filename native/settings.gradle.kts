@@ -53,3 +53,7 @@ include(":services")
 // E6b (S42): the Ranked authority layer — Kotlin/JS on Node, sharing :engine.
 // See docs/adr/0002-functions-runtime.md.
 include(":functions")
+// Stage 0 (E1): the workerd harness. A throwaway probe, not a product module —
+// it exists to answer one question from the native v1 plan's Stage 0: does the
+// engine play an identical match on the JVM and inside Cloudflare's runtime?
+include(":stage0")
