@@ -29,18 +29,23 @@
 | Monetization | No billing, ads or IAP in the current baseline and no approved V1 monetization scope (O-09) |
 
 > **Pointer, 2026-10-29 (measured; the "NOT YET RUN" row above is left verbatim).**
-> **Five of the thirteen experiments have now been run**: **E1** (the engine plays a complete
+> **Six of the thirteen experiments have now been run**: **E1** (the engine plays a complete
 > match inside `workerd`), **E2** (200 seeds × FULL/MINI × Normal/Classic = 800 matches,
 > 11,200 rounds, JVM and workerd byte-identical), **E3** (the 153 §5.3.3 rule/scoring vectors
 > T-01…T-16, T-22, T-24 — **139 IDENTICAL, 0 DIFFERENT, 14 NOT IMPLEMENTED**; both rendered
 > documents byte-identical, sha256 `f52451cf3adef1fc08d78ae9afaeed2c9b7d2728c1bac09e12cb07c5285c4ff3`),
 > **E4** (bundle 625,718 bytes raw / 102,750 gzip; cold start median 36.3 ms, warm
-> median 6.5 ms, both measured on `wrangler dev --local`) and **E5** (≈ 1,135 requests and
-> ≈ 1,135 rows written per FULL match; worst measured action 0.067 ms CPU against the 10 ms
-> budget; free tier ≈ 88 matches/day under per-action durability — the model E6 builds on;
-> report: `docs/implementation/Stage0_E5_Capacity_Model_Report.md`). Reports:
-> `docs/implementation/Stage0_E2_Corpus_Parity_Report.md` and
-> `docs/implementation/Stage0_E3_Vector_Parity_Report.md`. **E6–E13 are still not run**, so
+> median 6.5 ms, both measured on `wrangler dev --local`), **E5** (the per-match cost model —
+> ≈ 1,135 requests and ≈ 1,135 rows per FULL match under the then-assumed per-action design,
+> since recalibrated by E6 under the owner's rulings) and **E6** (the target workload: per-seat
+> measured loads, the WebSocket + server-side-bot + per-Trick model, the 100/125/150
+> matches-per-day scenarios at **10–15× measured headroom under documented readings**, the
+> **90% guardrail verdict — it protects ongoing matches** — and the three platform unknowns
+> that can still flip 125/150 to overrun, each owned by a named experiment). Reports:
+> `docs/implementation/Stage0_E2_Corpus_Parity_Report.md`,
+> `docs/implementation/Stage0_E3_Vector_Parity_Report.md`,
+> `docs/implementation/Stage0_E5_Capacity_Model_Report.md` and
+> `docs/implementation/Stage0_E6_Target_Workload_Report.md`. **E7–E13 are still not run**, so
 > the runtime decision (O-06) is **not yet decidable on evidence**; the ADR skeleton with the
 > evidence and the open slot is `docs/adr/0003-runtime-choice.md`.
 
@@ -970,6 +975,23 @@ defines what would count as a result; it does not report one.
 > `docs/implementation/Stage0_E3_Vector_Parity_Report.md`,
 > `docs/implementation/Stage0_E5_Capacity_Model_Report.md`; ADR skeleton:
 > `docs/adr/0003-runtime-choice.md` (the O-06 decision is still an open slot).
+>
+> **Pointer, 2026-10-29 (E6 measured; the rows above are left verbatim).**
+> **E1, E2, E3, E4, E5 and E6 have been run**; **E7–E13 have not**. The E6 row's pass criterion —
+> "Measured headroom or a documented overrun" — is met **in both branches**, which is the honest
+> shape of the answer: under the documented (paid-page) readings of the platform's meters the
+> 100/125/150 scenarios run at **10–15× measured headroom** and the 90% guardrail never fires;
+> under the conservative unpublished readings (free-plan WebSocket messages counted 1:1, the
+> KV-API ×2 rows-per-put bound, no hibernation) **125/150 overrun**. The ruled design's cost per
+> FULL match is **≈ 66 request-units and ≈ 428 rows written** (4 humans; per-seat loads measured,
+> all four count fingerprints byte-identical JVM↔workerd), superseding E5's per-action figures
+> as planning numbers. The three decisive unknowns are named and owned: free-plan WebSocket
+> metering, rows-per-put, and hibernation/duration — all E12/E9 work on a real Cloudflare
+> account. The 90% guardrail's 10% reserve protects ongoing matches under the documented
+> readings (≈ 151–416 concurrent tables of headroom vs ≈ 25 plausible) but **not** under the
+> conservative requests reading (≈ 1 table) — a documented gap, per ruling E's honesty
+> requirement. Evidence:
+> `docs/implementation/Stage0_E6_Target_Workload_Report.md` (§5 the fork, §6 the guardrail).
 >
 > **Pointer, 2026-10-29 (owner rulings A–G; the E5/E6/E9/E12 rows above are left verbatim).**
 > The owner has ruled on the design assumptions the capacity work must now assume

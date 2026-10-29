@@ -166,16 +166,38 @@ target usage, so capacity is presented per meter; the target is owner input E6 n
 > action-count-based model; E6 recalculates for the WebSocket + server-side-bot design across
 > the three scenarios.
 
+### E6 — does the target workload fit the free tier at 90%? ✅ MEASURED + MODELLED
+
+Full evidence: `docs/implementation/Stage0_E6_Target_Workload_Report.md` (2026-10-29), built on
+per-seat measured loads (all four count fingerprints byte-identical JVM↔workerd). Under the
+ruled design — WebSocket transport, bots inside the authority, per-Trick persistence — a FULL
+match costs **≈ 66 request-units and ≈ 428 rows written** (4 humans; superseding E5's per-action
+figures as planning numbers). Against the owner's 100/125/150 scenarios the answer forks exactly
+on the platform facts that are not yet published or measured:
+
+- **Documented readings**: 10–15× headroom on every meter; the 90% guardrail never fires at
+  target usage, and its 10% reserve protects ongoing matches with ≈ 151–416 concurrent tables of
+  headroom (vs ≈ 25 plausible).
+- **Conservative readings** (free-plan WebSocket messages counted 1:1; the KV-API ×2
+  rows-per-put bound; no hibernation): **125/150 overrun** (up to 849% on requests, 128% on
+  rows, 130% on duration), the guardrail trips early, and its reserve does **not** protect
+  ongoing matches on the request axis (≈ 1 table) — a documented gap per ruling E.
+
+CPU is a non-problem in every reading (worst measured message 0.067 ms vs the 10 ms budget).
+The three decisive unknowns — free-plan WebSocket metering, rows-per-put, hibernation/duration —
+are owned by **E12/E9 on a real Cloudflare account**; O-06 stays open until they are measured.
+
 ### What is still NOT measured
 
-Stage 0 is thirteen experiments, not one. E6 (primary usage at 90% of the free
-tier — it needs the owner's target-usage number), E7 (backup lag /
+Stage 0 is thirteen experiments, not one. E7 (backup lag /
 outbox / recovery), E8 (D1 atomicity), E9 (durable recovery after an
-interruption), E10 (write/cleanup cost), E12 (hibernation and duration cost)
-and E13 (account deletion and store policy) are **not** run. A choice between
-the two runtimes that depends on those numbers — especially E6 (does the
-usage fit the free tier?) and E9/E7 (does the state survive?) — is **not yet
-decidable on evidence**.
+interruption), E10 (write/cleanup cost), E12 (hibernation and duration cost,
+**including the free-plan WebSocket metering and rows-per-put facts E6 showed
+are decisive**) and E13 (account deletion and store policy) are **not** run.
+A choice between the two runtimes that depends on those numbers — especially
+E12 (do the platform's real meters leave the 100/125/150 scenarios the headroom
+the documented readings promise?) and E9/E7 (does the state survive?) — is
+**not yet decidable on evidence**.
 
 ## Alternatives considered
 
@@ -206,13 +228,13 @@ broken at the most satisfying moment in the game".
 ### B — Cloudflare Workers + Durable Objects
 
 **Status:** **not approved** (O-06, 2026-10-22, `docs/decisions/OPEN_QUESTIONS.md`).
-Stage 0 E1–E5 above are the evidence gathered so far, and they are positive.
+Stage 0 E1–E6 above are the evidence gathered so far, and they are positive.
 
 **What it needs before it can be adopted:**
-- E6 — the free-tier headroom against the owner's **100 / 125 / 150 completed-matches-per-day
-  planning range** (ruled 2026-10-29), applied at the 90% operating level with the intended
-  WebSocket + server-side-bot design. E5 measured the per-match cost model and the per-meter
-  capacity the range is applied to.
+- E12 — the **real free-account verification** of the three meters E6 showed are decisive:
+  free-plan WebSocket metering, the DO rows-per-put mapping, and hibernation/duration. Under the
+  documented readings E6 measured 10–15× headroom for the 100/125/150 scenarios; under the
+  conservative readings 125/150 overrun. E12 decides which world is real.
 - E9 — a Durable Object's state is per-object and single-threaded, which is a
   *better* fit for exactly-once settlement than a Firestore transaction, but it
   is a different durability story and has to be demonstrated, not assumed.
@@ -224,7 +246,7 @@ Stage 0 E1–E5 above are the evidence gathered so far, and they are positive.
 - The settlement path's Firestore writes must be re-expressed: the Admin SDK
   runs on Node.js today, and Workers has a different Admin SDK surface.
 
-**Strengths:** E1–E5 show the engine runs there, agrees with the JVM to the
+**Strengths:** E1–E6 show the engine runs there, agrees with the JVM to the
 byte, fits the bundle limit with ~99% headroom, and starts in tens of
 milliseconds locally — the R24 "settling…" wait is the weakest of the
 alternatives on that measure.

@@ -6,6 +6,7 @@
 import com.estemshan.engine.GameType
 import com.estemshan.engine.ScoringMode
 import com.estemshan.stage0.runCapacityJson
+import com.estemshan.stage0.runCapacityMixJson
 import com.estemshan.stage0.runCorpusJson
 import com.estemshan.stage0.runMatchJson
 import com.estemshan.stage0.runRuleVectorsText
@@ -47,6 +48,16 @@ fun runRuleVectors(): String = runRuleVectorsText()
 @JsExport
 fun runCapacity(firstSeed: Int, count: Int, gameType: String, scoringMode: String): String =
   runCapacityJson(firstSeed, count, gameTypeOf(gameType), scoringModeOf(scoringMode))
+
+/**
+ * E6's entry point: the per-seat capacity battery — the same match stream as
+ * E5's probe with every action attributed to the seat that acted, so the
+ * human/bot mix can be applied as a model on top of measured loads.
+ */
+@OptIn(ExperimentalJsExport::class)
+@JsExport
+fun runCapacityMix(firstSeed: Int, count: Int, gameType: String, scoringMode: String): String =
+  runCapacityMixJson(firstSeed, count, gameTypeOf(gameType), scoringModeOf(scoringMode))
 
 private fun gameTypeOf(name: String): GameType =
   GameType.entries.firstOrNull { it.name == name.uppercase() }
