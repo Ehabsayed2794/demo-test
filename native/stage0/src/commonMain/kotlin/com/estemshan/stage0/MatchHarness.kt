@@ -7,9 +7,11 @@ import com.estemshan.engine.BiddingPhase
 import com.estemshan.engine.Dealer
 import com.estemshan.engine.EmitResult
 import com.estemshan.engine.GameSession
+import com.estemshan.engine.GameType
 import com.estemshan.engine.PlayEmit
 import com.estemshan.engine.RoundCfg
 import com.estemshan.engine.RoundScoreInput
+import com.estemshan.engine.ScoringMode
 import com.estemshan.engine.SessionPlayer
 import com.estemshan.engine.TablePhase
 import com.estemshan.engine.accumulateMatchScores
@@ -27,8 +29,8 @@ import com.estemshan.engine.isFastRound
 import com.estemshan.engine.resolveTrick
 
 /**
- * Stage 0 (E1): play one complete bot-vs-bot match through the real engine and
- * reduce it to a canonical JSON document.
+ * Stage 0 (E1/E2): play complete bot-vs-bot matches through the real engine and
+ * reduce them to canonical JSON documents.
  *
  * The driver is a lift of `BotVsBotSmokeTest.playMatch` — the S10 golden that
  * already proves a full 18-round match completes — so the match being measured
@@ -39,10 +41,16 @@ import com.estemshan.engine.resolveTrick
  * reproduces a whole match. That is what makes the JVM/JS comparison
  * meaningful: same seed, same code, two runtimes, one expected byte string.
  *
+ * E2 adds the two axes the parity corpus needs — [GameType] (FULL 18 / MINI 10)
+ * and [ScoringMode] (NORMAL / CLASSIC) — applied the way the product applies
+ * them: `setGameType` for the rules, an explicit `RoundState.maxRounds` for the
+ * ceiling (`GameSession.setGameType` deliberately leaves the current round
+ * alone), and both stamped into the bidding state and the round score.
+ *
  * Everything below is commonMain — Kotlin means the JVM build and the JS build
  * compile the same source, so a divergence in the output can only come from the
  * runtime (float formatting, collection order, string hashing), which is exactly
- * what E1 is probing for.
+ * what the comparison is probing for.
  */
 private val SEATS = listOf("p1", "p2", "p3", "p4")
 
@@ -80,6 +88,9 @@ data class RoundDigest(
 )
 
 data class MatchRun(
+  val seed: Int,
+  val gameType: GameType,
+  val scoringMode: ScoringMode,
   val rounds: List<RoundDigest>,
   val dealers: List<String>,
   val redeals: Int,
@@ -88,19 +99,29 @@ data class MatchRun(
 )
 
 /** Play the match [seed] deals, through the real session and both reducers. */
-fun playMatch(seed: Int): MatchRun {
+fun playMatch(
+  seed: Int,
+  gameType: GameType = GameType.FULL,
+  scoringMode: ScoringMode = ScoringMode.NORMAL,
+): MatchRun {
   val tier = { seat: String -> ROSTER.getValue(seat).first }
   val personality = { seat: String -> ROSTER.getValue(seat).second }
 
   var tick = 0L
   val session = GameSession(clock = { ++tick })
   session.init("ai", force = true)
+  // Both are applied the way OnlineMatchViewModel applies a match document:
+  // the type drives the rules, the round's own maxRounds drives the ceiling.
+  // setGameType on its own would leave the FULL ceiling in place.
+  session.setGameType(gameType)
+  session.setScoringMode(scoringMode)
+  session.setRound(session.getRound().copy(maxRounds = gameType.baseRounds))
   session.setPlayers(SEATS.map {
     SessionPlayer(seatId = it, uid = null, displayName = "Bot $it", isAI = true)
   })
 
-  val rounds = ArrayList<RoundDigest>(18)
-  val dealers = ArrayList<String>(18)
+  val rounds = ArrayList<RoundDigest>(gameType.baseRounds)
+  val dealers = ArrayList<String>(gameType.baseRounds)
   var redealCount = 0
 
   val maxRounds = session.getRound().maxRounds
@@ -114,8 +135,11 @@ fun playMatch(seed: Int): MatchRun {
     var hands = Dealer.dealHands(dealSeed)
 
     var bidding = session.initializeBiddingState(
-      if (isFastRound(round)) initFastRound(round, dealer, SEATS, multiplier)
-      else initNormalRound(round, dealer, SEATS, multiplier),
+      if (isFastRound(round, gameType)) {
+        initFastRound(round, dealer, SEATS, multiplier, gameType, scoringMode)
+      } else {
+        initNormalRound(round, dealer, SEATS, multiplier, gameType, scoringMode)
+      },
     )
 
     var outcome: BiddingOutcome? = null
@@ -135,12 +159,15 @@ fun playMatch(seed: Int): MatchRun {
           dealSeed += 500L
           hands = Dealer.dealHands(dealSeed)
           session.initializeBiddingState(
-            if (isFastRound(round)) initFastRound(round, dealer, SEATS, multiplier)
-            else initNormalRound(round, dealer, SEATS, multiplier),
+            if (isFastRound(round, gameType)) {
+              initFastRound(round, dealer, SEATS, multiplier, gameType, scoringMode)
+            } else {
+              initNormalRound(round, dealer, SEATS, multiplier, gameType, scoringMode)
+            },
           )
         }
         is EmitResult.Rejected -> error(
-          "BidBrain produced an illegal intent in round $round for $seat: ${result.reason}",
+          "seed $seed round $round ($gameType/$scoringMode) for $seat: ${result.reason}",
         )
       }
       session.updateBiddingState(bidding)
@@ -170,13 +197,14 @@ fun playMatch(seed: Int): MatchRun {
         is PlayEmit.Applied ->
           if (result.state.phase == TablePhase.RESOLVING) resolveTrick(result.state) else result.state
         is PlayEmit.Rejected -> error(
-          "PlayBrain produced an illegal card in round $round trick ${table.trickNo} for $seat: ${result.reason}",
+          "seed $seed round $round trick ${table.trickNo} ($gameType/$scoringMode) for $seat: ${result.reason}",
         )
       }
       session.updatePlayState(table)
     }
     check(table.phase == TablePhase.DONE) { "round $round play never reached DONE" }
 
+    val classic = scoringMode == ScoringMode.CLASSIC
     val score = calculateRoundScore(
       RoundScoreInput(
         round = round,
@@ -187,6 +215,8 @@ fun playMatch(seed: Int): MatchRun {
         withPlayers = cfg.withPlayers,
         multiplier = multiplier,
         riskPlayerId = cfg.riskId,
+        classic = classic,
+        escalationCap = if (classic) 2 else 8,
       ),
     )
     session.setMatchScores(accumulateMatchScores(session.getMatchScores(), score.deltas))
@@ -215,6 +245,9 @@ fun playMatch(seed: Int): MatchRun {
 
   val scores = session.getMatchScores()
   return MatchRun(
+    seed = seed,
+    gameType = gameType,
+    scoringMode = scoringMode,
     rounds = rounds,
     dealers = dealers,
     redeals = redealCount,
@@ -224,24 +257,123 @@ fun playMatch(seed: Int): MatchRun {
 }
 
 /**
- * The canonical JSON for [seed]: a wrapper with a 32-bit fingerprint plus the
+ * The canonical JSON for one match: a wrapper with a 32-bit fingerprint plus the
  * full body it was computed over.
  *
- * The fingerprint is the fast comparison (one short string per runtime); the
- * body is the evidence, so a mismatch can be diffed instead of just detected.
- * Every map is written seat-major in [SEATS] order and numbers are integers
- * only — no floating-point formatting can leak a runtime difference into the
- * document before the rules themselves have had their say.
+ * The fingerprint is the fast comparison (one short string per match); the body
+ * is the evidence, so a mismatch can be diffed instead of just detected. Every
+ * map is written seat-major in [SEATS] order and numbers are integers only — no
+ * floating-point formatting can leak a runtime difference into the document
+ * before the rules themselves have had their say.
  */
-fun runMatchJson(seed: Int): String {
-  val run = playMatch(seed)
+fun runMatchJson(
+  seed: Int,
+  gameType: GameType = GameType.FULL,
+  scoringMode: ScoringMode = ScoringMode.NORMAL,
+): String = renderDocument(playMatch(seed, gameType, scoringMode))
 
+/**
+ * E2's corpus manifest: the fingerprints and final scores of [count] consecutive
+ * matches under one (gameType, scoringMode) combination.
+ *
+ * Deliberately compact — a byte-level diff over 200 full documents is
+ * unreadable, and the per-match document stays reachable through [runMatchJson]
+ * for any seed the manifest flags. The manifest still carries what the plan's
+ * evidence line asks for: the seed list, per-seat scores, and a fingerprint that
+ * covers every action of every round.
+ */
+fun runCorpusJson(
+  firstSeed: Int,
+  count: Int,
+  gameType: GameType = GameType.FULL,
+  scoringMode: ScoringMode = ScoringMode.NORMAL,
+): String = renderCorpus(playCorpus(firstSeed, count, gameType, scoringMode))
+
+/** A corpus column: the matches that completed, and the seeds the bots could
+ *  not legally finish. */
+data class CorpusRun(
+  val gameType: GameType,
+  val scoringMode: ScoringMode,
+  val firstSeed: Int,
+  val count: Int,
+  val matches: List<MatchRun>,
+  val failures: List<SeedFailure>,
+)
+
+/** A seed the drivers could not finish, with the reason. The message is built by
+ *  common code, so it is comparable across runtimes too — if the two runtimes
+ *  ever disagree about WHY a seed failed, that is itself a parity finding. */
+data class SeedFailure(val seed: Int, val message: String)
+
+fun playCorpus(
+  firstSeed: Int,
+  count: Int,
+  gameType: GameType = GameType.FULL,
+  scoringMode: ScoringMode = ScoringMode.NORMAL,
+): CorpusRun {
+  val rows = ArrayList<MatchRun>(count)
+  val failures = ArrayList<SeedFailure>()
+  for (seed in firstSeed until firstSeed + count) {
+    try {
+      rows += playMatch(seed, gameType, scoringMode)
+    } catch (t: Throwable) {
+      // A seed the bots cannot legally finish is a finding, not a reason to
+      // abandon the rest of the corpus: it is recorded by seed so the report can
+      // name it, and both runtimes must fail on exactly the same ones.
+      failures += SeedFailure(seed, t.message ?: t.toString())
+    }
+  }
+  return CorpusRun(gameType, scoringMode, firstSeed, count, rows, failures)
+}
+
+private fun renderCorpus(corpus: CorpusRun): String {
+  val w = JsonWriter().beginObject()
+  w.name("gameType").str(corpus.gameType.name)
+  w.name("scoringMode").str(corpus.scoringMode.name)
+  w.name("firstSeed").num(corpus.firstSeed)
+  w.name("count").num(corpus.count)
+  w.name("totalRounds").num(corpus.matches.sumOf { it.rounds.size })
+  w.name("failures").beginArray()
+  for (f in corpus.failures) {
+    w.beginObject()
+    w.name("seed").num(f.seed)
+    w.name("message").str(f.message)
+    w.endObject()
+  }
+  w.endArray()
+  w.name("matches").beginArray()
+  for (run in corpus.matches) {
+    w.beginObject()
+    w.name("seed").num(run.seed)
+    w.name("rounds").num(run.rounds.size)
+    // The same fingerprint runMatchJson wraps for this seed — one document,
+    // one hash, whether it is fetched alone or as a row of the corpus.
+    w.name("fingerprint").str(fnv1a32(renderBody(run)))
+    w.name("scores").seatMap(run.matchScores)
+    w.name("winners").strArray(run.winners)
+    w.endObject()
+  }
+  w.endArray()
+  w.endObject()
+
+  val json = w.toString()
+  return """{"fingerprint":"${fnv1a32(json)}","body":$json}"""
+}
+
+/** The wrapper [runMatchJson] returns: fingerprint over the body, then the body. */
+private fun renderDocument(run: MatchRun): String {
+  val body = renderBody(run)
+  return """{"fingerprint":"${fnv1a32(body)}","body":$body}"""
+}
+
+private fun renderBody(run: MatchRun): String {
   val body = JsonWriter().beginObject()
-  body.name("seed").num(seed)
+  body.name("seed").num(run.seed)
+  body.name("gameType").str(run.gameType.name)
+  body.name("scoringMode").str(run.scoringMode.name)
   body.name("rounds").num(run.rounds.size)
   body.name("redeals").num(run.redeals)
   body.name("dealers").strArray(run.dealers)
-
   body.name("history").beginArray()
   for (r in run.rounds) {
     body.beginObject()
@@ -262,13 +394,10 @@ fun runMatchJson(seed: Int): String {
     body.endObject()
   }
   body.endArray()
-
   body.name("matchScores").seatMap(run.matchScores)
   body.name("winners").strArray(run.winners)
   body.endObject()
-
-  val json = body.toString()
-  return """{"fingerprint":"${fnv1a32(json)}","body":$json}"""
+  return body.toString()
 }
 
 /**
