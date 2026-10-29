@@ -34,7 +34,7 @@
 > 11,200 rounds, JVM and workerd byte-identical), **E3** (the 153 §5.3.3 rule/scoring vectors
 > T-01…T-16, T-22, T-24 — **139 IDENTICAL, 0 DIFFERENT, 14 NOT IMPLEMENTED**; both rendered
 > documents byte-identical, sha256 `f52451cf3adef1fc08d78ae9afaeed2c9b7d2728c1bac09e12cb07c5285c4ff3`)
-> and **E4** (bundle 625,718 bytes raw / 103,890 gzip; cold start median 36.3 ms, warm
+> and **E4** (bundle 625,718 bytes raw / 102,750 gzip; cold start median 36.3 ms, warm
 > median 6.5 ms, both measured on `wrangler dev --local`). Reports:
 > `docs/implementation/Stage0_E2_Corpus_Parity_Report.md` and
 > `docs/implementation/Stage0_E3_Vector_Parity_Report.md`. **E5–E13 are still not run**, so

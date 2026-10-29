@@ -74,7 +74,7 @@ sha256). Zero diffs, explained or otherwise.
 
 The sharper question: a corpus can agree while one rule disagrees, because a
 match only exercises the rules its cards happen to reach. So the plan's
-§5.3.3 vectors were run as a **table of 153 named vectors** across all 19
+§5.3.3 vectors were run as a **table of 153 named vectors** across all 18
 in-scope vector ids (T-01…T-16, T-22, T-24), each with a known expected
 answer.
 
@@ -110,12 +110,16 @@ the engine's behaviour should change. Detail: the report §4.
 | Measure | Value |
 |---|---|
 | Worker bundle, raw | **625,718 bytes** (611 KB) — 4 files |
-| Worker bundle, gzip (level 9) | **103,890 bytes** (101.5 KB) |
-| Engine only (without the probe driver), raw / gzip | 491,636 / 77,520 bytes |
+| Worker bundle, gzip (level 9, one stream over the four files) | **102,750 bytes** (100.3 KB) |
+| Engine only (without the probe driver), raw / gzip | 491,636 / 76,974 bytes |
 | Cold start — first request after start (16 runs) | median **36.3 ms**, min 16.0, p90 50.5, max 54.7 |
 | Cold start — server-ready → first response | median **106 ms**, min 82, max 128 |
 | Warm start — request on a live isolate (80 samples) | median **6.5 ms**, min 4.8, max 31.7 |
 | A request that runs the whole rule-vector table (153 vectors) | median **41.8 ms** |
+
+The gzip figure is `cat <files> | gzip -9 | wc -c` — one stream over the four files, which is
+how the artifact is actually transferred. Gzipping the files one at a time instead gives 103,783
+and 77,423; both numbers are in the report §6.1.
 
 Cloudflare **removed the compressed-size limits on 2026-09-04** (3 MB Free / 10 MB paid) and now
 checks **only the uncompressed bundle size, at 64 MiB on every plan** — so the 625,718-byte raw

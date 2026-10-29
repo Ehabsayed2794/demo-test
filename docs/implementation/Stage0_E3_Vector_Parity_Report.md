@@ -57,20 +57,25 @@ expectation applies because the behaviour does not exist).
 Artifact hashes at the time of the run (identical copies in the build directory and in the worker
 directory):
 
-| File | sha256 | Raw bytes | gzip −9 bytes |
+| File | sha256 | Raw bytes | gzip −9 bytes (own stream) |
 | --- | --- | --- | --- |
-| `Estemshan-engine.js` | `d8e6310d235db5850837fac91d4c36c9afb6bceb4ef19496568b7a5bf12f556a` | 296,054 | 45,878 |
-| `kotlin-kotlin-stdlib.js` | `77f028b2fda52282699305bc95e07b7345874629502c41d48fe03947369c3f7f` | 195,010 | 31,305 |
-| `kotlin_org_jetbrains_kotlin_kotlin_dom_api_compat.js` | `dd4ef3b5bd828db9606eb1c4dd0b629e134e7935bb1631ba47bd773fb9deac0b` | 572 | 337 |
-| `stage0.js` (the probe harness, not the engine) | `a025adcae523702586fc181ca2387737a4d7a6e47e85e435b71e64d8bbe6e0b6` | 134,082 | 26,370 |
-| **Total** | — | **625,718** | **103,890** |
+| `Estemshan-engine.js` | `d8e6310d235db5850837fac91d4c36c9afb6bceb4ef19496568b7a5bf12f556a` | 296,054 | 45,858 |
+| `kotlin-kotlin-stdlib.js` | `77f028b2fda52282699305bc95e07b7345874629502c41d48fe03947369c3f7f` | 195,010 | 31,281 |
+| `kotlin_org_jetbrains_kotlin_kotlin_dom_api_compat.js` | `dd4ef3b5bd828db9606eb1c4dd0b629e134e7935bb1631ba47bd773fb9deac0b` | 572 | 284 |
+| `stage0.js` (the probe harness, not the engine) | `a025adcae523702586fc181ca2387737a4d7a6e47e85e435b71e64d8bbe6e0b6` | 134,082 | 26,360 |
+| **Total** | — | **625,718** | **103,783** (sum of the four) |
 
-## 3. Result — 153 cases, 19 vectors, zero disagreements
+The gzip column is GNU `gzip -9` read from stdin (`cat <file> | gzip -9 | wc -c`), so no
+filename header is stored. **The bundle gzipped as one stream** — the size it is actually
+transferred at, and the number quoted in §6.1 — is **102,750 bytes**. See §6.1 for why the two
+differ.
+
+## 3. Result — 153 cases, 18 vectors, zero disagreements
 
 | Measure | Value |
 | --- | --- |
 | Cases in the table | 153 |
-| Vectors in scope | 19 (T-01…T-16, T-22, T-24 — every T-ID the plan's E3 row names) |
+| Vectors in scope | 18 (T-01…T-16, T-22, T-24 — every T-ID the plan's E3 row names) |
 | **IDENTICAL** (JVM = workerd, and = the plan) | **139** |
 | **DIFFERENT** (JVM ≠ workerd) | **0** |
 | **NOT IMPLEMENTED** (the engine has no such behaviour) | **14** |
@@ -275,7 +280,7 @@ otherwise.
 | T-24 | 16 | 16 | 0 | 0 | 14 MATCHES, 2 DEVIATES |
 | **Total** | **153** | **139** | **0** | **14** | **136 MATCHES, 3 DEVIATES** |
 
-No T-ID is silently dropped: each of the 19 appears above with its own outcome and count.
+No T-ID is silently dropped: each of the 18 appears above with its own outcome and count.
 
 ### 3.3 The suites that were run
 
@@ -396,13 +401,21 @@ Measured on today's main (`dcb954e`), on the same artifacts, on this machine.
 
 ### 6.1 Bundle size
 
-| Bundle | Raw bytes | gzip −9 bytes |
+| Bundle | Raw bytes | gzip −9 bytes (one stream) |
 | --- | --- | --- |
-| All four runtime files (engine + stdlib + dom-compat + probe harness) | 625,718 | 103,890 |
-| Engine only (drop the `stage0` probe harness) | 491,636 | 77,520 |
+| All four runtime files (engine + stdlib + dom-compat + probe harness) | 625,718 | 102,750 |
+| Engine only (drop the `stage0` probe harness) | 491,636 | 76,974 |
 
 Raw total is the number the platform's **uncompressed** limit applies to; the gzip total is
 recorded because it was the binding limit until very recently.
+
+**Method.** `cat <files> | gzip -9 | wc -c` — GNU `gzip -9`, one stream over the files in the
+order listed. That is the transferable size, because a worker is deployed as one script.
+Gzipping the files **one at a time** instead gives 103,783 (all four) and 77,423 (engine only):
+each separate stream carries its own header and has no shared dictionary. The two numbers
+measure different things; the one-stream figures are the ones quoted throughout this report and
+in the ADR. The per-file gzip figures in §2 are the one-at-a-time method, so §2's total is the
+sum of the four, not the one-stream figure.
 
 **The limit itself changed on 2026-09-04.** Cloudflare **removed** the compressed-size limits
 (3 MB Free / 10 MB paid) and now checks **only the uncompressed bundle size, at 64 MiB on every
