@@ -29,15 +29,18 @@
 | Monetization | No billing, ads or IAP in the current baseline and no approved V1 monetization scope (O-09) |
 
 > **Pointer, 2026-10-29 (measured; the "NOT YET RUN" row above is left verbatim).**
-> **Four of the thirteen experiments have now been run**: **E1** (the engine plays a complete
+> **Five of the thirteen experiments have now been run**: **E1** (the engine plays a complete
 > match inside `workerd`), **E2** (200 seeds × FULL/MINI × Normal/Classic = 800 matches,
 > 11,200 rounds, JVM and workerd byte-identical), **E3** (the 153 §5.3.3 rule/scoring vectors
 > T-01…T-16, T-22, T-24 — **139 IDENTICAL, 0 DIFFERENT, 14 NOT IMPLEMENTED**; both rendered
-> documents byte-identical, sha256 `f52451cf3adef1fc08d78ae9afaeed2c9b7d2728c1bac09e12cb07c5285c4ff3`)
-> and **E4** (bundle 625,718 bytes raw / 102,750 gzip; cold start median 36.3 ms, warm
-> median 6.5 ms, both measured on `wrangler dev --local`). Reports:
+> documents byte-identical, sha256 `f52451cf3adef1fc08d78ae9afaeed2c9b7d2728c1bac09e12cb07c5285c4ff3`),
+> **E4** (bundle 625,718 bytes raw / 102,750 gzip; cold start median 36.3 ms, warm
+> median 6.5 ms, both measured on `wrangler dev --local`) and **E5** (≈ 1,135 requests and
+> ≈ 1,135 rows written per FULL match; worst measured action 0.067 ms CPU against the 10 ms
+> budget; free tier ≈ 88 matches/day under per-action durability — the model E6 builds on;
+> report: `docs/implementation/Stage0_E5_Capacity_Model_Report.md`). Reports:
 > `docs/implementation/Stage0_E2_Corpus_Parity_Report.md` and
-> `docs/implementation/Stage0_E3_Vector_Parity_Report.md`. **E5–E13 are still not run**, so
+> `docs/implementation/Stage0_E3_Vector_Parity_Report.md`. **E6–E13 are still not run**, so
 > the runtime decision (O-06) is **not yet decidable on evidence**; the ADR skeleton with the
 > evidence and the open slot is `docs/adr/0003-runtime-choice.md`.
 
@@ -944,7 +947,7 @@ Every row is an engineering investigation. None has been executed for this plan.
 defines what would count as a result; it does not report one.
 
 > **Pointer, 2026-10-29 (measured; the heading and the paragraph above are left verbatim).**
-> **E1, E2, E3 and E4 have been run**; **E5–E13 have not**. The E3 row's pass criterion —
+> **E1, E2, E3, E4 and E5 have been run**; **E6–E13 have not**. The E3 row's pass criterion —
 > "Every vector identical" — is met **for the engine's rules**: all 153 §5.3.3 vectors in scope
 > render byte-identically on the JVM and inside `workerd`, with **0 DIFFERENT**. The 14
 > NOT IMPLEMENTED rows are **service-side** rules (settlement, departure charges, abandonment,
@@ -956,9 +959,16 @@ defines what would count as a result; it does not report one.
 > Call converted to a PASS, ruled **[D]** on 2026-10-24 in
 > `docs/decisions/2026-10-24-f1-mixed-dash-general-pass.md` §2, and the 13-rule force, where the
 > engine follows `CANONICAL_RULES.md` §2.3 and the plan's one-line summary is the narrow reading).
-> The status paragraph above still stands: only **E1–E4** have been run; **E5–E13** have not.
+> The E5 row's pass criterion — "Model exists; capacity at target usage computed" — is met as far
+> as the plan allows: the per-match cost model exists (≈ 1,135 requests and ≈ 1,135 rows written
+> per FULL match; worst action 0.067 ms CPU vs the 10 ms budget), but the plan defines **no
+> numeric target usage**, so the capacity is presented per meter (free tier ≈ 88 matches/day
+> under per-action durability) and the target itself is owner input E6 needs
+> (`docs/implementation/Stage0_E5_Capacity_Model_Report.md` §5/§8).
+> The status paragraph above still stands: only **E1–E5** have been run; **E6–E13** have not.
 > Evidence:
-> `docs/implementation/Stage0_E3_Vector_Parity_Report.md`; ADR skeleton:
+> `docs/implementation/Stage0_E3_Vector_Parity_Report.md`,
+> `docs/implementation/Stage0_E5_Capacity_Model_Report.md`; ADR skeleton:
 > `docs/adr/0003-runtime-choice.md` (the O-06 decision is still an open slot).
 
 | ID | Experiment | Question answered | Method | Pass / decision criterion | Blocks |

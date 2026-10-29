@@ -136,14 +136,30 @@ accessed 2026-10-29.
 hop and the production isolate scheduler. It bounds the *local* start-up cost;
 it is not a production latency SLO.
 
+### E5 — what does one match cost, and what does the free tier carry? ✅ MEASURED
+
+Full evidence: `docs/implementation/Stage0_E5_Capacity_Model_Report.md` (2026-10-29). The
+short form: a FULL match costs **≈ 1,135 requests** (936 cards + ≈ 194 bidding actions +
+lifecycle, measured over 50 seeds with JVM↔workerd count fingerprints identical) and, under
+per-action durability, **≈ 1,135 rows written**. CPU is a non-problem: the worst measured
+action is **0.067 ms** against the 10 ms/request budget — three orders of magnitude of
+headroom. The binding free-tier meters are **requests/day** (HTTP-per-action transport) and
+**rows written/day** (every transport): **≈ 88 matches/day** (≈ 79 at 90%), or ≈ 230/day with
+per-trick write batching and ≈ 1,500/day on a WebSocket transport. The plan names no numeric
+target usage, so capacity is presented per meter; the target is owner input E6 needs.
+
+> **SLOT — the owner's reading of these numbers**, in particular whether the free tier's
+> ≈ 88–230 matches/day is sufficient for V1's primary scenario, and which write granularity
+> the recovery criteria (E9) should bless.
+
 ### What is still NOT measured
 
-Stage 0 is thirteen experiments, not one. E5 (measured resources vs the
-capacity model), E6 (primary usage at 90% of the free tier), E7 (backup lag /
+Stage 0 is thirteen experiments, not one. E6 (primary usage at 90% of the free
+tier — it needs the owner's target-usage number), E7 (backup lag /
 outbox / recovery), E8 (D1 atomicity), E9 (durable recovery after an
 interruption), E10 (write/cleanup cost), E12 (hibernation and duration cost)
 and E13 (account deletion and store policy) are **not** run. A choice between
-the two runtimes that depends on those numbers — especially E5/E6 (does the
+the two runtimes that depends on those numbers — especially E6 (does the
 usage fit the free tier?) and E9/E7 (does the state survive?) — is **not yet
 decidable on evidence**.
 
@@ -176,12 +192,12 @@ broken at the most satisfying moment in the game".
 ### B — Cloudflare Workers + Durable Objects
 
 **Status:** **not approved** (O-06, 2026-10-22, `docs/decisions/OPEN_QUESTIONS.md`).
-Stage 0 E1–E4 above are the evidence gathered so far, and they are positive.
+Stage 0 E1–E5 above are the evidence gathered so far, and they are positive.
 
 **What it needs before it can be adopted:**
-- E5/E6 — the measured cost per match and the free-tier headroom **on
-  Cloudflare's limits** (Workers requests/day, CPU time per request, Durable
-  Object storage and duration limits).
+- E6 — the free-tier headroom against a **numeric target usage** (E5 measured the
+  per-match cost model and the per-meter capacity the target is applied to;
+  the target itself is still an owner input).
 - E9 — a Durable Object's state is per-object and single-threaded, which is a
   *better* fit for exactly-once settlement than a Firestore transaction, but it
   is a different durability story and has to be demonstrated, not assumed.
@@ -193,7 +209,7 @@ Stage 0 E1–E4 above are the evidence gathered so far, and they are positive.
 - The settlement path's Firestore writes must be re-expressed: the Admin SDK
   runs on Node.js today, and Workers has a different Admin SDK surface.
 
-**Strengths:** E1–E4 show the engine runs there, agrees with the JVM to the
+**Strengths:** E1–E5 show the engine runs there, agrees with the JVM to the
 byte, fits the bundle limit with ~99% headroom, and starts in tens of
 milliseconds locally — the R24 "settling…" wait is the weakest of the
 alternatives on that measure.

@@ -5,6 +5,7 @@
 
 import com.estemshan.engine.GameType
 import com.estemshan.engine.ScoringMode
+import com.estemshan.stage0.runCapacityJson
 import com.estemshan.stage0.runCorpusJson
 import com.estemshan.stage0.runMatchJson
 import com.estemshan.stage0.runRuleVectorsText
@@ -36,6 +37,16 @@ fun runCorpus(firstSeed: Int, count: Int, gameType: String, scoringMode: String)
 @OptIn(ExperimentalJsExport::class)
 @JsExport
 fun runRuleVectors(): String = runRuleVectorsText()
+
+/**
+ * E5's entry point: the capacity battery — request counts (fingerprinted, so
+ * the two runtimes must agree bytewise) plus the per-match timings the
+ * capacity model is built from.
+ */
+@OptIn(ExperimentalJsExport::class)
+@JsExport
+fun runCapacity(firstSeed: Int, count: Int, gameType: String, scoringMode: String): String =
+  runCapacityJson(firstSeed, count, gameTypeOf(gameType), scoringModeOf(scoringMode))
 
 private fun gameTypeOf(name: String): GameType =
   GameType.entries.firstOrNull { it.name == name.uppercase() }
