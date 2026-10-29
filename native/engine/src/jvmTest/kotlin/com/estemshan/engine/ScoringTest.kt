@@ -56,7 +56,7 @@ class ScoringTest {
 
   // ── Super Call: win = bid² ──
   @Test
-  fun superWinTable() {
+  fun t05superWinTable() {
     val table = mapOf(8 to 64, 9 to 81, 10 to 100, 11 to 121, 12 to 144, 13 to 169)
     for ((bid, expected) in table) {
       assertEquals(expected, round(bid, bid, listOf(1 to 1, 2 to 2, 3 to 3)))
@@ -64,13 +64,13 @@ class ScoringTest {
   }
 
   @Test
-  fun superSoleWinAdds10() {
+  fun t05superSoleWinAdds10() {
     assertEquals(74, round(8, 8, listOf(1 to 2, 2 to 3, 3 to 4)))
   }
 
   // ── Super Call: loss = half rounded half-up, tricks ignored ──
   @Test
-  fun superLossTable() {
+  fun t05superLossTable() {
     val table = mapOf(8 to -32, 9 to -41, 10 to -50, 11 to -61, 12 to -72, 13 to -85)
     for ((bid, expected) in table) {
       assertEquals(expected, round(bid, 0, listOf(1 to 1, 2 to 2, 5 to 6)))
@@ -78,13 +78,13 @@ class ScoringTest {
   }
 
   @Test
-  fun superLossIgnoresTricksTaken() {
+  fun t05superLossIgnoresTricksTaken() {
     assertEquals(-32, round(8, 1, listOf(1 to 1, 2 to 2, 5 to 6)))
     assertEquals(-32, round(8, 7, listOf(1 to 1, 2 to 2, 5 to 6)))
   }
 
   @Test
-  fun superSoleLossTable() {
+  fun t05superSoleLossTable() {
     val table = mapOf(8 to -42, 9 to -51, 10 to -60, 11 to -71, 12 to -82, 13 to -95)
     for ((bid, expected) in table) {
       assertEquals(expected, round(bid, 0, listOf(1 to 1, 2 to 2, 3 to 3)))
@@ -95,7 +95,7 @@ class ScoringTest {
   // Round total 15 (diff 2 → ladder 10), so the owner pins hold: WIZZ 25,
   // WIZZ_RISK 35, CALLER 25, RISK 25.
   @Test
-  fun wizzWinTakesSingleBonus() {
+  fun t08wizzWinTakesSingleBonus() {
     assertEquals(25, normal(Role.WIZZ, 5, 5, totalBids = 15))
     assertEquals(35, normal(Role.WIZZ_RISK, 5, 5, totalBids = 15))
     assertEquals(25, normal(Role.CALLER, 5, 5, totalBids = 15))
@@ -104,7 +104,7 @@ class ScoringTest {
 
   // ── Owner D2: the Risk component is the graduated ladder, not flat 10 ──
   @Test
-  fun riskBonusIsGraduatedLadder() {
+  fun t24riskBonusIsGraduatedLadder() {
     // RISK win 5: 10 + 5 + ladder(total).
     assertEquals(15, normal(Role.RISK, 5, 5, totalBids = 12)) // diff 1 → 0
     assertEquals(25, normal(Role.RISK, 5, 5, totalBids = 15)) // diff 2 → 10
@@ -184,7 +184,7 @@ class ScoringTest {
 
   // ── Normal Dash 10+T ──
   @Test
-  fun normalDashTable() {
+  fun t06normalDashTable() {
     fun reg(won: Int, total: Int, others: List<Pair<Int, Int>>): Int {
       val players = mutableListOf(ScoredPlayer("p1", Role.REG_DASH, 0, won))
       others.forEachIndexed { i, o ->
@@ -203,7 +203,7 @@ class ScoringTest {
   // miss charged once. The seat stays REG_DASH — Risk here is a component, not
   // a role, so the RISK/WIZZ_RISK formulas must never be substituted. ──
   @Test
-  fun dashPlusRiskOwnerCases() {
+  fun t06t07dashPlusRiskOwnerCases() {
     // Normal (A6.3), total 15 → Risk 10: 0 tricks → +20, 2 tricks → −22.
     assertEquals(20, normalDash(totalBids = 15, won = 0, isRisk = true))
     assertEquals(-22, normalDash(totalBids = 15, won = 2, isRisk = true))
@@ -214,7 +214,7 @@ class ScoringTest {
   }
 
   @Test
-  fun classicDashPlusRiskSuccessBothSides() {
+  fun t07classicDashPlusRiskSuccessBothSides() {
     // Over (total 15 → Risk 10): +13 + 10 = +23.
     assertEquals(23, classicDash(totalBids = 15, won = 0, isRisk = true))
     // Under (total 11 → Risk 10): +23 + 10 = +33.
@@ -222,7 +222,7 @@ class ScoringTest {
   }
 
   @Test
-  fun dashPlusRiskSoleBonusesAreUnchanged() {
+  fun t06t07dashPlusRiskSoleBonusesAreUnchanged() {
     // Normal sole winner +10 → +30; sole loser −10 (flat, never the Classic
     // doubling) → −32.
     assertEquals(30, normalDash(totalBids = 15, won = 0, isRisk = true, soleWinner = true))
@@ -236,7 +236,7 @@ class ScoringTest {
   }
 
   @Test
-  fun dashPlusRiskLadderBoundaries() {
+  fun t06t07dashPlusRiskLadderBoundaries() {
     // Risk 0 — total 13 (diff 0): the flag adds nothing in either mode.
     assertEquals(10, normalDash(totalBids = 13, won = 0, isRisk = true))
     assertEquals(-12, normalDash(totalBids = 13, won = 2, isRisk = true))
@@ -269,7 +269,7 @@ class ScoringTest {
   }
 
   @Test
-  fun dashWithoutRiskIsUnchanged() {
+  fun t06t07dashWithoutRiskIsUnchanged() {
     // The ladder belongs to the Risk seat alone: however far the total drifts,
     // a non-Risk Dash keeps 10 / −(10+T) and the plain Classic table.
     assertEquals(10, normalDash(totalBids = 19, won = 0, isRisk = false))
@@ -283,7 +283,7 @@ class ScoringTest {
   }
 
   @Test
-  fun nonDashRolesIgnoreTheFlag() {
+  fun t06t07nonDashRolesIgnoreTheFlag() {
     // Only the REG_DASH branch reads isRisk. RISK/WIZZ_RISK already carry the
     // ladder in their own role formula, so the flag must be inert for them —
     // and for NORMAL/CALLER/DASH_CALL/SUPER_CALL, which never see Risk here.
@@ -304,7 +304,7 @@ class ScoringTest {
   }
 
   @Test
-  fun riskComponentIsAddedExactlyOnce() {
+  fun t06t07riskComponentIsAddedExactlyOnce() {
     // total 19 → Risk 30. These rows are chosen so single- and double-counting
     // cannot collide with any pinned constant (the −22 floor or the owner's
     // +23/−12 pair), which makes the arithmetic itself the proof.
@@ -331,7 +331,7 @@ class ScoringTest {
   }
 
   @Test
-  fun scoreRoundCarriesIsRiskInBothModes() {
+  fun t06t07scoreRoundCarriesIsRiskInBothModes() {
     // p1 is the Dash seat AND the Risk player; p2/p3 succeed so p1 is neither
     // sole winner nor sole loser. Total 0+5+5+5 = 15 → Risk 10.
     val players = listOf(

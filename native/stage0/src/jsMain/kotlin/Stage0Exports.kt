@@ -7,6 +7,7 @@ import com.estemshan.engine.GameType
 import com.estemshan.engine.ScoringMode
 import com.estemshan.stage0.runCorpusJson
 import com.estemshan.stage0.runMatchJson
+import com.estemshan.stage0.runRuleVectorsText
 import kotlin.js.ExperimentalJsExport
 import kotlin.js.JsExport
 
@@ -25,6 +26,16 @@ fun runMatch(seed: Int, gameType: String, scoringMode: String): String =
 @JsExport
 fun runCorpus(firstSeed: Int, count: Int, gameType: String, scoringMode: String): String =
   runCorpusJson(firstSeed, count, gameTypeOf(gameType), scoringModeOf(scoringMode))
+
+/**
+ * E3's entry point: the whole rule/scoring vector table, rendered as the
+ * deterministic line-oriented document the JVM side writes. One line per
+ * vector case, so the comparison between the two runtimes is a byte
+ * comparison.
+ */
+@OptIn(ExperimentalJsExport::class)
+@JsExport
+fun runRuleVectors(): String = runRuleVectorsText()
 
 private fun gameTypeOf(name: String): GameType =
   GameType.entries.firstOrNull { it.name == name.uppercase() }

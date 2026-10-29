@@ -73,28 +73,28 @@ class WithFloorSuitAwareTest {
   )
 
   @Test
-  fun suitAwareFloorReadsTheLastBidInTheWinningSuit() {
+  fun t12suitAwareFloorReadsTheLastBidInTheWinningSuit() {
     assertEquals(5, withFloorFor(mixedHistory, "p1", Suit.HEARTS))
     assertEquals(6, withFloorFor(mixedHistory, "p1", Suit.SPADES))
     assertEquals(4, withFloorFor(mixedHistory, "p2", Suit.HEARTS))
   }
 
   @Test
-  fun suitBlindFloorIsUnchanged() {
+  fun t12suitBlindFloorIsUnchanged() {
     // The two-arg form still reads the last BID in ANY suit — the three app
     // callers and BidBrain depend on it.
     assertEquals(6, withFloorFor(mixedHistory, "p1"))
   }
 
   @Test
-  fun seatThatNeverBidTheWinningSuitHasNoFloor() {
+  fun t12seatThatNeverBidTheWinningSuitHasNoFloor() {
     assertNull(withFloorFor(mixedHistory, "p1", Suit.CLUBS))
     assertNull(withFloorFor(mixedHistory, "p2", Suit.SPADES))
     assertNull(withFloorFor(mixedHistory, "p3", Suit.HEARTS))
   }
 
   @Test
-  fun floorLegalityFollowsTheWinningSuitNotTheLastBid() {
+  fun t12floorLegalityFollowsTheWinningSuitNotTheLastBid() {
     // Winning suit ♥ → the floor is 5, so 5 is legal and 4 is not.
     assertTrue(estimateBelowWithFloor(mixedHistory, "p1", 4, listOf("p1"), Suit.HEARTS))
     assertTrue(!estimateBelowWithFloor(mixedHistory, "p1", 5, listOf("p1"), Suit.HEARTS))
@@ -104,7 +104,7 @@ class WithFloorSuitAwareTest {
   }
 
   @Test
-  fun fourArgFloorLegalityStillDelegatesToTheSuitBlindFloor() {
+  fun t12fourArgFloorLegalityStillDelegatesToTheSuitBlindFloor() {
     // The legacy four-arg form keeps the suit-blind floor: 5 is below p1's
     // last bid of 6.
     assertTrue(estimateBelowWithFloor(mixedHistory, "p1", 5, listOf("p1")))
@@ -112,7 +112,7 @@ class WithFloorSuitAwareTest {
   }
 
   @Test
-  fun aSeatThatIsNotWithHasNoFloor() {
+  fun t12aSeatThatIsNotWithHasNoFloor() {
     assertTrue(!estimateBelowWithFloor(mixedHistory, "p2", 1, listOf("p1"), Suit.HEARTS))
   }
 
@@ -138,7 +138,7 @@ class WithFloorSuitAwareTest {
   }
 
   @Test
-  fun aRealAuctionGivesTheWithSeatItsSuitAwareFloor() {
+  fun t12aRealAuctionGivesTheWithSeatItsSuitAwareFloor() {
     val s = auctionWithMixedSuitBids()
     assertEquals(BiddingPhase.CONFIRM, s.subPhase)
     assertEquals("p2", s.callerId)
@@ -155,7 +155,7 @@ class WithFloorSuitAwareTest {
   }
 
   @Test
-  fun aWithEstimateBelowTheWinningSuitBidIsRejected() {
+  fun t12t24aWithEstimateBelowTheWinningSuitBidIsRejected() {
     val s = auctionWithMixedSuitBids()
     val confirmed = confirm(s, "p2", 7, Suit.HEARTS)
     assertEquals(BiddingPhase.ESTIMATES, confirmed.subPhase)
@@ -188,7 +188,7 @@ class WithFloorSuitAwareTest {
   }
 
   @Test
-  fun aLaterHigherBidInAnotherSuitDoesNotRaiseTheFloor() {
+  fun t12aLaterHigherBidInAnotherSuitDoesNotRaiseTheFloor() {
     val s = auctionWithMixedSuitBids()
     val confirmed = confirm(s, "p2", 7, Suit.HEARTS)
     assertEquals("p1", confirmed.waitingFor)
@@ -206,7 +206,7 @@ class WithFloorSuitAwareTest {
    * so it has no floor and the floor rule must not reject it.
    */
   @Test
-  fun aSeatThatNeverBidTheWinningSuitIsNotRejectedByTheFloorRule() {
+  fun t12aSeatThatNeverBidTheWinningSuitIsNotRejectedByTheFloorRule() {
     val s = initNormalRound(1, "p1", seats).copy(
       subPhase = BiddingPhase.ESTIMATES,
       auctionTop = 7,
@@ -240,7 +240,7 @@ class WithFloorSuitAwareTest {
   }
 
   @Test
-  fun aPasserWhoMatchesTheNumberAndTheSuitJoinsWith() {
+  fun t08t12aPasserWhoMatchesTheNumberAndTheSuitJoinsWith() {
     var s = auctionWithAPasser()
     assertEquals(BiddingPhase.CONFIRM, s.subPhase)
     assertEquals("p2", s.callerId)
@@ -264,7 +264,7 @@ class WithFloorSuitAwareTest {
   }
 
   @Test
-  fun aMatchingNumberInAnotherSuitIsNotWith() {
+  fun t08t12aMatchingNumberInAnotherSuitIsNotWith() {
     // The engine records every estimate under `declaredTrump`, and the
     // confirmation sets `declaredTrump == auctionSuit`, so a reachable state
     // always carries the two equal. The mismatched shape is hand-built here:
@@ -285,7 +285,7 @@ class WithFloorSuitAwareTest {
   }
 
   @Test
-  fun jumpInKeepsTheNumberOnlyRuleWhenTheStateCarriesNoWinningSuit() {
+  fun t08jumpInKeepsTheNumberOnlyRuleWhenTheStateCarriesNoWinningSuit() {
     // A hand-built / legacy state with no auctionSuit keeps the number-only
     // jump-in: the engine cannot produce such a state at the estimation
     // stage, and failing closed there would reject a legal jump-in.

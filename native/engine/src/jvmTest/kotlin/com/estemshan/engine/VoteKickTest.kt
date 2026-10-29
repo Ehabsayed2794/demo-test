@@ -34,12 +34,12 @@ class VoteKickTest {
   // ── unique Koz (Q2e) ─────────────────────────────────────────────
 
   @Test
-  fun uniqueLastPlaceResolves() {
+  fun t14uniqueLastPlaceResolves() {
     assertEquals("p4", uniqueKozSeat(mapOf("p1" to 120, "p2" to 98, "p3" to 134, "p4" to 77)))
   }
 
   @Test
-  fun tiedLastPlaceHasNoKoz() {
+  fun t14tiedLastPlaceHasNoKoz() {
     assertNull(uniqueKozSeat(mapOf("p1" to 44, "p2" to 44, "p3" to 60, "p4" to 60)))
     assertNull(uniqueKozSeat(mapOf("p1" to 10, "p2" to 10, "p3" to 10, "p4" to 10)))
     assertNull(uniqueKozSeat(emptyMap()))
@@ -48,7 +48,7 @@ class VoteKickTest {
   // ── eligibility + threshold (D7) ──────────────────────────────────
 
   @Test
-  fun eligibleIsHumansMinusTarget() {
+  fun t14eligibleIsHumansMinusTarget() {
     assertEquals(
       setOf("p1", "p2", "p3"),
       eligibleVoteKickVoters(seats, "p4", emptySet()),
@@ -56,7 +56,7 @@ class VoteKickTest {
   }
 
   @Test
-  fun botSeatsHoldNoSlotAndShrinkTheDenominator() {
+  fun t14botSeatsHoldNoSlotAndShrinkTheDenominator() {
     assertEquals(
       setOf("p1", "p2"),
       eligibleVoteKickVoters(seats, "p4", setOf("p3")),
@@ -66,7 +66,7 @@ class VoteKickTest {
   }
 
   @Test
-  fun majorityThresholdOverHumans() {
+  fun t14majorityThresholdOverHumans() {
     assertEquals(2, voteKickThreshold(3))
     assertEquals(2, voteKickThreshold(2))
     assertEquals(1, voteKickThreshold(1))
@@ -75,18 +75,18 @@ class VoteKickTest {
   // ── the seven gates ───────────────────────────────────────────────
 
   @Test
-  fun happyPathIsAvailable() {
+  fun t14happyPathIsAvailable() {
     assertEquals(VoteKickAvailability.Available, available())
   }
 
   @Test
-  fun rankDownIsRanked() {
+  fun t14rankDownIsRanked() {
     // Rank-down is RANKED + a private flag, never a mode — same gate.
     assertEquals(VoteKickAvailability.Available, available(mode = MatchMode.RANKED))
   }
 
   @Test
-  fun roomsNeverVoteAndUnrankedVotesLikeRanked() {
+  fun t14roomsNeverVoteAndUnrankedVotesLikeRanked() {
     // RD18 as amended by the 2026-10-17 owner clarification: ROOM is the
     // only mode without the vote — its entry is absent. UNRANKED is
     // RANKED minus RP and votes under identical conditions.
@@ -101,7 +101,7 @@ class VoteKickTest {
   }
 
   @Test
-  fun roundSevenInProgressIsRefused() {
+  fun t14roundSevenInProgressIsRefused() {
     // Round 7 must have FULLY completed: 6 complete rounds is short,
     // 7 opens Round 8+.
     assertEquals(
@@ -112,7 +112,7 @@ class VoteKickTest {
   }
 
   @Test
-  fun tiedLastBlocksWithReason() {
+  fun t14tiedLastBlocksWithReason() {
     assertEquals(
       VoteKickAvailability.Unavailable(VoteKickUnavailability.NO_UNIQUE_KOZ),
       available(standings = mapOf("p1" to 44, "p2" to 44, "p3" to 60, "p4" to 60)),
@@ -120,7 +120,7 @@ class VoteKickTest {
   }
 
   @Test
-  fun nonKozTargetIsRefused() {
+  fun t14nonKozTargetIsRefused() {
     assertEquals(
       VoteKickAvailability.Unavailable(VoteKickUnavailability.TARGET_NOT_KOZ),
       available(targetSeat = "p2"),
@@ -128,7 +128,7 @@ class VoteKickTest {
   }
 
   @Test
-  fun removedTargetCannotBeRekicked() {
+  fun t14removedTargetCannotBeRekicked() {
     assertEquals(
       VoteKickAvailability.Unavailable(VoteKickUnavailability.TARGET_REMOVED),
       available(targetSeat = "p4", botSeats = setOf("p4")),
@@ -136,7 +136,7 @@ class VoteKickTest {
   }
 
   @Test
-  fun initiatorCannotBeTheTarget() {
+  fun t14initiatorCannotBeTheTarget() {
     assertEquals(
       VoteKickAvailability.Unavailable(VoteKickUnavailability.INITIATOR_IS_TARGET),
       available(initiatorSeat = "p4"),
@@ -144,7 +144,7 @@ class VoteKickTest {
   }
 
   @Test
-  fun botInitiatorIsIneligible() {
+  fun t14botInitiatorIsIneligible() {
     assertEquals(
       VoteKickAvailability.Unavailable(VoteKickUnavailability.INITIATOR_INELIGIBLE),
       available(initiatorSeat = "p3", botSeats = setOf("p3")),
@@ -152,7 +152,7 @@ class VoteKickTest {
   }
 
   @Test
-  fun liveCooldownBlocksSameTargetOnly() {
+  fun t14liveCooldownBlocksSameTargetOnly() {
     // Failure in Round 8 blocks that target until Round 13.
     val cooldown = cooldownAfterFailedVote("p4", failedRound = 8)
     assertEquals(VoteKickCooldown("p4", 13), cooldown)
@@ -180,7 +180,7 @@ class VoteKickTest {
   )
 
   @Test
-  fun openVoteHasNullSlotsAndFrozenTarget() {
+  fun t14openVoteHasNullSlotsAndFrozenTarget() {
     val vote = openVote()
     assertEquals(VoteKickStatus.OPEN, vote.status)
     assertEquals("p4", vote.targetSeat)
@@ -189,7 +189,7 @@ class VoteKickTest {
   }
 
   @Test
-  fun voteIsOnceAndImmutable() {
+  fun t14voteIsOnceAndImmutable() {
     val vote = openVote()
     val cast = castVoteKick(vote, "p1", VoteKickChoice.YES, setOf("p1", "p2", "p3"))!!
     assertEquals(VoteKickChoice.YES, cast.votes["p1"])
@@ -199,7 +199,7 @@ class VoteKickTest {
   }
 
   @Test
-  fun targetAndBotsAndStrangersCannotVote() {
+  fun t14targetAndBotsAndStrangersCannotVote() {
     val vote = openVote()
     val eligible = setOf("p1", "p2", "p3")
     assertNull(castVoteKick(vote, "p4", VoteKickChoice.NO, eligible))
@@ -208,7 +208,7 @@ class VoteKickTest {
   }
 
   @Test
-  fun closedVoteRejectsCasts() {
+  fun t14closedVoteRejectsCasts() {
     val vote = openVote().copy(status = VoteKickStatus.PASSED)
     assertNull(castVoteKick(vote, "p1", VoteKickChoice.YES, setOf("p1", "p2", "p3")))
   }
@@ -224,7 +224,7 @@ class VoteKickTest {
   }
 
   @Test
-  fun twoYesPasses() {
+  fun t14twoYesPasses() {
     val vote = voted("p1" to VoteKickChoice.YES, "p2" to VoteKickChoice.YES)
     assertEquals(
       VoteKickStatus.PASSED,
@@ -233,7 +233,7 @@ class VoteKickTest {
   }
 
   @Test
-  fun twoNoFails() {
+  fun t14twoNoFails() {
     val vote = voted("p1" to VoteKickChoice.NO, "p2" to VoteKickChoice.NO)
     assertEquals(
       VoteKickStatus.FAILED_NO,
@@ -242,7 +242,7 @@ class VoteKickTest {
   }
 
   @Test
-  fun splitPendingStaysOpen() {
+  fun t14splitPendingStaysOpen() {
     val vote = voted("p1" to VoteKickChoice.YES, "p2" to VoteKickChoice.NO)
     assertEquals(
       VoteKickStatus.OPEN,
@@ -251,7 +251,7 @@ class VoteKickTest {
   }
 
   @Test
-  fun twoEligibleHumansDecideAlone() {
+  fun t14twoEligibleHumansDecideAlone() {
     // A seat went bot: threshold recomputes over the 2 remaining humans.
     val vote = voted("p1" to VoteKickChoice.YES, "p2" to VoteKickChoice.YES)
     assertEquals(
@@ -266,7 +266,7 @@ class VoteKickTest {
   }
 
   @Test
-  fun departedYesVoterLeavesTheTally() {
+  fun t14departedYesVoterLeavesTheTally() {
     // p1 voted YES, then went bot: the ballot leaves the eligible set
     // with the seat (D7) — ghost votes never decide.
     val vote = voted("p1" to VoteKickChoice.YES, "p2" to VoteKickChoice.NO)
@@ -277,7 +277,7 @@ class VoteKickTest {
   }
 
   @Test
-  fun completionSweepTimesOutUndecidedVotes() {
+  fun t14completionSweepTimesOutUndecidedVotes() {
     // "No majority by timeout = no" (RD18): an undecided vote overtaken
     // by match completion resolves FAILED_TIMEOUT — no clock invented.
     val vote = voted("p1" to VoteKickChoice.YES, "p2" to VoteKickChoice.NO)
@@ -288,7 +288,7 @@ class VoteKickTest {
   }
 
   @Test
-  fun decidedTallySurvivesCompletion() {
+  fun t14decidedTallySurvivesCompletion() {
     // A tally that already decided keeps its verdict at completion.
     val passed = voted("p1" to VoteKickChoice.YES, "p2" to VoteKickChoice.YES)
     assertEquals(
@@ -298,7 +298,7 @@ class VoteKickTest {
   }
 
   @Test
-  fun terminalVotesStayTerminal() {
+  fun t14terminalVotesStayTerminal() {
     val passed = openVote().copy(status = VoteKickStatus.PASSED)
     assertEquals(
       VoteKickStatus.PASSED,
@@ -309,7 +309,7 @@ class VoteKickTest {
   // ── frozen target (OPEN-2) ────────────────────────────────────────
 
   @Test
-  fun targetNeverRederivesFromShiftingStandings() {
+  fun t14targetNeverRederivesFromShiftingStandings() {
     // Rankings move mid-vote; the frozen target does not follow them.
     val vote = voted("p1" to VoteKickChoice.YES)
     assertEquals("p4", vote.targetSeat)
@@ -325,7 +325,7 @@ class VoteKickTest {
   // ── removal + D10 recording point ─────────────────────────────────
 
   @Test
-  fun passedVoteResolvesRemovalDescriptor() {
+  fun t14passedVoteResolvesRemovalDescriptor() {
     val vote = voted("p1" to VoteKickChoice.YES, "p2" to VoteKickChoice.YES)
       .copy(status = VoteKickStatus.PASSED)
     val seats = mapOf("p1" to "u1", "p2" to "u2", "p3" to "u3", "p4" to "u4")
@@ -333,7 +333,7 @@ class VoteKickTest {
   }
 
   @Test
-  fun nonPassedVotesResolveNoRemoval() {
+  fun t14nonPassedVotesResolveNoRemoval() {
     val seats = mapOf("p1" to "u1", "p2" to "u2", "p3" to "u3", "p4" to "u4")
     assertNull(removalForVoteKick(openVote(), seats))
     assertNull(
@@ -342,7 +342,7 @@ class VoteKickTest {
   }
 
   @Test
-  fun kickedRemovalAccumulatesAsKoz() {
+  fun t14kickedRemovalAccumulatesAsKoz() {
     // D10: the removal lands in the 9 career statistics as a KOZ outcome.
     val profile = RankedProfile(seasonId = "S12")
     val after = accumulateRankedStat(RankedStats(), MatchOutcome.KOZ, profile, MatchMode.RANKED)

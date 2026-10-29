@@ -17,49 +17,49 @@ import org.junit.Test
 class LeaveMatchTest {
 
   @Test
-  fun explicitLeaveInRankedRecordsKoz2() {
+  fun t15explicitLeaveInRankedRecordsKoz2() {
     assertEquals("leave RANKED = Koz2",
       KozCharge.Koz2, LeaveMatch.decideLeave(MatchMode.RANKED, LeaveReason.EXPLICIT_LEAVE))
   }
 
   @Test
-  fun explicitLeaveInUnrankedRecordsKoz2() {
+  fun t15explicitLeaveInUnrankedRecordsKoz2() {
     assertEquals("leave UNRANKED = Koz2",
       KozCharge.Koz2, LeaveMatch.decideLeave(MatchMode.UNRANKED, LeaveReason.EXPLICIT_LEAVE))
   }
 
   @Test
-  fun explicitLeaveInRoomRecordsKoz1() {
+  fun t15explicitLeaveInRoomRecordsKoz1() {
     assertEquals("leave ROOM = Koz1 (Q14b: ROOM leave = 1 Koz)",
       KozCharge.Koz1, LeaveMatch.decideLeave(MatchMode.ROOM, LeaveReason.EXPLICIT_LEAVE))
   }
 
   @Test
-  fun fifteenTimeoutInRankedRecordsKoz2() {
+  fun t15fifteenTimeoutInRankedRecordsKoz2() {
     assertEquals("15-timeout RANKED = Koz2",
       KozCharge.Koz2, LeaveMatch.decideLeave(MatchMode.RANKED, LeaveReason.FIFTEEN_TIMEOUT))
   }
 
   @Test
-  fun fifteenTimeoutInUnrankedRecordsKoz2() {
+  fun t15fifteenTimeoutInUnrankedRecordsKoz2() {
     assertEquals("15-timeout UNRANKED = Koz2",
       KozCharge.Koz2, LeaveMatch.decideLeave(MatchMode.UNRANKED, LeaveReason.FIFTEEN_TIMEOUT))
   }
 
   @Test
-  fun fifteenTimeoutInRoomRecordsKoz1() {
+  fun t15fifteenTimeoutInRoomRecordsKoz1() {
     assertEquals("15-timeout ROOM = Koz1 (Q37 closes O-03d: 1 Koz, not repealed to zero)",
       KozCharge.Koz1, LeaveMatch.decideLeave(MatchMode.ROOM, LeaveReason.FIFTEEN_TIMEOUT))
   }
 
   @Test
-  fun voteKickRecordsKoz2() {
+  fun t15voteKickRecordsKoz2() {
     assertEquals("kick = Koz2 (Q14d(1): supersedes A5.1's 1 Koz and the repealed C1 closure)",
       KozCharge.Koz2, LeaveMatch.decideLeave(MatchMode.RANKED, LeaveReason.VOTE_KICK))
   }
 
   @Test
-  fun voteKickInUnrankedRecordsKoz2() {
+  fun t15voteKickInUnrankedRecordsKoz2() {
     // The vote holds in UNRANKED since the 2026-10-17 owner clarification
     // (ROOM is the only excluded mode) — now 2 Koz per Q14d(1).
     assertEquals("kick UNRANKED = Koz2 (Q14d(1))",
@@ -67,7 +67,7 @@ class LeaveMatchTest {
   }
 
   @Test
-  fun returnedAllowedSeatRecordsNone() {
+  fun t15returnedAllowedSeatRecordsNone() {
     assertEquals("returned-allowed = None (no departure)",
       KozCharge.None, LeaveMatch.decideLeave(MatchMode.RANKED, LeaveReason.RETURNED_ALLOWED))
   }
@@ -77,25 +77,25 @@ class LeaveMatchTest {
   // pinned contract; the takeover removal is not a departure, A6.12).
 
   @Test
-  fun seventhTakeoverInRoomRecordsKoz1() {
+  fun t15seventhTakeoverInRoomRecordsKoz1() {
     assertEquals("7th takeover ROOM = Koz1 (A7.3: fired immediately, even mid-ballot)",
       KozCharge.Koz1, seventhTakeoverCharge(MatchMode.ROOM))
   }
 
   @Test
-  fun seventhTakeoverInRankedRecordsKoz2() {
+  fun t15seventhTakeoverInRankedRecordsKoz2() {
     assertEquals("7th takeover RANKED = Koz2",
       KozCharge.Koz2, seventhTakeoverCharge(MatchMode.RANKED))
   }
 
   @Test
-  fun seventhTakeoverInUnrankedRecordsKoz2() {
+  fun t15seventhTakeoverInUnrankedRecordsKoz2() {
     assertEquals("7th takeover UNRANKED = Koz2",
       KozCharge.Koz2, seventhTakeoverCharge(MatchMode.UNRANKED))
   }
 
   @Test
-  fun theSeventhTakeoverTableHasNoLeaveReasonInput() {
+  fun t15theSeventhTakeoverTableHasNoLeaveReasonInput() {
     // Structural: the removal keeps its own charge WITHOUT passing through
     // decideLeave — the function takes only the mode, which is what keeps
     // DepartureContractTest's four-row reason table intact in :services.

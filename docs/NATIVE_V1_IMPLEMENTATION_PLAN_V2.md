@@ -28,6 +28,19 @@
 | Runtime proposal | Cloudflare Workers + SQLite Durable Objects + D1 is a **PROPOSAL**, not an approved architecture (§5.7, O-06) |
 | Monetization | No billing, ads or IAP in the current baseline and no approved V1 monetization scope (O-09) |
 
+> **Pointer, 2026-10-29 (measured; the "NOT YET RUN" row above is left verbatim).**
+> **Four of the thirteen experiments have now been run**: **E1** (the engine plays a complete
+> match inside `workerd`), **E2** (200 seeds × FULL/MINI × Normal/Classic = 800 matches,
+> 11,200 rounds, JVM and workerd byte-identical), **E3** (the 153 §5.3.3 rule/scoring vectors
+> T-01…T-16, T-22, T-24 — **139 IDENTICAL, 0 DIFFERENT, 14 NOT IMPLEMENTED**; both rendered
+> documents byte-identical, sha256 `f52451cf3adef1fc08d78ae9afaeed2c9b7d2728c1bac09e12cb07c5285c4ff3`)
+> and **E4** (bundle 625,718 bytes raw / 103,890 gzip; cold start median 36.3 ms, warm
+> median 6.5 ms, both measured on `wrangler dev --local`). Reports:
+> `docs/implementation/Stage0_E2_Corpus_Parity_Report.md` and
+> `docs/implementation/Stage0_E3_Vector_Parity_Report.md`. **E5–E13 are still not run**, so
+> the runtime decision (O-06) is **not yet decidable on evidence**; the ADR skeleton with the
+> evidence and the open slot is `docs/adr/0003-runtime-choice.md`.
+
 ### Source-of-truth hierarchy
 
 When two sources disagree, the higher row wins. This hierarchy is the one the owner set for this
@@ -449,6 +462,29 @@ Legend for expected values:
 | Exactly-once settlement with durable outbox | Decisions §I | In-memory 6 retries (`OnlineMatchViewModel.kt:1312`) | E3.4 | T-18 (happy, duplicate) | T-18 (lost response, process death, quota, season race) | Duplicate calls, lost responses, process death and outbox replay produce one stored result and one RP delta; a quota failure writes nothing | Fault injection |
 | ≥200 seeded engine/server parity | Brief Stage 0 E2 | Not run | E1.2 | T-23 (corpus, evidence) | T-23 (diff definition, known gaps) | ≥200 seeds × FULL/MINI × Normal/Classic produce zero unexplained JVM/server diffs; known gaps are listed by defect ID; the post-fix run has zero diffs | Stage 0 report |
 | Auction floor, Call Cap, 13 Rule, Dash max 2, Risk values | Current Rules §2/§5 (`:89-103`, `:195-203`) | Implemented; floor defects noted | E2.2 | T-24 (minimum bid, Super threshold, Risk values) | T-24 (third Dash, 13 Rule scope, fast Call Cap, With floor) | Bid 3 is rejected and 4 accepted; a third pre-bid Dash is rejected; the 13 Rule forces 1–13 only when the first three sum to 13; Call Cap applies in normal rounds only; a With bid below the last winning-suit bid is rejected | Engine report |
+
+> **Pointer, 2026-10-29 (measured; the rows above are left verbatim).** The E2 run
+> (`docs/implementation/Stage0_E2_Corpus_Parity_Report.md`) has since produced the ≥200-seeded
+> parity evidence this table's last-but-one row calls "Not run": **200 seeds × FULL/MINI ×
+> Normal/Classic = 800 matches, 11,200 rounds, every column byte-identical** between the JVM and
+> workerd. The E3 run
+> (`docs/implementation/Stage0_E3_Vector_Parity_Report.md`) exercised every vector named in this
+> table's "Positive tests" / "Negative / edge-case tests" columns that falls in E3's scope
+> (T-01…T-16, T-22, T-24) — **153 cases, 139 IDENTICAL, 0 DIFFERENT, 14 NOT IMPLEMENTED**; the
+> JVM and workerd renderings are byte-identical. **Two acceptance sentences in the T-24 row are
+> contradicted by the measurement**, and this pointer is the correction — the engine's behaviour
+> is the measured one, and the row's wording is left as it was:
+>
+> - "a third pre-bid Dash is **rejected**" — the engine does not reject it, it **converts it to a
+>   PASS**. The cap of two Dash callers still holds; the mechanism does not match the sentence.
+> - "the 13 Rule forces 1–13 **only when the first three sum to 13**" — the engine's rule is
+>   `forbidden = 13 − sum of the others`, so the force **starts one step earlier**: when the other
+>   three sum to 12 the last estimator is already forbidden from picking 1. At a sum of 13 the
+>   forbidden number is 0 and at a sum of 14 there is no force, both matching the row.
+>
+> One further deviation is in T-11: the seat order decides an equal-highest fast call, which is the
+> already-named S4 defect. The 14 NOT IMPLEMENTED rows are service-side rules with no engine value
+> to compare; the report §5 names each one and where the behaviour actually lives.
 
 ### 5.3.3 Rule and scoring vectors
 
@@ -897,6 +933,20 @@ Hours are engineering hours from §5.5; external waiting time is separate.
 
 Every row is an engineering investigation. None has been executed for this plan. The table
 defines what would count as a result; it does not report one.
+
+> **Pointer, 2026-10-29 (measured; the heading and the paragraph above are left verbatim).**
+> **E1, E2, E3 and E4 have been run**; **E5–E13 have not**. The E3 row's pass criterion —
+> "Every vector identical" — is met **for the engine's rules**: all 153 §5.3.3 vectors in scope
+> render byte-identically on the JVM and inside `workerd`, with **0 DIFFERENT**. The 14
+> NOT IMPLEMENTED rows are **service-side** rules (settlement, departure charges, abandonment,
+> takeover counters and timers) that the backend decides and never asks the engine about, so
+> they have no engine value to compare; each names the missing behaviour and where it lives.
+> Three rows **deviate from the plan's wording** while agreeing with each other (the seat-order
+> tie-break in the equal-highest fast call, the third Dash Call converted to a PASS, and the
+> 13-rule force starting one step earlier) — reported, not fixed; the owner has to decide
+> whether the plan or the engine changes. Evidence:
+> `docs/implementation/Stage0_E3_Vector_Parity_Report.md`; ADR skeleton:
+> `docs/adr/0003-runtime-choice.md` (the O-06 decision is still an open slot).
 
 | ID | Experiment | Question answered | Method | Pass / decision criterion | Blocks |
 |---|---|---|---|---|---|

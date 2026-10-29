@@ -48,7 +48,7 @@ class FastSuperCallMultiCycleTest {
   }
 
   @Test
-  fun aSecondSuperCallWipesTheFirstCycleAndTheWithSetComesFromTheFinalCycle() {
+  fun t09t10aSecondSuperCallWipesTheFirstCycleAndTheWithSetComesFromTheFinalCycle() {
     var s = fast("p1")
     // Cycle 1 — p1 declares 8 and every other seat declares below it.
     s = estimateState(s, "p1", 8)
@@ -103,7 +103,7 @@ class FastSuperCallMultiCycleTest {
   }
 
   @Test
-  fun aSeatThatKeepsThePreviousCyclesNumberIsNotWith() {
+  fun t10aSeatThatKeepsThePreviousCyclesNumberIsNotWith() {
     var s = fast("p1")
     s = estimateState(s, "p1", 8)
     s = estimateState(s, "p2", 4)
@@ -130,7 +130,7 @@ class FastSuperCallMultiCycleTest {
   }
 
   @Test
-  fun aSecondCycleMayNotBeLowerThanTheFirst() {
+  fun t09aSecondCycleMayNotBeLowerThanTheFirst() {
     // A cycle is opened only by a declaration ABOVE the confirmed number:
     // a re-declaration at or below it does not open a new confirmation.
     var s = fast("p1")

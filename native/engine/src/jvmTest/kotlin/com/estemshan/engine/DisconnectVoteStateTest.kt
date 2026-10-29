@@ -60,7 +60,7 @@ class DisconnectVoteStateTest {
   // ── detection: the heartbeat's freeze, and nothing else ──────────────
 
   @Test
-  fun theStalenessThresholdIsTheRuntimesOwnDefinition() {
+  fun t16theStalenessThresholdIsTheRuntimesOwnDefinition() {
     // The one place the runtime DEFINES the silence that counts as "gone":
     // three S19 heartbeat intervals, so a single missed beat (worst case
     // ~60 s of apparent silence) can never borrow a present player's seat.
@@ -68,7 +68,7 @@ class DisconnectVoteStateTest {
   }
 
   @Test
-  fun detectionFiresAtTheRuledSilenceAndNotAMomentBefore() {
+  fun t16detectionFiresAtTheRuledSilenceAndNotAMomentBefore() {
     val now = 1_000_000L
     val threshold = DisconnectVoteState.HEARTBEAT_STALE_AFTER_MILLIS
 
@@ -87,7 +87,7 @@ class DisconnectVoteStateTest {
   }
 
   @Test
-  fun aPlayerWhoseHeartbeatNeverExistedIsNeverDetected() {
+  fun t16aPlayerWhoseHeartbeatNeverExistedIsNeverDetected() {
     // Absence of evidence is not evidence of absence: no lastSeenAt (a
     // profile predating the heartbeat) must never put a ballot about a
     // possibly-present player to the table.
@@ -97,7 +97,7 @@ class DisconnectVoteStateTest {
   // ── the wire shape ───────────────────────────────────────────────────
 
   @Test
-  fun everyPhaseRoundTripsThroughItsOwnFieldNames() {
+  fun t16everyPhaseRoundTripsThroughItsOwnFieldNames() {
     for (phase in DisconnectVotePhase.entries) {
       val state = vote(phase)
       val fields = state.toFields()
@@ -114,7 +114,7 @@ class DisconnectVoteStateTest {
   }
 
   @Test
-  fun onlyTheRuledShapeParses() {
+  fun t16onlyTheRuledShapeParses() {
     val healthy = vote(DisconnectVotePhase.VOTE, seat = "p1").toFields()
 
     assertNull("a non-map is no flow", DisconnectVoteState.parse("p1", "OPEN"))
@@ -175,7 +175,7 @@ class DisconnectVoteStateTest {
   }
 
   @Test
-  fun corruptEntriesAreDroppedAndNeverStrandOrBorrow() {
+  fun t16corruptEntriesAreDroppedAndNeverStrandOrBorrow() {
     // Fail-closed, the InactiveTakeover direction: a corrupt entry reads as
     // "no flow" — the seat keeps its ordinary pace and the next resolver pass
     // re-detects a genuinely dropped player. Corruption cannot brick a seat.
@@ -195,7 +195,7 @@ class DisconnectVoteStateTest {
   }
 
   @Test
-  fun aCancelledEntryIsHeldByNobodyAndReclaimableByNobody() {
+  fun t16aCancelledEntryIsHeldByNobodyAndReclaimableByNobody() {
     // A8.2 / Q36: the cancelled ballot is a dead flow. The seat it describes
     // was removed by the 7th takeover — the removal list, not this marker,
     // drives it — so the entry must not pace the seat, hold it, or offer it
@@ -213,7 +213,7 @@ class DisconnectVoteStateTest {
   }
 
   @Test
-  fun thePauseIsReadFromTheGrantedWaitWindowOnly() {
+  fun t16thePauseIsReadFromTheGrantedWaitWindowOnly() {
     assertNull(
       "an open ballot is not a pause",
       DisconnectVoteState.waitDeadlineMillis(
@@ -235,7 +235,7 @@ class DisconnectVoteStateTest {
   }
 
   @Test
-  fun theLiveBallotIsTheCanonicalLowestSeat() {
+  fun t16theLiveBallotIsTheCanonicalLowestSeat() {
     val raw = mapOf(
       "p3" to vote(DisconnectVotePhase.VOTE, seat = "p3").toFields(),
       "p1" to vote(DisconnectVotePhase.VOTE, seat = "p1").toFields(),
@@ -246,7 +246,7 @@ class DisconnectVoteStateTest {
   // ── the surgical marker writes ───────────────────────────────────────
 
   @Test
-  fun aTransitionNeverTouchesAnotherSeatsEntry() {
+  fun t16aTransitionNeverTouchesAnotherSeatsEntry() {
     val waiting = vote(DisconnectVotePhase.WAIT, seat = "p2")
     val replaced = vote(DisconnectVotePhase.REPLACED, seat = "p1")
     val corrupt = "not a flow"
@@ -272,7 +272,7 @@ class DisconnectVoteStateTest {
   // ── THE policy point (flagged for owner confirmation) ────────────────
 
   @Test
-  fun theReplacementInstantIsOneFunctionAndTheNarrowestReading() {
+  fun t16theReplacementInstantIsOneFunctionAndTheNarrowestReading() {
     // The documents fix the charge table and "reclaimable while the table
     // waits", but not the exact transition instant. The reading implemented
     // (and flagged for owner confirmation): the seat stays reclaimable through
