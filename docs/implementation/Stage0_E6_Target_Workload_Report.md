@@ -1,12 +1,16 @@
 # Stage 0 — E6: the target workload (100/125/150 matches/day) against the free tier
 
-**Status: MEASURED + MODELLED 2026-10-29.** This is the exit evidence for the plan's E6 row
-(`NATIVE_V1_IMPLEMENTATION_PLAN_V2.md` §5.4.3): "Is the primary usage scenario measurable at 90%
-of the free tier? Drive a synthetic 90%-of-limit workload" — pass criterion "Measured headroom or
-a documented overrun".
+**Status: PASS WITH LIMITATIONS (2026-10-29).** The action counts, per-seat loads and CPU costs
+are **measured** — locally, on the JVM and inside local `workerd`. The capacity numbers are
+**modelled** from those measurements plus the owner's 2026-10-29 rulings; the platform-side
+metering facts they depend on are **unverified** until a real Cloudflare account measures them
+(§13). The pass criterion ("measured headroom or a documented overrun") is met as **headroom on
+every meter under the documented readings — led by the binding meter, DO rows written, at only
+1.6–2.3× — and a documented overrun under the conservative readings**, with each meter's usage,
+headroom and thresholds in §5.
 
 Branch `stage0/e6-target-workload`, base `e624879` (`stage0/e5-capacity-model` — E5 plus the
-2026-10-29 owner rulings A–G, `docs/decisions/2026-10-29-stage0-capacity-persistence-transport-failover.md`).
+owner rulings A–G, `docs/decisions/2026-10-29-stage0-capacity-persistence-transport-failover.md`).
 
 ## 1. What the experiment is
 
@@ -17,33 +21,37 @@ E6 runs under the owner's rulings, which change what "the primary usage scenario
 - the transport is **WebSocket-preferred** with server-side **bots inside the authority**
   (rulings B/C), so E5's "one request per action" premise no longer holds;
 - card play persists **per completed Trick**, the auction per action (ruling A, conditional on
-  E9);
+  E9 — see §7 for why that condition is load-bearing);
 - the **90% quota guardrail** (ruling E) must be evaluated: does it protect ongoing matches, and
   when does it fire?
 
-Per the record §8, every input below is labelled **[M] measured**, **[m] modelled (assumption
-stated)**, **[u] unknown**, or **[x] needs a real Cloudflare experiment**. No real Cloudflare
-account, deployment or quota-consuming experiment was run — E6 is the measured engine loads plus
-the model the rulings require, with the unknowns named rather than guessed.
+Every input is labelled **[M] measured**, **[m] modelled (assumption stated)**, **[u] unknown**,
+or **[x] needs a real Cloudflare experiment**. No real Cloudflare account, deployment or
+quota-consuming experiment was run.
 
-## 2. Method — the per-seat probe
+## 2. Method — three self-contained probes
 
-E5's probe counted actions but never recorded **who** acted, which is exactly what the human/bot
-mix needs. `native/stage0/src/commonMain/kotlin/com/estemshan/stage0/CapacityMixProbe.kt` replays
-the same driver verbatim (same seeds, same roster, same guards) and attributes every quantity to
-the acting seat: per-seat bid/card action counts, per-seat decide/apply CPU, and the completed-trick
-count — the number of persistence writes card play costs under the ruled per-Trick boundary. E5's
-own probe, document shape and fingerprints are untouched (separate file, separate hash), so both
-experiments stay reproducible at the branch head.
+- **`CapacityProbe.kt`** (E5, untouched): totals per match.
+- **`CapacityMixProbe.kt`** (E6): replays the same driver verbatim and attributes every action
+  and every clock to the **acting seat** — the human/bot mix is applied as a model on top of
+  measured per-seat loads; no distribution is invented.
+- **`CapacityChainProbe.kt`** (E6, review item 6): measures the **longest consecutive run of
+  server-side actions that executes without an intervening human message** — the quantity the
+  10 ms CPU-per-request budget actually bounds. Chain CPU includes the brain and the reducer and
+  conservatively attaches the server-only round-boundary work (trick resolution, round scoring,
+  round advance) to the action that preceded it.
 
-The probe still plays all-bot matches (the harness's one honest way to finish a match); the
-human/bot mix is applied **as a model on top of the measured per-seat loads** — no distribution is
-invented. Batteries: seeds 1–50 FULL/NORMAL (primary) and 1–20 for the other three combos.
-**All four count fingerprints are byte-identical between the JVM and workerd**:
-`ee328556` / `31cacdd4` / `81ed9678` / `b1116c8d`. Same Node/wrangler evidence rules as E5
+Batteries: seeds 1–50 FULL/NORMAL (primary) and 1–20 for the other combos. **All count
+fingerprints are byte-identical between the JVM and workerd**: mix `ee328556` / `31cacdd4` /
+`81ed9678` / `b1116c8d`; chain `f68532ca` / `2749a715`. Same Node/wrangler evidence rules as E5
 (portable Node 22.14.0 by explicit path, pinned local wrangler 4.155.0, no installs, local HTTP
-only, `WRANGLER_SEND_METRICS=false`, **0 crashes** in the log; files written only under
-`D:/cache/stage0/e6/` and the Gradle build dir).
+only, `WRANGLER_SEND_METRICS=false`, **0 crashes** in every log).
+
+**A measurement caveat that matters for production (review item 6):** all CPU figures here are
+local **wall-clock around synchronous calls**. In deployed Workers, `performance.now()` and
+`Date.now()` do **not** advance during CPU work (Workers runtime docs), so this instrumentation
+cannot be reused in production. Production CPU must come from Cloudflare's own CPU metrics; the
+local figures are the shape of the cost, not the deployed number.
 
 ## 3. What one seat costs (measured, FULL/NORMAL, 50 seeds)
 
@@ -55,17 +63,26 @@ only, `WRANGLER_SEND_METRICS=false`, **0 crashes** in the log; files written onl
 | Apply CPU per match, ms (mean / p90) | 5.3 / 11 | 5.1 / 9 | 4.6 / 7 | 5.5 / 9 |
 
 Totals: **1,129.9 actions/match** (mean; 936 cards + 193.9 auction actions, p90 218; 3.48
-all-pass redeals/match), **234 trick checkpoints** — the per-Trick persistence count — and ~10.8
-auction actions per round. The seats are nearly balanced (each carries ≈ 25% of the traffic; the
-HARD/EXPERT brains cost ~2.8× the EASY brain's CPU). MINI/NORMAL (20 seeds): 603.2 actions (520
-cards, 83.2 auction, 130 checkpoints, 10 rounds).
+all-pass redeals/match), **234 trick checkpoints**, ~10.8 auction actions per round. Seats are
+nearly balanced (each ≈ 25% of the traffic). MINI/NORMAL (20 seeds): 603.2 actions (520 cards,
+83.2 auction, 130 checkpoints, 10 rounds).
 
-Server engine CPU per match by mix (this run; wall-clock varies run-to-run — E5's leg measured
-the all-bot case at ≈ 35 ms mean, this one at 67; both are orders of magnitude under budget):
+**Chains (the 10 ms question, measured):**
 
-| Mix | 4 humans | 3H+1B | 2H+2B | all-bot (E5's case) |
-| --- | --- | --- | --- | --- |
-| Server CPU, ms (mean / p90 / max) | 22.6 / 32 / 82 | 28.3 / 37 / 100 | 35.6 / 48 / 128 | 67.1 / 98 / 195 |
+| Attribution | Chain length (mean / p90 / max) | Chain CPU, ms (mean / max) |
+| --- | --- | --- |
+| 1 human, 3 bots (worst of 4 attributions) | 11.3 / 12 / **13** | 1.16 / **4.0** |
+| 2 humans, 2 bots (worst of 6 pairs) | 4.8 / 7 / **8** | 0.63 / **1.5** |
+| 0 humans — the whole match as one chain | 1,130 | **17.9 mean / 46 max** |
+
+Two findings: (a) bot runs between human messages are **longer than one trick** — auction raise
+wars plus trick/round boundaries chain up to 13 actions — but they still cost **≤ 4 ms**, inside
+the 10 ms budget; (b) an **all-bot fast-forward (a whole match in one invocation) is 17.9–46 ms
+and exceeds the budget — the design must chunk it** (per-trick or per-round alarm ticks). Each
+`setAlarm()` costs **1 row written + 1 alarm invocation** (a DO request), so chunking granularity
+is a capacity decision: per-trick ticks add ≈ 234 rows and ≈ 234 invocations per fast-forwarded
+match; per-round ticks add ≈ 18. Normal play (≥ 1 human) needs **zero** alarms — bot moves ride
+human messages.
 
 ## 4. The revised per-match cost model (the ruled design)
 
@@ -74,56 +91,71 @@ Per FULL match, by seat mix — WebSocket transport, per-Trick persistence, bots
 | Quantity | 4 humans | 3H+1B | 2H+2B | Label |
 | --- | --- | --- | --- | --- |
 | Inbound messages (human actions) | 1,129.9 | 847.4 | 565.0 | **[M]** |
-| DO request-units — paid-page reading: ⌈inbound/20⌉ + 4 connects + 5 lifecycle | 66 | 52 | 38 | inbound **[M]**; 20:1 **[m]** paid-page figure, free plan unpublished; lifecycle **[m]** minimal shape |
-| Outbound messages (1 ack + 3 broadcasts per action) | 4,519.7 | 4,519.7 | 4,519.7 | **[m]** assumption: 4 per action |
-| DO rows written (234 trick checkpoints + 193.9 auction actions) | 427.9 | 427.9 | 427.9 | checkpoints/auction **[M]**; 1 row/put **[m]** — Cloudflare does not publish the KV-API rows-per-put mapping (×2 bound carried) |
+| DO request-units — documented reading: ⌈inbound/20⌉ + 4 connects + 5 lifecycle | 66 | 52 | 38 | inbound **[M]**; 20:1 **[m]** paid-page figure — the free plan's enforcement is **[x]**; lifecycle **[m]** minimal shape |
+| DO request-units — conservative reading: inbound 1:1 + connects + lifecycle | 1,139 | 852 | 574 | **[m]** the ambiguity case: the free-plan limit text counts "WebSocket messages" without publishing the ratio |
+| Outbound messages (1 ack + 3 broadcasts per action) | 4,519.7 | 4,519.7 | 4,519.7 | **[M as message count]** — the pricing docs state outgoing messages are **not billed**; they are listed for design completeness, not for the request meter |
+| DO rows written (234 trick checkpoints + 193.9 auction actions) | 427.9 | 427.9 | 427.9 | counts **[M]**; 1 row/write **[m]** — see the ×2 allowance in §5 |
 | D1 rows written (settlement: 1 result + 4 RP) | 5 | 5 | 5 | **[m]** |
 | DO rows read (state per action) | ≈ 1,130 | ≈ 990 | ≈ 850 | **[m]** |
-| Server engine CPU, ms | 22.6 | 28.3 | 35.6 | **[M]** |
-| Alarms/timers | 0 | 0 | 0 | **[m]** minimal design; each `setAlarm` bills 1 row written — a turn-alarm design would add ≈ 13 rows/round |
-| Reconnects + snapshots | — | — | — | **[u]** rate unknown; each ≈ 1 inbound message + snapshot read — immaterial vs the metering unknowns |
+| Server engine CPU, ms (per match; chains ≤ 4 ms per request) | 22.6 | 28.3 | 35.6 | **[M]** local wall-clock — §2 caveat |
+| Alarms | 0 | 0 | 0 | **[m]** minimal design: bot moves ride human messages; chunking adds rows/requests only when a match runs all-bot (§3) |
+| Reconnects + snapshots | — | — | — | **[u]** rate unknown; each ≈ 1 inbound message + snapshot read |
 
-MINI/NORMAL, 4 humans: 603.2 inbound / 40 request-units (paid reading) / 213.2 DO rows / 5 D1
-rows / ≈ 12 ms CPU.
+MINI/NORMAL, 4 humans: 603.2 inbound / 40 request-units (documented reading) / 213.2 DO rows /
+5 D1 rows / ≈ 12 ms CPU.
 
-## 5. The three scenarios against the free tier
+## 5. The three scenarios against the free tier — per meter
 
 Daily demand = matches/day × per-match cost, FULL baseline (the assumption Decision D requires
 stated: one completed match ≈ one E5/E6 FULL match). Limits verified 2026-10-29 (E5 report §4).
+**The binding meter is DO rows written** — headroom 2.3× / 1.9× / 1.6× — not requests.
 
-**4-human FULL matches:**
+**4-human FULL matches, documented readings:**
 
-| Meter (limit/day) | 100/day | 125/day | 150/day |
-| --- | --- | --- | --- |
-| DO requests, paid-page reading (100,000) | 6,600 — **6.6%** | 8,250 — **8.3%** | 9,900 — **9.9%** |
-| DO requests, conservative reading — inbound **and** outbound 1:1 (100,000) | 565,900 — **566% ✗** | 707,300 — **707% ✗** | 848,800 — **849% ✗** |
-| DO rows written, SQL-native (100,000) | 42,792 — **42.8%** | 53,490 — **53.5%** | 64,188 — **64.2%** |
-| DO rows written, KV-API ×2 bound (100,000) | 85,584 — **85.6%** | 106,980 — **107% ✗** | 128,376 — **128% ✗** |
-| D1 rows written (100,000) | 500 — 0.5% | 625 — 0.6% | 750 — 0.8% |
-| DO rows read (5,000,000) | ≈ 113,000 — 2.3% | ≈ 141,000 | ≈ 170,000 |
-| DO duration, **no hibernation** — 15-min match assumption, 0.125 GB (13,000 GB-s) | 11,250 — **86.5%** | 14,063 — **108% ✗** | 16,875 — **130% ✗** |
-| DO duration, **hibernated** — ≈ 6 s active compute/match (13,000 GB-s) | 75 — 0.6% | 94 — 0.7% | 113 — 0.9% |
-| CPU per message (10 ms) | ≤ 0.067 ms worst — **0.7%** | — | — |
+| Meter (limit/day) | 100/day | 125/day | 150/day | Binding? |
+| --- | --- | --- | --- | --- |
+| Worker requests — connects + lifecycle (100,000) | 900 — 0.9% (111×) | 1,125 — 1.1% (89×) | 1,350 — 1.4% (74×) | no |
+| DO requests, 20:1 inbound (100,000) | 6,600 — 6.6% (**15.2×**) | 8,250 — 8.3% (**12.1×**) | 9,900 — 9.9% (**10.1×**) | no |
+| **DO rows written (100,000)** | **42,792 — 42.8% (2.3×)** | **53,490 — 53.5% (1.9×)** | **64,188 — 64.2% (1.6×)** | **yes — binding** |
+| D1 rows written (100,000) | 500 — 0.5% (200×) | 625 — 0.6% (160×) | 750 — 0.8% (133×) | no |
+| DO rows read (5,000,000) | 113,000 — 2.3% (44×) | 141,250 — 2.8% (35×) | 169,500 — 3.4% (30×) | no |
+| DO duration, hibernated ≈ 0.75 GB-s/match (13,000 GB-s) [u] | 75 — 0.6% (173×) | 94 — 0.7% (139×) | 113 — 0.9% (116×) | no — if hibernation works |
+| DO duration, **no hibernation**, 15-min match assumption (13,000 GB-s) [u] | 11,250 — 86.5% (1.2×) | 14,063 — **108% ✗** | 16,875 — **130% ✗** | **yes — if hibernation fails** |
+| CPU per request (10 ms) | ≤ 4 ms worst chain — 40% | — | — | no, but see §3/§8 |
 
-MINI matches (4 humans) use 3,920 / 21,320 / 750 of the same meters per 100 matches — everything
-proportionally lighter; the FULL baseline is the conservative case.
+**The conservative requests reading (inbound 1:1)** — the free plan's ambiguity, not a billed
+design: 113,892 / 142,365 / 170,838 requests → **113.9% / 142.4% / 170.8%** — **all three
+scenarios overrun**, not just the upper ones. Whether the 20:1 ratio is *enforced* on the Free
+plan or is only the paid billing ratio is **[x] — the docs are ambiguous**; E12 decides.
 
-**The three decisive unknowns**, each able to flip a scenario on its own:
+**The earlier "outbound counted 1:1" figure (≈ 5,659 units/match, 566–849%) is withdrawn: the
+pricing docs state outgoing WebSocket messages are not billed, so that reading contradicts the
+documentation and is no longer carried as any scenario's basis.**
 
-1. **Free-plan WebSocket metering** [u/x]: under the paid page's 20:1 inbound ratio the requests
-   axis passes with ~10× headroom; if the free plan counted every message 1:1 (its limit text
-   does not say), even 100 matches/day overruns 5.7×. **E12 verifies this on a real free
-   account — it is the single biggest open fact in the capacity question.**
-2. **Rows-per-put mapping** [u/x]: SQL-native writes fit all three scenarios (64% at 150); the
-   KV-API ×2 bound overruns 125 and 150. E9's first real Durable Object settles it.
-3. **Hibernation** [u/x]: without it, duration overruns at 125/150 (the 15-minute match is an
-   **[m]** illustration, not a measurement — real wall duration is human-paced); with it, the
-   axis is negligible. E12 owns the real number.
+**The ×2 rows allowance — what it stands for now (review item 3).** The written-rows figure
+counts one row per logical write. Real multipliers, each labelled:
 
-**E6's verdict, per its own pass criterion:** **measured headroom exists under the
-paid-page/documented reading — and a documented overrun exists under the conservative readings.**
-The plan's criterion anticipated exactly this fork; the fork is now explicit, quantified, and
-owned by named experiments rather than hidden in an average.
+- **[x documented]** **Deletes count as rows written** — post-settlement cleanup of per-Trick
+  rows would add up to one row written per deleted row.
+- **[x documented]** **Each `setAlarm()` is one row written** — and chunked bot continuation
+  (§3) would add one per tick.
+- **[x documented]** **Every index update adds ≥ 1 extra row written** (DO SQL and D1) — the
+  query shapes P3 designs determine this.
+- **[u]** The KV-API (`put()`) → rows mapping is **not published**; the SQL `cursor.rowsWritten`
+  counter **is observable** — E12 measures the real number.
+
+The ×2 figure is a **rough allowance** for these multipliers combined, **not a verified
+measurement**. At the ×2 bound: 85,584 / 106,980 / 128,376 rows → **85.6% / 107% / 128%** —
+150 overruns outright, 125 overruns, 100 sits just under the 90% trip line.
+
+**What would turn each scenario into a clear PASS or a clear overrun (thresholds):**
+
+| Meter | Clear PASS at/above | Clear overrun at/above |
+| --- | --- | --- |
+| DO requests | free plan honours 20:1 → all PASS (≤ 9.9%) | free plan bills 1:1 → all overrun (≥ 113.9%) |
+| DO rows written | effective rows multiplier ≤ 1.4× → 150 at ≤ 60% | multiplier ≥ 1.6× → 150 over; ≥ 1.9× → 125 over; ≥ 2.34× → 100 over |
+| DO duration | hibernation keeps active ≤ ≈ 0.75 GB-s/match → all PASS | ≥ 86.7 GB-s/match (≈ 11.6 min non-hibernated at 0.125 GB) → 150 over; ≥ 104 → 125; ≥ 130 → 100 |
+| CPU per request | chains stay ≤ 4 ms measured → PASS | an unchunked all-bot fast-forward (17.9–46 ms) → per-request overrun |
 
 ## 6. The 90% guardrail (ruling E)
 
@@ -131,75 +163,121 @@ owned by named experiments rather than hidden in an average.
 
 | Meter | 90% trip at |
 | --- | --- |
-| DO requests, paid-page reading | ≈ 1,363/day — never trips at target usage |
-| DO requests, conservative 1:1 | **≈ 16/day** — trips immediately at any scenario |
-| DO rows written, SQL-native | ≈ 210/day — **never trips at 100/125/150** (150/day peaks at 64%) |
-| DO rows written, KV ×2 | ≈ 105/day — **trips late in the day at 125/150** |
-| DO duration, no hibernation | ≈ 104/day — trips late at 125/150 |
-| DO duration, hibernated | ≈ 15,600/day — never trips |
+| DO requests, 20:1 | ≈ 1,363/day — never trips at target usage |
+| DO requests, inbound 1:1 | **≈ 79/day — trips at all three scenarios** |
+| DO rows written, 1× | ≈ 210/day — never trips at 100/125/150 (150/day peaks at 64%) |
+| DO rows written, ×2 | ≈ 105/day — trips late at 125/150 |
+| DO duration, no hibernation | ≈ 104/day — trips at 125/150 |
 
-**Reserve sufficiency** (the honesty requirement in ruling E §5): when a trip fires, an ongoing
-match needs at most one more round plus settlement — 13 trick checkpoints + ≈ 10.8 auction
-actions ≈ **24 DO rows** (measured per-round costs), or its remaining messages on the request
-axis. The 10% reserve is 10,000 of each meter, so it sustains:
+**Reserve sufficiency** (the honesty requirement in ruling E §5) — what the 10% reserve
+(10,000 of each meter) covers when a trip fires, sized by the **remaining** cost of an in-progress
+match (one more round + settlement ≈ 24 rows [M-derived] or its remaining inbound messages):
 
 | Reading | Reserve covers |
 | --- | --- |
-| DO rows, SQL-native (trip never fires at target usage) | ≈ 416 concurrent tables |
-| DO requests, paid-page reading | ≈ 151 tables |
-| DO rows, KV ×2 bound | ≈ 11 tables — marginal |
-| DO requests, conservative 1:1 | **≈ 1 table — insufficient** |
+| DO rows, 1× (trip never fires at target usage) | ≈ 416 concurrent tables |
+| DO requests, 20:1 | ≈ 151 tables |
+| DO rows, ×2 allowance (remaining ≈ 48 rows) | ≈ 208 tables |
+| DO requests, inbound 1:1 | **≈ 8 tables — insufficient** |
 
-**Verdict: the 90% guardrail protects ongoing matches under the documented readings** (rows
-SQL-native and requests paid-page), and under those readings it never even fires at target
-usage. Under the **conservative requests reading it does not** — the reserve covers about one
-ongoing table's worst-case remaining traffic — and that gap is **documented here** per ruling
-E's own honesty requirement rather than claimed away. If E12 confirms 1:1 free-plan metering,
-protecting ongoing matches requires either the backup/failover path (ruling F's missing
-architecture) or a smaller outbound-message shape — a design consequence, not a measurement.
-Two conditions attach in every reading: each meter must be monitored independently (ruling E
-§5.1), and rerouted *new* matches need the backup server that ruling F flags as **not yet
-designed** — without it, the correct behaviour at a trip is the explicit refuse/queue response
-of ruling E §5.6, which is a product decision to design, not a capacity fact.
+**Verdict: the guardrail protects ongoing matches under the documented readings** (and never
+fires there at target usage). Under the **conservative inbound-1:1 reading it does not** — the
+reserve covers ≈ 8 tables against a plausible ≈ 25 concurrent — and that gap is **documented
+here** per ruling E's own honesty requirement. If E12 confirms 1:1 free-plan metering, protecting
+ongoing matches requires either the backup/failover path (ruling F's missing architecture) or a
+smaller message shape — a design consequence, not a measurement. In every reading: each meter is
+monitored independently (ruling E §5.1), and rerouted *new* matches need the backup server ruling
+F flags as **not yet designed** — without it, the correct trip behaviour is the explicit
+refuse/queue response of ruling E §5.6, a product decision to design.
 
-## 7. The finding
+## 7. The per-Trick persistence window is a ruling, not a validated design (review item 5)
 
-1. Under the ruled design (WebSocket, server-side bots, per-Trick persistence), the **measured
-   engine loads leave 10–15× headroom on every meter at 100–150 matches/day** — requests
-   (paid-page reading), rows written (SQL-native), CPU — and under those readings the guardrail
-   never fires at target usage; its 10% reserve protects ongoing matches with two orders of
-   magnitude to spare. Under the conservative readings the guardrail fires early and its reserve
-   does **not** protect ongoing matches on the request axis (§6) — documented, not hidden.
-2. The margin is **not yet proven**, because three unpublished/unmeasured platform behaviours
-   each flip the upper scenarios to overrun: free-plan WebSocket metering, the KV-API
-   rows-per-put mapping, and hibernation/duration. All three are E12/E9 work on a real Cloudflare
-   account; none can be settled from a laptop.
-3. E5's ≈ 1,135 requests/match and ≈ 1,135 rows/match are thereby **superseded as planning
-   numbers**: the ruled design costs ≈ 66 request-units and ≈ 428 rows per FULL match (4 humans),
-   with the conservative bounds stated alongside.
+Ruling A prefers persisting at the completed Trick. Everything in this section is **[u] —
+unvalidated design surface that E9 owns**; none of it is settled by E6's measurements:
 
-## 8. What E6 does **not** prove
+- **The window.** Up to **3 accepted card actions** may exist after the last completed-Trick
+  checkpoint (the 4th card completes the trick and is itself the checkpoint). Auction state is
+  NOT in the window — ruling A keeps auction persistence per action, so bid state is always
+  committed. But "accepted card actions" span state beyond the trick: turn order, trick-contest
+  state, any With/Risk bookkeeping attached to those cards.
+- **Hibernation is a loss path without a crash.** An idle Durable Object can be **evicted**; its
+  in-memory state is then gone even though nothing failed. A design that keeps the trick window
+  in memory must either persist before idling or be able to rebuild the window on wake — and the
+  rebuild must be indistinguishable from recovery after a crash. E9 must test eviction, not only
+  kill -9.
+- **Output gating conflicts.** If a card is **broadcast to peers before it is persisted**, peers
+  have seen an action the checkpoint does not contain; after a restart the match would resume
+  behind what players saw. If broadcast waits for persistence, the per-Trick boundary adds
+  visible latency to every card. The design must choose — broadcast-then-durably-confirm,
+  persist-then-broadcast, or per-Trick broadcast with per-card visual echo — and E9 must test
+  whichever is chosen against the "players saw an uncommitted action" case.
+- **Idempotency and ordering.** Safe replay needs **idempotency keys** (client-generated action
+  ids) and **sequence numbers** (server-assigned order) so a retried card after reconnect is
+  deduplicated exactly once and out-of-order deliveries cannot double-apply.
+- **What a disconnected client cannot know.** A client that sent card 3 of a trick and
+  disconnected cannot know whether the server durably accepted it; on reconnect it must learn
+  the committed state from the server snapshot (sequence numbers), never from local memory.
 
-- No real Cloudflare account, DO, or WebSocket was exercised — the platform-side inputs (metering
-  ratios, rows-per-put, hibernation, duration accounting) remain **[u]/[x]**, owned by E12 and E9.
-- The outbound-message shape (4 per action) and the lifecycle shape (5 HTTP + 4 connects) are
-  **[m]** design assumptions; a real client will differ in detail.
-- The 15-minute match duration is an illustration, not a measurement; human-paced wall time is
-  unknown until a real closed test (M10's 12×14).
+**E9's question list:** interruption mid-trick; eviction mid-trick; last-checkpoint recovery;
+reconciliation of seen-but-uncommitted actions; idempotency/sequence replay; reconnect state
+discovery; hibernation/eviction restart; and one deterministic recovery test proving exactly one
+valid continuation with no duplicated and no lost committed actions. Deterministic engine replay
+(E2/E3) does **not** discharge any of these — it recomputes state; it says nothing about which
+network actions were durably accepted.
+
+## 8. Players per day (review item 7) — formulas, no invented distribution
+
+With S = completed matches/day, h = human seats per match, m = completed matches per player:
+
+- seat-participations/day = **4·S** (the table's four seats, human or bot);
+- human seat-participations/day = **h·S**;
+- unique players/day = **h·S / m**.
+
+| Scenario S | Seat-participations (h = 4) | Players/day at m = 3 | Players/day at m = 4 |
+| --- | --- | --- | --- |
+| 100 | 400 | ≈ 133 | 100 |
+| 125 | 500 | ≈ 167 | 125 |
+| 150 | 600 | ≈ 200 | 150 |
+
+For h < 4 the player counts scale down linearly (U = h·S/m) while the **request model stays at
+the 4-human cost** — the stated worst case for inbound messages (ruling B puts bot actions
+inside the server). The FULL baseline (Decision D) makes these upper bounds; a real FULL/MINI
+mix shifts demand down (MINI costs ≈ half per match). The h and m distributions are **[u]** —
+owner knowledge after launch, not invented here.
+
+## 9. The finding
+
+1. **The binding meter is DO rows written: 42.8% / 53.5% / 64.2% of the daily limit at
+   100/125/150 — headroom 2.3× / 1.9× / 1.6×.** Requests carry the 10–15× headroom **only under
+   the documented 20:1 reading**; under the conservative inbound-1:1 reading all three scenarios
+   overrun (114–171%). Duration is either negligible (hibernation works) or an overrun
+   (it does not). CPU is a non-problem for normal play (chains ≤ 4 ms) but **forbids an
+   unchunked all-bot fast-forward** (17.9–46 ms).
+2. E5's ≈ 1,135 requests/match and ≈ 1,135 rows/match are **superseded as planning numbers** by
+   the ruled design's ≈ 66 request-units (documented reading) and ≈ 428 rows.
+3. The 90% guardrail protects ongoing matches under the documented readings and **does not**
+   under the conservative requests reading (≈ 8 tables) — documented per ruling E.
+
+## 10. What E6 does **not** prove
+
+- No real Cloudflare account, DO, or WebSocket was exercised — the platform-side facts (20:1 on
+  Free, rows-per-write, deletes/alarms/index multipliers, hibernation, duration accounting) are
+  **[u]/[x]**, owned by E12/E9 (§13).
+- The outbound shape (4 per action), lifecycle shape (5 HTTP + 4 connects), alarm design (0 in
+  normal play) and the 15-minute match duration are **[m]** assumptions.
 - Matchmaking, disconnect votes, takeover clocks and profile traffic are outside one match's
-  cost; they add real requests and remain to be modelled when their services are designed.
-- The FULL baseline assumption (Decision D) means the scenarios are FULL-sized; a real FULL/MINI
-  mix shifts demand downward (MINI costs ≈ half), which is headroom, not risk — but the mix is
-  the owner's unknowable until launch.
+  cost; E6's follow-ups must add them.
+- The per-Trick persistence design itself is **unvalidated** (§7) — ruling A is conditional on
+  E9 for exactly this reason.
 
-## 9. How to reproduce
+## 11. How to reproduce
 
 ```bash
 # ── JVM leg ─────────────────────────────────────────────────────────────────
 cd native && ./gradlew :stage0:jvmTest --rerun-tasks --no-build-cache
-#   → native/stage0/build/stage0-e6/capacity-mix-jvm-*.json
+#   → native/stage0/build/stage0-e6/capacity-mix-jvm-*.json, capacity-chain-jvm-*.json
 
-# ── Server leg ──────────────────────────────────────────────────────────────
+# ── Server legs ─────────────────────────────────────────────────────────────
 cd native && ./gradlew :stage0:compileProductionExecutableKotlinJs --rerun-tasks --no-build-cache
 cp native/stage0/build/compileSync/js/main/productionExecutable/kotlin/*.js D:/cache/stage0/e6/
 cd D:/cache/stage0/e6
@@ -208,21 +286,72 @@ WRANGLER_SEND_METRICS=false XDG_CONFIG_HOME=D:/cache/stage0/config \
   D:/cache/stage0/node_modules/wrangler/bin/wrangler.js dev --local --port 8975 --ip 127.0.0.1
 curl "http://127.0.0.1:8975/?what=capacity-mix&first=1&count=50&gt=FULL&sm=NORMAL" \
   -o workerd-mix-FULL-NORMAL.json
+# chain probe: same recipe with runCapacityChain / what=capacity-chain (port 8976)
 
 # ── Compare ────────────────────────────────────────────────────────────────
-# counts.fingerprint must be ee328556 on both legs (31cacdd4 / 81ed9678 / b1116c8d
-# for the secondary batteries). Timings are compared against the 10 ms budget, not each other.
+# counts.fingerprint must be ee328556 (mix) / f68532ca (chain) on both legs.
+# Timings are compared against the 10 ms budget, not each other.
 ```
 
-## 10. What the owner still has to decide
+## 12. What the owner still has to decide
 
-1. **Authorize E12's free-account experiment** (a real WebSocket DO on a real free plan) — it
-   decides the single biggest unknown and thereby whether the scenarios pass by 10× or fail by
-   6×. No deployment or billing change is involved in *this* record.
-2. **The refuse/queue response** at a guardrail trip (ruling E §5.6) — a product behaviour to
-   design (copy, UX, retry), needed before P3 builds the guardrail.
-3. **The failover architecture** (ruling F's flagged prerequisite) — unchanged; E6 gives it its
-   demand numbers: at the conservative readings the trip fires early in the day, so the backup
-   path is load-bearing, not theoretical.
-4. **O-06** — unchanged; E6 is evidence, and the fork it documents is exactly what the ADR slot
-   waits to read.
+1. **Authorize the E12 free-account experiment** (§13) — it decides requests (20:1 vs 1:1), rows
+   (real rows-per-write), duration (hibernation), and with them whether the scenarios PASS or
+   overrun. Needs the owner's approval and a real account; this record runs nothing.
+2. **The bot-continuation chunking granularity** — per-trick ticks (≈ +234 rows, +234 invocations
+   per fast-forwarded match) vs per-round (≈ +18): a design decision with capacity consequences.
+3. **The refuse/queue response** at a guardrail trip (ruling E §5.6) — product behaviour to
+   design (copy, UX, retry) before P3 builds the guardrail.
+4. **The failover architecture** (ruling F's flagged prerequisite) — load-bearing exactly when
+   the conservative readings hold, since the trip then fires mid-day.
+5. **O-06** — unchanged; E6 is evidence with its limitations stated, not a decision.
+
+## 13. E12 protocol — free-account platform-metering experiment (NOT RUN; requires owner approval)
+
+**Status: documentation only. Nothing here has been executed; it needs the owner's explicit
+approval, a real (throwaway) Cloudflare account, and its own acceptance before running.**
+
+**Goal.** Replace E6's [u]/[x] platform assumptions with measured numbers, using a throwaway
+SQLite-backed Durable Object that mimics the proposed match-DO shape.
+
+**Setup.** One Worker + one DO class (SQLite-backed), deployed to the throwaway account; the DO
+uses the **exact proposed persistence API** — the per-Trick checkpoint write, the per-action
+auction write, and the settlement batch — implemented for the experiment with the same
+key/row shapes P3 will use. No real user data; no production namespace.
+
+**Steps.**
+
+1. Create the DO. Add a **secondary index** on the checkpoint table (to measure the index-update
+   multiplier).
+2. Connect **4 WebSocket clients** to one DO; drive **one match's worth of actions** (≈ 1,130
+   messages: 936 card actions in 234 trick checkpoints + ≈ 194 auction actions) through the
+   exact persistence design.
+3. Issue **one `setAlarm()`** and let it fire once (inactivity-timer shape).
+4. **Delete** the per-Trick rows after the synthetic settlement (cleanup shape).
+5. Read `ctx.storage.sql` **`cursor.rowsWritten`** around every step; compare with the
+   dashboard's **rows-written** counter for the same window.
+6. Record the dashboard's **DO requests** and **Worker requests** counters for: the 4 connection
+   upgrades, the ≈ 1,130 incoming messages, the outgoing messages, the alarm invocation, and a
+   reconnect with snapshot.
+7. Record **GB-s duration** for an idle DO held open for a full match-length window (the
+   hibernation question): with the WS attached and idle, after disconnect, and across a forced
+   eviction.
+8. **At-limit behaviour:** continue past 100% of one daily meter on the throwaway account and
+   record what actually fails, in what order, with what error — so the 90% guardrail's failure
+   model is real, not assumed.
+
+**What each result decides.**
+
+| Result | Decides |
+| --- | --- |
+| Dashboard rows-written ÷ logical writes | the real rows-per-write multiplier — the ×2 allowance stands or falls; whether 125/150 PASS or overrun on rows |
+| Dashboard DO-request delta per incoming WS message | whether the Free plan honours 20:1 or bills 1:1 — requests PASS (≤ 9.9%) or overrun (≥ 114%) at all scenarios |
+| Dashboard DO-request delta for outgoing messages | confirms outgoing are free (paid-page) or not on Free |
+| Alarm invocation counter + rows | the real cost of chunked bot continuation |
+| Index-write delta | the index multiplier the P3 schema design must price |
+| GB-s for idle-with-WS vs disconnected | whether hibernation makes duration negligible (PASS) or matches hold GB-s (overrun at 125/150) |
+| At-limit failure order and errors | what the 90% guardrail must monitor first, and what its refuse/queue response must look like |
+
+**Safety.** Throwaway account only; no billing enabled; no user data; torn down after the run.
+Requires the owner's approval before any deployment (ruling G: no paid plan, no production
+resources).

@@ -166,26 +166,35 @@ target usage, so capacity is presented per meter; the target is owner input E6 n
 > action-count-based model; E6 recalculates for the WebSocket + server-side-bot design across
 > the three scenarios.
 
-### E6 — does the target workload fit the free tier at 90%? ✅ MEASURED + MODELLED
+### E6 — does the target workload fit the free tier at 90%? ✅ PASS WITH LIMITATIONS
 
 Full evidence: `docs/implementation/Stage0_E6_Target_Workload_Report.md` (2026-10-29), built on
-per-seat measured loads (all four count fingerprints byte-identical JVM↔workerd). Under the
-ruled design — WebSocket transport, bots inside the authority, per-Trick persistence — a FULL
-match costs **≈ 66 request-units and ≈ 428 rows written** (4 humans; superseding E5's per-action
-figures as planning numbers). Against the owner's 100/125/150 scenarios the answer forks exactly
-on the platform facts that are not yet published or measured:
+per-seat measured loads and measured server-side action chains (all count fingerprints
+byte-identical JVM↔workerd); the capacity is modelled and the platform metering is unverified.
+Under the ruled design — WebSocket transport, bots inside the authority, per-Trick persistence —
+a FULL match costs **≈ 66 request-units (documented reading) and ≈ 428 rows written** (4 humans;
+superseding E5's per-action figures as planning numbers). Against the owner's 100/125/150
+scenarios the answer forks exactly on the platform facts that are not yet published or measured:
 
-- **Documented readings**: 10–15× headroom on every meter; the 90% guardrail never fires at
-  target usage, and its 10% reserve protects ongoing matches with ≈ 151–416 concurrent tables of
-  headroom (vs ≈ 25 plausible).
-- **Conservative readings** (free-plan WebSocket messages counted 1:1; the KV-API ×2
-  rows-per-put bound; no hibernation): **125/150 overrun** (up to 849% on requests, 128% on
-  rows, 130% on duration), the guardrail trips early, and its reserve does **not** protect
-  ongoing matches on the request axis (≈ 1 table) — a documented gap per ruling E.
+- **Documented readings**: the **binding meter is DO rows written — 42.8% / 53.5% / 64.2% of the
+  daily limit (headroom 2.3× / 1.9× / 1.6×)**; DO requests carry 10–15× headroom under the 20:1
+  reading; Worker requests, D1 rows and rows read are ≤ 3.4%; duration is negligible **if**
+  hibernation works. The 90% guardrail never fires at target usage, and its 10% reserve protects
+  ongoing matches with ≈ 151–416 concurrent tables of headroom (vs ≈ 25 plausible).
+- **Conservative readings** (free-plan WebSocket incoming messages billed 1:1 — the docs are
+  ambiguous about Free-plan enforcement; the rows multipliers from deletes, `setAlarm()` and
+  index updates combined; no hibernation): **requests overrun at all three scenarios**
+  (114% / 142% / 171%), rows overrun at 125/150 (107% / 128%), duration at 125/150 (108% /
+  130%); the guardrail trips early and its reserve does **not** protect ongoing matches on the
+  request axis (≈ 8 tables) — a documented gap per ruling E. (The earlier "outbound messages
+  counted 1:1" figure was withdrawn: the pricing docs state outgoing messages are not billed.)
 
-CPU is a non-problem in every reading (worst measured message 0.067 ms vs the 10 ms budget).
-The three decisive unknowns — free-plan WebSocket metering, rows-per-put, hibernation/duration —
-are owned by **E12/E9 on a real Cloudflare account**; O-06 stays open until they are measured.
+CPU is a non-problem for normal play in every reading (measured worst inter-human bot chain
+13 actions ≈ 4 ms vs the 10 ms budget) — but an **unchunked all-bot fast-forward (a whole match
+in one invocation) is 17.9–46 ms and exceeds the budget**: the design must chunk it with alarms
+(each 1 row written + 1 invocation). The decisive unknowns — free-plan WebSocket metering, the
+rows multipliers, hibernation/duration — are owned by **E12/E9 on a real Cloudflare account**
+(protocol in the E6 report §13); O-06 stays open until they are measured.
 
 ### What is still NOT measured
 
@@ -232,9 +241,10 @@ Stage 0 E1–E6 above are the evidence gathered so far, and they are positive.
 
 **What it needs before it can be adopted:**
 - E12 — the **real free-account verification** of the three meters E6 showed are decisive:
-  free-plan WebSocket metering, the DO rows-per-put mapping, and hibernation/duration. Under the
-  documented readings E6 measured 10–15× headroom for the 100/125/150 scenarios; under the
-  conservative readings 125/150 overrun. E12 decides which world is real.
+  free-plan WebSocket metering, the rows-per-write multipliers, and hibernation/duration. Under
+  the documented readings E6 measured headroom for the 100/125/150 scenarios led by rows written
+  at 1.6–2.3× (requests 10–15×); under the conservative inbound-1:1 reading all three scenarios
+  overrun requests. E12 decides which world is real.
 - E9 — a Durable Object's state is per-object and single-threaded, which is a
   *better* fit for exactly-once settlement than a Firestore transaction, but it
   is a different durability story and has to be demonstrated, not assumed.

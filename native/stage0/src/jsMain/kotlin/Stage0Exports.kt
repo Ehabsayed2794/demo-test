@@ -5,6 +5,7 @@
 
 import com.estemshan.engine.GameType
 import com.estemshan.engine.ScoringMode
+import com.estemshan.stage0.runCapacityChainJson
 import com.estemshan.stage0.runCapacityJson
 import com.estemshan.stage0.runCapacityMixJson
 import com.estemshan.stage0.runCorpusJson
@@ -58,6 +59,16 @@ fun runCapacity(firstSeed: Int, count: Int, gameType: String, scoringMode: Strin
 @JsExport
 fun runCapacityMix(firstSeed: Int, count: Int, gameType: String, scoringMode: String): String =
   runCapacityMixJson(firstSeed, count, gameTypeOf(gameType), scoringModeOf(scoringMode))
+
+/**
+ * E6's chain entry point: the longest run of consecutive server-side actions
+ * that executes without an intervening human message, per seat attribution —
+ * the quantity the 10 ms CPU-per-request budget actually bounds.
+ */
+@OptIn(ExperimentalJsExport::class)
+@JsExport
+fun runCapacityChain(firstSeed: Int, count: Int, gameType: String, scoringMode: String): String =
+  runCapacityChainJson(firstSeed, count, gameTypeOf(gameType), scoringModeOf(scoringMode))
 
 private fun gameTypeOf(name: String): GameType =
   GameType.entries.firstOrNull { it.name == name.uppercase() }
