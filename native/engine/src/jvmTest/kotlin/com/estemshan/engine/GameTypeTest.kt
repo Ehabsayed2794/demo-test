@@ -139,7 +139,7 @@ class GameTypeTest {
   // ── Extension window + caps (GM2/GM3) ─────────────────────────────────
 
   @Test
-  fun full_computeRoundExtensionKeepsTheLegacyWindowAndReasons() {
+  fun t03t04full_computeRoundExtensionKeepsTheLegacyWindowAndReasons() {
     // The pre-GameType RoundScoreTest roundExtensionWindow cases, unaltered.
     // maxRounds = 18 = FULL base; round 19 is post-window and not final.
     assertEquals(
@@ -161,7 +161,7 @@ class GameTypeTest {
   }
 
   @Test
-  fun mini_computeRoundExtensionQualifiesInsideSixToTen() {
+  fun t03mini_computeRoundExtensionQualifiesInsideSixToTen() {
     // A Super Call inside MINI's window extends. The override must differ
     // from MINI's own fixed trump for the round: 8's fixed trump is HEARTS
     // (ladder 6→Sans, 7→Spades, 8→Hearts), so SPADES is the override here.
@@ -182,7 +182,7 @@ class GameTypeTest {
   }
 
   @Test
-  fun mini_computeRoundExtensionNeverFiresOutsideItsWindow() {
+  fun t03mini_computeRoundExtensionNeverFiresOutsideItsWindow() {
     // Round 5 is a normal MINI round — no extension even on a Super Call.
     assertEquals(
       RoundExtension(false),
@@ -201,7 +201,7 @@ class GameTypeTest {
   }
 
   @Test
-  fun mini_computeRoundExtensionFinalRoundSaaydaRepeatsPastTen() {
+  fun t04mini_computeRoundExtensionFinalRoundSaaydaRepeatsPastTen() {
     // Round 10 in-window → extends to 11.
     assertEquals(
       RoundExtension(true, ExtensionReason.SAAYDA),
@@ -215,7 +215,7 @@ class GameTypeTest {
   }
 
   @Test
-  fun extensionCapIsNoLongerEngineEnforced() {
+  fun t03extensionCapIsNoLongerEngineEnforced() {
     // Q2c: the engine answers "does THIS round qualify" and never reads
     // maxExtensions. Five Sa'aydas in 14–18 all extend, 18+N with no cap.
     for (round in 14..18) {

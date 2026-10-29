@@ -95,7 +95,7 @@ class PlacementScoringTest {
   }
 
   @Test
-  fun aSharedBottomScoresTheKozComponentsNotAUniqueThird() {
+  fun t13aSharedBottomScoresTheKozComponentsNotAUniqueThird() {
     // Q2d / Q2f: both seats tied at the lowest total are rank 4 and Koz, so
     // the placement signals read 0.0 — never a unique Third's 1/3.
     val totals = mapOf("p1" to 100, "p2" to 99, "p3" to 10, "p4" to 10)

@@ -37,14 +37,14 @@ class InactiveTakeoverTest {
   // ── the names, in one home ────────────────────────────────────────────
 
   @Test
-  fun theMarkerFieldTheCollectionAndTheCursorAreNamedOnceForBothAuthorities() {
+  fun t16theMarkerFieldTheCollectionAndTheCursorAreNamedOnceForBothAuthorities() {
     assertEquals("inactiveTakeovers", InactiveTakeover.TAKEOVER_FIELD)
     assertEquals("inactivity", InactiveTakeover.INACTIVITY_COLLECTION)
     assertEquals("inactiveSeatActionCursor", InactiveTakeover.CURSOR_FIELD)
   }
 
   @Test
-  fun thePrivateDocumentIsExactlyThreeFieldsAndKeepsTheClocksTwoFirst() {
+  fun t16thePrivateDocumentIsExactlyThreeFieldsAndKeepsTheClocksTwoFirst() {
     // Fork 5: the CLOCK still owns two fields; the DOCUMENT that stores it adds
     // the streak cursor. Both halves are named here so :functions and :services
     // cannot each declare their own list.
@@ -59,7 +59,7 @@ class InactiveTakeoverTest {
   }
 
   @Test
-  fun noFieldNameReadsLikeATimeoutCountARemovalOrABotSeat() {
+  fun t16noFieldNameReadsLikeATimeoutCountARemovalOrABotSeat() {
     // RD20 separation, extended to the whole persisted surface of S73.
     val names = InactiveTakeover.inactivityDocFieldNames() +
       InactiveTakeover.entryFieldNames() +
@@ -71,7 +71,7 @@ class InactiveTakeoverTest {
   }
 
   @Test
-  fun aMarkerEntryOwnsExactlyThreeFieldsInOrder() {
+  fun t16aMarkerEntryOwnsExactlyThreeFieldsInOrder() {
     val fields = InactiveTakeover(roundAtTakeover = 3, trickAtTakeover = 2, takenOverAtMillis = 10_000L).toFields()
     assertEquals(InactiveTakeover.entryFieldNames(), fields.keys.toList())
     assertEquals(10_000L, fields[InactiveTakeover.TAKEN_OVER_AT_FIELD])
@@ -82,14 +82,14 @@ class InactiveTakeoverTest {
   // ── who holds the seat ────────────────────────────────────────────────
 
   @Test
-  fun anAbsentMarkerLeavesTheSeatHuman() {
+  fun t16anAbsentMarkerLeavesTheSeatHuman() {
     assertEquals(SeatControl.Human(), storedSeatControl(null, "p2", roundNow = 3, trickNoNow = 5))
     assertEquals(SeatControl.Human(), storedSeatControl(emptyMap<String, Any?>(), "p2", 3, 5))
     assertEquals(emptySet<String>(), InactiveTakeover.takeoverSeats(null))
   }
 
   @Test
-  fun aMarkerForAnotherSeatLeavesThisSeatHuman() {
+  fun t16aMarkerForAnotherSeatLeavesThisSeatHuman() {
     val marker = mapOf("p4" to entry())
     assertEquals(
       SeatControl.Human(clock = InactivityClock(accumulatedMillis = 40_000L)),
@@ -99,13 +99,13 @@ class InactiveTakeoverTest {
   }
 
   @Test
-  fun aCompleteEntryBorrowsTheSeatAndCarriesTheTakeoverStamp() {
+  fun t16aCompleteEntryBorrowsTheSeatAndCarriesTheTakeoverStamp() {
     val control = storedSeatControl(mapOf("p2" to entry()), "p2", roundNow = 3, trickNoNow = 2)
     assertEquals(SeatControl.Borrowed(takenOverAtMillis = 10_000L, trickFinished = false), control)
   }
 
   @Test
-  fun theClockSurvivesTheReadSoReclaimIsOneExpression() {
+  fun t16theClockSurvivesTheReadSoReclaimIsOneExpression() {
     val control = storedSeatControl(null, "p2", 3, 2, clock = InactivityClock(accumulatedMillis = 49_999L, openWindowStartMillis = 50_000L))
     val clock = (control as SeatControl.Human).clock
     assertEquals(49_999L, clock.accumulatedMillis)
@@ -115,7 +115,7 @@ class InactiveTakeoverTest {
   // ── DEC-RD19-04's trick bound, derived ────────────────────────────────
 
   @Test
-  fun trickFinishedComesFromTheTrickNotFromAStoredFlag() {
+  fun t16trickFinishedComesFromTheTrickNotFromAStoredFlag() {
     val owed = mapOf("p2" to entry(round = 3, trick = 2))
     assertFalse((storedSeatControl(owed, "p2", 3, 2) as SeatControl.Borrowed).trickFinished)
     assertTrue((storedSeatControl(owed, "p2", 3, 3) as SeatControl.Borrowed).trickFinished)
@@ -124,7 +124,7 @@ class InactiveTakeoverTest {
   }
 
   @Test
-  fun aTakeoverDuringTheAuctionWaitsForTheFirstTrickOfThatRound() {
+  fun t16aTakeoverDuringTheAuctionWaitsForTheFirstTrickOfThatRound() {
     // No trick was in progress when the seat was taken, so "the current trick"
     // is trick 0 and the bound is the first trick resolving.
     val duringAuction = mapOf("p2" to entry(round = 4, trick = InactiveTakeover.trickNo(0)))
@@ -134,13 +134,13 @@ class InactiveTakeoverTest {
   }
 
   @Test
-  fun aLaterRoundAlwaysMeansTheOwedTrickFinished() {
+  fun t16aLaterRoundAlwaysMeansTheOwedTrickFinished() {
     val endOfRound = mapOf("p2" to entry(round = 5, trick = InactiveTakeover.TRICKS_PER_ROUND - 1))
     assertTrue((storedSeatControl(endOfRound, "p2", 6, 0) as SeatControl.Borrowed).trickFinished)
   }
 
   @Test
-  fun trickNoAndSeatTrickKeyOrderAnEntireRound() {
+  fun t16trickNoAndSeatTrickKeyOrderAnEntireRound() {
     assertEquals(0, InactiveTakeover.trickNo(0))
     assertEquals(0, InactiveTakeover.trickNo(3))
     assertEquals(1, InactiveTakeover.trickNo(4))
@@ -154,7 +154,7 @@ class InactiveTakeoverTest {
   // ── fail-closed parsing ───────────────────────────────────────────────
 
   @Test
-  fun corruptEntriesFailClosedToHumanAndNeverToBorrowed() {
+  fun t16corruptEntriesFailClosedToHumanAndNeverToBorrowed() {
     assertNull(InactiveTakeover.parse(null))
     assertNull(InactiveTakeover.parse("p2"))
     assertNull(InactiveTakeover.parse(listOf(entry())))
@@ -174,7 +174,7 @@ class InactiveTakeoverTest {
   }
 
   @Test
-  fun oneGarbageEntryDoesNotDiscardAValidOne() {
+  fun t16oneGarbageEntryDoesNotDiscardAValidOne() {
     val marker: Map<Any, Any?> = mapOf(
       "p1" to entry(takenOverAt = 1_000L, round = 2, trick = 1),
       "p2" to entry(takenOverAt = "soon"),
@@ -186,7 +186,7 @@ class InactiveTakeoverTest {
   }
 
   @Test
-  fun anyWholeNumberShapeTheTransportMayHandOverIsTrusted() {
+  fun t16anyWholeNumberShapeTheTransportMayHandOverIsTrusted() {
     // Kotlin/JS receives Firestore numbers as Double, the JVM as Int/Long.
     val expected = InactiveTakeover(takenOverAtMillis = 10_000L, roundAtTakeover = 3, trickAtTakeover = 2)
     assertEquals(expected, InactiveTakeover.parse(entry(takenOverAt = 10_000, round = 3, trick = 2)))
@@ -197,7 +197,7 @@ class InactiveTakeoverTest {
   // ── the writes ────────────────────────────────────────────────────────
 
   @Test
-  fun withTakeoverReplacesOneSeatAndCarriesTheOthersVerbatim() {
+  fun t16withTakeoverReplacesOneSeatAndCarriesTheOthersVerbatim() {
     val stranger = mapOf("uninterpreted" to "shape")
     val written = InactiveTakeover.withTakeover(
       takeoverRaw = mapOf("p1" to entry(), "p9" to stranger),
@@ -217,7 +217,7 @@ class InactiveTakeoverTest {
   }
 
   @Test
-  fun withoutTakeoverRemovesOnlyItsOwnSeat() {
+  fun t16withoutTakeoverRemovesOnlyItsOwnSeat() {
     val marker = mapOf("p1" to entry(), "p2" to entry())
     val cleared = InactiveTakeover.withoutTakeover(marker, "p2")
     assertEquals(setOf("p1"), InactiveTakeover.takeoverSeats(cleared))
@@ -230,7 +230,7 @@ class InactiveTakeoverTest {
   // ── why the takeover write must zero the clock ────────────────────────
 
   @Test
-  fun theQualifyingAccumulationIsNeverLeftOnTheDocument() {
+  fun t16theQualifyingAccumulationIsNeverLeftOnTheDocument() {
     // R33's trap, pinned at the shape level: InactivityClock.fromStored refuses
     // any value at or above the threshold, so a takeover that leaves 50 s on the
     // doc produces state the NEXT look cannot parse — the clock dies for the rest

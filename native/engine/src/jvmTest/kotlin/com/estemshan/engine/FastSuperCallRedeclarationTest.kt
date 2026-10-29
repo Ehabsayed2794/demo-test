@@ -125,7 +125,7 @@ class FastSuperCallRedeclarationTest {
   }
 
   @Test
-  fun aSeatThatAlreadyRedeclaredMustDeclareAgainAfterAHigherCall() {
+  fun t09aSeatThatAlreadyRedeclaredMustDeclareAgainAfterAHigherCall() {
     var s = fast("p1")
     s = estimateState(s, "p1", 8)
     s = estimateState(s, "p2", 4)
@@ -159,7 +159,7 @@ class FastSuperCallRedeclarationTest {
   }
 
   @Test
-  fun aHigherCallOpensConfirmAndDoesNotCompleteTheRound() {
+  fun t09aHigherCallOpensConfirmAndDoesNotCompleteTheRound() {
     var s = fast("p1")
     s = estimateState(s, "p1", 8)
     s = estimateState(s, "p2", 4)
@@ -182,7 +182,7 @@ class FastSuperCallRedeclarationTest {
   }
 
   @Test
-  fun noHigherCallEndsTheAuctionWithTheLastCaller() {
+  fun t09noHigherCallEndsTheAuctionWithTheLastCaller() {
     var s = fast("p1")
     s = estimateState(s, "p1", 8)
     s = estimateState(s, "p2", 4)
@@ -205,7 +205,7 @@ class FastSuperCallRedeclarationTest {
   }
 
   @Test
-  fun exactNumberAndSuitDuplicateIsLegalAndLaterDuplicatesAreWith() {
+  fun t09exactNumberAndSuitDuplicateIsLegalAndLaterDuplicatesAreWith() {
     var s = fast("p1")
     // p1 and p2 both declare 8 under the round's fixed SPADES: exact
     // duplicates. The first declarer is the Caller, the later one is With.
@@ -236,7 +236,7 @@ class FastSuperCallRedeclarationTest {
   }
 
   @Test
-  fun aHigherCallMayConfirmWithAWeakerSuitBecauseTheNumberRose() {
+  fun t09aHigherCallMayConfirmWithAWeakerSuitBecauseTheNumberRose() {
     var s = fast("p1")
     s = estimateState(s, "p1", 8)
     s = estimateState(s, "p2", 4)
@@ -261,7 +261,7 @@ class FastSuperCallRedeclarationTest {
   }
 
   @Test
-  fun equalNumberInAWeakerSuitOpensNoCallAndGrantsNoWith() {
+  fun t09equalNumberInAWeakerSuitOpensNoCallAndGrantsNoWith() {
     // Hand-built state: the confirmed call is 8 HEARTS and p2 still holds an
     // equal 8 declared under the weaker DIAMONDS. The engine never keeps such a
     // record on its own — every declaration is made under the current trump —

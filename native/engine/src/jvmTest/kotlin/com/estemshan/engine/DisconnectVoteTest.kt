@@ -19,7 +19,7 @@ class DisconnectVoteTest {
   // ── the ruled windows (DEC-DISC-01 / closure §2) ──────────────────
 
   @Test
-  fun windowsAreTheRuledSeconds() {
+  fun t16windowsAreTheRuledSeconds() {
     assertEquals(30, DisconnectVote.voteWindowSec)
     assertEquals(90, DisconnectVote.waitWindowSec)
   }
@@ -27,7 +27,7 @@ class DisconnectVoteTest {
   // ── agreement = majority = 2 of 3 ─────────────────────────────────
 
   @Test
-  fun twoOfThreeWinsEitherWay() {
+  fun t16twoOfThreeWinsEitherWay() {
     assertEquals(
       DisconnectVoteStatus.WAIT,
       DisconnectVote.decideVote(
@@ -43,7 +43,7 @@ class DisconnectVoteTest {
   }
 
   @Test
-  fun unanimousTableSettlesEitherWay() {
+  fun t16unanimousTableSettlesEitherWay() {
     assertEquals(
       DisconnectVoteStatus.WAIT,
       DisconnectVote.decideVote(List(3) { DisconnectVoteChoice.WAIT }),
@@ -55,7 +55,7 @@ class DisconnectVoteTest {
   }
 
   @Test
-  fun abstentionDoesNotBlockAgreement() {
+  fun t16abstentionDoesNotBlockAgreement() {
     // The third human may simply not answer — 2 of 3 answers still win.
     assertEquals(
       DisconnectVoteStatus.WAIT,
@@ -68,7 +68,7 @@ class DisconnectVoteTest {
   }
 
   @Test
-  fun oneOneSplitIsNoAgreement() {
+  fun t16oneOneSplitIsNoAgreement() {
     // 1 of 2 is below the ruled majority: continue with the configured bot.
     assertEquals(
       DisconnectVoteStatus.NO_AGREEMENT,
@@ -77,7 +77,7 @@ class DisconnectVoteTest {
   }
 
   @Test
-  fun singleOrEmptyBallotIsNoAgreement() {
+  fun t16singleOrEmptyBallotIsNoAgreement() {
     assertEquals(
       DisconnectVoteStatus.NO_AGREEMENT,
       DisconnectVote.decideVote(listOf(DisconnectVoteChoice.WAIT)),
@@ -90,7 +90,7 @@ class DisconnectVoteTest {
   }
 
   @Test
-  fun aFourthBallotCannotExist() {
+  fun t16aFourthBallotCannotExist() {
     // Four seats, one disconnected: at most three humans, and bots hold no ballot.
     assertThrows(IllegalArgumentException::class.java) {
       DisconnectVote.decideVote(List(4) { DisconnectVoteChoice.WAIT })
@@ -100,17 +100,17 @@ class DisconnectVoteTest {
   // ── permanent replacement charge (closure §1) ─────────────────────
 
   @Test
-  fun unrankedPermanentReplacementChargesTwoKoz() {
+  fun t16unrankedPermanentReplacementChargesTwoKoz() {
     assertEquals(DisconnectVoteCharge.KOZ2, DisconnectVote.permanentCharge(MatchMode.UNRANKED))
   }
 
   @Test
-  fun roomPermanentReplacementDrawsNoKoz() {
+  fun t16roomPermanentReplacementDrawsNoKoz() {
     assertEquals(DisconnectVoteCharge.NONE, DisconnectVote.permanentCharge(MatchMode.ROOM))
   }
 
   @Test
-  fun rankedHasNoEntry() {
+  fun t16rankedHasNoEntry() {
     // DEC-DISC-01: the flow exists in ROOM + UNRANKED only — RANKED's entry does not exist.
     assertNull(DisconnectVote.permanentCharge(MatchMode.RANKED))
   }

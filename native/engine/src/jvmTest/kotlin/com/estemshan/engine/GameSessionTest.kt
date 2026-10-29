@@ -99,7 +99,7 @@ class GameSessionTest {
   // ── scoring ruleset ──────────────────────────────────────────────
 
   @Test
-  fun scoringMode_normalByDefaultClassicCapsTheLadderAtTwo() {
+  fun t02scoringMode_normalByDefaultClassicCapsTheLadderAtTwo() {
     val session = newSession()
     assertEquals(ScoringMode.NORMAL, session.getScoringMode())
     assertEquals(8, session.escalationCap)
@@ -275,7 +275,7 @@ class GameSessionTest {
   }
 
   @Test
-  fun round_generalPassTransitionBumpsTheRoundRotatesTheDealerAndInvalidatesTheDeal() {
+  fun t01round_generalPassTransitionBumpsTheRoundRotatesTheDealerAndInvalidatesTheDeal() {
     val session = newSession()
     session.setRound(session.getRound().copy(multiplier = 2))
     assertEquals("p1", session.getDealer())
@@ -494,7 +494,7 @@ class GameSessionTest {
   }
 
   @Test
-  fun completeRound_MarksDoneAndRollsTheMultiplierForward() {
+  fun t22completeRound_MarksDoneAndRollsTheMultiplierForward() {
     val session = newSession()
     session.initializePlayState(roundOneCfg(riggedHands()))
 
@@ -583,7 +583,7 @@ class GameSessionTest {
   }
 
   @Test
-  fun matchComplete_generalPassConsumesThePlannedFinalRound() {
+  fun t01matchComplete_generalPassConsumesThePlannedFinalRound() {
     val session = newSession()
     session.setRound(session.getRound().copy(number = 17))
     assertFalse(session.isMatchComplete())

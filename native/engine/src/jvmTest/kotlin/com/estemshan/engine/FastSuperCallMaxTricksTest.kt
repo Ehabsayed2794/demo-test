@@ -61,7 +61,7 @@ class FastSuperCallMaxTricksTest {
 
   // ── The estimate path: 13 is legal, 14 is not ────────────────────────
   @Test
-  fun aFastSeatMayDeclareThirteenButNotFourteen() {
+  fun t24aFastSeatMayDeclareThirteenButNotFourteen() {
     val s = confirmedSuperCallWiped()
 
     val ok = canSubmit(s, BiddingIntent.FinalEstimate("p2", 13))
@@ -78,7 +78,7 @@ class FastSuperCallMaxTricksTest {
 
   // ── The fast exemption removes the CALL cap only ─────────────────────
   @Test
-  fun aFastSeatMayDeclareAboveTheCallersNumberBecauseFastRoundsHaveNoCallCap() {
+  fun t24aFastSeatMayDeclareAboveTheCallersNumberBecauseFastRoundsHaveNoCallCap() {
     val s = confirmedSuperCallWiped()
     // The Caller's confirmed 8 is not a ceiling in a fast round: 10 is legal
     // and opens a new Super Call.
@@ -88,7 +88,7 @@ class FastSuperCallMaxTricksTest {
 
   // ── The trump selection path: 13 is legal, 14 is not ──────────────────
   @Test
-  fun aSuperCallerMaySelectThirteenAsTheFinalNumber() {
+  fun t24aSuperCallerMaySelectThirteenAsTheFinalNumber() {
     val s = confirmedSuperCall()
     val ok = canSubmit(s, BiddingIntent.ConfirmCall("p1", 13, Suit.HEARTS))
     assertTrue("13 must be legal: ${ok.reason}", ok.legal)
@@ -100,7 +100,7 @@ class FastSuperCallMaxTricksTest {
   }
 
   @Test
-  fun aSuperCallerMayNotRaiseTheCallToFourteen() {
+  fun t24aSuperCallerMayNotRaiseTheCallToFourteen() {
     val s = confirmedSuperCall()
     val over = canSubmit(s, BiddingIntent.ConfirmCall("p1", 14, Suit.HEARTS))
     assertFalse("14 is one over the absolute maximum", over.legal)
@@ -119,7 +119,7 @@ class FastSuperCallMaxTricksTest {
 
   // ── The raise path: an existing Super Call cannot be raised past 13 ───
   @Test
-  fun raisingAnExistingSuperCallAboveThirteenIsRejected() {
+  fun t24raisingAnExistingSuperCallAboveThirteenIsRejected() {
     val s = confirmedSuperCallWiped()
     val over = canSubmit(s, BiddingIntent.FinalEstimate("p2", 14))
     assertFalse("a raise may not exceed the absolute maximum", over.legal)
@@ -128,7 +128,7 @@ class FastSuperCallMaxTricksTest {
 
   // ── The normal round keeps its Caller-relative cap ───────────────────
   @Test
-  fun aNormalRoundKeepsTheCallersRelativeCap() {
+  fun t24aNormalRoundKeepsTheCallersRelativeCap() {
     var s = initNormalRound(1, "p1", seats)
     repeat(4) {
       val seat = s.waitingFor ?: throw AssertionError("waitingFor null mid-DASH")

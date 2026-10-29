@@ -24,7 +24,7 @@ class RoundScoreTest {
 
   // ── Sa'ayda: all fail → zeros, multiplier 1 applied, ladder escalates ──
   @Test
-  fun saaydaZeroesAndEscalates() {
+  fun t22saaydaZeroesAndEscalates() {
     val input = RoundScoreInput(
       round = 5,
       order = seats,
@@ -54,7 +54,7 @@ class RoundScoreTest {
   }
 
   @Test
-  fun nonSaaydaResetsMultiplier() {
+  fun t22nonSaaydaResetsMultiplier() {
     val input = RoundScoreInput(
       round = 6,
       order = seats,
@@ -99,7 +99,7 @@ class RoundScoreTest {
 
   // ── Graduated ladder reaches seats end-to-end (total 7 → diff 6 → 30) ──
   @Test
-  fun ladderAppliedEndToEnd() {
+  fun t24ladderAppliedEndToEnd() {
     val r = calculateRoundScore(
       RoundScoreInput(
         round = 2,
@@ -119,7 +119,7 @@ class RoundScoreTest {
 
   // ── Super Call bid² flows through the wrapper (caller 8/8 → 64) ──
   @Test
-  fun superBidSquaredThroughWrapper() {
+  fun t05superBidSquaredThroughWrapper() {
     val r = calculateRoundScore(
       RoundScoreInput(
         round = 3,
@@ -138,7 +138,7 @@ class RoundScoreTest {
 
   // ── Prior multiplier doubles real deltas ──
   @Test
-  fun multiplierDoublesDeltas() {
+  fun t01multiplierDoublesDeltas() {
     val r = calculateRoundScore(
       RoundScoreInput(
         round = 4,
@@ -158,7 +158,7 @@ class RoundScoreTest {
 
   // ── Classic mode: genuinely different formula + doubling capped at −22 ──
   @Test
-  fun classicMode() {
+  fun t02classicMode() {
     val win = calculateRoundScore(
       RoundScoreInput(
         round = 1,
@@ -205,7 +205,7 @@ class RoundScoreTest {
   )
 
   @Test
-  fun normalDashWhoIsAlsoRiskAddsTheLadderOnce() {
+  fun t06normalDashWhoIsAlsoRiskAddsTheLadderOnce() {
     val r = dashRiskRound(classic = false)
     assertEquals(15, r.totalBids)
     assertEquals(10, r.riskValue)
@@ -222,7 +222,7 @@ class RoundScoreTest {
   }
 
   @Test
-  fun classicDashWhoIsAlsoRiskAddsTheLadderOnce() {
+  fun t07classicDashWhoIsAlsoRiskAddsTheLadderOnce() {
     val r = dashRiskRound(classic = true)
     assertEquals(15, r.totalBids)
     assertEquals(Role.REG_DASH, r.breakdown.getValue("p4").role)
@@ -236,7 +236,7 @@ class RoundScoreTest {
   }
 
   @Test
-  fun dashSeatThatIsNotRiskKeepsTheOldValues() {
+  fun t06t07dashSeatThatIsNotRiskKeepsTheOldValues() {
     // Same table with the Risk moved to p3: p4's Dash rows fall back to
     // −(10+T) and the Classic −T, while p3 scores through its own RISK role.
     val normal = dashRiskRound(classic = false, riskId = "p3")
@@ -280,7 +280,7 @@ class RoundScoreTest {
 
   // ── Round extension: Rapid Rounds 14-18 only ──
   @Test
-  fun roundExtensionWindow() {
+  fun t04roundExtensionWindow() {
     // Successful Super Call with an overriding trump extends (maxRounds = base 18).
     assertEquals(
       RoundExtension(true, ExtensionReason.SUPER_CALL),
@@ -314,7 +314,7 @@ class RoundScoreTest {
 
   // ── A8.8 / Q48 — Sa'ayda count, generalised to 18+N ──
   @Test
-  fun saaydaCountFull14To19() {
+  fun t03saaydaCountFull14To19() {
     assertEquals(
       RoundExtension(true, ExtensionReason.SAAYDA),
       computeRoundExtension(14, 18, null, Suit.SANS, callerSucceeded = false, isSaayda = true),
@@ -322,7 +322,7 @@ class RoundScoreTest {
   }
 
   @Test
-  fun saaydaCountFull14Plus15To20() {
+  fun t03saaydaCountFull14Plus15To20() {
     assertEquals(
       RoundExtension(true, ExtensionReason.SAAYDA),
       computeRoundExtension(15, 19, null, Suit.SPADES, callerSucceeded = false, isSaayda = true),
@@ -330,7 +330,7 @@ class RoundScoreTest {
   }
 
   @Test
-  fun saaydaCountFull14Plus15Plus16To21() {
+  fun t03saaydaCountFull14Plus15Plus16To21() {
     assertEquals(
       RoundExtension(true, ExtensionReason.SAAYDA),
       computeRoundExtension(16, 20, null, Suit.HEARTS, callerSucceeded = false, isSaayda = true),
@@ -338,7 +338,7 @@ class RoundScoreTest {
   }
 
   @Test
-  fun saaydaCountRound13BeforeWindowNoExtend() {
+  fun t03saaydaCountRound13BeforeWindowNoExtend() {
     assertEquals(
       RoundExtension(false),
       computeRoundExtension(13, 18, null, Suit.CLUBS, callerSucceeded = false, isSaayda = true),
@@ -346,7 +346,7 @@ class RoundScoreTest {
   }
 
   @Test
-  fun saaydaCountFullEighteenN() {
+  fun t03saaydaCountFullEighteenN() {
     // Round 18 is in-window → extends to 19.
     assertEquals(
       RoundExtension(true, ExtensionReason.SAAYDA),
@@ -365,7 +365,7 @@ class RoundScoreTest {
   }
 
   @Test
-  fun saaydaCountNonFinalPostWindowAddsNothing() {
+  fun t03saaydaCountNonFinalPostWindowAddsNothing() {
     // Round 19 past the window, but maxRounds is 21 so round 19 is NOT final.
     assertEquals(
       RoundExtension(false),
@@ -379,7 +379,7 @@ class RoundScoreTest {
   }
 
   @Test
-  fun saaydaCountMini6To11() {
+  fun t03saaydaCountMini6To11() {
     assertEquals(
       RoundExtension(true, ExtensionReason.SAAYDA),
       computeRoundExtension(6, 10, null, Suit.SANS, callerSucceeded = false, isSaayda = true, gameType = GameType.MINI),
@@ -387,7 +387,7 @@ class RoundScoreTest {
   }
 
   @Test
-  fun saaydaCountMini6Plus7To12() {
+  fun t03saaydaCountMini6Plus7To12() {
     assertEquals(
       RoundExtension(true, ExtensionReason.SAAYDA),
       computeRoundExtension(7, 11, null, Suit.SPADES, callerSucceeded = false, isSaayda = true, gameType = GameType.MINI),
@@ -395,7 +395,7 @@ class RoundScoreTest {
   }
 
   @Test
-  fun saaydaCountMiniRound5BeforeWindowNoExtend() {
+  fun t03saaydaCountMiniRound5BeforeWindowNoExtend() {
     assertEquals(
       RoundExtension(false),
       computeRoundExtension(5, 10, null, Suit.CLUBS, callerSucceeded = false, isSaayda = true, gameType = GameType.MINI),
@@ -403,7 +403,7 @@ class RoundScoreTest {
   }
 
   @Test
-  fun saaydaCountMiniTenToEleven() {
+  fun t03saaydaCountMiniTenToEleven() {
     assertEquals(
       RoundExtension(true, ExtensionReason.SAAYDA),
       computeRoundExtension(10, 10, null, Suit.CLUBS, callerSucceeded = false, isSaayda = true, gameType = GameType.MINI),
@@ -411,7 +411,7 @@ class RoundScoreTest {
   }
 
   @Test
-  fun saaydaCountFiveSaaydas14To18To23NoRejection() {
+  fun t03saaydaCountFiveSaaydas14To18To23NoRejection() {
     // FULL: five Sa'aydas in 14, 15, 16, 17, 18 → 18 + 5 = 23.
     for (round in 14..18) {
       val currentMax = 18 + (round - 14)
@@ -425,7 +425,7 @@ class RoundScoreTest {
   }
 
   @Test
-  fun superCallOnlyIfCallerSucceeded() {
+  fun t04t05superCallOnlyIfCallerSucceeded() {
     // Overriding trump, caller succeeded → extends.
     assertEquals(
       RoundExtension(true, ExtensionReason.SUPER_CALL),
@@ -444,7 +444,7 @@ class RoundScoreTest {
   }
 
   @Test
-  fun superCallCombinesWithSaaydaCount() {
+  fun t03t04superCallCombinesWithSaaydaCount() {
     // Round 15 Super Call extends (in window). Round 16 Sa'ayda also extends.
     assertEquals(
       RoundExtension(true, ExtensionReason.SUPER_CALL),
@@ -457,7 +457,7 @@ class RoundScoreTest {
   }
 
   @Test
-  fun passIsNotASaaydaNeverExtends() {
+  fun t01passIsNotASaaydaNeverExtends() {
     // A pass never reaches this helper as isSaayda=true, but defensively:
     // isSaayda=false means no extension regardless of other facts.
     assertEquals(
@@ -471,7 +471,7 @@ class RoundScoreTest {
   }
 
   @Test
-  fun superCallStaysInWindowNoPostWindowExtend() {
+  fun t04superCallStaysInWindowNoPostWindowExtend() {
     // Round 19 post-window Super Call never extends, even if caller succeeded.
     assertEquals(
       RoundExtension(false),
@@ -482,7 +482,7 @@ class RoundScoreTest {
   // ── D1: the Super Call extension is decided by the LOCKED NUMBER, not the round number ──
 
   @Test
-  fun normalInWindowCallerBelowSuperBidNeverExtends() {
+  fun t05normalInWindowCallerBelowSuperBidNeverExtends() {
     // THE D1 pin: an ordinary auction winner — locked 7, under a trump they
     // chose themselves, succeeding — inside the window. Keying on the round
     // number alone scored exactly this as a Super Call and extended.
@@ -507,7 +507,7 @@ class RoundScoreTest {
   }
 
   @Test
-  fun genuineSuperCallByBidAmountExtendsOnlyOnSuccess() {
+  fun t05genuineSuperCallByBidAmountExtendsOnlyOnSuccess() {
     // Locked 8 under a replacement trump, caller made it → extends.
     assertEquals(
       RoundExtension(true, ExtensionReason.SUPER_CALL),
@@ -531,7 +531,7 @@ class RoundScoreTest {
   }
 
   @Test
-  fun unknownBidAmountKeepsTheLegacyAssumptionForTheOnlineCaller() {
+  fun t05unknownBidAmountKeepsTheLegacyAssumptionForTheOnlineCaller() {
     // The online call site passes no amount yet (a known gap, later lane):
     // a non-null caller at an overridden trump keeps the legacy reading.
     assertEquals(
@@ -541,7 +541,7 @@ class RoundScoreTest {
   }
 
   @Test
-  fun superBidOutsideTheWindowNeverExtends() {
+  fun t04superBidOutsideTheWindowNeverExtends() {
     // Before MINI's window (round 5) and past FULL's (round 19, fixed SANS,
     // override HEARTS isolates the window guard) — even a genuine 8+ Caller
     // success at an overridden trump adds nothing.

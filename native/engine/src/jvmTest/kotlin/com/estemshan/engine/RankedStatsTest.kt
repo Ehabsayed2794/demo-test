@@ -222,7 +222,7 @@ class RankedStatsTest {
   // ── Tie placement through the merged conventions (Q2d/Q2f, PR #161) ────
 
   @Test
-  fun sharedBottomSeatsTakeTheLastPlacementAsKozForStats() {
+  fun t13sharedBottomSeatsTakeTheLastPlacementAsKozForStats() {
     // Q2d: every seat tied at the lowest total shares the LAST placement —
     // rank 4, KOZ in this vocabulary — and Q2f gives them all the same last
     // placement, so no bottom-tied seat ever reads Third. The convention is
@@ -259,7 +259,7 @@ class RankedStatsTest {
   }
 
   @Test
-  fun theAllTieCaseIsAllKingInEveryMode() {
+  fun t13theAllTieCaseIsAllKingInEveryMode() {
     // Q2d's sole exception: all four seats tied stays rank 1 — every seat
     // is King, and each player's own fold records a King, in every mode.
     val totals = mapOf("A" to 77, "B" to 77, "C" to 77, "D" to 77)
@@ -278,7 +278,7 @@ class RankedStatsTest {
   //    2026-10-17 owner clarification on Unranked) ───────────────────────
 
   @Test
-  fun theTwoKozDeparturesChargeTwoKozAndOneGamesPlayedInRankedAndUnranked() {
+  fun t15theTwoKozDeparturesChargeTwoKozAndOneGamesPlayedInRankedAndUnranked() {
     // A5.1's first two rows (explicit leave + the 15-timeout removal), the
     // RANKED/UNRANKED cells: "2 Koz" exactly — re-ratified by Q14b /
     // Q14b(1), 2026-10-22. The recorded form is option
@@ -301,7 +301,7 @@ class RankedStatsTest {
   }
 
   @Test
-  fun roomDeparturesRecordNothing() {
+  fun t15roomDeparturesRecordNothing() {
     // A5.1's scope correction as it lands at THIS surface: the fold's ROOM
     // gate records nothing. (The domain charges for ROOM departures are now
     // Koz1 — Q14b for the explicit leave, Q37 for the 15-timeout removal,
@@ -317,7 +317,7 @@ class RankedStatsTest {
   }
 
   @Test
-  fun aChargedDepartureForRoomRecordsNothingEvenWhenFedDirectly() {
+  fun t15aChargedDepartureForRoomRecordsNothingEvenWhenFedDirectly() {
     // A second line of defense at the stats surface: since Q14b / Q37
     // (2026-10-22) decideLeave produces a Koz1 for a ROOM explicit leave and
     // for the ROOM 15-timeout removal, while permanentCharge still reads
@@ -331,7 +331,7 @@ class RankedStatsTest {
   }
 
   @Test
-  fun aVoteKickDepartureChargesTwoKozInBothVotableModes() {
+  fun t15aVoteKickDepartureChargesTwoKozInBothVotableModes() {
     // Q14d(1) (2026-10-22; register of 2026-10-23): a passed Vote Kick
     // records 2 Koz in RANKED and UNRANKED — superseding A5.1's "1 Koz,
     // final" and the repealed 2026-10-16 C1 closure. Seed one natural Koz so
@@ -347,7 +347,7 @@ class RankedStatsTest {
   }
 
   @Test
-  fun anUnrankedDisconnectReplacementChargesTwoKozAndRoomRecordsNothing() {
+  fun t15anUnrankedDisconnectReplacementChargesTwoKozAndRoomRecordsNothing() {
     // A5.1's fourth row: a permanently replaced disconnect records 2 Koz in
     // UNRANKED; ROOM's verdict is "no Koz"; RANKED is "n/a — the vote is
     // not held in Ranked" (no such path ever calls the fold there). The
@@ -370,7 +370,7 @@ class RankedStatsTest {
   }
 
   @Test
-  fun aReclaimableReturnRecordsNothingInAnyMode() {
+  fun t15aReclaimableReturnRecordsNothingInAnyMode() {
     // A5.1's fifth row + the borrowed-seat discriminator: a seat still
     // reclaimable whose human returns is no departure — "no penalty" in
     // all three modes, and not one of the nine moves.

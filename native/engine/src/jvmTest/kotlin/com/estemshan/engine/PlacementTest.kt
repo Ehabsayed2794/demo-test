@@ -117,7 +117,7 @@ class PlacementTest {
   }
 
   @Test
-  fun aDecisiveMatchRanksOneThroughFour() {
+  fun t13aDecisiveMatchRanksOneThroughFour() {
     assertEquals(1, placementRank(decisive, "p1"))
     assertEquals(2, placementRank(decisive, "p2"))
     assertEquals(3, placementRank(decisive, "p3"))
@@ -129,7 +129,7 @@ class PlacementTest {
   }
 
   @Test
-  fun aTieForFirstMakesEveryTiedSeatMatchKing() {
+  fun t13aTieForFirstMakesEveryTiedSeatMatchKing() {
     val tieFirst = mapOf("p1" to 300, "p2" to 300, "p3" to 100, "p4" to 0)
     assertEquals("ties share the better rank", 1, placementRank(tieFirst, "p2"))
     assertEquals(MatchOutcome.KING, placementOutcome(tieFirst, "p2"))
@@ -139,7 +139,7 @@ class PlacementTest {
   }
 
   @Test
-  fun aTieForSecondMakesEveryTiedSeatSecond() {
+  fun t13aTieForSecondMakesEveryTiedSeatSecond() {
     val tieSecond = mapOf("p1" to 300, "p2" to 200, "p3" to 200, "p4" to 0)
     assertEquals(2, placementRank(tieSecond, "p2"))
     assertEquals(MatchOutcome.SECOND, placementOutcome(tieSecond, "p3"))
@@ -148,7 +148,7 @@ class PlacementTest {
   }
 
   @Test
-  fun aSharedLastMakesEveryTiedSeatKoz() {
+  fun t13aSharedLastMakesEveryTiedSeatKoz() {
     // Q2d / A6.7: every player tied at the lowest total is Koz and shares the
     // last placement for RP. The seats above keep their competition ranks.
     val tieLast = mapOf("p1" to 300, "p2" to 200, "p3" to 100, "p4" to 100)
@@ -168,7 +168,7 @@ class PlacementTest {
   }
 
   @Test
-  fun aThreeWayBottomTieMakesOneKingAndThreeKoz() {
+  fun t13aThreeWayBottomTieMakesOneKingAndThreeKoz() {
     // Q2d example: 100 / 99 / 99 / 99.
     assertPlacements(
       mapOf("p1" to 100, "p2" to 99, "p3" to 99, "p4" to 99),
@@ -182,7 +182,7 @@ class PlacementTest {
   }
 
   @Test
-  fun aSharedBottomBelowKingAndSecondMakesTwoKoz() {
+  fun t13aSharedBottomBelowKingAndSecondMakesTwoKoz() {
     // Q2d example: 100 / 99 / 10 / 10.
     assertPlacements(
       mapOf("p1" to 100, "p2" to 99, "p3" to 10, "p4" to 10),
@@ -196,7 +196,7 @@ class PlacementTest {
   }
 
   @Test
-  fun aTopTieWithAUniqueLastMakesTwoKingsOneThirdAndOneKoz() {
+  fun t13aTopTieWithAUniqueLastMakesTwoKingsOneThirdAndOneKoz() {
     // Q2d example: 100 / 100 / 50 / 20.
     assertPlacements(
       mapOf("p1" to 100, "p2" to 100, "p3" to 50, "p4" to 20),
@@ -210,7 +210,7 @@ class PlacementTest {
   }
 
   @Test
-  fun anAllTieMatchMakesEverySeatMatchKing() {
+  fun t13anAllTieMatchMakesEverySeatMatchKing() {
     val allTie = mapOf("p1" to 150, "p2" to 150, "p3" to 150, "p4" to 150)
     allTie.keys.forEach { seat ->
       assertEquals(1, placementRank(allTie, seat))
