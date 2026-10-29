@@ -179,22 +179,26 @@ scenarios the answer forks exactly on the platform facts that are not yet publis
 - **Documented readings**: the **binding meter is DO rows written — 42.8% / 53.5% / 64.2% of the
   daily limit (headroom 2.3× / 1.9× / 1.6×)**; DO requests carry 10–15× headroom under the 20:1
   reading; Worker requests, D1 rows and rows read are ≤ 3.4%; duration is negligible **if**
-  hibernation works. The 90% guardrail never fires at target usage, and its 10% reserve protects
-  ongoing matches with ≈ 151–416 concurrent tables of headroom (vs ≈ 25 plausible).
+  hibernation works. The 90% guardrail never fires at target usage, and its 10% reserve — on the
+  uniform full-match-remaining basis — covers **151 tables on requests (20:1) but only 23 / 11
+  on rows (1× / ×2)** against an unknown real concurrency peak [u].
 - **Conservative readings** (free-plan WebSocket incoming messages billed 1:1 — the docs are
   ambiguous about Free-plan enforcement; the rows multipliers from deletes, `setAlarm()` and
   index updates combined; no hibernation): **requests overrun at all three scenarios**
   (114% / 142% / 171%), rows overrun at 125/150 (107% / 128%), duration at 125/150 (108% /
-  130%); the guardrail trips early and its reserve does **not** protect ongoing matches on the
-  request axis (≈ 8 tables) — a documented gap per ruling E. (The earlier "outbound messages
-  counted 1:1" figure was withdrawn: the pricing docs state outgoing messages are not billed.)
+  130%); the guardrail trips early and its reserve does **not** protect ongoing matches
+  (≈ 8 tables on requests, 11 on rows) — a documented gap per ruling E. (The earlier "outbound
+  messages counted 1:1" figure was withdrawn: the pricing docs state outgoing messages are not
+  billed.)
 
-CPU is a non-problem for normal play in every reading (measured worst inter-human bot chain
-13 actions ≈ 4 ms vs the 10 ms budget) — but an **unchunked all-bot fast-forward (a whole match
-in one invocation) is 17.9–46 ms and exceeds the budget**: the design must chunk it with alarms
-(each 1 row written + 1 invocation). The decisive unknowns — free-plan WebSocket metering, the
-rows multipliers, hibernation/duration — are owned by **E12/E9 on a real Cloudflare account**
-(protocol in the E6 report §13); O-06 stays open until they are measured.
+CPU is a non-problem for normal play as far as the engine's share goes (measured worst
+inter-human bot chain: 13 actions ≈ 4 ms local wall-clock, excluding JSON/SQL/WS/auth) — but an
+**unchunked all-bot fast-forward (a whole match in one invocation) is 17.9–46 ms and exceeds the
+budget on the conservative 10 ms Workers reading** (the DO page states 30 s CPU per request
+without separating plans — [x] which applies): the design must chunk it with alarms (each 1 row
+written + 1 invocation). The decisive unknowns — free-plan WebSocket metering, the rows
+multipliers, hibernation/duration, the applicable CPU limit — are owned by **E12/E9 on a real
+Cloudflare account** (protocol in the E6 report §14); O-06 stays open until they are measured.
 
 ### What is still NOT measured
 

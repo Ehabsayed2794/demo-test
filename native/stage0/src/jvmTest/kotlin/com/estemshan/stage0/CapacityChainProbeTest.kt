@@ -26,9 +26,11 @@ class CapacityChainProbeTest {
     assertTrue(battery.failures.isEmpty(), "failures: ${battery.failures}")
 
     for (m in battery.matches) {
-      // Measured (seeds 1..50): 1-human chains reach 13 actions — auction raise
-      // wars and trick/round boundaries chain bot seats far beyond one trick —
-      // so the bound here only catches double-counting, not the measured shape.
+      // The bounds below are a REGRESSION GUARD set from this measurement
+      // (seeds 1..50: 1-human chains reach 13 actions — auction raise wars and
+      // trick/round boundaries chain bot seats far beyond one trick), NOT a
+      // proof of the true maximum. They exist to catch double-counting in the
+      // probe's clock attribution.
       assertTrue(m.longestOneHumanChainLen <= 16,
         "seed ${m.seed}: 1-human chain ${m.longestOneHumanChainLen} is above any plausible legal run")
       assertTrue(m.longestTwoHumanChainLen <= 10,

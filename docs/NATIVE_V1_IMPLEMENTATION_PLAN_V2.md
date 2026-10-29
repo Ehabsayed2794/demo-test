@@ -41,9 +41,11 @@
 > measured loads, the WebSocket + server-side-bot + per-Trick model, and the 100/125/150
 > matches-per-day scenarios evaluated **per meter — the binding meter is DO rows written at
 > 1.6–2.3× headroom, requests carry 10–15× only under the documented 20:1 reading and overrun
-> under inbound-1:1**, with the **90% guardrail protecting ongoing matches under the documented
-> readings but not under the conservative requests reading** — and the three platform unknowns
-> that decide between the readings, each owned by a named experiment). Reports:
+> under inbound-1:1**, with the **90% guardrail's 10% reserve protecting ongoing matches only on
+> the requests-20:1 meter (151 tables) — rows are marginal (23 / 11 tables) and the conservative
+> requests reading is insufficient (8), all conditional on the unknown real concurrency [u]** —
+> and the three platform unknowns that decide between the readings, each owned by a named
+> experiment). Reports:
 > `docs/implementation/Stage0_E2_Corpus_Parity_Report.md`,
 > `docs/implementation/Stage0_E3_Vector_Parity_Report.md`,
 > `docs/implementation/Stage0_E5_Capacity_Model_Report.md` and
@@ -993,12 +995,14 @@ defines what would count as a result; it does not report one.
 > per-action figures as planning numbers. Three decisive unknowns — free-plan WebSocket
 > metering, the rows-per-write multipliers (deletes, alarms, indexes, the unpublished KV-API
 > mapping), and hibernation/duration — are owned by E12/E9 on a real Cloudflare account (the E12
-> protocol is written in the E6 report §13 and awaits the owner's approval). The 90% guardrail's
-> 10% reserve protects ongoing matches under the documented readings (≈ 151–416 concurrent tables
-> of headroom vs ≈ 25 plausible) but **not** under the conservative requests reading (≈ 8
-> tables) — a documented gap, per ruling E's honesty requirement. Evidence:
-> `docs/implementation/Stage0_E6_Target_Workload_Report.md` (§5 per meter, §6 the guardrail,
-> §7 the per-Trick window, §13 the E12 protocol).
+> protocol is written in the E6 report §14 and awaits the owner's approval). The 90% guardrail's
+> 10% reserve, on the uniform full-match-remaining basis, covers **151 tables on requests (20:1)
+> but only 23 / 11 on rows (1× / ×2) and 8 on conservative requests** — marginal against the
+> ≈ 25-table illustrative peak and conditional on the unknown real concurrency [u]; the earlier
+> "416 tables" rows figure was an artefact of a mixed basis and is withdrawn. Evidence:
+> `docs/implementation/Stage0_E6_Target_Workload_Report.md` (§5 per meter and thresholds at both
+> bases, §5.2 chunking sensitivity, §6 the guardrail, §7 the remaining-rows budget, §8 the
+> per-Trick window, §14 the E12 protocol).
 >
 > **Pointer, 2026-10-29 (owner rulings A–G; the E5/E6/E9/E12 rows above are left verbatim).**
 > The owner has ruled on the design assumptions the capacity work must now assume
