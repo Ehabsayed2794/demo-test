@@ -48,6 +48,7 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 | Inactive players need season-board records | Not needed in V1 (no board) | K |
 | O-19 | CLOSED 2026-10-23 — Option B persisted currentMultiplier authorized with a strict rules surface; implemented 2026-10-24 on agent/s1b-option-b-impl and merged into main via PR #152 (88217a3) | 2026-10-23 direction record §1 (on docs/native-v1-implementation-plan-v2 @ 33ca9bc, not merged here) |
 | O-20 | CLOSED 2026-10-23 — Git policy ratified: one integration branch, one feature branch/worktree per agent, integrate only after review + green tests | 2026-10-23 direction record §4; docs/agents/git-workflow.md (same branch @ 33ca9bc, not merged here) |
+| Stage 0 capacity, persistence, transport, failover | DECIDED 2026-10-29: persistence per **completed Trick** (conditional on E9), auction per action; bots **inside the authoritative server**; **WebSocket transport preferred** (free-plan metering unverified → E12); planning range **100/125/150 matches/day** (three scenarios); **90% quota guardrail** — new matches stop, ongoing matches never terminated; failover per **Q13**, with the independent quota-isolated secondary-server architecture flagged missing (prerequisite); **Cloudflare preferred on cost** — preference only, **O-06 unchanged**, no paid plan authorized | `docs/decisions/2026-10-29-stage0-capacity-persistence-transport-failover.md` (refines Q13; E5 report §4/§5 = preliminary action-count-based model) |
 
 ### Decided on 2026-10-22 and 2026-10-23
 
