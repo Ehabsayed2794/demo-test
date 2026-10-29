@@ -9,7 +9,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.await
 import kotlinx.coroutines.promise
 import kotlinx.coroutines.test.runTest
-import kotlin.test.AfterTest
+import kotlinx.coroutines.test.TestScope
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -101,7 +101,12 @@ class SeasonResetDryRunEmulatorTest {
     db.runTransaction { tx -> seedScope.promise { tx.set(ref, toPlain(fields)) } }.await()
   }
 
-  private suspend fun seedSeason(fields: Map<String, Any?>) = seedDoc(seasonRef(), fields)
+  private var originalSeason: DocSnapshot? = null
+
+  private suspend fun seedSeason(fields: Map<String, Any?>) {
+    if (originalSeason == null) originalSeason = seasonRef().get().await()
+    seedDoc(seasonRef(), fields)
+  }
 
   /** One transaction per up-to-400 documents: transaction writes cap at 500. */
   private suspend fun seedProfiles(profiles: List<Pair<String, Map<String, Any?>>>) {
@@ -136,10 +141,30 @@ class SeasonResetDryRunEmulatorTest {
    * S59 test (or a later suite) starts from an empty players collection. The
    * quiet host check keeps a hermetic run marker-free here.
    */
-  @AfterTest
-  fun cleanSharedPlayers() = runTest {
-    if (emulatorHost() == null) return@runTest
-    clearPlayers()
+  // Kotlin/JS discards @AfterTest promises, so cleanup must be awaited inside runTest.
+  private fun runEmulatorTest(block: suspend TestScope.() -> Unit) = runTest {
+    try {
+      block()
+    } finally {
+      cleanSharedPlayers()
+    }
+  }
+
+  private suspend fun cleanSharedPlayers() {
+    if (emulatorHost() == null) return
+    try {
+      clearPlayers()
+    } finally {
+      originalSeason?.let { snapshot ->
+        db.runTransaction { tx ->
+          seedScope.promise {
+            if (snapshot.exists) tx.set(seasonRef(), snapshot.data())
+            else tx.delete(seasonRef())
+          }
+        }.await()
+        originalSeason = null
+      }
+    }
   }
 
   private suspend fun readSeasonDoc(): Map<String, Any?>? {
@@ -270,8 +295,8 @@ class SeasonResetDryRunEmulatorTest {
   // ── the R27 rehearsal ────────────────────────────────────────────────
 
   @Test
-  fun aDryRunPlansEveryProfileAndWritesNeitherASeasonNorAProfile() = runTest {
-    if (!emulatorReady()) return@runTest
+  fun aDryRunPlansEveryProfileAndWritesNeitherASeasonNorAProfile() = runEmulatorTest {
+    if (!emulatorReady()) return@runEmulatorTest
     val from = season("dry-from")
     val to = season("dry-to")
     val now = kotlin.js.Date.now().toLong()
@@ -317,8 +342,8 @@ class SeasonResetDryRunEmulatorTest {
   // ── the real migration ───────────────────────────────────────────────
 
   @Test
-  fun anApplyOverFiveHundredProfilesMovesEveryRungAndKeepsCareerData() = runTest {
-    if (!emulatorReady()) return@runTest
+  fun anApplyOverFiveHundredProfilesMovesEveryRungAndKeepsCareerData() = runEmulatorTest {
+    if (!emulatorReady()) return@runEmulatorTest
     val from = season("apply-from")
     val to = season("apply-to")
     val now = kotlin.js.Date.now().toLong()
@@ -377,8 +402,8 @@ class SeasonResetDryRunEmulatorTest {
   }
 
   @Test
-  fun aCrashedResetResumesAndOnlyMovesTheProfilesStillBehind() = runTest {
-    if (!emulatorReady()) return@runTest
+  fun aCrashedResetResumesAndOnlyMovesTheProfilesStillBehind() = runEmulatorTest {
+    if (!emulatorReady()) return@runEmulatorTest
     val from = season("resume-from")
     val to = season("resume-to")
     val now = kotlin.js.Date.now().toLong()
@@ -459,8 +484,8 @@ class SeasonResetDryRunEmulatorTest {
   }
 
   @Test
-  fun aConcurrentProfileWriteBetweenReadAndBatchIsNeverOverwritten() = runTest {
-    if (!emulatorReady()) return@runTest
+  fun aConcurrentProfileWriteBetweenReadAndBatchIsNeverOverwritten() = runEmulatorTest {
+    if (!emulatorReady()) return@runEmulatorTest
     val from = season("guard-from")
     val to = season("guard-to")
     val now = kotlin.js.Date.now().toLong()
@@ -504,8 +529,8 @@ class SeasonResetDryRunEmulatorTest {
   }
 
   @Test
-  fun theKillSwitchConfigReadsThroughTheAdminPort() = runTest {
-    if (!emulatorReady()) return@runTest
+  fun theKillSwitchConfigReadsThroughTheAdminPort() = runEmulatorTest {
+    if (!emulatorReady()) return@runEmulatorTest
     val gateRef = db.collection("config").doc("seasonReset")
     seedDoc(
       gateRef,
