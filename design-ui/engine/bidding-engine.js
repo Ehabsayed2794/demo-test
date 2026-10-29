@@ -513,6 +513,14 @@ function emit(intent) {
         // the first Dash Caller CCW from the new Caller would be asked to
         // estimate again, and their submission would silently overwrite
         // (corrupt) their DASHCALL bid record.
+        // NOTE (2026-10-29): this prototype still walks the table plainly CCW.
+        // The shipped engine (native/engine Bidding.kt, `estimationQueue`) now
+        // asks ALL With players first and only then the rest, both legs CCW
+        // from the Caller — the plain walk below can leave a With seat last,
+        // where its own-bid floor + the cap + the 13 Rule leave no legal
+        // number (seed 194, round 5 of the E2 corpus). Apply the same rule if
+        // this file is ever revived; see docs/decisions/2026-10-29-with-first-
+        // estimation-order.md.
         let firstEstimator = nextCCW(intent.playerId);
         let estGuard = 0;
         while (state.bids[firstEstimator] && estGuard < 8) { firstEstimator = nextCCW(firstEstimator); estGuard++; }
@@ -852,6 +860,9 @@ function dashCallerIds() {
 // Every auction bid that doesn't conclude the auction is persisted via
 // recordBidAction (see the "continue" branch above), so the most recent one
 // for this player is their current floor.
+// NOTE (2026-10-29): suit-blind — it reads the last bid in ANY suit, while the
+// shipped engine floors a With seat on its last bid in the CALLER'S WINNING
+// suit (T-12). Same story as the ordering note above; see the decision record.
 function withFloorFor(pId) {
   const history = GameSession.getBiddingState().actionHistory || [];
   const mine = history.filter(a => a.actionType === "BID" && a.playerId === pId);

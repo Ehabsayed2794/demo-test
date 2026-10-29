@@ -159,30 +159,31 @@ class WithFloorSuitAwareTest {
     val s = auctionWithMixedSuitBids()
     val confirmed = confirm(s, "p2", 7, Suit.HEARTS)
     assertEquals(BiddingPhase.ESTIMATES, confirmed.subPhase)
-    assertEquals("p3", confirmed.waitingFor)
 
-    // p3 and p4 passed the auction: they have no floor at all. p1 — the With
-    // seat — estimates last.
-    val afterP3 = applied(estimate(confirmed, "p3", 0))
-    assertEquals("p4", afterP3.waitingFor)
-    val afterP4 = applied(estimate(afterP3, "p4", 0))
-    assertEquals("p1", afterP4.waitingFor)
+    // The With seat is asked FIRST (owner ruling 2026-10-29 — the Caller's
+    // number is locked by the confirmation); p3 and p4 follow with no floor.
+    assertEquals("p1", confirmed.waitingFor)
 
     // p1's last bid in the winning suit ♥ is 5; its last bid overall is the
     // 6♠. The suit-blind floor (6) would have rejected 5 as well.
-    assertEquals(5, withFloorFor(afterP4.actionHistory, "p1", Suit.HEARTS))
-    assertEquals(6, withFloorFor(afterP4.actionHistory, "p1"))
+    assertEquals(5, withFloorFor(confirmed.actionHistory, "p1", Suit.HEARTS))
+    assertEquals(6, withFloorFor(confirmed.actionHistory, "p1"))
 
     val below = BiddingIntent.FinalEstimate("p1", 4)
-    val verdict = canSubmit(afterP4, below)
+    val verdict = canSubmit(confirmed, below)
     assertTrue(!verdict.legal)
     assertEquals("Min is 5 (your own With bid)", verdict.reason)
-    assertTrue(emit(afterP4, below) is EmitResult.Rejected)
+    assertTrue(emit(confirmed, below) is EmitResult.Rejected)
 
     // Exactly at the floor is accepted, and emit agrees with canSubmit.
-    assertTrue(canSubmit(afterP4, BiddingIntent.FinalEstimate("p1", 5)).legal)
-    val completed = emit(afterP4, BiddingIntent.FinalEstimate("p1", 5))
-    assertTrue("p1's floor estimate completes the round", completed is EmitResult.Completed)
+    assertTrue(canSubmit(confirmed, BiddingIntent.FinalEstimate("p1", 5)).legal)
+    val afterP1 = applied(estimate(confirmed, "p1", 5))
+    assertEquals("p3", afterP1.waitingFor)
+    val afterP3 = applied(estimate(afterP1, "p3", 0))
+    assertEquals("p4", afterP3.waitingFor)
+
+    val completed = emit(afterP3, BiddingIntent.FinalEstimate("p4", 0))
+    assertTrue("the last estimate completes the round", completed is EmitResult.Completed)
     assertEquals(listOf("p1"), (completed as EmitResult.Completed).outcome.withPlayers)
   }
 
@@ -190,16 +191,14 @@ class WithFloorSuitAwareTest {
   fun aLaterHigherBidInAnotherSuitDoesNotRaiseTheFloor() {
     val s = auctionWithMixedSuitBids()
     val confirmed = confirm(s, "p2", 7, Suit.HEARTS)
-    val afterP3 = applied(estimate(confirmed, "p3", 0))
-    val afterP4 = applied(estimate(afterP3, "p4", 0))
-    assertEquals("p1", afterP4.waitingFor)
+    assertEquals("p1", confirmed.waitingFor)
 
     // The floor is p1's last ♥ bid (5) even though its last bid is the 6♠, so
     // the suit-blind floor would reject 5 — the suit-aware floor does not.
-    assertEquals(5, withFloorFor(afterP4.actionHistory, "p1", Suit.HEARTS))
-    assertEquals(6, withFloorFor(afterP4.actionHistory, "p1"))
-    assertTrue(canSubmit(afterP4, BiddingIntent.FinalEstimate("p1", 5)).legal)
-    assertTrue(!canSubmit(afterP4, BiddingIntent.FinalEstimate("p1", 4)).legal)
+    assertEquals(5, withFloorFor(confirmed.actionHistory, "p1", Suit.HEARTS))
+    assertEquals(6, withFloorFor(confirmed.actionHistory, "p1"))
+    assertTrue(canSubmit(confirmed, BiddingIntent.FinalEstimate("p1", 5)).legal)
+    assertTrue(!canSubmit(confirmed, BiddingIntent.FinalEstimate("p1", 4)).legal)
   }
 
   /**
