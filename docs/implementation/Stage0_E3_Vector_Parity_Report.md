@@ -466,8 +466,8 @@ Examples:
 | `aMatchingNumberInAnotherSuitIsNotWith` | `t08t12aMatchingNumberInAnotherSuitIsNotWith` | T-08 + T-12 |
 
 Four classes carry the ID as a whole-class tag: `VoteKickTest` (T-14, 31 tests), `LeaveMatchTest`
-(T-15, 19), and `DisconnectVoteTest` / `InactivityClockTest` / `InactiveTakeoverTest` /
-`DisconnectVoteStateTest` (T-16, 67 in total).
+(T-15, 13), and `DisconnectVoteTest` / `InactivityClockTest` / `InactiveTakeoverTest` /
+`DisconnectVoteStateTest` (T-16, 10 + 28 + 18 + 11 = 67 in total).
 
 **The rename changes no assertion.** The whole diff is 19 files, 234 insertions and 234 deletions,
 and every changed line is a `fun` declaration line. No assert, no expected value and no test body
