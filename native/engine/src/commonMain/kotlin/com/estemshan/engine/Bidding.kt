@@ -267,6 +267,35 @@ fun computeRiskId(seats: List<String>, callerId: String): String {
   return seats[(i - 1 + seats.size) % seats.size]
 }
 
+/**
+ * Normal-round estimation queue (owner ruling 2026-10-29): the Caller's number
+ * is locked by the confirmation, so the seats asked FIRST are the With players
+ * and only then everyone else — both legs counter-clockwise from the Caller.
+ *
+ * Seats that already hold a bid are dropped, which covers the Caller itself, a
+ * pre-bid Dash Caller, and anyone already asked. That also makes the queue safe
+ * to recompute after every estimate: an Estimation Jump-In seat became With by
+ * declaring, so it is already out of the queue and never reorders the rest.
+ *
+ * Fast rounds share the helper harmlessly — their With set is empty until the
+ * last declaration, so this degenerates to the legacy next-open-seat walk.
+ */
+fun estimationQueue(
+  state: BiddingState,
+  bids: Map<String, Bid> = state.bids,
+  withPlayers: List<String> = state.withPlayers,
+): List<String> {
+  val open = rotateFrom(state.seats, state.callerId ?: state.firstBidder).filter { bids[it] == null }
+  val withSet = withPlayers.toSet()
+  return open.filter { it in withSet } + open.filter { it !in withSet }
+}
+
+private fun rotateFrom(seats: List<String>, start: String): List<String> {
+  val i = seats.indexOf(start)
+  if (i <= 0) return seats
+  return seats.subList(i, seats.size) + seats.subList(0, i)
+}
+
 // ── Legality predicates (shared by canSubmit and emit — one source of truth) ──
 
 fun auctionBidBeatsTop(bidVal: Int, bidSuit: Suit, auctionTop: Int, auctionSuit: Suit?): Boolean =
@@ -339,13 +368,16 @@ fun estimateBelowWithFloor(
   withPlayers: List<String>,
 ): Boolean = estimateBelowWithFloor(history, pId, tricks, withPlayers, null)
 
-/** The floor the "Min is …" rejection shows — suit-aware whenever the state carries the winning suit. */
-private fun floorShownInRejection(
-  history: List<BidAction>,
-  pId: String,
-  winningSuit: Suit?,
-): Int? =
-  if (winningSuit == null) withFloorFor(history, pId) else withFloorFor(history, pId, winningSuit)
+/**
+ * The With floor in force for [pId] in [state] — suit-aware whenever the state
+ * carries the Caller's winning suit, mirroring [estimateBelowWithFloor]'s own
+ * fallback. The suit-blind form answers a different question ("the last number
+ * this seat bid in ANY suit"), so a caller that needs the REAL floor must come
+ * through here or it will over-raise a With seat past what the engine allows.
+ */
+fun withFloorFor(state: BiddingState, pId: String): Int? =
+  if (state.auctionSuit == null) withFloorFor(state.actionHistory, pId)
+  else withFloorFor(state.actionHistory, pId, state.auctionSuit)
 
 /** The number the R1 rule forbids for this seat right now (null = no constraint). */
 fun forbiddenEstimateFor(state: BiddingState, pId: String): Int? {
@@ -531,7 +563,7 @@ fun canSubmit(state: BiddingState, intent: BiddingIntent): Legality {
         )
       }
       if (estimateBelowWithFloor(state.actionHistory, intent.playerId, intent.tricks, state.withPlayers, state.auctionSuit)) {
-        val floor = floorShownInRejection(state.actionHistory, intent.playerId, state.auctionSuit)
+        val floor = withFloorFor(state, intent.playerId)
         return Legality(false, "Min is $floor (your own With bid)")
       }
       if (estimateIsForbidden13(state, intent.playerId, intent.tricks)) {
@@ -785,24 +817,19 @@ private fun emitConfirmCall(state: BiddingState, intent: BiddingIntent.ConfirmCa
     )
   }
 
-  // Normal-round confirm: Dash Callers never re-estimate — start at the
-  // first seat CCW from the Caller that has no bid on record yet.
-  var firstEstimator = nextSeat(state.seats, intent.playerId)
-  var estGuard = 0
-  while (newBids[firstEstimator] != null && estGuard < 8) {
-    firstEstimator = nextSeat(state.seats, firstEstimator)
-    estGuard++
-  }
+  // Normal-round confirm: the Caller's number is locked, so the With players
+  // are asked first and everyone else follows (owner ruling 2026-10-29).
+  // Dash Callers already hold a record and never re-estimate.
+  val confirmed = state.copy(
+    auctionTop = t,
+    auctionSuit = s,
+    declaredTrump = s,
+    bids = newBids,
+    subPhase = BiddingPhase.ESTIMATES,
+    actionHistory = history,
+  )
   return EmitResult.Applied(
-    state.copy(
-      auctionTop = t,
-      auctionSuit = s,
-      declaredTrump = s,
-      bids = newBids,
-      subPhase = BiddingPhase.ESTIMATES,
-      waitingFor = firstEstimator,
-      actionHistory = history,
-    ),
+    confirmed.copy(waitingFor = estimationQueue(confirmed).first()),
   )
 }
 
@@ -819,7 +846,7 @@ private fun emitFinalEstimate(state: BiddingState, intent: BiddingIntent.FinalEs
     )
   }
   if (estimateBelowWithFloor(state.actionHistory, pId, intent.tricks, state.withPlayers, state.auctionSuit)) {
-    val floor = floorShownInRejection(state.actionHistory, pId, state.auctionSuit)
+    val floor = withFloorFor(state, pId)
     return EmitResult.Rejected("Min is $floor (your own With bid)")
   }
   if (estimateIsForbidden13(state, pId, intent.tricks)) {
@@ -849,20 +876,12 @@ private fun emitFinalEstimate(state: BiddingState, intent: BiddingIntent.FinalEs
 
   val resolved = state.seats.count { newBids[it] != null }
   if (resolved < state.seats.size) {
-    var cand = nextSeat(state.seats, pId)
-    var guard = 0
-    while (newBids[cand] != null && guard < 8) {
-      cand = nextSeat(state.seats, cand)
-      guard++
-    }
-    return EmitResult.Applied(
-      state.copy(
-        bids = newBids,
-        withPlayers = withPlayers,
-        waitingFor = cand,
-        actionHistory = state.actionHistory + BidAction(pId, "ESTIMATE", intent.tricks, null),
-      ),
+    val advanced = state.copy(
+      bids = newBids,
+      withPlayers = withPlayers,
+      actionHistory = state.actionHistory + BidAction(pId, "ESTIMATE", intent.tricks, null),
     )
+    return EmitResult.Applied(advanced.copy(waitingFor = estimationQueue(advanced).first()))
   }
 
   val base = state.copy(

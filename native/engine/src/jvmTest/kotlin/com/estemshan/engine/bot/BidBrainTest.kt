@@ -1,5 +1,7 @@
 package com.estemshan.engine.bot
 
+import com.estemshan.engine.Bid
+import com.estemshan.engine.BidAction
 import com.estemshan.engine.BidType
 import com.estemshan.engine.BiddingIntent
 import com.estemshan.engine.BiddingPhase
@@ -20,6 +22,7 @@ import com.estemshan.engine.dashCallerIds
 import com.estemshan.engine.emit
 import com.estemshan.engine.initFastRound
 import com.estemshan.engine.initNormalRound
+import com.estemshan.engine.withFloorFor
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -264,6 +267,37 @@ class BidBrainTest {
         assertTrue("$seat estimated ${bid.amount} above the cap of $cap", bid.amount <= cap)
       }
     }
+  }
+
+  /**
+   * T-12 at the brain's own boundary: a With seat's floor is its last bid in
+   * the Caller's WINNING suit, not its last bid overall. The suit-blind floor
+   * would raise this bankrupt hand to the 6♠ instead of the 5♥.
+   */
+  @Test
+  fun aWithEstimateRaisesToTheWinningSuitBidNotTheLastBidOverall() {
+    val state = initNormalRound(round = 1, dealer = "p1").copy(
+      subPhase = BiddingPhase.ESTIMATES,
+      auctionTop = 7,
+      auctionSuit = HEARTS,
+      declaredTrump = HEARTS,
+      callerId = "p2",
+      withPlayers = listOf("p1"),
+      bids = mapOf("p2" to Bid(BidType.TRICKS, 7, HEARTS)),
+      waitingFor = "p1",
+      actionHistory = listOf(
+        BidAction("p1", "BID", 5, HEARTS),
+        BidAction("p1", "BID", 6, SPADES),
+        BidAction("p2", "BID", 7, HEARTS),
+      ),
+    )
+    assertEquals("the real floor", 5, withFloorFor(state, "p1"))
+    assertEquals("the suit-blind floor", 6, withFloorFor(state.actionHistory, "p1"))
+
+    val zeroSim = BotSimulation { _, _ -> SimBid(estimate = 0.0, confidence = 1.0, reasoning = "fixed zero") }
+    val intent = brain.decide(state, dashHand(), "p1", BotTier.EXPERT, simulation = zeroSim)
+
+    assertEquals(5, (intent as BiddingIntent.FinalEstimate).tricks)
   }
 
   @Test

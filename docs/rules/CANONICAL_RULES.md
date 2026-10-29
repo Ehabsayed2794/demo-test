@@ -93,6 +93,16 @@ Normal Dash: during estimation, more than one player may bid 0 tricks.
 The 13 Rule: the total of all four players' bids may NEVER equal 13.
 The Risk Player & the Rule of 13
 Estimation begins with the player immediately after the Caller (counter-clockwise) and ends with the player immediately before the Caller — that last player is the Risk Player (⚡ RISK) and is shown with a special icon.
+  > **Pointer, 2026-10-29 (owner ruling; the paragraph above is left verbatim).** In a normal round the
+  > counter-clockwise walk BREAKS at the “With” players. The Caller's number is locked by Confirmation, so
+  > the seats asked first are ALL the “With” players, and only then everyone still left — both legs
+  > counter-clockwise from the Caller. A pre-bidding Dash Call seat is never asked. The Risk Player is
+  > whoever is asked LAST, which can still be a “With” seat (see “Combined With + Risk” below); the
+  > “seat immediately before the Caller” wording above only described the plain walk. Fast rounds are
+  > unchanged — their With set exists only after the final declaration. Reason for the ruling: under the
+  > plain walk the With seat could be asked last, where its own-bid floor, the Call Cap and the 13 Rule can
+  > between them leave NO legal number — the seed 194 round 5 dead end found by the E2 corpus. Full record:
+  > `docs/decisions/2026-10-29-with-first-estimation-order.md`.
 The Risk Player is forced to choose a number that makes the total ≠ 13 (either Under or Over 13).
 ✔ CLARIFIED: If the seat immediately before the Caller is a pre-bidding Dash Call player, the Risk obligation passes backward to the next eligible (non-Dash) estimator.
 ✔ CLARIFIED: If the first three bids already total 13, the Risk Player cannot bid 0; they are forced to bid 1–13 (pushing the round Over).
