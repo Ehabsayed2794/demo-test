@@ -180,8 +180,10 @@ scenarios the answer forks exactly on the platform facts that are not yet publis
   daily limit (headroom 2.3× / 1.9× / 1.6×)**; DO requests carry 10–15× headroom under the 20:1
   reading; Worker requests, D1 rows and rows read are ≤ 3.4%; duration is negligible **if**
   hibernation works. The 90% guardrail never fires at target usage, and its 10% reserve — on the
-  uniform full-match-remaining basis — covers **151 tables on requests (20:1) but only 23 / 11
-  on rows (1× / ×2)** against an unknown real concurrency peak [u].
+  uniform **worst-case** basis (an ongoing match needs its whole remaining cost) — covers **151
+  tables on requests (20:1) but only 23 / 11 on rows (1× / ×2)**; on the **average-case**
+  halfway assumption [m] it covers **303 / 46 / 23 / 17** — rows stay marginal in the worst
+  case against an unknown real concurrency peak [u].
 - **Conservative readings** (free-plan WebSocket incoming messages billed 1:1 — the docs are
   ambiguous about Free-plan enforcement; the rows multipliers from deletes, `setAlarm()` and
   index updates combined; no hibernation): **requests overrun at all three scenarios**

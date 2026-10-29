@@ -1,6 +1,7 @@
 # Stage 0 — E6: the target workload (100/125/150 matches/day) against the free tier
 
-**Status: PASS WITH LIMITATIONS (2026-10-29; second review round applied 2026-10-30).** The
+**Status: PASS WITH LIMITATIONS (2026-10-29; second review round applied 2026-10-30; third
+review round applied 2026-10-30).** The
 action counts, per-seat loads and CPU costs are **measured** — locally, on the JVM and inside
 local `workerd`. The capacity numbers are **modelled** from those measurements plus the owner's
 2026-10-29 rulings; the platform-side metering facts they depend on are **unverified** until a
@@ -17,7 +18,9 @@ decimal**; absolute demands (rows, requests, GB-s) round **half up to integers**
 request-units per match use the **ceiling** (a fractional message is still a message); capacity,
 trip points and per-match thresholds derived from a daily limit **floor** (667 messages × 150
 would exceed a 100,000 limit, so the threshold is 666); CPU milliseconds round half up to
-**two decimals**.
+**two decimals**. **Arithmetic basis:** every row figure is computed from the unrounded measured
+mean **427.92 rows per FULL match** — the "428" appearing in prose is its rounding, never the
+computation input.
 
 ## 1. What the experiment is
 
@@ -207,6 +210,34 @@ Only one cell crosses the guardrail: **150/day with per-trick ticks on every mat
 Per-round ticks never do. If real abandonment telemetry lands near f = 100% *and* per-trick
 chunking is chosen, 150/day trips the guardrail in the model.
 
+**Where each scenario crosses (review item 2):** with rows per match = 427.9 + 234·f, a scenario
+crosses the 90% guardrail when S × (427.9 + 234·f) ≥ 90,000, i.e. **f\* = (90,000/S − 427.9)/234**:
+
+| Scenario | f\* | Meaning |
+| --- | --- | --- |
+| 100/day | (900 − 427.9)/234 = **2.02 → never crosses** | even fast-forwarding every match stays at 66.2% |
+| 125/day | (720 − 427.9)/234 = **1.25 → never crosses** | even fast-forwarding every match stays at 82.7% |
+| 150/day | (600 − 427.9)/234 = **0.74** | the guardrail trips only if roughly **three quarters of all matches** need a per-trick fast-forward |
+
+f remains **[u]** — nothing here says how likely f = 0.74 is; closed-testing disconnect and
+takeover telemetry is what would measure it.
+
+**An alternative the owner may choose (check only — not decided, not implemented).** The plan
+already records an **all-humans-gone rule**: ADR 0003's E1 section lists "the 60-second
+all-humans-gone wait" among the rules the engine does not implement because the backend decides
+them, and the E3 report §5.3 names the row precisely — `t16.s12.all-humans-gone`: "the 60 s wait
+before a table with no humans is cancelled — A services timer. The engine has no abandonment
+path at all." If the backend applied that rule — **abandon the match after the 60 s wait**
+instead of fast-forwarding it with bots — then the chunking cost of §5.2 **largely disappears**:
+a match whose humans have all gone is cancelled, not played out, so no per-trick/per-round alarm
+ticks are spent on it (what remains is one abandonment write plus the cleanup deletes, which
+themselves count as rows written, and one timer/alarm to wake the idle DO when the wait expires —
+1 row + 1 invocation, not 234). What **remains** in every case: **partial takeover** (1–3 humans
+leave) still runs bot seats through human-message piggybacking — the measured ≤ 4 ms chains —
+with zero alarms; only a fully-abandoned tail (the last human leaving mid-match) hits the 60 s
+path instead of a fast-forward. This is presented as an owner alternative alongside chunked
+continuation, not as a decision.
+
 ## 6. The 90% guardrail (ruling E)
 
 **Trip points** — matches/day at which a meter reaches 90% and new matches must stop (4H FULL):
@@ -219,34 +250,41 @@ chunking is chosen, 150/day trips the guardrail in the model.
 | DO rows written, ×2 | ≈ 105/day — trips late at 125/150 |
 | DO duration, no hibernation | ≈ 104/day — trips at 125/150 |
 
-**Reserve sufficiency (one basis, stated — review item 1).** When a trip fires, the matches
-already in progress keep consuming. The worst case for **one ongoing match** is that it had just
-started: its remaining cost is then its **whole-match cost**. This report now uses that single
-uniform basis for every meter — remaining cost of one ongoing match = one full match's cost —
-instead of the earlier mixed basis (rows sized by one round, requests by a whole match), which
-overstated the rows reserve. The 10% reserve is 10,000 of each meter:
+**Reserve sufficiency (review item 1; worst case and average case, one stated basis each).**
+When a trip fires, the matches already in progress keep consuming. How much one ongoing match
+still needs depends on where it is:
 
-| Reading | Per-match remaining cost | Reserve covers |
-| --- | --- | --- |
-| DO rows written, 1× | 428 rows | **23 tables** |
-| DO rows written, ×2 allowance | 856 rows | **11 tables** |
-| DO requests, 20:1 documented | 66 units | **151 tables** |
-| DO requests, inbound 1:1 | 1,139 units | **8 tables** |
+- **Worst case** — the match had **just started** when the trip fired: its remaining cost is its
+  **whole-match cost**. This is the basis every figure below used since the second review round;
+  it is now labelled as the worst case everywhere.
+- **Average case [m]** — an ongoing match is **halfway through** on average, so its remaining
+  cost is **half** a match's. The "halfway" split is a **modelling assumption, not a
+  measurement**; the halves derive directly from the measured per-match figures: rows
+  427.92 / 2 = **214** (×1) and 855.84 / 2 = **428** (×2); requests 66 / 2 = **33** (20:1) and
+  1,138.92 / 2 = **570** (1:1, ceiling — a fractional message is still a message).
 
-For scale: the illustrative peak used earlier (all 150 matches overlapping within one hour) is
-≈ 25 concurrent tables.
+The 10% reserve is 10,000 of each meter; tables covered = floor(10,000 ÷ remaining cost):
 
-**Verdict — changed by the uniform basis and stated plainly:** under the documented readings the
-**requests** reserve is comfortable (151 tables), but the **rows** reserve is **marginal**: 23
-tables (1×) or 11 (×2) against an unknown real concurrency peak [u] — the earlier claim that
-rows were protected "with 416 tables of headroom" was an artefact of the mixed basis and is
-withdrawn. Under the conservative readings the reserve is insufficient on both axes (8, 11).
-Whether the 90% guardrail actually protects ongoing matches therefore **depends on the real
-concurrent-match count, which is [u] until match wall duration and play-time distribution are
-measured** (closed testing, M10). What is unconditional: each meter must be monitored
-independently (ruling E §5.1), rerouted *new* matches need the backup server ruling F flags as
-**not yet designed**, and without it the correct trip behaviour is the explicit refuse/queue
-response of ruling E §5.6 — a product decision to design.
+| Reading | Remaining cost — worst case | Tables — worst case | Remaining cost — average case [m] | Tables — average case |
+| --- | --- | --- | --- | --- |
+| DO rows written, 1× | 428 rows | **23** | 214 rows | **46** |
+| DO rows written, ×2 allowance | 856 rows | **11** | 428 rows | **23** |
+| DO requests, 20:1 documented | 66 units | **151** | 33 units | **303** |
+| DO requests, inbound 1:1 | 1,139 units | **8** | 570 units | **17** |
+
+For scale only: the illustrative peak used earlier (all 150 matches overlapping within one hour)
+is ≈ 25 concurrent tables — **[u] illustrative, not measured**; real concurrency is what E12 /
+closed testing would measure (match wall duration and play-time distribution).
+
+**Verdict — honest in both directions:** in the **worst case**, rows stay **marginal** (23 / 11
+tables) and the conservative requests reading stays **insufficient** (8) — nothing in this round
+softens that. In the **average case [m]**, rows ×1 rises above the illustrative peak (46) while
+**rows ×2 (23) and requests 1:1 (17) stay below it**. Neither case is the guarantee: which one
+reality resembles depends on the real concurrent-match count and how far matches typically are
+when a trip fires — **[u] until E12 / closed testing measure it**. What is unconditional: each
+meter must be monitored independently (ruling E §5.1), rerouted *new* matches need the backup
+server ruling F flags as **not yet designed**, and without it the correct trip behaviour is the
+explicit refuse/queue response of ruling E §5.6 — a product decision to design.
 
 ## 7. Traffic not in the model — the remaining rows budget (review item 5)
 
@@ -345,10 +383,13 @@ owner knowledge after launch, not invented here.
    applies.
 2. E5's ≈ 1,135 requests/match and ≈ 1,135 rows/match are **superseded as planning numbers** by
    the ruled design's ≈ 66 request-units (documented reading) and ≈ 428 rows.
-3. The 90% guardrail's reserve, on the uniform full-match-remaining basis, protects **requests
-   only under the 20:1 reading (151 tables)**; rows are marginal (23 / 11 tables at 1× / ×2) and
-   the conservative requests reading is insufficient (8) — all conditional on the unknown real
-   concurrent-match peak [u]. The earlier "protected under the documented readings" claim for
+3. The 90% guardrail's reserve, on the uniform **worst-case** basis (an ongoing match needs its
+   whole remaining cost), protects **requests only under the 20:1 reading (151 tables)**; rows
+   are marginal (23 / 11 tables at 1× / ×2) and the conservative requests reading is
+   insufficient (8). On the **average-case** halfway assumption [m] it becomes 303 / 46 / 23 /
+   17 — rows ×1 rises above the illustrative ≈ 25-table peak, rows ×2 and the conservative
+   requests reading stay below it. All of it is conditional on the unknown real concurrent-match
+   peak [u]. The earlier "protected under the documented readings" claim for
    rows was an artefact of a mixed basis and is withdrawn.
 
 ## 11. What E6 does **not** prove
@@ -393,9 +434,12 @@ curl "http://127.0.0.1:8975/?what=capacity-mix&first=1&count=50&gt=FULL&sm=NORMA
 1. **Authorize the E12 free-account experiment** (§14) — it decides requests (20:1 vs 1:1), rows
    (real rows-per-write), duration (hibernation), and with them whether the scenarios PASS or
    overrun. Needs the owner's approval and a real account; this record runs nothing.
-2. **The bot-continuation chunking granularity** — per-trick ticks (≈ +234 rows, +234 invocations
-   per fast-forwarded match; trips the guardrail at 150/day if f = 100%) vs per-round
-   (≈ +18; never trips): a design decision with capacity consequences.
+2. **The bot-continuation chunking granularity and the all-bot endgame** — three owner
+   alternatives, not decided here: per-trick alarm ticks (≈ +234 rows, +234 invocations per
+   fast-forwarded match; trips the guardrail at 150/day if f = 100%), per-round ticks
+   (≈ +18; never trips), or applying the plan's **60 s all-humans-gone abandonment rule**
+   (§5.2 — abandons the match instead of fast-forwarding it; the chunking cost then largely
+   disappears).
 3. **How an all-bot match is handled at all** — chunked continuation with the extra rows above,
    or a time-limited/terminated abandoned match (a product ruling the capacity model must then
    reflect).

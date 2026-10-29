@@ -996,10 +996,13 @@ defines what would count as a result; it does not report one.
 > metering, the rows-per-write multipliers (deletes, alarms, indexes, the unpublished KV-API
 > mapping), and hibernation/duration — are owned by E12/E9 on a real Cloudflare account (the E12
 > protocol is written in the E6 report §14 and awaits the owner's approval). The 90% guardrail's
-> 10% reserve, on the uniform full-match-remaining basis, covers **151 tables on requests (20:1)
-> but only 23 / 11 on rows (1× / ×2) and 8 on conservative requests** — marginal against the
-> ≈ 25-table illustrative peak and conditional on the unknown real concurrency [u]; the earlier
-> "416 tables" rows figure was an artefact of a mixed basis and is withdrawn. Evidence:
+> 10% reserve, on the uniform **worst-case** basis (an ongoing match needs its whole remaining
+> cost), covers **151 tables on requests (20:1) but only 23 / 11 on rows (1× / ×2) and 8 on
+> conservative requests**; on the **average-case** assumption that an ongoing match is halfway
+> through [m], it covers **303 / 46 / 23 / 17** respectively — so rows stay marginal in the
+> worst case and the conservative requests reading stays insufficient in both cases, against an
+> ≈ 25-table illustrative peak [u] with the real concurrency left to E12 / closed testing; the
+> earlier "416 tables" rows figure was an artefact of a mixed basis and is withdrawn. Evidence:
 > `docs/implementation/Stage0_E6_Target_Workload_Report.md` (§5 per meter and thresholds at both
 > bases, §5.2 chunking sensitivity, §6 the guardrail, §7 the remaining-rows budget, §8 the
 > per-Trick window, §14 the E12 protocol).
