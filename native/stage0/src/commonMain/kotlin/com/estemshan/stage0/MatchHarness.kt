@@ -428,7 +428,7 @@ private fun fnv1a32(s: String): String {
 
 /** Minimal deterministic JSON writer — no reflection, no property order to
  *  inherit from a runtime's map implementation. */
-private class JsonWriter {
+internal class JsonWriter {
   private val sb = StringBuilder()
   private var empty = true
 
