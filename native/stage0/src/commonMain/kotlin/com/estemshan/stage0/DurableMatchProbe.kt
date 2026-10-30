@@ -446,6 +446,50 @@ class DurableMatch private constructor(
     }
   }
 
+  /**
+   * The record of the next durable unit, WITHOUT applying it.
+   *
+   * A Worker needs this ordering: write the row, then apply it. Producing the
+   * record first is easy for an auction action (the intent is known before it
+   * is emitted); a Trick's record needs four cards, so the fourth is played
+   * against a simulated copy of the table and the copy is discarded. The
+   * simulation uses the same brains and the same reducer, so the record it
+   * yields is the one the real application then reproduces.
+   */
+  fun nextUnitRecord(): String? {
+    val b = bidding
+    if (b != null && b.subPhase != BiddingPhase.DONE) {
+      val seat = b.waitingFor ?: return null
+      val (tier, personality) = E9_ROSTER.getValue(seat)
+      val intent = BidBrain.decide(b, hands.getValue(seat), seat, tier, personality)
+      val key = E9Key(b.round, E9Unit.BID, bidIndex + 1)
+      return "B;${applied + 1};${key.round};${key.index};${encodeBidPayload(intent)}"
+    }
+    val t = table
+    if (t == null || t.phase != TablePhase.PLAY) return null
+
+    var sim: TableState = t
+    var resolvedPlays: List<Play> = emptyList()
+    for (i in 0 until 4) {
+      val current = sim
+      val seat = current.turn ?: error("trick ${t.trickNo}: no turn while simulating")
+      val intent = PlayBrain.decide(current, seat, E9_ROSTER.getValue(seat).first)
+      val next = when (val r = emitPlay(current, PlayCard(intent.playerId, intent.card))) {
+        is PlayEmit.Applied -> r.state
+        is PlayEmit.Rejected -> error("simulated play rejected: ${r.reason}")
+      }
+      if (next.phase == TablePhase.RESOLVING) {
+        resolvedPlays = next.plays
+        sim = resolveTrick(next)
+      } else {
+        sim = next
+      }
+    }
+    require(resolvedPlays.size == 4) { "a trick record needs four plays" }
+    val key = E9Key(t.cfg.round, E9Unit.TRICK, t.trickNo)
+    return encodeTrick(applied + 1, key, t.leaderId, resolvedPlays)
+  }
+
   private fun expectedKey(): E9Key? {
     val b = bidding
     if (b != null && b.subPhase != BiddingPhase.DONE) return E9Key(b.round, E9Unit.BID, bidIndex + 1)

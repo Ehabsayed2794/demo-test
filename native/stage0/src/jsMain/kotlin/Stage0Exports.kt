@@ -154,6 +154,48 @@ fun e9PlayCard(seat: String, suit: String, rank: Int): String {
   return submitJson(m, m.submitCard(seat, Card(s, r)))
 }
 
+/**
+ * The record of the next durable unit, produced WITHOUT applying it.
+ *
+ * This is the order a write-ahead store needs: the record must exist before
+ * the row is written, and the engine may only advance once the row is in the
+ * store. `record` is the single row to insert; its second field is the row id.
+ */
+@OptIn(ExperimentalJsExport::class)
+@JsExport
+fun e9NextUnit(): String {
+  val m = e9Match ?: return """{"status":"error","message":"no match"}"""
+  val record = m.nextUnitRecord()
+    ?: return """{"done":true,"applied":${m.recordsApplied},"digest":"${m.stateDigest()}","complete":${m.isComplete()}}"""
+  val kind = if (record.startsWith("B;")) "bid" else "trick"
+  return """{"done":false,"kind":"$kind","record":"${jsonEscape(record)}","applied":${m.recordsApplied},"digest":"${m.stateDigest()}"}"""
+}
+
+/**
+ * Apply a row that is already in the store. The record must be the next unit
+ * and must reproduce itself exactly — the same check a cold start makes, so
+ * the live write-ahead path and the recovery path agree row for row.
+ */
+@OptIn(ExperimentalJsExport::class)
+@JsExport
+fun e9Apply(record: String): String {
+  val m = e9Match ?: return """{"status":"error","message":"no match"}"""
+  return try {
+    m.applyRecord(record)
+    """{"status":"applied","applied":${m.recordsApplied},"digest":"${m.stateDigest()}","complete":${m.isComplete()}}"""
+  } catch (e: Throwable) {
+    """{"status":"error","message":"${jsonEscape(e.message ?: "replay failed")}","applied":${m.recordsApplied}}"""
+  }
+}
+
+@OptIn(ExperimentalJsExport::class)
+@JsExport
+fun e9Applied(): Int = e9Match?.recordsApplied ?: -1
+
+@OptIn(ExperimentalJsExport::class)
+@JsExport
+fun e9Complete(): Boolean = e9Match?.isComplete() ?: false
+
 /** Restart: rebuild the match from the stored rows alone. */
 @OptIn(ExperimentalJsExport::class)
 @JsExport

@@ -11,6 +11,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNotEquals
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -53,6 +54,9 @@ class DurableMatchProbeTest {
     val producers: List<E9Step>,
     /** `docs[k]` is the state after exactly k records; `docs[0]` is the start. */
     val docs: List<String>,
+    /** `digests[k]` is the digest of `docs[k]` — the per-prefix baseline the
+     *  kill matrix compares a restarted process against. */
+    val digests: List<String>,
   )
 
   private fun drive(
@@ -64,7 +68,9 @@ class DurableMatchProbeTest {
     val records = ArrayList<String>()
     val producers = ArrayList<E9Step>()
     val docs = ArrayList<String>()
+    val digests = ArrayList<String>()
     docs += m.stateDocument()
+    digests += m.stateDigest()
     while (true) {
       val step = m.nextStep()
       if (step is E9Step.Done) break
@@ -75,6 +81,7 @@ class DurableMatchProbeTest {
             records += record
             producers += step
             docs += m.stateDocument()
+            digests += m.stateDigest()
           }
         }
         else -> error("live path refused a legal step: $r")
@@ -82,7 +89,8 @@ class DurableMatchProbeTest {
     }
     check(m.isComplete()) { "match did not complete" }
     check(docs.size == records.size + 1) { "a page of state went missing" }
-    return Driven(m, records, producers, docs)
+    check(digests.size == docs.size) { "a digest went missing" }
+    return Driven(m, records, producers, docs, digests)
   }
 
   // ── 1. the durable path is the same match ─────────────────────────
@@ -159,6 +167,33 @@ class DurableMatchProbeTest {
     val out = File("build/stage0-parity").apply { mkdirs() }
     File(out, "e9-seed42.log").writeText(driven.records.joinToString("\n"))
     File(out, "e9-seed42.digest").writeText(driven.match.stateDigest())
+    // Every prefix, so a process killed after k rows can be compared with the
+    // no-kill run WITHOUT replaying the JVM side first.
+    File(out, "e9-seed42.prefixes").writeText(
+      driven.digests.mapIndexed { k, d -> "$k\t$d" }.joinToString("\n"),
+    )
+  }
+
+  /** The store's order is write-then-apply, so the record must be producible
+   *  without moving the engine. This pins the primitive the Worker calls: at
+   *  every unit the produced row is the row the live path produces, and
+   *  applying it lands exactly where the live path lands. */
+  @Test
+  fun theNextUnitCanBeProducedBeforeItIsApplied() {
+    val driven = drive(42)
+    val m = DurableMatch.start(42)
+    for (k in driven.records.indices) {
+      val before = m.stateDocument()
+      val next = assertNotNull(m.nextUnitRecord(), "no unit $k")
+      assertEquals(driven.records[k], next, "unit $k was produced differently")
+      assertEquals(before, m.stateDocument(), "producing unit $k applied it")
+      assertEquals(k, m.recordsApplied, "producing unit $k wrote the row")
+      m.applyRecord(next)
+      assertEquals(k + 1, m.recordsApplied)
+      assertEquals(driven.docs[k + 1], m.stateDocument(), "applying unit $k diverged")
+    }
+    assertNull(m.nextUnitRecord(), "a complete match still produced a unit")
+    assertEquals(driven.docs.last(), m.stateDocument())
   }
 
   /** The number the capacity model quotes. E7's model is 428/match
