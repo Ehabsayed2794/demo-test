@@ -11,6 +11,8 @@ import com.estemshan.stage0.runCapacityMixJson
 import com.estemshan.stage0.runCorpusJson
 import com.estemshan.stage0.runMatchJson
 import com.estemshan.stage0.runRuleVectorsText
+import com.estemshan.stage0.runSettlementStreamFromJson
+import com.estemshan.stage0.runSettlementStreamJson
 import kotlin.js.ExperimentalJsExport
 import kotlin.js.JsExport
 
@@ -69,6 +71,37 @@ fun runCapacityMix(firstSeed: Int, count: Int, gameType: String, scoringMode: St
 @JsExport
 fun runCapacityChain(firstSeed: Int, count: Int, gameType: String, scoringMode: String): String =
   runCapacityChainJson(firstSeed, count, gameTypeOf(gameType), scoringModeOf(scoringMode))
+
+/**
+ * E7's entry point: the settlement stream a durable RP store has to apply
+ * exactly once — one row per seat per finished match, RP carried seat to seat.
+ */
+@OptIn(ExperimentalJsExport::class)
+@JsExport
+fun runSettlementStream(firstSeed: Int, count: Int, gameType: String, scoringMode: String): String =
+  runSettlementStreamJson(firstSeed, count, gameTypeOf(gameType), scoringModeOf(scoringMode))
+
+/**
+ * E7's recompute entry point: the same stream, but starting from an explicit
+ * RP state — the state a restored ledger actually holds. Used to recompute the
+ * settlements a stale backup is missing instead of copying precomputed rows.
+ */
+@OptIn(ExperimentalJsExport::class)
+@JsExport
+fun runSettlementStreamFrom(
+  firstSeed: Int,
+  count: Int,
+  gameType: String,
+  scoringMode: String,
+  startingRpJson: String,
+): String =
+  runSettlementStreamFromJson(
+    firstSeed,
+    count,
+    gameTypeOf(gameType),
+    scoringModeOf(scoringMode),
+    startingRpJson,
+  )
 
 private fun gameTypeOf(name: String): GameType =
   GameType.entries.firstOrNull { it.name == name.uppercase() }

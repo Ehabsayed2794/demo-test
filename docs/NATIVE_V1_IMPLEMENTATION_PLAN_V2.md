@@ -28,6 +28,17 @@
 | Runtime proposal | Cloudflare Workers + SQLite Durable Objects + D1 is a **PROPOSAL**, not an approved architecture (§5.7, O-06) |
 | Monetization | No billing, ads or IAP in the current baseline and no approved V1 monetization scope (O-09) |
 
+> **Pointer, 2026-10-30 (the "Stage 0 status" and "Runtime proposal" rows above are left
+> verbatim).** **E1–E7 have run** (locally; E7b is E7's rows leg) **and E12 has run in four of its
+> platform steps — a, c, d and e — on a real throwaway Free account**, and **O-06 is DECIDED:
+> Cloudflare Workers + Durable Objects + D1, Free plan, no paid subscription**, at a **V1 target of
+> 80 completed matches/day** with a **refusal ceiling of 88/day**
+> (`docs/decisions/2026-10-30-runtime-decision-o06-cloudflare.md`; ADR `0003` is ACCEPTED). The
+> measured binding meter is **DO duration** (0.128 GB·s/s; 115.2 GB·s per 15-minute match):
+> **70.9% at 80/day**, 78.0% at 88/day; rows written 34.2%, requests < 1%. **Still not run: E8,
+> E9, E10, E11, E13 and the optional E12-b/f/g/h/i** — **E9 is the only one that can still change
+> the architecture** (`docs/implementation/Stage0_Remaining_Steps.md`).
+
 > **Pointer, 2026-10-29 (measured; the "NOT YET RUN" row above is left verbatim).**
 > **Six of the thirteen experiments have now been run**: **E1** (the engine plays a complete
 > match inside `workerd`), **E2** (200 seeds × FULL/MINI × Normal/Classic = 800 matches,
@@ -52,6 +63,23 @@
 > `docs/implementation/Stage0_E6_Target_Workload_Report.md`. **E7–E13 are still not run**, so
 > the runtime decision (O-06) is **not yet decidable on evidence**; the ADR skeleton with the
 > evidence and the open slot is `docs/adr/0003-runtime-choice.md`.
+>
+> **Pointer, 2026-10-30 (E7 measured locally; the paragraph above is left verbatim).**
+> **Seven of the thirteen experiments have now been run**: **E1–E6** as recorded above, and
+> **E7** — the backup lag, the intent outbox, recovery and the duplicate-RP guarantee, measured
+> against a local D1 with **0 duplicate RP rows and 0 lost settlements** across a 10-scenario
+> fault matrix (two negative controls prove the harness detects both failure modes), the
+> **restore-point rule** that closes the gap a stale backup leaves, the **write-failure window**
+> (a quota-exhaustion analogue), the **loss window** when the intent queue is lost with the
+> primary (5 settlements / 20 rows / 476 delta per uncovered interval), the **recompute path**
+> (0 differences against the original rows), and the **split-brain** behaviour (a different
+> payload raises an alarm and is not acked). The **91.67% backup coverage is a result of the
+> chosen cadence, not a natural measurement**, and the settlement write cost is **25.4 rows per
+> match** for the whole protocol — not the capacity model's old 5 — which still leaves the
+> settlement axis far from binding (≤ 3.81% of the D1 daily limit at 150 matches/day). Report:
+> `docs/implementation/Stage0_E7_Backup_Outbox_Report.md`. **E8–E13 are still not run**, so the
+> runtime decision (O-06) is **still not decidable on evidence**: E7 measured the protocol, not
+> Cloudflare, and the independent quota-isolated secondary server **does not exist**.
 
 ### Source-of-truth hierarchy
 
@@ -275,6 +303,11 @@ One decision still blocks a workstream rather than merely shaping it:
 1. **O-06 runtime architecture approval** — cannot be decided before Stage 0; it blocks Ranked
    runtime implementation (E3) and the purchase verifier (§5.9, S8). It does not block Stage 0, the
    engine wave, or the planned sprints S1–S7.
+
+   > **Pointer, 2026-10-30 (the sentence above is history).** **O-06 is DECIDED — Cloudflare**
+   > (`docs/decisions/2026-10-30-runtime-decision-o06-cloudflare.md`; ADR 0003 ACCEPTED). E3 is
+   > now gated on **E9**, not on a runtime choice; **S8's** backend is no longer blocked on the
+   > runtime, only on the purchase design.
 
 The open items now shape scope rather than the rule set: **O-12** voice provider/protocol/cost,
 **O-13** ads/consent provider, **O-15** matchmaking direction, **O-16** IAP/Stage 0 sequencing,
@@ -754,6 +787,18 @@ Abandonment is a separate outcome, not a departure charge:
 | All humans disconnected | Wait 60 s; if nobody returns, cancel and apply the same outcome (Q27c) |
 | Server/quota failure | Never charged (Q27(3)) |
 
+> **Pointer, 2026-10-30 (E7 measured; the rows above are left verbatim).** The **60 s
+> all-humans-gone rule** (the humans left) and the **server/quota exemption** (the platform
+> refused the write) are **different rules and must not be merged**. The 60 s rule ends with a
+> charge (Q27c → T-15); the quota case ends with **no charge at all** (Q27(3)), and E7 measures
+> why that distinction is load-bearing: in the write-failure window a **rejected write is not a
+> lost settlement** — the intent stays durable in the outbox and the settlement is applied later,
+> exactly once, with 0 duplicates and 0 losses. A quota failure must therefore **never** be
+> silently converted into an abandoned match: that would charge the players for a platform
+> failure (forbidden by Q27(3)) **and** lose a settlement that did not need to be lost.
+> **No ruling is changed**; pending confirmation is listed as D-E7-4 in
+> `docs/implementation/Stage0_E7_Backup_Outbox_Report.md` §15.
+
 #### T-16 — Disconnect, takeover, reconnect and cancellation
 
 | Time / event | Expected |
@@ -1033,6 +1078,51 @@ defines what would count as a result; it does not report one.
 > durable intent/replay/idempotency, and ongoing-match behaviour at quota; E12 validates
 > WebSocket billing, hibernation, duration and reconnects. No experiment's acceptance criterion
 > is changed by these rulings.
+>
+> **Pointer, 2026-10-30 (E7 measured locally; the E7 row above is left verbatim).**
+> **E1, E2, E3, E4, E5, E6 and E7 have been run**; **E8–E13 have not**. The E7 row's pass
+> criterion — "No duplicate RP; lag measured; recovery documented" — is met **locally**: across a
+> 10-scenario fault matrix against a local D1, **0 duplicate RP rows and 0 lost settlements**,
+> with two negative controls proving the harness detects both failure modes (20 rows / 476 delta
+> lost; +375 delta double-awarded). The protocol keeps **one** RP authority — RP is the source of
+> truth, RP_BACKUP only ever receives copies, and the OUTBOX only ever receives intents.
+> **Measured:** backup lag (5 matches / 20 rows / 476 delta stale at a 5-match cadence), the
+> restore-point rule (replay every outbox row with `seq > max(outbox_seq)`, regardless of the
+> acked flag — the control that trusts the acked flags loses exactly that window), the write-
+> failure window (a quota-exhaustion analogue: **a rejected write is not a lost settlement** if
+> the intent is retained), the loss window when the intent queue is lost with the primary
+> (**5 settlements / 20 rows / 476 delta per uncovered interval**), the recompute path (the
+> missing settlements recomputed from the restored state reproduce all 20 rows with **0
+> differences** across 9 fields), and the split-brain behaviour (the same payload dedupes; a
+> different payload raises a `PAYLOAD_MISMATCH` alarm and is **not** acked). **The 91.67%
+> coverage is a result of the chosen cadence, not a natural measurement** — coverage is
+> `1 − N/M`, so ≥90% requires the stale window to be at most 10% of the settlements in it.
+> **Modelled:** the settlement write cost is **25.4 rows per match** for the whole protocol
+> (RP + OUTBOX incl. ack/delete + the amortised backup copy) against the capacity model's old
+> **5 rows** — D1 bills index rows too, and the old figure counted the ledger's table rows only;
+> the effect is **≤ 3.81% of the D1 daily limit at 150 matches/day** (the axis does not change
+> which meter binds), with the ceiling on this axis falling from 18,000 to **3,543 matches/day**.
+> **Unknown / needs a real Cloudflare account [x]:** D1's real metering and atomicity, a real
+> quota event, and the independent quota-isolated secondary server — which **does not exist**, so
+> the requirement the loss window implies (the intent queue must not share the primary's failure
+> domain) is a requirement **on an architecture that has not been built**. **E7 does not approve
+> Cloudflare and does not close O-06.** Report: `docs/implementation/Stage0_E7_Backup_Outbox_Report.md`.
+> **Pending owner decisions (listed, not decided): D-E7-1** the production backup cadence,
+> **D-E7-2** where the intent queue must live, **D-E7-3** the protocol figure and the
+> three-databases-or-one question, **D-E7-4** confirmation that a quota/write failure is never
+> converted into an abandoned match (the existing Q27(3) / Q27c rules already separate the two
+> cases — E7 changes no ruling), **D-E7-5** whether the local evidence closes the E7 row or a
+> real-Cloudflare leg is required first.
+>
+> **POINTER NOTE (2026-10-30, owner rulings).** **D-E7-1 is DECIDED** — the production backup
+> cadence is **every settlement** (N = 1) — and **D-E7-4 is CONFIRMED**: at the 90% guardrail the
+> system **refuses new matches and never cancels a running one**. The protocol figure the
+> capacity model therefore carries is **27 rows per match** (RP 10 + OUTBOX 5 + RP_BACKUP 12),
+> and the settlement-axis ceiling becomes **3,333 matches/day at the 90% guardrail / 3,703 at the
+> hard limit**. The **25.4 / 3,543 figures above are left verbatim** — they are the measured
+> cadence-5 alternative. Record:
+> `docs/decisions/2026-10-30-cadence-quota-and-e12-preparation.md`. **D-E7-2, D-E7-3 (the
+> three-databases-or-one half), D-E7-5, D-E7-6 and D-E7-7 stay open**, and **O-06 stays open**.
 
 | ID | Experiment | Question answered | Method | Pass / decision criterion | Blocks |
 |---|---|---|---|---|---|
@@ -1052,6 +1142,22 @@ defines what would count as a result; it does not report one.
 
 Stage 0 does **not** decide the architecture by itself. It produces measurements and a
 recommendation; the owner approves or rejects the runtime through a new ADR (O-06).
+
+> **Pointer, 2026-10-30 (E12 measured; O-06 decided; the E8–E13 rows above are left verbatim).**
+> **E12 has run in four of its platform steps on a throwaway Free account, and the owner has
+> approved the runtime through ADR 0003 — Option B, Cloudflare Workers + Durable Objects + D1, Free
+> plan, no paid subscription.** The measured facts that close the E12 row's question ("does
+> hibernation keep idle cost inside the free tier?"): **hibernation keeps *duration* at ≈ 0 but
+> bills 1,134 DO requests per match; the plain always-awake API bills ≈ 7 requests and
+> 0.128 GB·s per second (115.2 GB·s per 15-minute match); `setAlarm()` costs 0 rows and the fire
+> costs 1 request; `DELETE FROM` costs 428 rows and 0 reads, a row-by-row loop 428 rows and 856
+> reads; the rows-written meter is ×1 on a table with no second index.** The decision's own
+> numbers — **80 matches/day target, 88/day refusal ceiling, plain WebSocket, no failover server in
+> V1, ×1 row shape, RD19's 50 s unchanged** — are in
+> `docs/decisions/2026-10-30-runtime-decision-o06-cloudflare.md`. **E9 is now the gate** for
+> per-Trick persistence; **E8, E10, E11, E13 and E12-b/f/g/h/i remain unrun**, and E6 §14's step 8
+> (driving a meter past 100%) is the one protocol item still open
+> (`docs/implementation/Stage0_Remaining_Steps.md`).
 
 ### 5.4.4 Milestones
 
@@ -1548,6 +1654,10 @@ O-07, O-08 and O-09 were all answered between 2026-10-22 and 2026-10-23** and li
 labelled “Engineering investigation” are all in §5.7.3 (T1–T9). Each question has its own row where
 it has its own answer.
 
+> **Pointer, 2026-10-30.** **O-06 is no longer open** — it was decided on 2026-10-30
+> (`docs/decisions/2026-10-30-runtime-decision-o06-cloudflare.md`). The open rows are now
+> **O-10, O-11, O-12, O-13, O-16, O-17 and O-18** (O-15 closed 2026-10-28).
+
 | Q | Topic | Decision as recorded | Label | Source |
 |---|---|---|---|---|
 | Q1 | General Pass | Consumes the round: round 6 all pass → round 7 played ×2. **R-1 / Q51 restates it: the new round is a new round number with a fresh deal, never a replay** | Owner-approved | record §O; A8.7 |
@@ -1650,7 +1760,7 @@ default value in a rule or a test.
 
 | ID | Question | Concrete example | Why it blocks | Blocks |
 |---|---|---|---|---|
-| O-06 | Approve or reject the proposed runtime after Stage 0 | Cloudflare Workers + DO + D1 is a proposal, and **Q40 records that it is not approved**. If Stage 0 passes, approve a runtime by ADR; if it fails, choose a fallback that still meets $0/no-Blaze and Ranked authority | E3 cannot start implementation without an architecture, and **Play Billing verification (S8) needs a deployable backend** | E3, S8, ADR |
+| O-06 | Approve or reject the proposed runtime after Stage 0 | Cloudflare Workers + DO + D1 is a proposal, and **Q40 records that it is not approved**. If Stage 0 passes, approve a runtime by ADR; if it fails, choose a fallback that still meets $0/no-Blaze and Ranked authority. **CLOSED 2026-10-30 (owner): APPROVED on the Stage 0 evidence — Cloudflare Workers + Durable Objects (SQLite) + D1, Free plan, no paid subscription; V1 target 80 completed matches/day with an 88/day refusal ceiling; plain (always-awake) WebSocket, no hibernation; no backup/failover server in V1 (deferred); ×1 row shape (no second index); RD19's 50 s unchanged. ADR 0003 is ACCEPTED. E3 is now gated on E9, not on O-06.** See `docs/decisions/2026-10-30-runtime-decision-o06-cloudflare.md` | E3 cannot start implementation without an architecture, and **Play Billing verification (S8) needs a deployable backend** — **both unblocked on the runtime as of 2026-10-30** | E3, S8, ADR |
 | O-10 | Deletion retention (scope settled by Q44) | Q44 requires **full deletion** of the profile with **no anonymized substitute**, deferred from V1 by Q6. What survives a deletion for integrity (RP ledger, idempotency keys) and for how long still has no ruling | No V1 work while deletion is deferred, but the Data safety form must not describe a deletion behaviour the owner has not chosen | Post-V1 deletion work; store form |
 | O-11 | RP scaling rates | **The four base values are final (Q45): King +30, Second +15, Third −8, Koz −20.** The Mini multiplier and the tier-band scaling rates stay tunable pending a balance pass (RD4) | Ranked can ship on the base values; a later balance pass changes rates, not the four values | E2.9 follow-up, G3 |
 | O-12 | Voice provider, protocol and cost | Voice is **in V1 for Rooms and the Waiting Room and never in Ranked (Q42)**. No vendor, transport, moderation model, microphone-permission policy or hourly cost exists; Spark cannot host a media relay | A V1-scope feature with no design, no estimate and no provider; it is excluded from the 1,626–2,812 h baseline | E7 design, E8, release |

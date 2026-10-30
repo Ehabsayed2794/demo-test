@@ -20,6 +20,17 @@ Branch `stage0/e5-capacity-model`, base `64bd2e9` (main after PR #189).
 > recalculate for the WebSocket + server-side-bot design across the three target scenarios, and
 > label every input measured, modelled, unknown, or needing a real Cloudflare experiment
 > (record §8).
+>
+> **Addendum, 2026-10-30 (E7b measured the rows-per-write multiplier; the sections below are left
+> verbatim).** The **×2 bound** carried in §3.3 is now **measured** and is **a schema choice, not a
+> platform precaution**: a Durable Object write costs **1 row written** on a plain rowid table, on
+> a `WITHOUT ROWID` table with `PRIMARY KEY (match_id, seq)`, and on a single-row upsert, but
+> **2 rows written** when the table carries a **second index** — a composite `PRIMARY KEY` on an
+> ordinary rowid table, an explicit secondary index, or a `UNIQUE` constraint. **A LOCAL COUNT IS
+> NOT PROOF OF WHAT CLOUDFARE BILLS** — the dashboard-vs-local comparison is **[x]**, a
+> real-account question to be run **with the owner's approval** (E12-a in
+> `docs/implementation/Stage0_E7b_DO_Rows_Report.md` §9). The ×2 is **not withdrawn**; it becomes
+> conditional on the schema the P3 design picks (**D-E7-7** in the E7 report).
 
 ## 1. What the experiment is
 
@@ -143,6 +154,51 @@ constant on top, which is exactly what E6's synthetic workload will exercise end
 | Rows read per match | ≈ 1,135 | 1 state-row read per request + settlement reads (budget 5M/day — never binding) |
 | State size per persist | ≤ 5.5 KB | Measured upper bound: the rendered match document (mean 5,488 / max 5,514 chars, identical on both runtimes) |
 
+> **Pointer, 2026-10-30 (E7b measured the rows-per-write multiplier; the table above is left
+> verbatim).** The **×2 bound** in the "Rows written per match" row is now **measured**, and it is
+> **a schema choice, not a platform precaution**. E7b wrote one FULL match's worth of events
+> (**428** writes) into six Durable Object table shapes and read the DO SQL cursor's own
+> `rowsWritten`:
+>
+> | Rows written per write | Designs | Rows per match |
+> |---|---|---|
+> | **×1** | **V1** — a rowid table with no secondary index; **V3** — `WITHOUT ROWID` with `PRIMARY KEY (match_id, seq)`; **V6** — one state row updated in place | **428** |
+> | **×2** | **V2** — the same composite `PRIMARY KEY` on an **ordinary rowid** table; **V4** — an explicit **secondary index**; **V5** — a `UNIQUE` constraint | **856** |
+>
+> **The cause is a second index.** A composite `PRIMARY KEY` on an ordinary rowid table is
+> implemented as a separate UNIQUE index, and each index entry is a second written row. A
+> `WITHOUT ROWID` table keeps the **same unique key** at **×1**. **Payload size does not change
+> the row count** (100 / 300 / 1,000 B all report the same `rowsWritten`), and **neither does
+> batching** (one statement, chunks, 428 separate statements, or `transactionSync`).
+>
+> **A LOCAL COUNT IS NOT PROOF OF WHAT CLOUDFARE BILLS** — whether Cloudflare's metered
+> rows-written matches the local cursor is **[x]**, a real-account question (E12-a in the E7b
+> report's add-on, **with the owner's approval**).
+>
+> **The figures in this section are left verbatim.** The ×2 bound is **not** withdrawn; it becomes
+> **conditional on the schema** the P3 design picks (**D-E7-7** in the E7 report). Report:
+> `docs/implementation/Stage0_E7b_DO_Rows_Report.md`.
+>
+> **Pointer, 2026-10-30 (E12-a measured the ×2 ON CLOUDFLARE — the "not proof" line above is
+> superseded on the write axis).** E12-a ran on the owner's **throwaway** Cloudflare account (Free
+> plan, **no subscriptions, no billing**) and read **Cloudflare's own metered counter** for the
+> same Durable Object instances: **V1 = 428 rows billed for 428 inserts (×1)**, **V2 = 856 rows
+> billed for 428 inserts (×2)** — **exactly** the DO's own cursor counts. So the **×2 is what
+> Cloudflare bills for the V2-shaped schema**, and the factor behind the §3.3 row is now
+> **confirmed rather than carried**. **The measurement is on the per-Trick axis** — 428 writes per
+> match = 234 trick checkpoints + 193.9 auction actions, the ruled persistence design — so the
+> §5 per-trick row now reads **428 (856)**: at 100 / 125 / 150 matches/day that is **42.8% /
+> 53.5% / 64.2%** under an ×1 shape and **85.6% / 107% / 128%** under the ×2 shape. **The
+> "per-action durability" row in §4 is a different axis and is NOT measured** — it stays at
+> 1,135 (×2: 2,270) as a model figure, and E9 decides whether that axis applies at all.
+> **V3 (`WITHOUT ROWID`) is still [x]** — it has not been measured on the platform.
+> **The read row above is NOT confirmed**: Cloudflare counted **430 rows read** where
+> the DO's cursor reported **0** (the platform meter counts a read per write; the local cursor
+> does not), so the "Rows read per match ≈ 1,135" figure may be low by ~428 per match — far
+> inside the 5,000,000/day budget, so **not** a capacity blocker, but a **correctness** item with
+> its own step. The table above and the capacity table in §4 are **left verbatim**. Report:
+> `docs/implementation/Stage0_E12a_Platform_Rows_Report.md`.
+
 ## 4. The capacity table
 
 Free-tier limits verified against Cloudflare's docs on 2026-10-29: Workers — 100,000 requests/day,
@@ -163,6 +219,33 @@ Capacity = floor(limit ÷ per-match cost), at 100% and at the 90% G5 asks for:
 | CPU per request | 0.067 ms worst | 10 ms | not binding | — |
 | DO duration | — | 13,000 GB-s | E12's question (hibernation) | — |
 | D1 / DO storage | ≤ 5.5 KB/snapshot | 5 GB | E10's question (retention) | — |
+
+> **Pointer, 2026-10-30 (E7 measured the settlement write protocol; the rows above are left
+> verbatim).** The **"D1 rows written (settlement only) = 5"** row and the **"Settlement per match
+> = 5 rows"** row are **not a protocol figure** — they are the ledger's **table** rows (1
+> match-result row + 4 RP rows), and they exclude two things the protocol actually writes:
+> the **intent queue** (insert + ack + cleanup delete) and the **backup copy**. E7 measured the
+> whole settlement protocol against a local D1, from D1's own `meta.rows_written` — which counts
+> **table rows and index rows**: **RP 10 + OUTBOX 5 + RP_BACKUP 10.4 = 25.4 rows per match** at a
+> 5-match backup cadence (**29** backing up every match), against the **5** above. The effect on
+> this table's D1 row: **2,540 / 3,175 / 3,810 rows/day at 100 / 125 / 150 matches/day —
+> 2.54% / 3.175% / 3.81% of the 100,000/day limit** — so **this axis is still not the binding
+> meter** (E6's binding meter is DO rows written at 1.6–2.3×), but the **ceiling on this axis
+> falls from 18,000 to 3,543 matches/day** at the 90% guardrail. **Modelled, not measured on
+> Cloudflare:** the local D1's `rows_written` semantics and the Free plan's enforcement are
+> **[x] — a real Cloudflare account**. Report:
+> `docs/implementation/Stage0_E7_Backup_Outbox_Report.md` §10 (pending owner decision D-E7-3:
+> which figure the model carries, and whether the three stores are three databases or one).
+>
+> **Pointer, 2026-10-30 (the owner ruled the cadence — the model now carries 27, not 25.4).**
+> **D-E7-1 is decided**: the backup runs after **every** settlement
+> (`docs/decisions/2026-10-30-cadence-quota-and-e12-preparation.md` §2), so the protocol figure
+> is **RP 10 + OUTBOX 5 + RP_BACKUP 12 = 27 rows per match**. The D1 row of §4 therefore reads
+> **2,700 / 3,375 / 4,050 rows/day — 2.70% / 3.375% / 4.05%** at 100 / 125 / 150 matches/day, and
+> the **ceiling on this axis falls from 3,543 to 3,333 matches/day** at the 90% guardrail
+> (**3,703** at the hard limit). The **5-row line and the 25.4 paragraph above are left
+> verbatim** — 25.4 remains the measured cadence-5 alternative, not the policy. The axis is
+> **still not the binding meter**, and the **[x] real-account caveat is unchanged**.
 
 ## 5. The finding
 
@@ -234,3 +317,20 @@ curl "http://127.0.0.1:8974/?what=capacity&first=1&count=50&gt=FULL&sm=NORMAL" \
    binds (~88/day) or not (~1,500/day); E12 confirms the free-plan WS metering.
 4. **O-06 itself** — unchanged: this model is evidence, not a decision. The ADR slot stays open
    until E6–E13 give it the rest of its inputs.
+
+> **POINTER NOTE (2026-10-30 — all four are answered; the list above is left verbatim).**
+> **(1) The target** is **80 completed matches/day** with a **refusal ceiling of 88/day** (the
+> 100/125/150 range is superseded). **(2) The durability granularity** is still conditional on
+> **E9** — the one item here that is *not* closed. **(3) The transport** is **WebSocket, plain
+> (always-awake)**: the free plan bills **1 inbound message = 1 DO request under hibernation** and
+> **0 under the plain API**, and an open match costs **0.128 GB·s per second**. **(4) O-06 is
+> DECIDED — Cloudflare** (`docs/adr/0003-runtime-choice.md`,
+> `docs/decisions/2026-10-30-runtime-decision-o06-cloudflare.md`).
+>
+> **What this model's numbers become:** at the ruled design the **measured** platform cost is
+> **428 DO rows** (×1 shape) and **115.2 GB·s** per 15-minute match, so **duration is the binding
+> meter** — **112 matches/day** hard, **101** at the 90% guardrail — and the per-action rows axis
+> this report modelled (1,135/match) is **not the design** (E9 decides whether any per-action log
+> is needed). Measurements: `Stage0_E12a_Platform_Rows_Report.md` §7,
+> `Stage0_E12d_e_c_Platform_Meters_Report.md` §10. The request axis E5 called binding (~88/day under
+> per-action HTTP) **does not bind under WebSocket + per-Trick**: ≈ 7 DO requests per match.
