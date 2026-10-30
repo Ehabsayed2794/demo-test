@@ -245,6 +245,15 @@ be run without the owner's explicit approval.** It requires creating a **throwaw
 Free account** and deploying a **throwaway Worker + DO** to it. It touches the owner's account
 and consumes that account's quota, which is exactly what the current brief forbids.
 
+> **POINTER NOTE (2026-10-30 — the preparation is approved; every step is still gated).** The
+> owner ruled on 2026-10-30 that **preparing** E12 is approved (a **throwaway** Free account, **no
+> real data**, the steps **one at a time, each approved before it runs**), and that **no
+> real-account step may start before the owner confirms it**. The **step-by-step approval
+> checklist is §4 of `docs/decisions/2026-10-30-cadence-quota-and-e12-preparation.md`** (the
+> one-page Arabic version is in that record). **Nothing has been run**: no account exists, no
+> worker has been written for E12, and no network call to Cloudflare has been made. The body
+> below is unchanged.
+
 **E12-a — does the local counter equal the billed rows? [x]**
 Deploy one DO with the **V1** and **V2** schemas on a throwaway account. Write exactly **428
 single-row events** into each. Read the account's **dashboard rows-written** counter before and

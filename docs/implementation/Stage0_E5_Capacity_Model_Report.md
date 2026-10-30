@@ -216,6 +216,16 @@ Capacity = floor(limit ÷ per-match cost), at 100% and at the 90% G5 asks for:
 > **[x] — a real Cloudflare account**. Report:
 > `docs/implementation/Stage0_E7_Backup_Outbox_Report.md` §10 (pending owner decision D-E7-3:
 > which figure the model carries, and whether the three stores are three databases or one).
+>
+> **Pointer, 2026-10-30 (the owner ruled the cadence — the model now carries 27, not 25.4).**
+> **D-E7-1 is decided**: the backup runs after **every** settlement
+> (`docs/decisions/2026-10-30-cadence-quota-and-e12-preparation.md` §2), so the protocol figure
+> is **RP 10 + OUTBOX 5 + RP_BACKUP 12 = 27 rows per match**. The D1 row of §4 therefore reads
+> **2,700 / 3,375 / 4,050 rows/day — 2.70% / 3.375% / 4.05%** at 100 / 125 / 150 matches/day, and
+> the **ceiling on this axis falls from 3,543 to 3,333 matches/day** at the 90% guardrail
+> (**3,703** at the hard limit). The **5-row line and the 25.4 paragraph above are left
+> verbatim** — 25.4 remains the measured cadence-5 alternative, not the policy. The axis is
+> **still not the binding meter**, and the **[x] real-account caveat is unchanged**.
 
 ## 5. The finding
 

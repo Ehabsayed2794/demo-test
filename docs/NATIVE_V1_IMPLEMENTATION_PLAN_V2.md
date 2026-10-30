@@ -1097,6 +1097,16 @@ defines what would count as a result; it does not report one.
 > converted into an abandoned match (the existing Q27(3) / Q27c rules already separate the two
 > cases — E7 changes no ruling), **D-E7-5** whether the local evidence closes the E7 row or a
 > real-Cloudflare leg is required first.
+>
+> **POINTER NOTE (2026-10-30, owner rulings).** **D-E7-1 is DECIDED** — the production backup
+> cadence is **every settlement** (N = 1) — and **D-E7-4 is CONFIRMED**: at the 90% guardrail the
+> system **refuses new matches and never cancels a running one**. The protocol figure the
+> capacity model therefore carries is **27 rows per match** (RP 10 + OUTBOX 5 + RP_BACKUP 12),
+> and the settlement-axis ceiling becomes **3,333 matches/day at the 90% guardrail / 3,703 at the
+> hard limit**. The **25.4 / 3,543 figures above are left verbatim** — they are the measured
+> cadence-5 alternative. Record:
+> `docs/decisions/2026-10-30-cadence-quota-and-e12-preparation.md`. **D-E7-2, D-E7-3 (the
+> three-databases-or-one half), D-E7-5, D-E7-6 and D-E7-7 stay open**, and **O-06 stays open**.
 
 | ID | Experiment | Question answered | Method | Pass / decision criterion | Blocks |
 |---|---|---|---|---|---|

@@ -218,6 +218,17 @@ measurement**. At the ×2 bound: 85,584 / 106,980 / 128,376 rows → **85.6% / 1
 > the steady-state figure and is **unchanged**. Measured directly at cadences 1 / 5 / 10
 > (backup job rows per run 14/12, 54/52, 104/102; coverage 98.33% / 91.67% / 83.33%).
 > Report: `docs/implementation/Stage0_E7_Backup_Outbox_Report.md` §8.1 and §10.4.
+>
+> **Pointer, 2026-10-30 (the owner ruled the cadence — the model now carries 27, not 25.4).**
+> **D-E7-1 is decided**: the backup runs after **every** settlement
+> (`docs/decisions/2026-10-30-cadence-quota-and-e12-preparation.md` §2), so the protocol figure
+> is **RP 10 + OUTBOX 5 + RP_BACKUP 12 = 27 rows per settlement**, and the D1 axis reads
+> **2,700 / 3,375 / 4,050 rows/day — 2.70% / 3.375% / 4.05%** at 100 / 125 / 150 matches/day. The
+> **ceiling on this axis is 3,333 matches/day at the 90% guardrail** (**3,703** at the hard limit),
+> not 3,543 / 3,937. **The verdict of this report does not change**: the D1 axis is still not the
+> binding meter (DO rows written is, at 42.8% / 53.5% / 64.2%). The **25.4 / 29 figures above
+> are left verbatim** — they are the measured cadence-5 alternative and the superseded first-run
+> figure. The **[x] real-account caveat is unchanged**.
 
 ### 5.1 PASS/overrun thresholds at both bases (review item 2)
 

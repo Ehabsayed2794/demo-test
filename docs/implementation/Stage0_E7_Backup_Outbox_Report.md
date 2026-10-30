@@ -24,6 +24,16 @@ external quota, no merge, no PR.
 > **E7b** (`Stage0_E7b_DO_Rows_Report.md`) measures the Durable Object's rows-written per write
 > and is the source of the ×2 explanation. **No earlier figure was silently rewritten** — §10.4
 > carries the old → new log.
+>
+> **POINTER NOTE (2026-10-30, owner rulings).** After the measurements above, the owner ruled on
+> the three open questions this report carried. The record is
+> `docs/decisions/2026-10-30-cadence-quota-and-e12-preparation.md`:
+> **D-E7-1 is DECIDED — the backup cadence is every settlement (N = 1)**, which fixes the protocol
+> figure the capacity model carries at **27 rows/settlement** (not 25.4) and the settlement-axis
+> ceiling at **3,333 matches/day at the 90% guardrail / 3,703 at the hard limit** (§8.1, §10,
+> §10.4). The 90% behaviour is also ruled (**refuse new matches, never cancel running ones**).
+> **No earlier figure was silently rewritten** — §10.4 carries the old → new log, and the
+> earlier bodies are left verbatim.
 
 **Labels used throughout:** **[M] measured** (on this machine, against a local D1) ·
 **[m] modelled** (an assumption, stated) · **[u] unknown** · **[x] needs a real Cloudflare
@@ -427,6 +437,13 @@ same volume. On this battery only cadences 1 and 5 clear 90%; cadence 10 does no
 of protocol work changes that — it is arithmetic on N and M. **Which cadence production uses is
 D-E7-1 (§15) and this report does not choose it.**
 
+> **POINTER NOTE (2026-10-30 — D-E7-1 is DECIDED).** The owner chose **cadence N = 1: the backup
+> runs after every settlement** (`docs/decisions/2026-10-30-cadence-quota-and-e12-preparation.md`
+> §2). The table above is unchanged and remains the measurement; the *chosen* row is the **first**
+> one: **98.33% coverage**, **12.0** backup rows per match, **27.00** rows per settlement for the
+> whole protocol. The cadence-5 row (91.67% / 10.4 / 25.40) stays in this report as the
+> measured alternative, not as the policy.
+
 ## 9. The restore-point rule
 
 > **The rule.** RP publishes its maximum `outbox_seq` as the **restore point**. After a disaster
@@ -466,6 +483,11 @@ Measured from D1's own `meta.rows_written` (**[M]** on the local D1):
 | **per settlement, total** | | | **25.4** |
 | **per settlement, total, backing up every match** | 10 | 12 | 5 → **27** |
 
+> **POINTER NOTE (2026-10-30 — the figure the model carries).** The owner ruled the cadence to
+> **every settlement** (D-E7-1, §8.1), so **27 rows/settlement is the figure the capacity model
+> carries** and the 25.4 row above is the *measured cadence-5 alternative*, kept for the record.
+> The table is left verbatim; the old → new log is in §10.4.
+
 **Why the E5 figure of 5 rows/match understates it.** D1's `rows_written` counts **table rows and
 index rows**. The E5 figure counted the **5 table rows** of the settlement (1 match-result row +
 4 RP ledger rows) and nothing else: it did not count the index rows D1 bills for, the intent
@@ -482,6 +504,12 @@ database):
 | 150 | 750 rows — 0.75% | **3,810 rows — 3.81%** | 3.81% |
 
 (The percentages are exact — 25.4 × matches/day ÷ 100,000 — and are not rounded.)
+
+> **POINTER NOTE (2026-10-30 — at the chosen cadence the row is 4,050, not 3,810).** The table
+> above is the **cadence-5** measurement, left verbatim. At the ruled cadence (**every
+> settlement**, 27 rows/settlement) the same three days read **2,700 rows — 2.70%** at 100
+> matches/day, **3,375 — 3.375%** at 125 and **4,050 — 4.05%** at 150. The axis is **still far
+> from binding**; only the number moves.
 
 ### 10.2 The settlement ceiling, at both bases
 
@@ -509,6 +537,19 @@ binding meter is DO rows written at 1.6–2.3× headroom, while the settlement a
 binds. What changes is the **number** the capacity model must carry, and the implied ceiling on
 this axis (3,543 matches/day at the 90% guardrail, 3,937 at the hard limit — not 18,000).
 
+> **POINTER NOTE (2026-10-30 — the ceiling at the ruled cadence is 3,333 / 3,703).** The ceiling
+> above is computed on the **cadence-5** figure (25.4) and is left verbatim. The owner ruled the
+> cadence to **every settlement** (D-E7-1), so the **figure the model now carries is 27
+> rows/settlement**, and the ceiling on this axis becomes:
+>
+> | Base | Rows available | **Ceiling at 27 rows/settlement** |
+> |---|---|---|
+> | **the 90% guardrail** | 90,000 rows/day ÷ 27 | **floor(90,000 / 27) = 3,333 matches/day** |
+> | **100%** (the hard D1 Free limit) | 100,000 rows/day ÷ 27 | **floor(100,000 / 27) = 3,703 matches/day** |
+>
+> The **caveat below is unchanged and still binds**: these are **local-counter** ceilings, not
+> Cloudflare ceilings — **Cloudflare's billing equivalence is UNVERIFIED [x]**.
+
 ### 10.3 Two readings of the limit [m] — and the plan does not settle which one applies
 
 - **three separate D1 databases** (RP, RP_BACKUP, OUTBOX): each has its own 100,000/day limit, so
@@ -530,6 +571,8 @@ No earlier figure was silently rewritten. This is the log.
 | **Backup rows per match, cadence 1** | "14" (§8's closing line) | **12.0** steady state | Same cause. The old sentence quoted the first-run cost. |
 | **Backup job rows per run** | not measured per cadence | **14 / 12 · 54 / 52 · 104 / 102** (cadence 1 / 5 / 10) | Now measured, with the first-run vs steady-state split stated (§8.1). |
 | **The ×2 rows allowance** (E5/E6) | "conservative ×2, unexplained" | **explained**: it is caused by a **second index** (a composite `PRIMARY KEY` on an ordinary rowid table, or an explicit secondary index, or a `UNIQUE` constraint) | Measured in E7b (`Stage0_E7b_DO_Rows_Report.md`): V1 = ×1, V2 = ×2, V3 = ×1, V4 = ×2, V5 = ×2, V6 = ×1. Pointers added to the E5/E6 reports; the earlier figures are left in place with the pointer. |
+| **The figure the capacity model carries** | **25.4** rows/settlement (cadence 5 — a candidate) | **27** rows/settlement (cadence 1 — the owner's decision) | **D-E7-1 decided 2026-10-30**: the backup runs after **every** settlement. §10.1, §10.2 and §8.1 carry the pointer; the old bodies stay verbatim. |
+| **The settlement-axis ceiling** | 3,543 matches/day at 90% · 3,937 at 100% (on 25.4) | **3,333** at 90% · **3,703** at 100% (on 27) | Same ruling. `floor(90,000 / 27)` and `floor(100,000 / 27)`. Still **local-counter** figures — Cloudflare's billing equivalence stays **[x] unverified**. |
 
 ## 11. The 60 s all-humans-gone rule vs the quota/outage exemption
 
@@ -648,10 +691,10 @@ which §4 shows is not necessary.
 
 | ID | The question | Why it needs the owner |
 |---|---|---|
-| **D-E7-1** | **What backup cadence** does the ≥90% coverage target mean in production? | The coverage is 1 − N/M, so the cadence must be chosen against the observed volume (§8). E7 measured the mechanism, not the policy. §8.1 now measures cadences 1, 5 and 10 directly: 98.33% / 91.67% / 83.33% coverage at 12.0 / 10.4 / 10.2 backup rows per match. |
+| **D-E7-1** | **DECIDED 2026-10-30 — the backup cadence is every settlement (N = 1).** | The coverage is 1 − N/M, so the cadence must be chosen against the observed volume (§8). E7 measured the mechanism, not the policy. §8.1 now measures cadences 1, 5 and 10 directly: 98.33% / 91.67% / 83.33% coverage at 12.0 / 10.4 / 10.2 backup rows per match. **The owner chose cadence 1** — `docs/decisions/2026-10-30-cadence-quota-and-e12-preparation.md` §2. **Closed.** |
 | **D-E7-2** | **Where must the intent queue live** — a separate store/region, or re-derivable from the match log? | S7's requirement; the plan already flags that no quota-isolated secondary exists (ruling F). **§5 now records a third possibility: the outbox may not need a separate provider at all if the intent is re-derivable from the action log (the correct-and-settle design) — that is [u] unproven and E9 must test it.** |
-| **D-E7-3** | **Which protocol figure does the capacity model carry** — 25.4 rows/match (cadence 5) or 27 (every match)? And are the three stores three D1 databases or one? | §10; it changes the ceiling on the settlement axis (3,543 matches/day at the 90% guardrail, 3,937 at the hard limit, not 18,000) and the reading of the limit. **The figure for "every match" is corrected from 29 to 27 (§10.4).** |
-| **D-E7-4** | **Confirm** that a quota/write failure is never converted into an abandoned match (no charge, intent retained, settlement applied later). | §11; the existing rulings (Q27(3), Q27c) already separate the two cases — E7 changes nothing and asks only for confirmation. |
+| **D-E7-3** | **Which protocol figure does the capacity model carry** — 25.4 rows/match (cadence 5) or 27 (every match)? And are the three stores three D1 databases or one? | §10; it changes the ceiling on the settlement axis (3,543 matches/day at the 90% guardrail, 3,937 at the hard limit, not 18,000) and the reading of the limit. **The figure for "every match" is corrected from 29 to 27 (§10.4).** **Partly closed 2026-10-30:** the owner ruled the cadence to every settlement, so the model carries **27 rows/settlement** and the ceiling is **3,333 @ 90% / 3,703 @ 100%** (§10.2). **Still open: three D1 databases or one** (the limit's reading, §10.3) — and note the ceiling stays a **local-counter** figure until a real account confirms the billing equivalence **[x]**. |
+| **D-E7-4** | **CONFIRMED 2026-10-30** — a quota/write failure is never converted into an abandoned match (no charge, intent retained, settlement applied later). | §11; the existing rulings (Q27(3), Q27c) already separate the two cases — E7 changes nothing. The owner's ruling of 2026-10-30 states it explicitly: **at 90% the system refuses new matches and never cancels a running one** (`docs/decisions/2026-10-30-cadence-quota-and-e12-preparation.md` §3). **Closed.** |
 | **D-E7-5** | **Is the local E7 evidence enough to close the E7 row**, or is a real-Cloudflare E7 leg required first? | §12; O-06 stays open either way, and M3's "exactly-once and recovery evidence" spans E7 + E9. |
 | **D-E7-6** | **Who holds a settlement intent while every durable store refuses the write** — the match authority, the client, or neither? And how long is it held? | §4 (S6b). The architecture does not name a holder for this case; E7b cannot decide it. It is the same requirement as the ruling *"keep the result pending until persistence is confirmed"* — the pending state is real, but its holder is not designed yet. |
 | **D-E7-7** | **Which DO row layout** does the Ranked match DO use — and does the capacity model keep the ×2 allowance or drop it? | E7b measures the factor as a **schema choice** (§14.12): ×1 for a plain rowid table / `WITHOUT ROWID` / single-row upsert, ×2 for a composite `PRIMARY KEY` / secondary index / `UNIQUE`. **This is a local count, not proof of what Cloudflare bills** — the E12 add-on in `Stage0_E7b_DO_Rows_Report.md` lists what a throwaway Free account must confirm, **with the owner's approval**. |
@@ -719,3 +762,19 @@ WebSocket (20:1) وطلبات الـ Worker، ومدة الـ GB-s والhiberna
 Report: docs/implementation/Stage0_E7_Backup_Outbox_Report.md
 Report: docs/implementation/Stage0_E7b_DO_Rows_Report.md
 ```
+
+> **POINTER NOTE (2026-10-30, the owner's three rulings — see the one-page Arabic checklist in
+> `docs/decisions/2026-10-30-cadence-quota-and-e12-preparation.md` §4).**
+>
+> ```
+> قرارات المالك (2026-10-30):
+> 1. تجهيز تجربة E12 على حساب مؤقت اتapproved - مفيش بيانات حقيقية، وكل خطوة لوحدها
+>    بموافقتك. مفيش أي خطوة اتنفّذت لحد دلوقتي.
+> 2. الـ backup cadence = بعد كل تسوية (مش 5 ولا 10). ده اختار النسبة 98.33% تغطية
+>    بدل 91.67%، وكلفة 27 سطر لكل تسوية بدل 25.4، وسقف التسويات 3,333 مباراة في اليوم
+>    عند حد الـ 90% (و3,703 عند 100%) بدل 3,543 / 3,937.
+> 3. عند 90% من الكوتا: نرفض مباريات جديدة، ومانلغيش أي مباراة شغالة.
+>
+> يعني D-E7-1 اتقفل، وD-E7-4 اتأكد. لسه مفتوح: D-E7-2، D-E7-3 (نصها الثاني: تلات
+> قواعد بيانات ولا واحدة)، D-E7-5، D-E7-6، D-E7-7. وO-06 لسه مفتوح.
+> ```

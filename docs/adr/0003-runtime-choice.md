@@ -246,6 +246,16 @@ Two figures the capacity model must now carry, both stated rather than silently 
 > (D-E7-5). All five are **listed, not decided**
 > (`docs/implementation/Stage0_E7_Backup_Outbox_Report.md` §15).
 
+> **POINTER NOTE (2026-10-30, owner rulings).** Two of the five slots are now filled:
+> **D-E7-1 is DECIDED** — the production backup cadence is **every settlement** (N = 1) — and
+> **D-E7-4 is CONFIRMED**: at the 90% guardrail the system **refuses new matches and never
+> cancels a running one**, so a quota or write failure is never converted into an abandoned
+> match. The protocol figure is therefore **27 rows per match** and the settlement-axis ceiling
+> **3,333 matches/day at 90% / 3,703 at the hard limit** (the 25.4 / 3,543 figures above are the
+> measured cadence-5 alternative, left verbatim). Record:
+> `docs/decisions/2026-10-30-cadence-quota-and-e12-preparation.md`. **D-E7-2, D-E7-3, D-E7-5,
+> D-E7-6 and D-E7-7 stay open, and this ADR stays PROPOSED — O-06 is not closed.**
+
 > **What this does NOT settle.** A local D1 does not measure Cloudflare behaviour: the real
 > metering, the real atomicity, a real quota event and a real Free-plan enforcement are all
 > **[x] — a real Cloudflare account**. The independent quota-isolated secondary server **does not
