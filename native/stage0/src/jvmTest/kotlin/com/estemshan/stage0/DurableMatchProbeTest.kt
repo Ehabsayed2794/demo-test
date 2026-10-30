@@ -1,0 +1,372 @@
+package com.estemshan.stage0
+
+import com.estemshan.engine.Card
+import com.estemshan.engine.GameType
+import com.estemshan.engine.Play
+import com.estemshan.engine.ScoringMode
+import com.estemshan.engine.TablePhase
+import com.estemshan.engine.legalCards
+import java.io.File
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertNotEquals
+import kotlin.test.assertTrue
+
+/**
+ * E9, stage 1 — the durable match on the JVM, no store and no runtime.
+ *
+ * What this file has to prove before any Worker exists:
+ *
+ *  - the durable path is the SAME match `playMatch` already pins (so the
+ *    record-producing driver did not fork the game);
+ *  - a restart fed the stored rows alone lands on byte-identical state at
+ *    every prefix — including mid-round, mid-auction, and on the last trick;
+ *  - a unit retried after "record written, ack lost" (boundary 2) is
+ *    recognised from the head row and writes nothing;
+ *  - a unit retried after "crash before the record" (boundary 1) is applied
+ *    and produces the same record the killed process would have written;
+ *  - an interrupted Trick leaves no row and re-drives, and a different
+ *    client choice thereafter is carried by the log, not re-derived.
+ *
+ * Every assertion here reads state that the durable path produced — the
+ * record list or `stateDocument()` — never a value returned by an in-flight
+ * call that might not have been committed.
+ */
+class DurableMatchProbeTest {
+
+  private val combos = listOf(
+    GameType.FULL to ScoringMode.NORMAL,
+    GameType.FULL to ScoringMode.CLASSIC,
+    GameType.MINI to ScoringMode.NORMAL,
+    GameType.MINI to ScoringMode.CLASSIC,
+  )
+
+  private val seeds = listOf(42, 7, 1)
+
+  /** A full match driven through the durable driver, with the artefacts every
+   *  later test compares against. */
+  private class Driven(
+    val match: DurableMatch,
+    val records: List<String>,
+    /** The step that produced each record, in order. */
+    val producers: List<E9Step>,
+    /** `docs[k]` is the state after exactly k records; `docs[0]` is the start. */
+    val docs: List<String>,
+  )
+
+  private fun drive(
+    seed: Int,
+    gameType: GameType = GameType.FULL,
+    scoringMode: ScoringMode = ScoringMode.NORMAL,
+  ): Driven {
+    val m = DurableMatch.start(seed, gameType, scoringMode)
+    val records = ArrayList<String>()
+    val producers = ArrayList<E9Step>()
+    val docs = ArrayList<String>()
+    docs += m.stateDocument()
+    while (true) {
+      val step = m.nextStep()
+      if (step is E9Step.Done) break
+      when (val r = m.submit(step)) {
+        is E9Submit.Applied -> {
+          val record = r.record
+          if (record != null) {
+            records += record
+            producers += step
+            docs += m.stateDocument()
+          }
+        }
+        else -> error("live path refused a legal step: $r")
+      }
+    }
+    check(m.isComplete()) { "match did not complete" }
+    check(docs.size == records.size + 1) { "a page of state went missing" }
+    return Driven(m, records, producers, docs)
+  }
+
+  // ── 1. the durable path is the same match ─────────────────────────
+
+  @Test
+  fun durablePathMatchesPlayMatch() {
+    for ((gameType, scoringMode) in combos) {
+      for (seed in seeds) {
+        val driven = drive(seed, gameType, scoringMode)
+        assertEquals(
+          playMatch(seed, gameType, scoringMode),
+          driven.match.completedRun(),
+          "durable run diverged from playMatch at seed $seed ($gameType/$scoringMode)",
+        )
+      }
+    }
+  }
+
+  // ── 2. restart at every prefix, from the rows alone ───────────────
+
+  @Test
+  fun everyPrefixReplaysToByteIdenticalState() {
+    val driven = drive(42)
+    assertTrue(driven.records.size > 400, "expected a full NFL match's record count, got ${driven.records.size}")
+
+    for (k in driven.records.indices) {
+      val replayed = DurableMatch.replay(
+        driven.records.subList(0, k + 1).joinToString("\n"),
+        seed = 42,
+      )
+      assertEquals(k + 1, replayed.recordsApplied, "restart at prefix ${k + 1} lost a unit")
+      assertEquals(
+        driven.docs[k + 1],
+        replayed.stateDocument(),
+        "restart at prefix ${k + 1} (${driven.records[k]}) diverged",
+      )
+    }
+  }
+
+  // ── 3. the record shape the capacity model needs ──────────────────
+
+  @Test
+  fun oneRowPerAuctionActionAndOnePerTrick() {
+    val driven = drive(42)
+    val parsed = driven.records.map(::parseRecord)
+    val rounds = driven.match.completedRun().rounds.size
+    val tricks = parsed.filterIsInstance<E9Record.TrickUnit>()
+    val bids = parsed.filterIsInstance<E9Record.BidUnit>()
+
+    assertEquals(rounds * 13, tricks.size, "a Trick must own exactly one row")
+    assertEquals(driven.records.size, tricks.size + bids.size)
+
+    // seq is dense, equals the row id, and the natural position is inside
+    // the same row: there is no second key write to lose.
+    parsed.forEachIndexed { i, r ->
+      assertEquals(i + 1, r.seq, "seq must be the row id")
+      assertEquals(r.seq, parseRecord(driven.records[i]).seq)
+    }
+
+    // Per round: bids come first (1..n), then tricks (1..13), both dense.
+    val perRound = parsed.groupBy { it.key.round }
+    for ((round, units) in perRound) {
+      val rBids = units.filterIsInstance<E9Record.BidUnit>().map { it.key.index }
+      val rTricks = units.filterIsInstance<E9Record.TrickUnit>().map { it.key.index }
+      assertEquals(13, rTricks.size, "round $round has ${rTricks.size} trick rows")
+      assertEquals((1..13).toList(), rTricks, "round $round trick indexes are not dense")
+      assertEquals((1..rBids.size).toList(), rBids, "round $round bid indexes are not dense")
+    }
+
+    // The report quotes this number; it is the measured half of 428/match.
+    println("E9 record shape seed 42: rows=${driven.records.size} tricks=${tricks.size} bids=${bids.size} rounds=$rounds")
+
+    // The workerd leg's reference: same seed, same record text, same digest.
+    val out = File("build/stage0-parity").apply { mkdirs() }
+    File(out, "e9-seed42.log").writeText(driven.records.joinToString("\n"))
+    File(out, "e9-seed42.digest").writeText(driven.match.stateDigest())
+  }
+
+  /** The number the capacity model quotes. E7's model is 428/match
+   *  (234 trick checkpoints + 193.9 auction actions); this measures the same
+   *  two quantities on the E9 record shape, per seed, and never adjusts them. */
+  @Test
+  fun rowCountsAcrossSeeds() {
+    val totals = ArrayList<Int>()
+    for (seed in listOf(1, 7, 42, 99, 123, 777, 1001, 1994, 5000, 12345)) {
+      val d = drive(seed)
+      val tricks = d.records.count { it.startsWith("T;") }
+      val bids = d.records.count { it.startsWith("B;") }
+      assertEquals(234, tricks, "a FULL match is 18 rounds x 13 tricks")
+      assertEquals(d.records.size, tricks + bids)
+      totals += d.records.size
+      println("E9 rows seed $seed: total=${d.records.size} tricks=$tricks bids=$bids")
+    }
+    println(
+      "E9 FULL/NORMAL rows/match over ${totals.size} seeds: " +
+        "min=${totals.min()} max=${totals.max()} avg=${(totals.sum().toDouble() / totals.size)}",
+    )
+
+    val mini = drive(42, GameType.MINI, ScoringMode.NORMAL)
+    val miniTricks = mini.records.count { it.startsWith("T;") }
+    val miniBids = mini.records.count { it.startsWith("B;") }
+    assertEquals(130, miniTricks, "a MINI match is 10 rounds x 13 tricks")
+    println("E9 rows MINI seed 42: total=${mini.records.size} tricks=$miniTricks bids=$miniBids")
+  }
+
+  // ── 4. boundaries 1 and 2 at every unit boundary ──────────────────
+
+  @Test
+  fun everyUnitBoundaryIsIdempotent() {
+    val driven = drive(42)
+
+    // The restart path: a fresh engine fed the rows one at a time.
+    val restart = DurableMatch.start(42)
+    for (k in driven.records.indices) {
+      val step = driven.producers[k]
+      val unit = parseRecord(driven.records[k])
+
+      // Boundary 1 — the record was never written (crash before the write).
+      // An auction action is one unit, so the client's single retry must
+      // produce EXACTLY the row the killed process wrote. A Trick is not one
+      // card: a restart lands at the Trick's start, so the four cards are
+      // re-driven — the first three from the stored row, the last from the
+      // client — and the completed row must be identical.
+      when (unit) {
+        is E9Record.BidUnit -> {
+          val first = restart.submit(step)
+          check(first is E9Submit.Applied) { "unit $k was refused after restart: $first" }
+          assertEquals(driven.records[k], first.record, "unit $k did not reproduce its row")
+        }
+        is E9Record.TrickUnit -> {
+          for ((i, play) in unit.plays.withIndex()) {
+            val r = restart.submitCard(play.playerId, play.card)
+            check(r is E9Submit.Applied) { "unit $k card $i was refused after restart: $r" }
+            if (i < unit.plays.size - 1) {
+              assertTrue(r.record == null, "unit $k wrote a row before the fourth card")
+            } else {
+              assertEquals(driven.records[k], r.record, "unit $k did not reproduce its row")
+            }
+          }
+        }
+      }
+      assertEquals(k + 1, restart.recordsApplied, "unit $k did not write")
+      assertEquals(driven.docs[k + 1], restart.stateDocument(), "unit $k landed on a different state")
+
+      // Boundary 2 — the record IS written but the ack was lost. The retry
+      // must be recognised from the head row: no second write, no state move.
+      val retry = restart.retryStored(driven.records[k])
+      assertTrue(retry is E9Submit.AlreadyApplied, "unit $k was not recognised as applied: $retry")
+      assertEquals(unit.key, (retry as E9Submit.AlreadyApplied).key)
+      assertEquals(k + 1, restart.recordsApplied, "unit $k was written twice")
+      assertEquals(driven.docs[k + 1], restart.stateDocument(), "the retry moved the state")
+    }
+    assertEquals(driven.docs.last(), restart.stateDocument())
+  }
+
+  /** The same check through the store-row path the Worker uses: hand the
+   *  driver the head row it just stored, exactly as a client's retry would. */
+  @Test
+  fun retryFromTheStoredRowWritesNothing() {
+    val driven = drive(42)
+    for (k in listOf(0, 17, 100, 240, driven.records.size - 1)) {
+      val prefix = driven.records.subList(0, k + 1).joinToString("\n")
+      val restarted = DurableMatch.replay(prefix, seed = 42)
+      val before = restarted.stateDocument()
+      val result = restarted.retryStored(driven.records[k])
+      assertTrue(result is E9Submit.AlreadyApplied, "row $k was not recognised: $result")
+      assertEquals(k + 1, restarted.recordsApplied)
+      assertEquals(before, restarted.stateDocument())
+    }
+  }
+
+  // ── 5. boundary 3/4 shape: mid-trick is lost, then re-driven ──────
+
+  @Test
+  fun anInterruptedTrickLeavesNoRowAndRedrivesWithTheClientsOwnCard() {
+    val seed = 42
+    val live = DurableMatch.start(seed)
+    val store = ArrayList<String>()
+
+    fun drain() {
+      while (true) {
+        val step = live.nextStep()
+        if (step is E9Step.Done) return
+        when (val r = live.submit(step)) {
+          is E9Submit.Applied -> r.record?.let { store += it }
+          else -> error("refused: $r")
+        }
+        // stop as soon as the fourth trick is complete
+        if (store.isNotEmpty() &&
+          parseRecord(store.last()).key.let { it.unit == E9Unit.TRICK && it.index == 4 }
+        ) return
+      }
+    }
+    drain()
+
+    val fourTricks = DurableMatch.replay(store.joinToString("\n"), seed)
+    val stateAtTrickFive = fourTricks.stateDocument()
+    val trickFiveRow = store.size
+
+    // Two cards of trick 5 fly, then the process dies. Design B persists per
+    // Trick, so neither card may have produced a row.
+    repeat(2) {
+      val step = live.nextStep()
+      val r = live.submit(step)
+      assertTrue(r is E9Submit.Applied && r.record == null, "a card must not be a durable unit")
+    }
+    assertEquals(trickFiveRow, store.size, "a partial trick wrote a row")
+
+    // Restart: the in-progress trick is gone, and the engine is exactly where
+    // the fourth trick left it.
+    val recovered = DurableMatch.replay(store.joinToString("\n"), seed)
+    assertEquals(stateAtTrickFive, recovered.stateDocument())
+    assertEquals(TablePhase.PLAY, recovered.currentTable()?.phase)
+    assertEquals(5, recovered.currentTable()?.trickNo ?: -1)
+
+    // Re-drive trick 5 with a card the bot would NOT have chosen — the
+    // client's own decision has to survive in the log.
+    val table = assertNotNull(recovered.currentTable())
+    val seat = assertNotNull(table.turn)
+    val botCard = (recovered.nextStep() as E9Step.CardPlay).card
+    val clientCard: Card = legalCards(table, seat).first {
+      it.suit != botCard.suit || it.rank.v != botCard.rank.v
+    }
+    val firstCard = recovered.submitCard(seat, clientCard)
+    assertTrue(firstCard is E9Submit.Applied && firstCard.record == null)
+
+    // Rest of the trick from the bot, then the match to the end.
+    while (true) {
+      val step = recovered.nextStep()
+      if (step is E9Step.Done) break
+      val r = recovered.submit(step)
+      if (r is E9Submit.Applied) r.record?.let { store += it }
+    }
+    assertTrue(recovered.isComplete())
+
+    val alternative = store.joinToString("\n")
+    val replayed = DurableMatch.replay(alternative, seed)
+    assertEquals(recovered.stateDocument(), replayed.stateDocument(), "the log did not carry the client's choice")
+
+    val trickFive = parseRecord(store[trickFiveRow]) as E9Record.TrickUnit
+    assertEquals(clientCard.suit, trickFive.plays.first().card.suit)
+    assertEquals(clientCard.rank.v, trickFive.plays.first().card.rank.v)
+
+    // And it is a different match from the bot-only one, still complete.
+    val botOnly = drive(seed)
+    assertNotEquals(botOnly.records[trickFiveRow], store[trickFiveRow])
+    assertEquals(18, replayed.completedRun().rounds.size)
+  }
+
+  // ── 6. determinism ────────────────────────────────────────────────
+
+  @Test
+  fun theSameSeedProducesTheSameLog() {
+    val a = drive(1994, GameType.MINI, ScoringMode.CLASSIC)
+    val b = drive(1994, GameType.MINI, ScoringMode.CLASSIC)
+    assertEquals(a.records, b.records)
+    assertEquals(a.match.stateDocument(), b.match.stateDocument())
+  }
+
+  // ── 7. a conflict is loud, never silently ignored ─────────────────
+
+  @Test
+  fun aRowThatDoesNotFollowTheStoredPrefixIsRejected() {
+    val driven = drive(1)
+    val replayed = DurableMatch.replay(driven.records.subList(0, 50).joinToString("\n"), seed = 1)
+
+    // 51st row replaced by an earlier one: same payload, wrong position.
+    val wrong = driven.records[10]
+    val boom = runCatching { replayed.applyRecord(wrong) }
+    assertTrue(boom.isFailure, "a mis-ordered row was accepted")
+    assertEquals(50, replayed.recordsApplied, "a rejected row advanced the store")
+  }
+
+  // ── 8. the trick row is the play, not a re-derivation ─────────────
+
+  @Test
+  fun aTrickRowCarriesTheFourCardsInPlayOrder() {
+    val driven = drive(7)
+    val tricks = driven.records.map(::parseRecord).filterIsInstance<E9Record.TrickUnit>()
+    assertTrue(tricks.isNotEmpty())
+    for (t in tricks) {
+      assertEquals(4, t.plays.size)
+      val seats = t.plays.map(Play::playerId)
+      assertEquals(4, seats.toSet().size, "a trick cannot be played by one seat twice")
+    }
+  }
+}
