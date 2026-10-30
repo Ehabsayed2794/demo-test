@@ -289,7 +289,9 @@ and consumes that account's quota, which is exactly what the current brief forbi
 > **The ×1 layout of §11 is now the engineering rule** ("no second index on the match table");
 > V3 (`WITHOUT ROWID`) stays a candidate until **E12-h** measures it. **E12-b (the KV-style API)
 > and E12-f (the repeat run) did not run** — E12-c served as the repeat on a second table shape.
-> The harness has been removed and the account is empty.
+> The harness has been removed and the account is empty. **(Corrected 2026-10-30 by the owner: the
+> account is retained as the standing test surface and the token stays valid —
+> `docs/decisions/2026-10-30-test-account-retained.md`; only the deployed code is removed.)**
 
 **E12-a — does the local counter equal the billed rows? [x]**
 Deploy one DO with the **V1** and **V2** schemas on a throwaway account. Write exactly **428

@@ -60,7 +60,10 @@ target is re-run.
    and the row accounting; reuse it.
 2. **Platform leg [x]:** the same object on the throwaway account, with `ctx.abort()` (or an
    eviction) at the same boundaries, and the DO's own recovery observed through KV. Only this leg
-   proves that a **real** eviction preserves the state.
+   proves that a **real** eviction preserves the state. **The account is retained for exactly this
+   purpose** (owner, 2026-10-30 — `docs/decisions/2026-10-30-test-account-retained.md`): the token
+   stays valid, the deployed code is removed after each leg, no billing, and the leg still runs only
+   on its own approval.
 3. **The pass criterion:** at **every** boundary, the recovered match is byte-identical to the
    uninterrupted match, the settlement is applied **exactly once**, and the RP ledger has **0
    duplicate rows and 0 lost settlements** — the same two negative controls E7 used.

@@ -291,6 +291,9 @@ steps are done, the cron and the worker are removed and the owner is asked to re
 > [`Stage0_E12d_e_c_Platform_Meters_Report.md`](Stage0_E12d_e_c_Platform_Meters_Report.md), §4–§6.
 > **The harness has been removed**: all four workers deleted, the KV namespace deleted, no Durable
 > Object namespaces left — **the account is empty**, and the owner was asked to revoke the token.
+> **Superseded (owner, 2026-10-30): the account is RETAINED** as the standing test surface for every
+> platform leg and **the token stays valid**; only the deployed code is removed. The revoke step is
+> withdrawn — `docs/decisions/2026-10-30-test-account-retained.md`.
 > **The nine measured facts also closed O-06**: the runtime is **Cloudflare** at **80 matches/day**
 > with an **88/day refusal ceiling** (`docs/decisions/2026-10-30-runtime-decision-o06-cloudflare.md`).
 

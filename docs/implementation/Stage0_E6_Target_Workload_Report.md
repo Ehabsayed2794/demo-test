@@ -567,7 +567,9 @@ approval, a real (throwaway) Cloudflare account, and its own acceptance before r
 > the one item in this protocol that still needs a real account. Results and the table of what each
 > result decided: `docs/implementation/Stage0_E12d_e_c_Platform_Meters_Report.md` §4–§10;
 > rows-written leg: `docs/implementation/Stage0_E12a_Platform_Rows_Report.md`. **The account is
-> empty again** (all workers and the KV namespace deleted).
+> empty again** (all workers and the KV namespace deleted). **Corrected 2026-10-30 by the owner: the
+> account itself is RETAINED as the standing test surface and the token stays valid**
+> (`docs/decisions/2026-10-30-test-account-retained.md`); only the deployed code is removed.
 
 **Goal.** Replace E6's [u]/[x] platform assumptions with measured numbers, using a throwaway
 SQLite-backed Durable Object that mimics the proposed match-DO shape.

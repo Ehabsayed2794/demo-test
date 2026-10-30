@@ -377,6 +377,12 @@ number to watch in closed testing.
 **No secret is in this repository**, and **the account is empty**: four workers deleted, the KV
 namespace deleted, no Durable Object namespaces left. The API token is the owner's to revoke.
 
+> **Correction (owner, 2026-10-30 — the account is NOT retired).** The account is **kept**: it is the
+> standing test surface every platform leg runs on (E9's included), and **the token stays valid**
+> (outside the repository, never in a report or a message). The line above stays true about the
+> **code** — workers and KV are deleted after each experiment — and is withdrawn about the account
+> itself. `docs/decisions/2026-10-30-test-account-retained.md`.
+
 ## 12. Reproduction
 
 ```bash

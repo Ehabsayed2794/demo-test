@@ -25,6 +25,9 @@
 > server in V1**, the ×1 row shape, and RD19's 50 s unchanged
 > (`docs/decisions/2026-10-30-runtime-decision-o06-cloudflare.md`; ADR `0003` ACCEPTED). The
 > **token was to be revoked by the owner** and the harness was removed — the account is empty.
+> **Correction (owner, later the same day): the account is RETAINED as the standing test surface and
+> the token stays valid** — only the deployed code is removed. The revoke step is withdrawn:
+> `docs/decisions/2026-10-30-test-account-retained.md`.
 
 ---
 
