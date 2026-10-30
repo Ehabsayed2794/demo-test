@@ -218,8 +218,10 @@ requests, **e** on duration/hibernation, and **f** on the repeat run.
 | **E12-i** *(new)* | does **D1** meter **27 rows per settlement** the same way? | the 27-row figure and the 3,333-settlement ceiling rest on it | one D1 database, one write pass |
 | **E12-b…f** | the KV-style API, alarms, WebSockets/requests, duration/hibernation, the repeat run | the remaining E5/E6 axes | more runs, more of the account's quota |
 
-**Nothing above has been run.** The account is idle; the deployed worker is a cron that has
-already written its one flag and will not fire again.
+**Nothing above has been run.** The deployed worker stays in place as the E12 harness for the next
+step: its cron still fires every minute, but the run flag makes it a **no-op** — no writes, no new
+DO instances, no rows. The four DO instances and their rows remain on the throwaway account until
+the account is deleted (the account-deletion policy is **E13**, a separate step).
 
 ## 10. Artifacts
 
