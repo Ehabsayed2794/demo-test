@@ -29,18 +29,27 @@
 | Monetization | No billing, ads or IAP in the current baseline and no approved V1 monetization scope (O-09) |
 
 > **Pointer, 2026-10-29 (measured; the "NOT YET RUN" row above is left verbatim).**
-> **Five of the thirteen experiments have now been run**: **E1** (the engine plays a complete
+> **Six of the thirteen experiments have now been run**: **E1** (the engine plays a complete
 > match inside `workerd`), **E2** (200 seeds × FULL/MINI × Normal/Classic = 800 matches,
 > 11,200 rounds, JVM and workerd byte-identical), **E3** (the 153 §5.3.3 rule/scoring vectors
 > T-01…T-16, T-22, T-24 — **139 IDENTICAL, 0 DIFFERENT, 14 NOT IMPLEMENTED**; both rendered
 > documents byte-identical, sha256 `f52451cf3adef1fc08d78ae9afaeed2c9b7d2728c1bac09e12cb07c5285c4ff3`),
 > **E4** (bundle 625,718 bytes raw / 102,750 gzip; cold start median 36.3 ms, warm
-> median 6.5 ms, both measured on `wrangler dev --local`) and **E5** (≈ 1,135 requests and
-> ≈ 1,135 rows written per FULL match; worst measured action 0.067 ms CPU against the 10 ms
-> budget; free tier ≈ 88 matches/day under per-action durability — the model E6 builds on;
-> report: `docs/implementation/Stage0_E5_Capacity_Model_Report.md`). Reports:
-> `docs/implementation/Stage0_E2_Corpus_Parity_Report.md` and
-> `docs/implementation/Stage0_E3_Vector_Parity_Report.md`. **E6–E13 are still not run**, so
+> median 6.5 ms, both measured on `wrangler dev --local`), **E5** (the per-match cost model —
+> ≈ 1,135 requests and ≈ 1,135 rows per FULL match under the then-assumed per-action design,
+> since recalibrated by E6 under the owner's rulings) and **E6** (the target workload: per-seat
+> measured loads, the WebSocket + server-side-bot + per-Trick model, and the 100/125/150
+> matches-per-day scenarios evaluated **per meter — the binding meter is DO rows written at
+> 1.6–2.3× headroom, requests carry 10–15× only under the documented 20:1 reading and overrun
+> under inbound-1:1**, with the **90% guardrail's 10% reserve protecting ongoing matches only on
+> the requests-20:1 meter (151 tables) — rows are marginal (23 / 11 tables) and the conservative
+> requests reading is insufficient (8), all conditional on the unknown real concurrency [u]** —
+> and the three platform unknowns that decide between the readings, each owned by a named
+> experiment). Reports:
+> `docs/implementation/Stage0_E2_Corpus_Parity_Report.md`,
+> `docs/implementation/Stage0_E3_Vector_Parity_Report.md`,
+> `docs/implementation/Stage0_E5_Capacity_Model_Report.md` and
+> `docs/implementation/Stage0_E6_Target_Workload_Report.md`. **E7–E13 are still not run**, so
 > the runtime decision (O-06) is **not yet decidable on evidence**; the ADR skeleton with the
 > evidence and the open slot is `docs/adr/0003-runtime-choice.md`.
 
@@ -970,6 +979,33 @@ defines what would count as a result; it does not report one.
 > `docs/implementation/Stage0_E3_Vector_Parity_Report.md`,
 > `docs/implementation/Stage0_E5_Capacity_Model_Report.md`; ADR skeleton:
 > `docs/adr/0003-runtime-choice.md` (the O-06 decision is still an open slot).
+>
+> **Pointer, 2026-10-29 (E6 measured; the rows above are left verbatim).**
+> **E1, E2, E3, E4, E5 and E6 have been run**; **E7–E13 have not**. The E6 row's pass criterion —
+> "Measured headroom or a documented overrun" — is met **PASS WITH LIMITATIONS**: counts, per-seat
+> loads and CPU are measured locally (all count fingerprints byte-identical JVM↔workerd), the
+> capacity is modelled, and the platform metering is unverified. Per meter, at 100/125/150
+> matches/day under the documented readings: **DO rows written 42.8% / 53.5% / 64.2% — the
+> binding meter at 2.3× / 1.9× / 1.6× headroom**; DO requests 6.6% / 8.3% / 9.9% (10–15×) under
+> the 20:1 reading; Worker requests, D1 rows and rows read all ≤ 3.4%; duration negligible **if**
+> hibernation works (an overrun at 125/150 if it does not). Under the conservative
+> **inbound-1:1** reading of free-plan WebSocket metering, **all three scenarios overrun
+> requests** (114% / 142% / 171%). The ruled design's cost per FULL match is **≈ 66
+> request-units (documented reading) and ≈ 428 rows written** (4 humans), superseding E5's
+> per-action figures as planning numbers. Three decisive unknowns — free-plan WebSocket
+> metering, the rows-per-write multipliers (deletes, alarms, indexes, the unpublished KV-API
+> mapping), and hibernation/duration — are owned by E12/E9 on a real Cloudflare account (the E12
+> protocol is written in the E6 report §14 and awaits the owner's approval). The 90% guardrail's
+> 10% reserve, on the uniform **worst-case** basis (an ongoing match needs its whole remaining
+> cost), covers **151 tables on requests (20:1) but only 23 / 11 on rows (1× / ×2) and 8 on
+> conservative requests**; on the **average-case** assumption that an ongoing match is halfway
+> through [m], it covers **303 / 46 / 23 / 17** respectively — so rows stay marginal in the
+> worst case and the conservative requests reading stays insufficient in both cases, against an
+> ≈ 25-table illustrative peak [u] with the real concurrency left to E12 / closed testing; the
+> earlier "416 tables" rows figure was an artefact of a mixed basis and is withdrawn. Evidence:
+> `docs/implementation/Stage0_E6_Target_Workload_Report.md` (§5 per meter and thresholds at both
+> bases, §5.2 chunking sensitivity, §6 the guardrail, §7 the remaining-rows budget, §8 the
+> per-Trick window, §14 the E12 protocol).
 >
 > **Pointer, 2026-10-29 (owner rulings A–G; the E5/E6/E9/E12 rows above are left verbatim).**
 > The owner has ruled on the design assumptions the capacity work must now assume

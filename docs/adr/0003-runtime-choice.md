@@ -166,16 +166,53 @@ target usage, so capacity is presented per meter; the target is owner input E6 n
 > action-count-based model; E6 recalculates for the WebSocket + server-side-bot design across
 > the three scenarios.
 
+### E6 — does the target workload fit the free tier at 90%? ✅ PASS WITH LIMITATIONS
+
+Full evidence: `docs/implementation/Stage0_E6_Target_Workload_Report.md` (2026-10-29), built on
+per-seat measured loads and measured server-side action chains (all count fingerprints
+byte-identical JVM↔workerd); the capacity is modelled and the platform metering is unverified.
+Under the ruled design — WebSocket transport, bots inside the authority, per-Trick persistence —
+a FULL match costs **≈ 66 request-units (documented reading) and ≈ 428 rows written** (4 humans;
+superseding E5's per-action figures as planning numbers). Against the owner's 100/125/150
+scenarios the answer forks exactly on the platform facts that are not yet published or measured:
+
+- **Documented readings**: the **binding meter is DO rows written — 42.8% / 53.5% / 64.2% of the
+  daily limit (headroom 2.3× / 1.9× / 1.6×)**; DO requests carry 10–15× headroom under the 20:1
+  reading; Worker requests, D1 rows and rows read are ≤ 3.4%; duration is negligible **if**
+  hibernation works. The 90% guardrail never fires at target usage, and its 10% reserve — on the
+  uniform **worst-case** basis (an ongoing match needs its whole remaining cost) — covers **151
+  tables on requests (20:1) but only 23 / 11 on rows (1× / ×2)**; on the **average-case**
+  halfway assumption [m] it covers **303 / 46 / 23 / 17** — rows stay marginal in the worst
+  case against an unknown real concurrency peak [u].
+- **Conservative readings** (free-plan WebSocket incoming messages billed 1:1 — the docs are
+  ambiguous about Free-plan enforcement; the rows multipliers from deletes, `setAlarm()` and
+  index updates combined; no hibernation): **requests overrun at all three scenarios**
+  (114% / 142% / 171%), rows overrun at 125/150 (107% / 128%), duration at 125/150 (108% /
+  130%); the guardrail trips early and its reserve does **not** protect ongoing matches
+  (≈ 8 tables on requests, 11 on rows) — a documented gap per ruling E. (The earlier "outbound
+  messages counted 1:1" figure was withdrawn: the pricing docs state outgoing messages are not
+  billed.)
+
+CPU is a non-problem for normal play as far as the engine's share goes (measured worst
+inter-human bot chain: 13 actions ≈ 4 ms local wall-clock, excluding JSON/SQL/WS/auth) — but an
+**unchunked all-bot fast-forward (a whole match in one invocation) is 17.9–46 ms and exceeds the
+budget on the conservative 10 ms Workers reading** (the DO page states 30 s CPU per request
+without separating plans — [x] which applies): the design must chunk it with alarms (each 1 row
+written + 1 invocation). The decisive unknowns — free-plan WebSocket metering, the rows
+multipliers, hibernation/duration, the applicable CPU limit — are owned by **E12/E9 on a real
+Cloudflare account** (protocol in the E6 report §14); O-06 stays open until they are measured.
+
 ### What is still NOT measured
 
-Stage 0 is thirteen experiments, not one. E6 (primary usage at 90% of the free
-tier — it needs the owner's target-usage number), E7 (backup lag /
+Stage 0 is thirteen experiments, not one. E7 (backup lag /
 outbox / recovery), E8 (D1 atomicity), E9 (durable recovery after an
-interruption), E10 (write/cleanup cost), E12 (hibernation and duration cost)
-and E13 (account deletion and store policy) are **not** run. A choice between
-the two runtimes that depends on those numbers — especially E6 (does the
-usage fit the free tier?) and E9/E7 (does the state survive?) — is **not yet
-decidable on evidence**.
+interruption), E10 (write/cleanup cost), E12 (hibernation and duration cost,
+**including the free-plan WebSocket metering and rows-per-put facts E6 showed
+are decisive**) and E13 (account deletion and store policy) are **not** run.
+A choice between the two runtimes that depends on those numbers — especially
+E12 (do the platform's real meters leave the 100/125/150 scenarios the headroom
+the documented readings promise?) and E9/E7 (does the state survive?) — is
+**not yet decidable on evidence**.
 
 ## Alternatives considered
 
@@ -206,13 +243,14 @@ broken at the most satisfying moment in the game".
 ### B — Cloudflare Workers + Durable Objects
 
 **Status:** **not approved** (O-06, 2026-10-22, `docs/decisions/OPEN_QUESTIONS.md`).
-Stage 0 E1–E5 above are the evidence gathered so far, and they are positive.
+Stage 0 E1–E6 above are the evidence gathered so far, and they are positive.
 
 **What it needs before it can be adopted:**
-- E6 — the free-tier headroom against the owner's **100 / 125 / 150 completed-matches-per-day
-  planning range** (ruled 2026-10-29), applied at the 90% operating level with the intended
-  WebSocket + server-side-bot design. E5 measured the per-match cost model and the per-meter
-  capacity the range is applied to.
+- E12 — the **real free-account verification** of the three meters E6 showed are decisive:
+  free-plan WebSocket metering, the rows-per-write multipliers, and hibernation/duration. Under
+  the documented readings E6 measured headroom for the 100/125/150 scenarios led by rows written
+  at 1.6–2.3× (requests 10–15×); under the conservative inbound-1:1 reading all three scenarios
+  overrun requests. E12 decides which world is real.
 - E9 — a Durable Object's state is per-object and single-threaded, which is a
   *better* fit for exactly-once settlement than a Firestore transaction, but it
   is a different durability story and has to be demonstrated, not assumed.
@@ -224,7 +262,7 @@ Stage 0 E1–E5 above are the evidence gathered so far, and they are positive.
 - The settlement path's Firestore writes must be re-expressed: the Admin SDK
   runs on Node.js today, and Workers has a different Admin SDK surface.
 
-**Strengths:** E1–E5 show the engine runs there, agrees with the JVM to the
+**Strengths:** E1–E6 show the engine runs there, agrees with the JVM to the
 byte, fits the bundle limit with ~99% headroom, and starts in tens of
 milliseconds locally — the R24 "settling…" wait is the weakest of the
 alternatives on that measure.
