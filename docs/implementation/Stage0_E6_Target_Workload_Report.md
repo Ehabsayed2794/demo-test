@@ -167,6 +167,20 @@ The ×2 figure is a **rough allowance** for these multipliers combined, **not a 
 measurement**. At the ×2 bound: 85,584 / 106,980 / 128,376 rows → **85.6% / 107% / 128%** —
 150 overruns outright, 125 overruns, 100 sits just under the 90% trip line.
 
+> **Pointer, 2026-10-30 (E7 measured the settlement write protocol; the D1 rows rows above are
+> left verbatim).** The **5 D1 rows/match** in §4 and the **D1 rows written** row in §5 are the
+> ledger's **table** rows only — they exclude the **intent queue** (insert + ack + cleanup) and
+> the **backup copy**, and D1's `rows_written` counts **index rows** too. E7 measured the whole
+> settlement protocol against a local D1: **RP 10 + OUTBOX 5 + RP_BACKUP 10.4 = 25.4 rows per
+> match** at a 5-match backup cadence (**29** backing up every match), so the D1 axis reads
+> **2,540 / 3,175 / 3,810 rows/day — 2.54% / 3.175% / 3.81%** at 100 / 125 / 150 matches/day.
+> **The verdict of this report does not change**: the D1 axis was never the binding meter (DO
+> rows written is, at 42.8% / 53.5% / 64.2%), and the settlement axis stays far from its limit.
+> What changes is the **figure the model carries** and the **ceiling on this axis** — 3,543
+> matches/day at the 90% guardrail, not 18,000. **[m]** (modelled on a local D1; the Free plan's
+> real metering is **[x]** — a real Cloudflare account). Report:
+> `docs/implementation/Stage0_E7_Backup_Outbox_Report.md` §10; pending owner decision D-E7-3.
+
 ### 5.1 PASS/overrun thresholds at both bases (review item 2)
 
 Every threshold restated at **100% of the limit** and at the **90% guardrail**, for all three

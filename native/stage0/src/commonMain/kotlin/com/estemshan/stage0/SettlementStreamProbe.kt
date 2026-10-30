@@ -160,6 +160,51 @@ fun runSettlementStreamJson(
   return """{"fingerprint":"${fnv1a32(body)}","body":$body}"""
 }
 
+/**
+ * The same stream, but starting from an **explicit** RP state instead of
+ * [E7_STARTING_RP].
+ *
+ * This is the recompute path E7 needs: after a disaster restore the ledger
+ * holds whatever the backup copy contained, so the missing settlements must be
+ * recomputed *from that state* — not from the batch's original base, and not by
+ * copying precomputed rows. Starting from a different base produces different
+ * RP, which is exactly what makes the recompute comparison meaningful.
+ *
+ * [startingRpJson] is a flat JSON object of uid → RP, e.g. `{"u1":900,"u2":1020}`.
+ */
+fun runSettlementStreamFromJson(
+  firstSeed: Int,
+  count: Int,
+  gameType: GameType = GameType.FULL,
+  scoringMode: ScoringMode = ScoringMode.NORMAL,
+  startingRpJson: String,
+): String {
+  val stream = buildSettlementStream(firstSeed, count, gameType, scoringMode, parseRpMap(startingRpJson))
+  val body = renderSettlementStream(stream)
+  return """{"fingerprint":"${fnv1a32(body)}","body":$body}"""
+}
+
+/** Flat `{"uid":rp,...}` → RP map. A flat object only, because that is all the
+ *  restored ledger state is; anything else is a caller bug and must not be
+ *  silently coerced. */
+internal fun parseRpMap(json: String): Map<String, Int> {
+  val trimmed = json.trim()
+  require(trimmed.startsWith("{") && trimmed.endsWith("}")) { "startingRp must be a JSON object" }
+  val body = trimmed.substring(1, trimmed.length - 1).trim()
+  if (body.isEmpty()) return emptyMap()
+  val out = LinkedHashMap<String, Int>()
+  for (entry in body.split(",")) {
+    val pair = entry.trim()
+    require(pair.isNotEmpty()) { "empty startingRp entry" }
+    val colon = pair.indexOf(':')
+    require(colon > 0) { "startingRp entry must be \"uid\":rp" }
+    val uid = pair.substring(0, colon).trim().trim('"')
+    val rp = pair.substring(colon + 1).trim().toInt()
+    out[uid] = rp
+  }
+  return out
+}
+
 /** FNV-1a, 32-bit — the same hash E1–E6 use, declared per file exactly as
  *  `CapacityProbe.kt` and `RuleVectors.kt` already do. */
 private fun fnv1a32(s: String): String {

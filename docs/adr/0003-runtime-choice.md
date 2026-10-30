@@ -33,7 +33,7 @@ Two candidates are on the table:
 | State | Firestore | Durable Objects |
 | Settlement idempotency | Firestore transactions | Durable Object storage |
 | Cost at this scale | Free tier (Spark) | Free tier |
-| Measured today | E1 ✅, E2 ✅ | E1 ✅, E2 ✅, E3 ✅, E4 ✅ (this ADR's evidence) |
+| Measured today | E1 ✅, E2 ✅ | E1 ✅, E2 ✅, E3 ✅, E4 ✅, E5 ✅, E6 ✅, E7 ✅ (local D1) (this ADR's evidence) |
 
 The Stage 0 experiments were designed to answer "does the engine run correctly
 in a server runtime, and what does it cost to start there" without touching
@@ -202,17 +202,66 @@ written + 1 invocation). The decisive unknowns — free-plan WebSocket metering,
 multipliers, hibernation/duration, the applicable CPU limit — are owned by **E12/E9 on a real
 Cloudflare account** (protocol in the E6 report §14); O-06 stays open until they are measured.
 
+### E7 — does the backup/outbox/recovery protocol hold without a second RP truth? ✅ PASS (local)
+
+Full evidence: `docs/implementation/Stage0_E7_Backup_Outbox_Report.md` (2026-10-30). Measured
+against a **local** D1 (`wrangler dev --local`, three bindings — RP, RP_BACKUP, OUTBOX), over a
+60-match battery of **real** settlement rows produced by the Kotlin engine inside `workerd`
+(fingerprint `cbfe5a72`, byte-identical to the JVM leg).
+
+The protocol keeps **one** RP authority: RP is the source of truth, RP_BACKUP only ever receives
+copies, and the OUTBOX only ever receives intents. Across a 10-scenario fault matrix — kill
+before the relay, kill after the ledger write before the ack, primary wipe and restore, a stale
+backup restored twice, a write-failure window (a quota-exhaustion analogue), the outbox lost with
+the primary, a recompute replay, and a split-brain conflict — the result is **0 duplicate RP rows
+and 0 lost settlements**, with **two negative controls** proving the harness detects both failure
+modes (20 rows / 476 delta lost; +375 delta double-awarded).
+
+Measured: the backup lag (5 matches / 20 rows / 476 delta stale at a 5-match cadence), the
+**restore-point rule** (replay every outbox row with `seq > max(outbox_seq)`, regardless of the
+acked flag — the control that trusts the acked flags loses exactly that window), the write-failure
+window (a rejected write is not a lost settlement, provided the intent is retained), the loss
+window when the queue is lost with the primary (**5 settlements / 20 rows / 476 delta per
+uncovered interval**), the recompute path (the missing settlements recomputed from the restored
+state reproduce all 20 rows with **0 differences** across 9 fields), and the split-brain
+behaviour (the same payload dedupes; a different payload raises a `PAYLOAD_MISMATCH` alarm and is
+**not** acked).
+
+Two figures the capacity model must now carry, both stated rather than silently replaced:
+
+- the **91.67% backup coverage is a result of the chosen cadence, not a natural measurement**
+  (coverage is `1 − N/M`; ≥90% requires the stale window to be at most 10% of the settlements in
+  it);
+- the **settlement write cost is 25.4 rows per match** for the whole protocol (RP + OUTBOX incl.
+  ack/delete + the amortised backup copy) against E5's **5 rows** — D1 bills index rows too, and
+  the old figure counted the ledger's table rows only. The axis stays far from binding (**≤ 3.81%
+  of the D1 daily limit at 150 matches/day**); the ceiling on it falls from 18,000 to **3,543
+  matches/day**.
+
+> **SLOT — the owner's reading of these numbers.** In particular: the production backup cadence
+> (D-E7-1), where the intent queue must live so that it does not share the primary's failure
+> domain (D-E7-2), the protocol figure and the three-databases-or-one question (D-E7-3), the
+> confirmation that a quota/write failure is never converted into an abandoned match (D-E7-4), and
+> whether the local evidence closes the E7 row or a real-Cloudflare leg is required first
+> (D-E7-5). All five are **listed, not decided**
+> (`docs/implementation/Stage0_E7_Backup_Outbox_Report.md` §15).
+
+> **What this does NOT settle.** A local D1 does not measure Cloudflare behaviour: the real
+> metering, the real atomicity, a real quota event and a real Free-plan enforcement are all
+> **[x] — a real Cloudflare account**. The independent quota-isolated secondary server **does not
+> exist**, so the requirement the loss window implies is a requirement **on an architecture that
+> has not been built**. **E7 does not approve Cloudflare and does not close O-06.**
+
 ### What is still NOT measured
 
-Stage 0 is thirteen experiments, not one. E7 (backup lag /
-outbox / recovery), E8 (D1 atomicity), E9 (durable recovery after an
+Stage 0 is thirteen experiments, not one. E8 (D1 atomicity), E9 (durable recovery after an
 interruption), E10 (write/cleanup cost), E12 (hibernation and duration cost,
 **including the free-plan WebSocket metering and rows-per-put facts E6 showed
 are decisive**) and E13 (account deletion and store policy) are **not** run.
 A choice between the two runtimes that depends on those numbers — especially
 E12 (do the platform's real meters leave the 100/125/150 scenarios the headroom
-the documented readings promise?) and E9/E7 (does the state survive?) — is
-**not yet decidable on evidence**.
+the documented readings promise?) and E9 (does the state survive at every
+interruption boundary?) — is **not yet decidable on evidence**.
 
 ## Alternatives considered
 
@@ -227,6 +276,9 @@ ADR 0002; this ADR does not reopen it unless the owner says so.
   invocations, Firestore reads/writes, and the 60-min function timeout).
 - E7/E9 — the backup, outbox and recovery story on Firestore: the duplicate-RP
   guarantee (RD18) and the exactly-once settlement path under interruption.
+  *(E7's protocol is now measured — locally, on a local D1 — but **not** on Firestore: the
+  duplicate-RP guarantee holds because the rows are absolute and the key is
+  `(match_id, seat)`, which is a property of the rows, not of the store. E9 remains open.)*
 - E8 — the D1-equivalent atomicity guarantee on Firestore transactions for
   the settlement write.
 
@@ -255,6 +307,10 @@ Stage 0 E1–E6 above are the evidence gathered so far, and they are positive.
   *better* fit for exactly-once settlement than a Firestore transaction, but it
   is a different durability story and has to be demonstrated, not assumed.
 - E7 — the backup/restore story for Durable Object storage.
+  *(E7's protocol is measured — locally, on a local D1 — but **not** on Durable Object
+  storage: the restore-point rule, the absolute rows and the `(match_id, seat)` key are
+  store-independent, while the store-side facts — atomicity across the three bindings, the
+  real row metering, a real quota event — are **not**. E8 and E9 remain open.)*
 - **A second data model.** The product's state lives in Firestore today. A
   Workers+DO authority layer means the match state, the settlement and the
   statistics live somewhere else, and the two must agree. That is a migration

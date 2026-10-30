@@ -164,6 +164,23 @@ Capacity = floor(limit ÷ per-match cost), at 100% and at the 90% G5 asks for:
 | DO duration | — | 13,000 GB-s | E12's question (hibernation) | — |
 | D1 / DO storage | ≤ 5.5 KB/snapshot | 5 GB | E10's question (retention) | — |
 
+> **Pointer, 2026-10-30 (E7 measured the settlement write protocol; the rows above are left
+> verbatim).** The **"D1 rows written (settlement only) = 5"** row and the **"Settlement per match
+> = 5 rows"** row are **not a protocol figure** — they are the ledger's **table** rows (1
+> match-result row + 4 RP rows), and they exclude two things the protocol actually writes:
+> the **intent queue** (insert + ack + cleanup delete) and the **backup copy**. E7 measured the
+> whole settlement protocol against a local D1, from D1's own `meta.rows_written` — which counts
+> **table rows and index rows**: **RP 10 + OUTBOX 5 + RP_BACKUP 10.4 = 25.4 rows per match** at a
+> 5-match backup cadence (**29** backing up every match), against the **5** above. The effect on
+> this table's D1 row: **2,540 / 3,175 / 3,810 rows/day at 100 / 125 / 150 matches/day —
+> 2.54% / 3.175% / 3.81% of the 100,000/day limit** — so **this axis is still not the binding
+> meter** (E6's binding meter is DO rows written at 1.6–2.3×), but the **ceiling on this axis
+> falls from 18,000 to 3,543 matches/day** at the 90% guardrail. **Modelled, not measured on
+> Cloudflare:** the local D1's `rows_written` semantics and the Free plan's enforcement are
+> **[x] — a real Cloudflare account**. Report:
+> `docs/implementation/Stage0_E7_Backup_Outbox_Report.md` §10 (pending owner decision D-E7-3:
+> which figure the model carries, and whether the three stores are three databases or one).
+
 ## 5. The finding
 
 1. **CPU is a non-problem** — three orders of magnitude of headroom per request, on both legs.

@@ -52,6 +52,23 @@
 > `docs/implementation/Stage0_E6_Target_Workload_Report.md`. **E7–E13 are still not run**, so
 > the runtime decision (O-06) is **not yet decidable on evidence**; the ADR skeleton with the
 > evidence and the open slot is `docs/adr/0003-runtime-choice.md`.
+>
+> **Pointer, 2026-10-30 (E7 measured locally; the paragraph above is left verbatim).**
+> **Seven of the thirteen experiments have now been run**: **E1–E6** as recorded above, and
+> **E7** — the backup lag, the intent outbox, recovery and the duplicate-RP guarantee, measured
+> against a local D1 with **0 duplicate RP rows and 0 lost settlements** across a 10-scenario
+> fault matrix (two negative controls prove the harness detects both failure modes), the
+> **restore-point rule** that closes the gap a stale backup leaves, the **write-failure window**
+> (a quota-exhaustion analogue), the **loss window** when the intent queue is lost with the
+> primary (5 settlements / 20 rows / 476 delta per uncovered interval), the **recompute path**
+> (0 differences against the original rows), and the **split-brain** behaviour (a different
+> payload raises an alarm and is not acked). The **91.67% backup coverage is a result of the
+> chosen cadence, not a natural measurement**, and the settlement write cost is **25.4 rows per
+> match** for the whole protocol — not the capacity model's old 5 — which still leaves the
+> settlement axis far from binding (≤ 3.81% of the D1 daily limit at 150 matches/day). Report:
+> `docs/implementation/Stage0_E7_Backup_Outbox_Report.md`. **E8–E13 are still not run**, so the
+> runtime decision (O-06) is **still not decidable on evidence**: E7 measured the protocol, not
+> Cloudflare, and the independent quota-isolated secondary server **does not exist**.
 
 ### Source-of-truth hierarchy
 
@@ -754,6 +771,18 @@ Abandonment is a separate outcome, not a departure charge:
 | All humans disconnected | Wait 60 s; if nobody returns, cancel and apply the same outcome (Q27c) |
 | Server/quota failure | Never charged (Q27(3)) |
 
+> **Pointer, 2026-10-30 (E7 measured; the rows above are left verbatim).** The **60 s
+> all-humans-gone rule** (the humans left) and the **server/quota exemption** (the platform
+> refused the write) are **different rules and must not be merged**. The 60 s rule ends with a
+> charge (Q27c → T-15); the quota case ends with **no charge at all** (Q27(3)), and E7 measures
+> why that distinction is load-bearing: in the write-failure window a **rejected write is not a
+> lost settlement** — the intent stays durable in the outbox and the settlement is applied later,
+> exactly once, with 0 duplicates and 0 losses. A quota failure must therefore **never** be
+> silently converted into an abandoned match: that would charge the players for a platform
+> failure (forbidden by Q27(3)) **and** lose a settlement that did not need to be lost.
+> **No ruling is changed**; pending confirmation is listed as D-E7-4 in
+> `docs/implementation/Stage0_E7_Backup_Outbox_Report.md` §15.
+
 #### T-16 — Disconnect, takeover, reconnect and cancellation
 
 | Time / event | Expected |
@@ -1033,6 +1062,41 @@ defines what would count as a result; it does not report one.
 > durable intent/replay/idempotency, and ongoing-match behaviour at quota; E12 validates
 > WebSocket billing, hibernation, duration and reconnects. No experiment's acceptance criterion
 > is changed by these rulings.
+>
+> **Pointer, 2026-10-30 (E7 measured locally; the E7 row above is left verbatim).**
+> **E1, E2, E3, E4, E5, E6 and E7 have been run**; **E8–E13 have not**. The E7 row's pass
+> criterion — "No duplicate RP; lag measured; recovery documented" — is met **locally**: across a
+> 10-scenario fault matrix against a local D1, **0 duplicate RP rows and 0 lost settlements**,
+> with two negative controls proving the harness detects both failure modes (20 rows / 476 delta
+> lost; +375 delta double-awarded). The protocol keeps **one** RP authority — RP is the source of
+> truth, RP_BACKUP only ever receives copies, and the OUTBOX only ever receives intents.
+> **Measured:** backup lag (5 matches / 20 rows / 476 delta stale at a 5-match cadence), the
+> restore-point rule (replay every outbox row with `seq > max(outbox_seq)`, regardless of the
+> acked flag — the control that trusts the acked flags loses exactly that window), the write-
+> failure window (a quota-exhaustion analogue: **a rejected write is not a lost settlement** if
+> the intent is retained), the loss window when the intent queue is lost with the primary
+> (**5 settlements / 20 rows / 476 delta per uncovered interval**), the recompute path (the
+> missing settlements recomputed from the restored state reproduce all 20 rows with **0
+> differences** across 9 fields), and the split-brain behaviour (the same payload dedupes; a
+> different payload raises a `PAYLOAD_MISMATCH` alarm and is **not** acked). **The 91.67%
+> coverage is a result of the chosen cadence, not a natural measurement** — coverage is
+> `1 − N/M`, so ≥90% requires the stale window to be at most 10% of the settlements in it.
+> **Modelled:** the settlement write cost is **25.4 rows per match** for the whole protocol
+> (RP + OUTBOX incl. ack/delete + the amortised backup copy) against the capacity model's old
+> **5 rows** — D1 bills index rows too, and the old figure counted the ledger's table rows only;
+> the effect is **≤ 3.81% of the D1 daily limit at 150 matches/day** (the axis does not change
+> which meter binds), with the ceiling on this axis falling from 18,000 to **3,543 matches/day**.
+> **Unknown / needs a real Cloudflare account [x]:** D1's real metering and atomicity, a real
+> quota event, and the independent quota-isolated secondary server — which **does not exist**, so
+> the requirement the loss window implies (the intent queue must not share the primary's failure
+> domain) is a requirement **on an architecture that has not been built**. **E7 does not approve
+> Cloudflare and does not close O-06.** Report: `docs/implementation/Stage0_E7_Backup_Outbox_Report.md`.
+> **Pending owner decisions (listed, not decided): D-E7-1** the production backup cadence,
+> **D-E7-2** where the intent queue must live, **D-E7-3** the protocol figure and the
+> three-databases-or-one question, **D-E7-4** confirmation that a quota/write failure is never
+> converted into an abandoned match (the existing Q27(3) / Q27c rules already separate the two
+> cases — E7 changes no ruling), **D-E7-5** whether the local evidence closes the E7 row or a
+> real-Cloudflare leg is required first.
 
 | ID | Experiment | Question answered | Method | Pass / decision criterion | Blocks |
 |---|---|---|---|---|---|
