@@ -202,8 +202,14 @@ measurement**. At the ×2 bound: 85,584 / 106,980 / 128,376 rows → **85.6% / 1
 > plan, **no subscriptions, no billing**) and read **Cloudflare's own metered counter** for the
 > same Durable Object instances: **V1 = 428 rows billed for 428 inserts (×1)**, **V2 = 856 rows
 > billed for 428 inserts (×2)** — **exactly** the DO's own cursor counts. So the **×2 allowance is
-> what Cloudflare bills for the V2-shaped schema**, and the DO-rows-written axis is **confirmed**,
-> not a bound. **V3 (`WITHOUT ROWID`) is still [x]** — not yet measured on the platform, and it
+> what Cloudflare bills for the V2-shaped schema**. **The measurement is on the per-Trick axis**
+> — 428 writes per match = 234 trick checkpoints + 193.9 auction actions, the ruled persistence
+> design — which is **this report's §5 "DO rows written (100,000)" row**: it is now **measured,
+> not modelled**, at **428 (856)** rows/match → **42,792 / 53,490 / 64,188** (42.8% / 53.5% /
+> 64.2%) at 100 / 125 / 150 matches/day under an **×1** shape, and **85,584 / 106,980 / 128,376**
+> (85.6% / 107% / 128%) under the **×2** shape. **The per-action-durability axis (1,135 rows/
+> match) is a different axis and is NOT measured** — E9 decides whether it applies.
+> **V3 (`WITHOUT ROWID`) is still [x]** — not yet measured on the platform, and it
 > is the ×1 candidate. **The read axis is NOT confirmed**: Cloudflare counted **430 rows read**
 > where the DO's cursor reported **0** (the platform meter counts a read per write; the local
 > cursor does not), so the "DO rows read (state per action) ≈ 1,130" row above may be low by

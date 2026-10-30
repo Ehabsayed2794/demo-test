@@ -150,6 +150,10 @@ the same extra index that costs one more row per insert.
 
 ## 6. What this does NOT settle
 
+**The owner deferred E12-g (the read meter), E12-h (V3 on the platform) and E12-i (D1's 27
+rows/settlement) on 2026-10-30** — "far from binding" — in favour of the three steps in §9.
+They stay open; they are not cancelled.
+
 1. **The read meter. [u]** Cloudflare counted **430 rows read** per write instance where the DO's
    cursor reported **0**. The two counters disagree on reads (§8) — so the E6 read figure
    (≈ 1,130 DO rows read per match) and the "reconnect snapshot = 1 row read" assumption are
@@ -168,17 +172,58 @@ the same extra index that costs one more row per insert.
 
 ## 7. What it changes in the capacity model
 
+**The measurement sits on the per-Trick axis.** 428 writes per match = **234 trick checkpoints +
+193.9 auction actions** — the ruled persistence design ("persist per completed Trick, auction per
+action", the 2026-10-29 ruling). The E5/E6 model's **per-action-durability** axis (1,135
+rows/match) is a **different axis**: it charges a state write for *every* applied action, and it
+is the variant **E9** must test. **It is not what E12-a measured**, and the figures below do not
+use it.
+
+### 7.1 The per-Trick axis — now measured on Cloudflare
+
+| Schema shape | Rows per match | 100 matches/day | 125/day | 150/day |
+|---|---|---|---|---|
+| **×1** — V1 rowid, or V3 `WITHOUT ROWID` | **428** | 42,792 — **42.8%** (2.3× headroom) | 53,490 — **53.5%** (1.9×) | 64,188 — **64.2%** (1.6×) |
+| **×2** — V2 composite `PRIMARY KEY` on a rowid table | **856** | 85,584 — **85.6%** (1.2×) | 106,980 — **107% ✗** | 128,376 — **128% ✗** |
+
+(limit: **100,000 DO rows written/day**, Free tier — E5 §4. The daily figures are E6 §5's own
+numbers for the three scenarios, at the model's canonical 427.92 rows/match; **428 is that
+figure's rounding**.)
+
+**Both rows were modelled before this run; both are measured now.** The ×2 was an *allowance*
+carried "to be safe" — it is now **what Cloudflare meters**.
+
+**What the shape decides:**
+
+- under **×1**, all three scenarios fit with headroom, and **DO rows written stops being the
+  binding meter**. The binding meter becomes **DO duration if hibernation does not work**
+  (86.5% / **108% ✗** / **130% ✗** — E6 §5), i.e. **E12-e**;
+- under **×2**, rows written binds again: 100 matches/day sits at 85.6%, **just under the 90% trip
+  line**, and **125 and 150 overrun the limit outright**.
+
+### 7.2 The per-action-durability axis — a different axis, still unmeasured
+
+The E5 model's other rows-written axis (**1 row per applied action = 1,135 rows/match**) was
+**not** measured by E12-a. The **schema factor applies to it identically** — the same second index
+— so it would read **1,135 (×1) or 2,270 (×2)** rows/match, i.e. **113.5% / 141.9% / 170.3%** at
+×1 and **227% / 283.8% / 340.5%** at ×2 against the 100,000/day limit: **it would overrun at every
+scenario under either shape**. Whether that axis applies at all is **E9's** question — the ruled
+design persists per Trick, not per action.
+
+### 7.3 Document by document
+
 | Document | Before this run | After |
 |---|---|---|
-| E5 §3.3 "Rows written per match" | "≈ 1,135 (conservative ×2 → 2,270)", both carried, the ×2 flagged as *not a confirmed production value* | the **×2 is confirmed as a metered value for the V2-shaped schema**; the figure stands at 2,270 for that shape and **1,135 for the ×1 shapes** (V1, V3) |
-| E6 §4 "DO rows written, per-action durability" | 1,135 (×2 bound: 2,270), the bound **carried** | the bound is **no longer a bound — it is a schema-dependent measurement**; the rows axis is the **binding axis** under both shapes |
-| E7b §10 | "This is a local count, not proof of what Cloudflare bills" | **superseded on the write axis** — it is now proof; the read axis stays open |
+| E6 §5 "DO rows written (100,000)" row | 42,792 / 53,490 / 64,188 at ×1, modelled from a local counter; the ×2 carried as an allowance | **both rows measured on Cloudflare**: ×1 = 428/match (42.8% / 53.5% / 64.2%), ×2 = 856/match (85.6% / 107% / 128%) |
+| E5 §4 "per-trick in play + per-action in bidding" row | ≈ 433 (866) → 230 (115) matches/day | the model figure stands; **the factor behind it is measured**, not carried |
+| E5 §4 "per-action durability" row | 1,135 (×2: 2,270) → 88 (44) matches/day | **unchanged** — a different axis, still unmeasured (§7.2) |
+| E7b §10 | "This is a local count, not proof of what Cloudflare bills" | **superseded on the write axis** — it is now proof for V1/V2; the read axis stays open |
 
-**The direction of the decision has changed, not the decision.** If the Ranked match DO keeps the
-composite primary key on an ordinary rowid table (V2), it pays **2,270 rows per match** against
-the daily limit; if it takes `WITHOUT ROWID` (V3), it pays **1,135**. The owner ruling on the
-row layout (**D-E7-7**) is worth materially more than it was yesterday — but it is still the
-owner's to make, and V3's platform number is **[x]** until it is measured.
+**The direction of the decision has changed, not the decision.** Under the composite key on an
+ordinary rowid table (V2), the free tier carries **44 matches/day** on the rows-written axis
+alone; under an ×1 shape it carries **233**. The owner ruling on the row layout (**D-E7-7**) is
+worth materially more than it was yesterday — but it is still the owner's to make, and **V3's
+platform number is still [x]**.
 
 ## 8. The read-meter divergence — the one open thing this run created
 
@@ -204,24 +249,26 @@ must describe the meter Cloudflare actually bills.
 measured separately (a point lookup, a count, a full scan, an insert, an upsert), so the read
 meter's definition is measured instead of inferred.
 
-## 9. The next steps — proposed, not run
+## 9. The next steps — the owner's list, one at a time
 
-Each of these is a **step for the owner to approve**, one at a time, on the same throwaway
-account, with the same no-billing constraint. **The labels g, h and i are new** — the E7b
+**The owner set the priority order on 2026-10-30 (after E12-a).** These run on the same
+throwaway account, one at a time, with a report after each, and **no billing**. The E12b
 report's §9 already spends **b** on the KV-style API, **c** on alarms, **d** on WebSockets and
-requests, **e** on duration/hibernation, and **f** on the repeat run.
+requests, **e** on duration/hibernation, and **f** on the repeat run; **E12-g/h/i are deferred by
+the owner** (g = the read meter of §8, h = V3 on the platform, i = D1's 27 rows/settlement —
+"far from binding").
 
-| Step | Question | Why it matters | Cost |
+| # | Step | Question | Why it matters |
 |---|---|---|---|
-| **E12-g** *(new — from §8)* | what does Cloudflare count as a **row read**? | the read axis of the capacity model is currently unconfirmed, and E6's read figure may be ~38 % low | one cron run, same shape as this one |
-| **E12-h** *(new)* | does **V3** (`WITHOUT ROWID`) meter at **×1** on Cloudflare? | it is the recommended design; if yes, the rows axis halves | one cron run, +2 instances |
-| **E12-i** *(new)* | does **D1** meter **27 rows per settlement** the same way? | the 27-row figure and the 3,333-settlement ceiling rest on it | one D1 database, one write pass |
-| **E12-b…f** | the KV-style API, alarms, WebSockets/requests, duration/hibernation, the repeat run | the remaining E5/E6 axes | more runs, more of the account's quota |
+| **1** | **E12-d — WebSocket metering** | 4 clients, one match's worth of messages (≈ 1,130): what do Cloudflare's **DO requests** and **Worker requests** counters show? | tests the **20:1 inbound ratio on the Free plan** and whether the messages are also counted as Worker requests — two E6 figures that are still modelled |
+| **2** | **E12-e — duration (GB-s)** | a match-length connection, **with** and **without** hibernation | whether an open match costs duration; under an ×1 row shape this becomes the **binding meter** (§7.1) |
+| **3** | **E12-c + the delete cost** | what does **`setAlarm()`** cost, and what does a **row-by-row `DELETE`** cost vs **`DELETE FROM`**? | the alarm figure E7's §11 inactivity-timer design carries, and the cleanup cost E10 needs — both measured on the platform's own counter |
 
-**Nothing above has been run.** The deployed worker stays in place as the E12 harness for the next
-step: its cron still fires every minute, but the run flag makes it a **no-op** — no writes, no new
+**Nothing above has been run.** The deployed worker stays in place as the E12 harness for these
+steps: its cron still fires every minute, but the run flag makes it a **no-op** — no writes, no new
 DO instances, no rows. The four DO instances and their rows remain on the throwaway account until
-the account is deleted (the account-deletion policy is **E13**, a separate step).
+the account is deleted (the account-deletion policy is **E13**, a separate step). **When the three
+steps are done, the cron and the worker are removed and the owner is asked to revoke the token.**
 
 ## 10. Artifacts
 
@@ -265,16 +312,25 @@ built-ins and the pinned local wrangler — no installs, no PATH or admin change
 2. **يعني الـ"×2" اللي في نموذج السعة مش تخمين — ده اللي بيتحاسب فعلاً.** والسبب هو **شكل
    الجدول** مش سلوك المنصة: نفس المنصة، نفس الكود، الفرق بس إن V2 عنده فهرس تاني بيخلي السطر
    يتكتب مرتين. لو استخدمنا `WITHOUT ROWID` (V3) هنرجع لـ×1 — **بس ده لسه متقيسش على المنصة**.
+2-ج. **التأثير على السعة (بأرقام per-Trick، مش per-action):** المباراة = **428** صف بـ×1 و**856**
+   صف بـ×2. يعني عند **100 / 125 / 150** مباراة في اليوم: **42.8% / 53.5% / 64.2%** من حدّ
+   الـ100,000 صف/يوم تحت ×1، و**85.6% / 107% / 128%** تحت ×2 — يعني **125 و150 بتتجاوز الحد**
+   لو اخترنا الشكل ×2. (محور الـper-action — 1,135/2,270 — ده محور تاني مش متقيس، وE9 هو
+   اللي بيحسم هل هو أصلاً applies.)
 3. **في اختلاف جديد في عدّ القراءات:** Cloudflare عدّ **430 صف مقروء** في كل instance، بينما الـDO
    نفسه سجّل **صفر**. يعني عدّ القراءات محتاج قياس لوحده (E12-g) — لكن ده **مش** مشكلة سعة
    (القراءة بعيدة تحت الحد)، بس الرقم في الموديل لازم يتظبط.
 4. **الحساب: تجريبي، Free، ومفيش أي billing.** `GET /accounts/{id}/subscriptions` رجع **فاضي**.
    **حساب A الأساسي ما اتلمسش خالص** — عملت `XDG_CONFIG_HOME` جديد وربطت `account_id` بالحساب
    التجريبي بس.
-5. **الخطوة الجاية محتاجة موافقتك:** أقترح **E12-g** (قياس عدّ القراءات) وبعدها **E12-h** (V3 على
-   المنصة) وبعدها **E12-i** (D1/pages قطعة الـ27 صف). **معملتش حاجة من دول، والـworker واقف.**
+5. **الخطوات الجاية (بترتيب أولويتك):** (1) **عدّ الـ WebSocket** على المنصة الحقيقية، (2) **المدة
+   GB-s** مع ومن غير hibernation، (3) **تكلفة `setAlarm` والحذف**. و**E12-g/h/i متأجلين** زي ما
+   اتفقنا.
 
 English: Cloudflare's metered rows-written equals the DO's own count exactly — V1 ×1, V2 ×2 — so
-the capacity model's ×2 is confirmed and is a schema choice, not a platform precaution. The read
-meter diverges (430 vs 0) and needs its own step. The throwaway account is on the Free plan with
-no subscriptions; the primary account was never touched. The next steps are proposed, not run.
+the capacity model's ×2 is confirmed and is a schema choice, not a platform precaution. On the
+per-Trick axis that is 428 rows/match (×1) or 856 (×2), i.e. 42.8% / 53.5% / 64.2% and
+85.6% / 107% / 128% of the 100,000 rows/day limit at 100 / 125 / 150 matches per day. The read
+meter diverges (430 vs 0) and is deferred. The throwaway account is on the Free plan with no
+subscriptions; the primary account was never touched. The next steps are the owner's list:
+WebSocket metering, duration, then setAlarm/delete.

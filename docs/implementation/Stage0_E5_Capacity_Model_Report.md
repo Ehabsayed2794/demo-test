@@ -184,10 +184,15 @@ constant on top, which is exactly what E6's synthetic workload will exercise end
 > plan, **no subscriptions, no billing**) and read **Cloudflare's own metered counter** for the
 > same Durable Object instances: **V1 = 428 rows billed for 428 inserts (×1)**, **V2 = 856 rows
 > billed for 428 inserts (×2)** — **exactly** the DO's own cursor counts. So the **×2 is what
-> Cloudflare bills for the V2-shaped schema**, and the "Rows written per match" row above is now
-> **confirmed rather than carried**: **2,270 for a composite-primary-key rowid table, 1,135 for
-> an ×1 shape**. **V3 (`WITHOUT ROWID`) is still [x]** — it has not been measured on the
-> platform. **The read row above is NOT confirmed**: Cloudflare counted **430 rows read** where
+> Cloudflare bills for the V2-shaped schema**, and the factor behind the §3.3 row is now
+> **confirmed rather than carried**. **The measurement is on the per-Trick axis** — 428 writes per
+> match = 234 trick checkpoints + 193.9 auction actions, the ruled persistence design — so the
+> §5 per-trick row now reads **428 (856)**: at 100 / 125 / 150 matches/day that is **42.8% /
+> 53.5% / 64.2%** under an ×1 shape and **85.6% / 107% / 128%** under the ×2 shape. **The
+> "per-action durability" row in §4 is a different axis and is NOT measured** — it stays at
+> 1,135 (×2: 2,270) as a model figure, and E9 decides whether that axis applies at all.
+> **V3 (`WITHOUT ROWID`) is still [x]** — it has not been measured on the platform.
+> **The read row above is NOT confirmed**: Cloudflare counted **430 rows read** where
 > the DO's cursor reported **0** (the platform meter counts a read per write; the local cursor
 > does not), so the "Rows read per match ≈ 1,135" figure may be low by ~428 per match — far
 > inside the 5,000,000/day budget, so **not** a capacity blocker, but a **correctness** item with
