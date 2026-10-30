@@ -623,6 +623,39 @@ class DurableMatch private constructor(
    *  can make across a process kill. */
   fun stateDigest(): String = fnv1a32(stateDocument())
 
+  /**
+   * The decision point the engine is waiting at: the round, the count of tricks
+   * FINISHED in it, the seat that owes the next move, and the phase. The trick
+   * count is the same basis [com.estemshan.engine.InactiveTakeover.trickNo]
+   * uses — 0 through the auction and through the opening trick — so an RD19
+   * marker stamped from here and the move the borrowed seat then plays cannot
+   * disagree about which trick a takeover interrupted.
+   */
+  fun positionJson(): String {
+    val b = bidding
+    val t = table
+    val biddingOpen = b != null && b.subPhase != BiddingPhase.DONE
+    val phase = when {
+      isComplete() -> "DONE"
+      biddingOpen -> "BIDDING"
+      t != null && t.phase == TablePhase.PLAY -> "PLAY"
+      else -> "WAITING"
+    }
+    val round = session.getRound().number
+    val trick = if (!biddingOpen && t != null && t.phase == TablePhase.PLAY) {
+      (t.trickNo - 1).coerceAtLeast(0)
+    } else {
+      0
+    }
+    val seat = when {
+      biddingOpen -> b?.waitingFor
+      t != null && t.phase == TablePhase.PLAY -> t.turn
+      else -> null
+    }
+    return """{"status":"ok","round":$round,"trick":$trick,"phase":"$phase",""" +
+      """"seat":"${seat ?: "-"}","decisionPoint":$applied}"""
+  }
+
   companion object {
     fun start(
       seed: Int,

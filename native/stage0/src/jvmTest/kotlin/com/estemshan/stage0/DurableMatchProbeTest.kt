@@ -198,6 +198,99 @@ class DurableMatchProbeTest {
     assertEquals(driven.docs.last(), m.stateDocument())
   }
 
+  // ── 10. Design A's row count (stage 4) ───────────────────────────
+
+  /** A = B's checkpoints + one row per card. The bid and Trick rows A carries
+   *  are B's own strings, so the only new cost is the card rows — and the
+   *  count is measured per unit, the same way B's was. */
+  @Test
+  fun theCardLevelLogCountsOneRowPerCardOnTopOfTheRuledShape() {
+    val driven = drive(42)
+    val a = cardLogCounts(42, GameType.FULL, ScoringMode.NORMAL)
+
+    assertEquals(driven.records.size, a.bids + a.tricks, "A's non-card units are not B's units")
+    val bUnits = a.units.filter { it.kind != "CARDS" }.map { it.record }
+    assertEquals(driven.records, bUnits, "A's bid/Trick rows differ from B's log")
+    assertEquals(936, a.cards, "a FULL match is 18 rounds x 13 tricks x 4 cards")
+    assertEquals(a.tricks * 4, a.cards, "cards must be four per Trick")
+
+    println(
+      "E9 design A seed 42: bids=${a.bids} tricks=${a.tricks} cards=${a.cards} " +
+        "checkpoint+cards=${a.checkpointPlusCards} cards-only=${a.cardsOnly}",
+    )
+
+    val out = java.io.File("build/stage0-e9").apply { mkdirs() }
+    out.resolve("e9-cardlog-42.json").writeText(
+      """{"seed":42,"bids":${a.bids},"tricks":${a.tricks},"cards":${a.cards},""" +
+        """"checkpointPlusCards":${a.checkpointPlusCards},"cardsOnly":${a.cardsOnly},""" +
+        """"units":[${a.units.joinToString(",") { "\"${it.record}\"" }}]}""",
+    )
+  }
+
+  // ── 11. boundary 7's decision is the engine's own ─────────────────
+
+  /** The decision a Durable Object reaches on an alarm is the engine's
+   *  [InactivityClock] arithmetic, not a second copy of it: 50 s accumulates
+   *  into a takeover, 49,999 ms does not, a borrowed seat is idempotent, and
+   *  an untrustworthy stored clock never takes a seat over. */
+  @Test
+  fun theTakeoverDecisionIsTheEnginesAndIsIdempotent() {
+    // Below the threshold: wait — an early alarm does nothing.
+    val early = takeoverDecisionJson(0L, 1_000L, 50_999L, borrowed = false)
+    assertTrue(early.contains("\"status\":\"wait\""), early)
+    assertTrue(early.contains("\"takeover\":false"), early)
+
+    // Exactly 50 s: takeover.
+    val at = takeoverDecisionJson(0L, 1_000L, 51_000L, borrowed = false)
+    assertTrue(at.contains("\"status\":\"takeover\""), at)
+
+    // A late delivery decides on the clock, not on the timer: still one takeover.
+    val late = takeoverDecisionJson(0L, 1_000L, 120_000L, borrowed = false)
+    assertTrue(late.contains("\"status\":\"takeover\""), late)
+    // A window that never opened and no accumulation: nothing to take.
+    val idle = takeoverDecisionJson(0L, null, 200_000L, borrowed = false)
+    assertTrue(idle.contains("\"status\":\"wait\""), idle)
+
+    // A borrowed seat is idempotent: a re-delivered alarm cannot re-take it.
+    val dup = takeoverDecisionJson(0L, 1_000L, 51_000L, borrowed = true)
+    assertTrue(dup.contains("\"status\":\"duplicate\""), dup)
+    assertTrue(dup.contains("\"takeover\":false"), dup)
+
+    // Fail-closed: a stored accumulation at or above the threshold is not state
+    // the clock produced, so no takeover can fire from it.
+    assertEquals(
+      "refused",
+      takeoverDecisionJson(50_000L, null, 200_000L, borrowed = false).substringAfter("\"status\":\"").substringBefore("\""),
+    )
+
+    val marker = takeoverMarkerJson(51_000L, 3, 7)
+    assertTrue(marker.contains("\"takenOverAtMillis\":51000"), marker)
+    assertTrue(marker.contains("\"roundAtTakeover\":3"), marker)
+    assertTrue(marker.contains("\"trickAtTakeover\":7"), marker)
+  }
+
+  // ── 12. the stage-4 matrix's JVM anchor ───────────────────────────
+
+  /** Boundaries 1–8 each run a different seed; these are the uninterrupted
+   *  JVM logs the workerd matrix compares a killed-and-recovered match with.
+   *  Seeds 58–59 are boundary 7's other two kill points (after the takeover row,
+   *  and while the replacement clock is re-armed). */
+  @Test
+  fun theMatrixSeedsWriteTheirJvmLogs() {
+    val out = java.io.File("build/stage0-parity").apply { mkdirs() }
+    for (seed in 50..59) {
+      val driven = drive(seed)
+      java.io.File(out, "e9-matrix-$seed.log").writeText(driven.records.joinToString("\n"))
+      java.io.File(out, "e9-matrix-$seed.digest").writeText(driven.match.stateDigest())
+      // Every prefix, so a match killed after k rows is compared with the
+      // UNINTERRUPTED run at k — not merely with its own final digest.
+      java.io.File(out, "e9-matrix-$seed.prefixes").writeText(
+        driven.digests.mapIndexed { k, d -> "$k\t$d" }.joinToString("\n"),
+      )
+      println("E9 matrix seed $seed: rows=${driven.records.size} digest=${driven.match.stateDigest()}")
+    }
+  }
+
   // ── 9. the settlement a finished match owes ───────────────────────
 
   /** The durable match settles through the SAME arithmetic as E7's stream —

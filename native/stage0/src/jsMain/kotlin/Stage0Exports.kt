@@ -16,8 +16,11 @@ import com.estemshan.stage0.runCapacityJson
 import com.estemshan.stage0.runCapacityMixJson
 import com.estemshan.stage0.runCorpusJson
 import com.estemshan.stage0.runMatchJson
+import com.estemshan.stage0.cardLogCounts
 import com.estemshan.stage0.parseRpMap
 import com.estemshan.stage0.renderMatchSettlement
+import com.estemshan.stage0.takeoverDecisionJson
+import com.estemshan.stage0.takeoverMarkerJson
 import com.estemshan.stage0.runRuleVectorsText
 import com.estemshan.stage0.runSettlementStreamFromJson
 import com.estemshan.stage0.runSettlementStreamJson
@@ -213,6 +216,61 @@ fun e9Settle(matchId: String, startingRpJson: String): String {
     """{"status":"ok","matchId":"${jsonEscape(matchId)}","payload":${renderMatchSettlement(set)}}"""
   } catch (e: Throwable) {
     """{"status":"error","message":"${jsonEscape(e.message ?: "settlement failed")}"}"""
+  }
+}
+
+/**
+ * E9 boundary 7: the takeover decision, answered by the engine's own RD19
+ * clock. [openSinceMillis] is -1 when no window is open. Pure — the same
+ * stored fields and the same [nowMillis] always give the same verdict, which
+ * is what lets a restarted object reach it again.
+ */
+@OptIn(ExperimentalJsExport::class)
+@JsExport
+fun e9TakeoverDecision(
+  accumulatedMillis: Double,
+  openSinceMillis: Double,
+  nowMillis: Double,
+  borrowed: Boolean,
+): String = takeoverDecisionJson(
+  accumulatedMillis.toLong(),
+  if (openSinceMillis < 0) null else openSinceMillis.toLong(),
+  nowMillis.toLong(),
+  borrowed,
+)
+
+/** The marker of a takeover, in the engine's `InactiveTakeover` field shape. */
+@OptIn(ExperimentalJsExport::class)
+@JsExport
+fun e9TakeoverMarker(takenOverAtMillis: Double, round: Int, trick: Int): String =
+  takeoverMarkerJson(takenOverAtMillis.toLong(), round, trick)
+
+/**
+ * The decision point the engine waits at — round, finished tricks in it, the
+ * seat that owes the move, and the log head. The alarm handler stamps its RD19
+ * marker from this, so the marker is the engine's own position rather than the
+ * probe's guess at it.
+ */
+@OptIn(ExperimentalJsExport::class)
+@JsExport
+fun e9Position(): String = e9Match?.positionJson() ?: """{"status":"error","message":"no match"}"""
+
+/**
+ * Design A's unit stream for one match — every card play, every auction action
+ * and (when [withTricks]) every Trick checkpoint — rendered as one row per
+ * line. The workerd leg inserts it one unit per event to measure the per-unit
+ * cost with the store's own cursor.
+ */
+@OptIn(ExperimentalJsExport::class)
+@JsExport
+fun e9CardLog(seed: Int, gameType: String, scoringMode: String, withTricks: Boolean): String {
+  return try {
+    val c = cardLogCounts(seed, gameTypeOf(gameType), scoringModeOf(scoringMode))
+    val rows = c.units.filter { withTricks || it.kind != "TRICK" }.map { it.record }
+    """{"status":"ok","seed":${c.seed},"bids":${c.bids},"tricks":${c.tricks},"cards":${c.cards},""" +
+      """"checkpointPlusCards":${c.checkpointPlusCards},"cardsOnly":${c.cardsOnly},"units":[${rows.joinToString(",") { "\"${jsonEscape(it)}\"" }}]}"""
+  } catch (e: Throwable) {
+    """{"status":"error","message":"${jsonEscape(e.message ?: "card log failed")}"}"""
   }
 }
 
