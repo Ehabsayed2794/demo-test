@@ -20,6 +20,17 @@ Branch `stage0/e5-capacity-model`, base `64bd2e9` (main after PR #189).
 > recalculate for the WebSocket + server-side-bot design across the three target scenarios, and
 > label every input measured, modelled, unknown, or needing a real Cloudflare experiment
 > (record §8).
+>
+> **Addendum, 2026-10-30 (E7b measured the rows-per-write multiplier; the sections below are left
+> verbatim).** The **×2 bound** carried in §3.3 is now **measured** and is **a schema choice, not a
+> platform precaution**: a Durable Object write costs **1 row written** on a plain rowid table, on
+> a `WITHOUT ROWID` table with `PRIMARY KEY (match_id, seq)`, and on a single-row upsert, but
+> **2 rows written** when the table carries a **second index** — a composite `PRIMARY KEY` on an
+> ordinary rowid table, an explicit secondary index, or a `UNIQUE` constraint. **A LOCAL COUNT IS
+> NOT PROOF OF WHAT CLOUDFARE BILLS** — the dashboard-vs-local comparison is **[x]**, a
+> real-account question to be run **with the owner's approval** (E12-a in
+> `docs/implementation/Stage0_E7b_DO_Rows_Report.md` §9). The ×2 is **not withdrawn**; it becomes
+> conditional on the schema the P3 design picks (**D-E7-7** in the E7 report).
 
 ## 1. What the experiment is
 
@@ -142,6 +153,31 @@ constant on top, which is exactly what E6's synthetic workload will exercise end
 | **Rows written per match** | **≈ 1,135** (conservative ×2 → 2,270) | Cloudflare bills KV-style `put()` as rows written via a hidden SQLite table and does not publish the rows-per-put mapping, so both bounds are carried |
 | Rows read per match | ≈ 1,135 | 1 state-row read per request + settlement reads (budget 5M/day — never binding) |
 | State size per persist | ≤ 5.5 KB | Measured upper bound: the rendered match document (mean 5,488 / max 5,514 chars, identical on both runtimes) |
+
+> **Pointer, 2026-10-30 (E7b measured the rows-per-write multiplier; the table above is left
+> verbatim).** The **×2 bound** in the "Rows written per match" row is now **measured**, and it is
+> **a schema choice, not a platform precaution**. E7b wrote one FULL match's worth of events
+> (**428** writes) into six Durable Object table shapes and read the DO SQL cursor's own
+> `rowsWritten`:
+>
+> | Rows written per write | Designs | Rows per match |
+> |---|---|---|
+> | **×1** | **V1** — a rowid table with no secondary index; **V3** — `WITHOUT ROWID` with `PRIMARY KEY (match_id, seq)`; **V6** — one state row updated in place | **428** |
+> | **×2** | **V2** — the same composite `PRIMARY KEY` on an **ordinary rowid** table; **V4** — an explicit **secondary index**; **V5** — a `UNIQUE` constraint | **856** |
+>
+> **The cause is a second index.** A composite `PRIMARY KEY` on an ordinary rowid table is
+> implemented as a separate UNIQUE index, and each index entry is a second written row. A
+> `WITHOUT ROWID` table keeps the **same unique key** at **×1**. **Payload size does not change
+> the row count** (100 / 300 / 1,000 B all report the same `rowsWritten`), and **neither does
+> batching** (one statement, chunks, 428 separate statements, or `transactionSync`).
+>
+> **A LOCAL COUNT IS NOT PROOF OF WHAT CLOUDFARE BILLS** — whether Cloudflare's metered
+> rows-written matches the local cursor is **[x]**, a real-account question (E12-a in the E7b
+> report's add-on, **with the owner's approval**).
+>
+> **The figures in this section are left verbatim.** The ×2 bound is **not** withdrawn; it becomes
+> **conditional on the schema** the P3 design picks (**D-E7-7** in the E7 report). Report:
+> `docs/implementation/Stage0_E7b_DO_Rows_Report.md`.
 
 ## 4. The capacity table
 

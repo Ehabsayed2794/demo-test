@@ -113,7 +113,7 @@ Per FULL match, by seat mix — WebSocket transport, per-Trick persistence, bots
 | DO request-units — documented reading: ⌈inbound/20⌉ + 4 connects + 5 lifecycle | 66 | 52 | 38 | inbound **[M]**; 20:1 **[m]** paid-page figure — the free plan's enforcement is **[x]**; lifecycle **[m]** minimal shape |
 | DO request-units — conservative reading: inbound 1:1 + connects + lifecycle | 1,139 | 852 | 574 | **[m]** the ambiguity case: the free-plan limit text counts "WebSocket messages" without publishing the ratio |
 | Outbound messages (1 ack + 3 broadcasts per action) | 4,519.7 | 4,519.7 | 4,519.7 | **[M as message count]** — the pricing docs state outgoing messages are **not billed**; listed for design completeness, not for the request meter |
-| DO rows written (234 trick checkpoints + 193.9 auction actions) | 427.9 | 427.9 | 427.9 | counts **[M]**; 1 row/write **[m]** — see the ×2 allowance in §5 |
+| DO rows written (234 trick checkpoints + 193.9 auction actions) | 427.9 | 427.9 | 427.9 | counts **[M]**; 1 row/write **[m]** → **now [M] measured by E7b: the rows-per-write is 1 or 2 depending on the schema** — see the ×2 allowance in §5 and its E7b pointer |
 | D1 rows written (settlement: 1 result + 4 RP) | 5 | 5 | 5 | **[m]** |
 | DO rows read (state per action) | ≈ 1,130 | ≈ 990 | ≈ 850 | **[m]** |
 | Server engine CPU, ms (per match; chains ≤ 4 ms per request) | 22.6 | 28.3 | 35.6 | **[M]** local wall-clock — §2 caveat |
@@ -167,6 +167,36 @@ The ×2 figure is a **rough allowance** for these multipliers combined, **not a 
 measurement**. At the ×2 bound: 85,584 / 106,980 / 128,376 rows → **85.6% / 107% / 128%** —
 150 overruns outright, 125 overruns, 100 sits just under the 90% trip line.
 
+> **Pointer, 2026-10-30 (E7b measured the ×2 rows allowance; the §5 figures above are left
+> verbatim).** The **×2 rows allowance** is now **measured**, and it is **a schema choice, not a
+> platform precaution**. E7b wrote one FULL match's worth of events (**428** writes — the counts
+> read from the same probe file, not retyped) into six DO table shapes and read the DO SQL
+> cursor's own `rowsWritten`:
+>
+> | Rows written per write | Designs | Rows per match |
+> |---|---|---|
+> | **×1** | **V1** — a rowid table with no secondary index; **V3** — `WITHOUT ROWID` with `PRIMARY KEY (match_id, seq)`; **V6** — one state row updated in place (428, plus 428 rows **read**) | **428** |
+> | **×2** | **V2** — the same composite `PRIMARY KEY` on an **ordinary rowid** table; **V4** — an explicit **secondary index**; **V5** — a `UNIQUE` constraint | **856** |
+>
+> **So the ×2 is caused by a second index.** A composite `PRIMARY KEY` on an ordinary rowid table
+> is implemented as a separate UNIQUE index, and each index entry is a second written row. A
+> `WITHOUT ROWID` table carries the **same unique key** at **×1**.
+>
+> Also measured: **payload size does not change the row count** (100 / 300 / 1,000 B all report
+> the same `rowsWritten` — only the file size moves); **batching does not change it either** (one
+> statement, 5 chunks, 428 separate statements and `transactionSync` all report the same rows);
+> **a delete costs 1 row per deleted row, with no index multiplier** (the ×2 is an insert-side
+> cost only); and this runtime caps a statement at **100 bind variables** (so **33** three-column
+> rows per statement, not 428).
+>
+> **A LOCAL COUNT IS NOT PROOF OF WHAT CLOUDFARE BILLS.** Whether Cloudflare's metered
+> rows-written matches the local cursor is **[x]** — a real-account question (E12-a in the E7b
+> report's add-on, to be run **with the owner's approval**).
+>
+> **The figures in this section are left verbatim.** The ×2 bound is **not** withdrawn; it becomes
+> **conditional on the schema** the P3 design picks — **D-E7-7** in the E7 report. Report:
+> `docs/implementation/Stage0_E7b_DO_Rows_Report.md`.
+
 > **Pointer, 2026-10-30 (E7 measured the settlement write protocol; the D1 rows rows above are
 > left verbatim).** The **5 D1 rows/match** in §4 and the **D1 rows written** row in §5 are the
 > ledger's **table** rows only — they exclude the **intent queue** (insert + ack + cleanup) and
@@ -180,6 +210,14 @@ measurement**. At the ×2 bound: 85,584 / 106,980 / 128,376 rows → **85.6% / 1
 > matches/day at the 90% guardrail, not 18,000. **[m]** (modelled on a local D1; the Free plan's
 > real metering is **[x]** — a real Cloudflare account). Report:
 > `docs/implementation/Stage0_E7_Backup_Outbox_Report.md` §10; pending owner decision D-E7-3.
+>
+> **Correction (2026-10-30, E7 step 4) — the "29" in this pointer is superseded by "27".** The
+> old 29 used the **first** backup run's cost (14 rows, which includes **creating** the two
+> watermark rows). Every later run only **updates** them, so the steady-state run costs **12** →
+> 10 + 12 + 5 = **27** rows per settlement. The **25.4** headline at a 5-match cadence was already
+> the steady-state figure and is **unchanged**. Measured directly at cadences 1 / 5 / 10
+> (backup job rows per run 14/12, 54/52, 104/102; coverage 98.33% / 91.67% / 83.33%).
+> Report: `docs/implementation/Stage0_E7_Backup_Outbox_Report.md` §8.1 and §10.4.
 
 ### 5.1 PASS/overrun thresholds at both bases (review item 2)
 
