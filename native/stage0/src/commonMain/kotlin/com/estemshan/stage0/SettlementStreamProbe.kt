@@ -98,55 +98,100 @@ fun buildSettlementStream(
 
   for (seed in firstSeed until firstSeed + count) {
     val run = playMatch(seed, gameType, scoringMode)
-    val totals = run.matchScores
     val matchId = "m-${gameType.name}-${scoringMode.name}-$seed"
-
-    val ordinals = E7_SEATS.map { rankLadder.indexOf(rankAt(carried.getValue(E7_UID_OF_SEAT.getValue(it)))) }
-    val tierIndexes = E7_SEATS.map { seat ->
-      E7_TIERS.indexOf(rankAt(carried.getValue(E7_UID_OF_SEAT.getValue(seat))).tier)
-    }
-    // RD29: a table wider than one tier records the match but awards nothing.
-    val noAward = tierIndexes.max() - tierIndexes.min() > 1
-
-    val rows = E7_SEATS.mapIndexed { index, seat ->
-      val uid = E7_UID_OF_SEAT.getValue(seat)
-      val previousRp = carried.getValue(uid)
-      val others = ordinals.filterIndexed { i, _ -> i != index }
-      val opponentStrength = if (others.isEmpty()) 0 else others.sum() / others.size
-      val resolution = if (noAward) {
-        resolveRanked(previousRp, 0)
-      } else {
-        resolveRanked(
-          previousRp,
-          finalRpDelta(
-            RpMatchInput(
-              outcome = placementOutcome(totals, seat),
-              playerOrdinal = ordinals[index],
-              opponentStrength = opponentStrength,
-              gameType = gameType,
-              rankDown = false,
-            ),
-          ),
-        )
-      }
-      carried[uid] = resolution.rp
-      SettlementRow(
-        matchId = matchId,
-        seat = seat,
-        uid = uid,
-        placement = placementRank(totals, seat),
-        outcome = placementOutcome(totals, seat).name,
-        delta = resolution.delta,
-        previousRp = resolution.previousRP,
-        rp = resolution.rp,
-        ladderIndex = rankLadder.indexOf(resolution.next),
-        movement = resolution.movement,
-      )
-    }
-    matches += MatchSettlement(matchId, seed, rows)
+    matches += settleOneMatch(matchId, seed, run.matchScores, gameType, carried)
   }
 
   return SettlementStream(gameType, scoringMode, firstSeed, count, startingRp, matches)
+}
+
+/**
+ * One finished match's four settlement rows, folded from the RP its seats
+ * carried in. [carried] is advanced in place, so a caller settling a sequence
+ * of matches gets the same dependent chain the stream produces.
+ *
+ * Extracted so the durable match (E9) settles through THIS code and not a
+ * second derivation of the production formulas — one settlement path, one
+ * arithmetic, whoever the caller is.
+ */
+fun settleOneMatch(
+  matchId: String,
+  seed: Int,
+  matchScores: Map<String, Int>,
+  gameType: GameType,
+  carried: MutableMap<String, Int>,
+): MatchSettlement {
+  val totals = matchScores
+
+  val ordinals = E7_SEATS.map { rankLadder.indexOf(rankAt(carried.getValue(E7_UID_OF_SEAT.getValue(it)))) }
+  val tierIndexes = E7_SEATS.map { seat ->
+    E7_TIERS.indexOf(rankAt(carried.getValue(E7_UID_OF_SEAT.getValue(seat))).tier)
+  }
+  // RD29: a table wider than one tier records the match but awards nothing.
+  val noAward = tierIndexes.max() - tierIndexes.min() > 1
+
+  val rows = E7_SEATS.mapIndexed { index, seat ->
+    val uid = E7_UID_OF_SEAT.getValue(seat)
+    val previousRp = carried.getValue(uid)
+    val others = ordinals.filterIndexed { i, _ -> i != index }
+    val opponentStrength = if (others.isEmpty()) 0 else others.sum() / others.size
+    val resolution = if (noAward) {
+      resolveRanked(previousRp, 0)
+    } else {
+      resolveRanked(
+        previousRp,
+        finalRpDelta(
+          RpMatchInput(
+            outcome = placementOutcome(totals, seat),
+            playerOrdinal = ordinals[index],
+            opponentStrength = opponentStrength,
+            gameType = gameType,
+            rankDown = false,
+          ),
+        ),
+      )
+    }
+    carried[uid] = resolution.rp
+    SettlementRow(
+      matchId = matchId,
+      seat = seat,
+      uid = uid,
+      placement = placementRank(totals, seat),
+      outcome = placementOutcome(totals, seat).name,
+      delta = resolution.delta,
+      previousRp = resolution.previousRP,
+      rp = resolution.rp,
+      ladderIndex = rankLadder.indexOf(resolution.next),
+      movement = resolution.movement,
+    )
+  }
+  return MatchSettlement(matchId, seed, rows)
+}
+
+/** One match's settlement as the outbox payload: the four rows the ledger
+ *  applies, plus the totals a relay can check without re-deriving them. */
+fun renderMatchSettlement(set: MatchSettlement): String {
+  val w = JsonWriter().beginObject()
+  w.name("matchId").str(set.matchId)
+  w.name("seed").num(set.seed)
+  w.name("rows").beginArray()
+  for (row in set.rows) {
+    w.beginObject()
+    w.name("seat").str(row.seat)
+    w.name("uid").str(row.uid)
+    w.name("placement").num(row.placement)
+    w.name("outcome").str(row.outcome)
+    w.name("delta").num(row.delta)
+    w.name("previousRp").num(row.previousRp)
+    w.name("rp").num(row.rp)
+    w.name("ladderIndex").num(row.ladderIndex)
+    w.name("movement").num(row.movement)
+    w.endObject()
+  }
+  w.endArray()
+  w.name("totalDelta").num(set.rows.sumOf { it.delta })
+  w.endObject()
+  return w.toString()
 }
 
 fun runSettlementStreamJson(

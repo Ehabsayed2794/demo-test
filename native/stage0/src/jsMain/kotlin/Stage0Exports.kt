@@ -16,6 +16,8 @@ import com.estemshan.stage0.runCapacityJson
 import com.estemshan.stage0.runCapacityMixJson
 import com.estemshan.stage0.runCorpusJson
 import com.estemshan.stage0.runMatchJson
+import com.estemshan.stage0.parseRpMap
+import com.estemshan.stage0.renderMatchSettlement
 import com.estemshan.stage0.runRuleVectorsText
 import com.estemshan.stage0.runSettlementStreamFromJson
 import com.estemshan.stage0.runSettlementStreamJson
@@ -195,6 +197,24 @@ fun e9Applied(): Int = e9Match?.recordsApplied ?: -1
 @OptIn(ExperimentalJsExport::class)
 @JsExport
 fun e9Complete(): Boolean = e9Match?.isComplete() ?: false
+
+/**
+ * The settlement this finished match owes — the outbox payload, derived from
+ * the durable result and the RP each uid carried in (`startingRpJson`, a flat
+ * `{"uid":rp}` object read from the RP store). Refuses an unfinished match:
+ * an intent may only be derived from a match the log says is over.
+ */
+@OptIn(ExperimentalJsExport::class)
+@JsExport
+fun e9Settle(matchId: String, startingRpJson: String): String {
+  val m = e9Match ?: return """{"status":"error","message":"no match"}"""
+  return try {
+    val set = m.settlementRows(matchId, parseRpMap(startingRpJson))
+    """{"status":"ok","matchId":"${jsonEscape(matchId)}","payload":${renderMatchSettlement(set)}}"""
+  } catch (e: Throwable) {
+    """{"status":"error","message":"${jsonEscape(e.message ?: "settlement failed")}"}"""
+  }
+}
 
 /** Restart: rebuild the match from the stored rows alone. */
 @OptIn(ExperimentalJsExport::class)

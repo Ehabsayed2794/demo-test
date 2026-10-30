@@ -512,6 +512,21 @@ class DurableMatch private constructor(
   )
 
   /**
+   * The settlement this finished match owes, derived from its own durable
+   * result and the RP its seats carried in — the same [settleOneMatch] the E7
+   * stream uses. Refuses an unfinished match: a settlement intent may only
+   * exist for a match the log says is over.
+   */
+  fun settlementRows(matchId: String, startingRp: Map<String, Int>): MatchSettlement {
+    check(isComplete()) { "settlement requested for an unfinished match" }
+    val carried = LinkedHashMap(startingRp)
+    require(carried.keys.containsAll(listOf("u1", "u2", "u3", "u4"))) {
+      "startingRp must carry all four uids, got ${carried.keys}"
+    }
+    return settleOneMatch(matchId, seed, session.getMatchScores(), gameType, carried)
+  }
+
+  /**
    * The whole comparable state, as text. Deliberately includes the transient
    * parts — the in-flight trick, the seats' remaining hands, the auction in
    * progress — so a recovery that dropped the last unit cannot pass by

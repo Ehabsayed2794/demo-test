@@ -36,6 +36,8 @@ import kotlin.test.assertTrue
  */
 class DurableMatchProbeTest {
 
+  private val outDir = java.io.File("build/stage0-e9").apply { mkdirs() }
+
   private val combos = listOf(
     GameType.FULL to ScoringMode.NORMAL,
     GameType.FULL to ScoringMode.CLASSIC,
@@ -194,6 +196,50 @@ class DurableMatchProbeTest {
     }
     assertNull(m.nextUnitRecord(), "a complete match still produced a unit")
     assertEquals(driven.docs.last(), m.stateDocument())
+  }
+
+  // ── 9. the settlement a finished match owes ───────────────────────
+
+  /** The durable match settles through the SAME arithmetic as E7's stream —
+   *  same seed, same starting RP, identical rows. One settlement path, not a
+   *  second derivation of the production formulas. */
+  @Test
+  fun theCompletedMatchSettlesExactlyAsTheE7StreamDoes() {
+    val driven = drive(42)
+    val fromDurable = driven.match.settlementRows("m-FULL-NORMAL-42", E7_STARTING_RP)
+    val fromStream = buildSettlementStream(42, 1).matches.single()
+
+    assertEquals(fromStream.matchId, fromDurable.matchId)
+    assertEquals(fromStream.rows, fromDurable.rows, "the durable match settled differently from the E7 stream")
+    assertEquals(4, fromDurable.rows.size, "one ledger row per seat")
+    assertEquals(4, fromDurable.rows.map { it.seat }.toSet().size)
+    // The document the workerd leg must reproduce byte for byte: the DO derives
+    // its intent from the same function, so a different byte is a real fork.
+    outDir.resolve("e9-settle-42-full-normal.json").writeText(renderMatchSettlement(fromDurable))
+    println(
+      "E9 settlement seed 42: " +
+        fromDurable.rows.joinToString { "${it.seat}/${it.uid} ${it.outcome} ${it.delta} -> ${it.rp}" } +
+        " total=${fromDurable.rows.sumOf { it.delta }}",
+    )
+  }
+
+  /** An intent may only be derived from a match the log says is over. */
+  @Test
+  fun anUnfinishedMatchCannotBeSettled() {
+    val m = DurableMatch.start(42)
+    repeat(20) {
+      val step = m.nextStep()
+      if (step !is E9Step.Done) m.submit(step)
+    }
+    assertTrue(!m.isComplete())
+    val before = m.recordsApplied
+    val boom = runCatching { m.settlementRows("m-unfinished", E7_STARTING_RP) }
+    assertTrue(boom.isFailure, "an unfinished match produced a settlement")
+    assertTrue(
+      boom.exceptionOrNull()?.message?.contains("unfinished match") == true,
+      "wrong refusal: ${boom.exceptionOrNull()?.message}",
+    )
+    assertEquals(before, m.recordsApplied, "the refusal moved the log")
   }
 
   /** The number the capacity model quotes. E7's model is 428/match
