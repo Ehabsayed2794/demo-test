@@ -313,6 +313,17 @@ Stage 0 E1–E6 above are the evidence gathered so far, and they are positive.
   the documented readings E6 measured headroom for the 100/125/150 scenarios led by rows written
   at 1.6–2.3× (requests 10–15×); under the conservative inbound-1:1 reading all three scenarios
   overrun requests. E12 decides which world is real.
+
+  > **Pointer, 2026-10-30 (E12-a ran: the rows-per-write multiplier is now measured on
+  > Cloudflare; the other two meters are still [x]).** The owner's **throwaway** Free account (no
+  > subscriptions, **no billing**) confirmed the **rows-per-write multiplier**: Cloudflare's
+  > metered rows-written count **equals** the DO's own cursor count — **V1 = 428 (×1)**,
+  > **V2 = 856 (×2)** — so the **×2 in the capacity model is a schema choice, not a precaution**,
+  > and the "led by rows written" headroom above is now **measured on the platform**, not
+  > modelled. **Still open:** the free-plan WebSocket metering and the hibernation/duration cost
+  > (E12-d/e), the read meter (E12-g), V3 on the platform (E12-h), and D1's 27 rows/settlement
+  > (E12-i). Report: `docs/implementation/Stage0_E12a_Platform_Rows_Report.md`. **This ADR stays
+  > PROPOSED and O-06 stays open** — one meter measured is not an adoption.
 - E9 — a Durable Object's state is per-object and single-threaded, which is a
   *better* fit for exactly-once settlement than a Firestore transaction, but it
   is a different durability story and has to be demonstrated, not assumed.

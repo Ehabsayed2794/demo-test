@@ -142,18 +142,26 @@ the other.
 
 **⏸ إيقاف — لحد ما تقول "موافق على خطوة N"، محدشش يعمل الخطوة دي.**
 
-☐ **خطوة 0 — الحساب (سلّمي انت)**
-انت تعمل حساب Cloudflare مؤقت وتبعتّهولي. أنا مش هعمل حساب، ولا هدفع، ولا أوصل
-لحساب من عندي، ولا أوصل لحسابك الأساسي.
+✅ **خطوة 0 — الحساب — تم ✅**
+الحساب المؤقت وصل، و**اتأكد** إنه **Free** من غير أي اشتراك (`subscriptions = []`)، يعني **مفيش
+billing**. والحساب الأساسي **ما اتمسش** خالص.
 
-☐ **خطوة 1 (E12-a) — أهم خطوة: هل عدّاد Cloudflare زي عدّادنا المحلي؟**
+✅ **خطوة 1 (E12-a) — أهم خطوة: هل عدّاد Cloudflare زي عدّادنا المحلي؟ — تم ✅**
 نكتب **428** سطر في جدول عادي (V1) و**428** سطر في جدول مفتاحه مركّب (V2)، ونقارن
 عدّاد الـ dashboard بـ **428** و **856**.
 **بتجيب إيه:** هل الـ ×2 في نموذج السعة يفضل ولا يشال. دي الخطوة اللي بتفصل كل حاجة.
+**النتيجة: Cloudflare عدّ نفس اللي الـDO كاتبه بالظبط — V1 = 428 (×1) و V2 = 856 (×2).**
+يعني **الـ ×2 يفضل، مش يتشال** — بس بقى **شكل جدول** مش تخمين. تقرير كامل:
+`docs/implementation/Stage0_E12a_Platform_Rows_Report.md`.
 
 ☐ **خطوة 2 (E12-b) — تكلفة `ctx.storage.put()` / `delete()`**
 **100** put + **100** delete، ونقارن عدّاد الـ dashboard.
 **بتجيب إيه:** سعر الـ API ده — العدّاد المحلي ميكشفشوش خالص، فمفيش غير الحساب الحقيقي.
+
+☐ **خطوة 2-ج (E12-g) — جديدة — عدّاد القراءات**
+Cloudflare عدّ **430 صف مقروء** في خطوة 1، والـDO سجّل **صفر**. نعمل نفس الكتابة مع **قرار
+قراءة متعمد** (point lookup / count / scan / upsert) عشان نعرف Cloudflare بيعدّ إيه.
+**بتجيب إيه:** رقم القراءة في نموذج السعة (≈1,130 صف قراءة لكل مباراة) صح ولا ناقص.
 
 ☐ **خطوة 3 (E12-c) — تكلفة `setAlarm()`**
 `setAlarm` واحد، ونشوف الفرق في الـ dashboard.
@@ -205,3 +213,4 @@ DO شغال فاضي والـ WS متصل لمدة مباراة، وبعدين �
 | The measured cadence table | `docs/implementation/Stage0_E7_Backup_Outbox_Report.md` §8.1 |
 | The protocol rows + ceilings + the old → new log | `docs/implementation/Stage0_E7_Backup_Outbox_Report.md` §10 |
 | The capacity models the new figure feeds | `docs/implementation/Stage0_E5_Capacity_Model_Report.md`, `docs/implementation/Stage0_E6_Target_Workload_Report.md` |
+| The E12-a result (step 1 — done) | `docs/implementation/Stage0_E12a_Platform_Rows_Report.md` |

@@ -178,6 +178,21 @@ constant on top, which is exactly what E6's synthetic workload will exercise end
 > **The figures in this section are left verbatim.** The ×2 bound is **not** withdrawn; it becomes
 > **conditional on the schema** the P3 design picks (**D-E7-7** in the E7 report). Report:
 > `docs/implementation/Stage0_E7b_DO_Rows_Report.md`.
+>
+> **Pointer, 2026-10-30 (E12-a measured the ×2 ON CLOUDFLARE — the "not proof" line above is
+> superseded on the write axis).** E12-a ran on the owner's **throwaway** Cloudflare account (Free
+> plan, **no subscriptions, no billing**) and read **Cloudflare's own metered counter** for the
+> same Durable Object instances: **V1 = 428 rows billed for 428 inserts (×1)**, **V2 = 856 rows
+> billed for 428 inserts (×2)** — **exactly** the DO's own cursor counts. So the **×2 is what
+> Cloudflare bills for the V2-shaped schema**, and the "Rows written per match" row above is now
+> **confirmed rather than carried**: **2,270 for a composite-primary-key rowid table, 1,135 for
+> an ×1 shape**. **V3 (`WITHOUT ROWID`) is still [x]** — it has not been measured on the
+> platform. **The read row above is NOT confirmed**: Cloudflare counted **430 rows read** where
+> the DO's cursor reported **0** (the platform meter counts a read per write; the local cursor
+> does not), so the "Rows read per match ≈ 1,135" figure may be low by ~428 per match — far
+> inside the 5,000,000/day budget, so **not** a capacity blocker, but a **correctness** item with
+> its own step. The table above and the capacity table in §4 are **left verbatim**. Report:
+> `docs/implementation/Stage0_E12a_Platform_Rows_Report.md`.
 
 ## 4. The capacity table
 

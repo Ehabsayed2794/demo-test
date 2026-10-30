@@ -21,6 +21,19 @@ precaution.
 the local `workerd` runtime's own counter. Whether Cloudflare's metered "rows written" is counted
 the same way is **[x] — a real account is required** (§8, and the E12 add-on in §9).
 
+> **POINTER NOTE (2026-10-30 — E12-a is DONE, on a throwaway account).** The write axis is now
+> **measured on Cloudflare itself**, in
+> [`Stage0_E12a_Platform_Rows_Report.md`](Stage0_E12a_Platform_Rows_Report.md): Cloudflare's
+> metered rows-written count is **exactly** the DO's own cursor count — **V1 = 428 for 428
+> inserts (×1)**, **V2 = 856 for 428 inserts (×2)** — read from the platform's own counter for the
+> same instances, on the Free plan, with no billing. **So the ×2 above is confirmed as what
+> Cloudflare bills, for the V2-shaped schema.** Two statements in this report's body are
+> **superseded**: "a local count is not proof of what Cloudflare bills" (the header) is settled
+> **on the write axis**, and "no real Cloudflare account" (below) is no longer true. **The read
+> axis is NOT settled** — Cloudflare counted **430 rows read** where the DO's cursor reported
+> **0** (E12-a §8), so the local read figures below still need their own step. The body below is
+> otherwise unchanged.
+
 **No real Cloudflare account, no deploy, no external quota, no merge, no PR.** Branch
 `stage0/e7-backup-outbox`. The companion E7 report is
 [`Stage0_E7_Backup_Outbox_Report.md`](Stage0_E7_Backup_Outbox_Report.md).
@@ -250,9 +263,17 @@ and consumes that account's quota, which is exactly what the current brief forbi
 > real data**, the steps **one at a time, each approved before it runs**), and that **no
 > real-account step may start before the owner confirms it**. The **step-by-step approval
 > checklist is §4 of `docs/decisions/2026-10-30-cadence-quota-and-e12-preparation.md`** (the
-> one-page Arabic version is in that record). **Nothing has been run**: no account exists, no
-> worker has been written for E12, and no network call to Cloudflare has been made. The body
-> below is unchanged.
+> one-page Arabic version is in that record).
+>
+> **POINTER NOTE (2026-10-30 — E12-a HAS NOW RUN; the body below is stale on that point).** The
+> owner confirmed the throwaway account (`c6321eda25af9e06234358928272a0fa`, **Free plan, no
+> subscriptions, no billing**) and approved **E12-a alone**. It ran, and the result is in
+> [`Stage0_E12a_Platform_Rows_Report.md`](Stage0_E12a_Platform_Rows_Report.md): **Cloudflare's
+> metered rows-written count equals the DO's own cursor count exactly — V1 = 428 (×1), V2 = 856
+> (×2)** — so the sentence above ("nothing here has been run, no account exists, no network call
+> to Cloudflare has been made") is **no longer true for E12-a**, and the body below is **stale on
+> that point**. **E12-b…E12-f have NOT run** and remain gated, one step at a time. The body
+> below is otherwise unchanged.
 
 **E12-a — does the local counter equal the billed rows? [x]**
 Deploy one DO with the **V1** and **V2** schemas on a throwaway account. Write exactly **428
@@ -318,6 +339,17 @@ CREATE TABLE events (
 **The caveats, in order of weight:**
 
 1. **This is a local count, not proof of what Cloudflare bills.** E12-a must confirm it (§9).
+
+   > **POINTER NOTE (2026-10-30 — confirmed for V1/V2; V3 is still [x]).** E12-a ran on a
+   > throwaway Free account: Cloudflare's metered rows-written count **equals** the DO's own
+   > cursor count — **V1 = 428 (×1)**, **V2 = 856 (×2)** — so the local count **is** what
+   > Cloudflare bills for those two shapes
+   > ([`Stage0_E12a_Platform_Rows_Report.md`](Stage0_E12a_Platform_Rows_Report.md)). **The ×2 is
+   > confirmed, not a precaution.** **What is still unproven is V3** — that `WITHOUT ROWID` also
+   > meters at ×1 on the platform — so caveat 1 now applies to **V3 alone**, and the
+   > recommendation below is unchanged: it still rests on V3's local ×1 until **E12-h** measures
+   > it on the platform.
+
 2. **V3 was the largest file at every payload size** (§4.2) — 2.04 MB vs V1's 0.47 MB at 1,000 B
    payloads. If the DO's storage budget is tight, that is the price of the ×1.
 3. **Any additional lookup index adds ×1 back.** If the design needs a second key (by uid, by

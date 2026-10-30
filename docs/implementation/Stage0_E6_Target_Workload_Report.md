@@ -197,6 +197,20 @@ measurement**. At the ×2 bound: 85,584 / 106,980 / 128,376 rows → **85.6% / 1
 > **conditional on the schema** the P3 design picks — **D-E7-7** in the E7 report. Report:
 > `docs/implementation/Stage0_E7b_DO_Rows_Report.md`.
 
+> **Pointer, 2026-10-30 (E12-a measured the ×2 ON CLOUDFLARE — the "not proof" line above is
+> superseded on the write axis).** E12-a ran on the owner's **throwaway** Cloudflare account (Free
+> plan, **no subscriptions, no billing**) and read **Cloudflare's own metered counter** for the
+> same Durable Object instances: **V1 = 428 rows billed for 428 inserts (×1)**, **V2 = 856 rows
+> billed for 428 inserts (×2)** — **exactly** the DO's own cursor counts. So the **×2 allowance is
+> what Cloudflare bills for the V2-shaped schema**, and the DO-rows-written axis is **confirmed**,
+> not a bound. **V3 (`WITHOUT ROWID`) is still [x]** — not yet measured on the platform, and it
+> is the ×1 candidate. **The read axis is NOT confirmed**: Cloudflare counted **430 rows read**
+> where the DO's cursor reported **0** (the platform meter counts a read per write; the local
+> cursor does not), so the "DO rows read (state per action) ≈ 1,130" row above may be low by
+> ~428 per match — **far inside the 5,000,000/day limit, so not a capacity blocker**, but a
+> **correctness** item with its own step. The §4/§5 tables above are **left verbatim**. Report:
+> `docs/implementation/Stage0_E12a_Platform_Rows_Report.md`.
+
 > **Pointer, 2026-10-30 (E7 measured the settlement write protocol; the D1 rows rows above are
 > left verbatim).** The **5 D1 rows/match** in §4 and the **D1 rows written** row in §5 are the
 > ledger's **table** rows only — they exclude the **intent queue** (insert + ack + cleanup) and
