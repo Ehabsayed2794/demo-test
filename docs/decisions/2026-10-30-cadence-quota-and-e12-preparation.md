@@ -16,6 +16,16 @@
 - **No real-account step may start before the owner confirms it.** This record is the approval
   checklist (§4), not a permission slip.
 
+> **POINTER NOTE (2026-10-30, later the same day — the checklist below has moved; the body is left
+> verbatim).** Steps **1 (E12-a)**, **3 (E12-c)**, **4 (E12-d)** and **5 (E12-e)** have **run** on
+> the throwaway account and their results are recorded in the checklist; **step 2 (E12-b)** and
+> **step 6 (E12-f)** did not run (E12-c served as the repeat), and **E12-g/h/i stay deferred**.
+> **O-06 is no longer open**: on the measured evidence the owner **approved Cloudflare** at a
+> **80 matches/day target with an 88/day refusal ceiling**, **plain WebSocket**, **no failover
+> server in V1**, the ×1 row shape, and RD19's 50 s unchanged
+> (`docs/decisions/2026-10-30-runtime-decision-o06-cloudflare.md`; ADR `0003` ACCEPTED). The
+> **token was to be revoked by the owner** and the harness was removed — the account is empty.
+
 ---
 
 ## 1. Ruling A — E12 preparation is approved; every step is gated [D]
@@ -163,18 +173,26 @@ Cloudflare عدّ **430 صف مقروء** في خطوة 1، والـDO سجّل 
 قراءة متعمد** (point lookup / count / scan / upsert) عشان نعرف Cloudflare بيعدّ إيه.
 **بتجيب إيه:** رقم القراءة في نموذج السعة (≈1,130 صف قراءة لكل مباراة) صح ولا ناقص.
 
-☐ **خطوة 3 (E12-c) — تكلفة `setAlarm()`**
+✅ **خطوة 3 (E12-c) — تكلفة `setAlarm()` — تم ✅**
 `setAlarm` واحد، ونشوف الفرق في الـ dashboard.
 **بتجيب إيه:** هل فعلاً بيكلف سطر واحد زي ما الوثائق بتقول.
+**النتيجة: الـ`setAlarm` نفسه بيكلف صفر صفوف وصفر طلبات؛ اللي بيتحاسب هو الإطلاق — طلب واحد
+وصفر صفوف.** وكمان اتقاس الحذف: **`DELETE FROM` = 428 صف + صفر قراءات + سطر واحد**، والحذف سطر
+بسطر = **428 صف + 856 قراءة + 428 سطر**. تقرير: `docs/implementation/Stage0_E12d_e_c_Platform_Meters_Report.md`.
 
-☐ **خطوة 4 (E12-d) — الـ WebSocket والطلبات**
+✅ **خطوة 4 (E12-d) — الـ WebSocket والطلبات — تم ✅**
 **4** اتصالات على DO واحد، ورسالة بحجم مباراة كاملة (**≈1,130**)، ونقارن **DO requests**
 و **Worker requests** في الـ dashboard.
 **بتجيب إيه:** هل الـ **20:1** بيتطبّق فعلاً، وهل الرسايل اللي بتطلع بتتحسب ولا لأ.
+**النتيجة: مفيش 20:1 على الخطة المجانية — الرسالة الواردة = طلب واحد في وضع الـhibernation
+(1,134 طلب لـ1,130 رسالة)، وصفر في الوضع العادي (7 طلبات بس). والرسايل الصادرة ببلاش، ومش بتتحسب
+كـWorker requests.**
 
-☐ **خطوة 5 (E12-e) — المدة والـ hibernation**
+✅ **خطوة 5 (E12-e) — المدة والـ hibernation — تم ✅**
 DO شغال فاضي والـ WS متصل لمدة مباراة، وبعدين تفصل، وبعدين evict قسري، ونقارن **GB-s**.
 **بتجيب إيه:** هل المباراة المفتوحة بتكلّف مدة، وهل الـ hibernation بيشتغل.
+**النتيجة: المباراة المفتوحة بتكلّف 0.128 جيجا-ثانية في الثانية (115.2 لمباراة 15 دقيقة). الـ
+hibernation بيشيل تكلفة السكتة خالص — بس بيدفع تمنها 1,130 طلب لكل مباراة.**
 
 ☐ **خطوة 6 (E12-f) — تكرار خطوة 1 للتأكّد**
 نفس الكتابة تاني على الحساب الحقيقي.
@@ -214,3 +232,5 @@ DO شغال فاضي والـ WS متصل لمدة مباراة، وبعدين �
 | The protocol rows + ceilings + the old → new log | `docs/implementation/Stage0_E7_Backup_Outbox_Report.md` §10 |
 | The capacity models the new figure feeds | `docs/implementation/Stage0_E5_Capacity_Model_Report.md`, `docs/implementation/Stage0_E6_Target_Workload_Report.md` |
 | The E12-a result (step 1 — done) | `docs/implementation/Stage0_E12a_Platform_Rows_Report.md` |
+| The E12-c/d/e results (steps 3–5 — done) | `docs/implementation/Stage0_E12d_e_c_Platform_Meters_Report.md` |
+| The runtime decision that closed the thread | `docs/decisions/2026-10-30-runtime-decision-o06-cloudflare.md` |

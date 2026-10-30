@@ -28,6 +28,17 @@
 | Runtime proposal | Cloudflare Workers + SQLite Durable Objects + D1 is a **PROPOSAL**, not an approved architecture (§5.7, O-06) |
 | Monetization | No billing, ads or IAP in the current baseline and no approved V1 monetization scope (O-09) |
 
+> **Pointer, 2026-10-30 (the "Stage 0 status" and "Runtime proposal" rows above are left
+> verbatim).** **E1–E7 have run** (locally; E7b is E7's rows leg) **and E12 has run in four of its
+> platform steps — a, c, d and e — on a real throwaway Free account**, and **O-06 is DECIDED:
+> Cloudflare Workers + Durable Objects + D1, Free plan, no paid subscription**, at a **V1 target of
+> 80 completed matches/day** with a **refusal ceiling of 88/day**
+> (`docs/decisions/2026-10-30-runtime-decision-o06-cloudflare.md`; ADR `0003` is ACCEPTED). The
+> measured binding meter is **DO duration** (0.128 GB·s/s; 115.2 GB·s per 15-minute match):
+> **70.9% at 80/day**, 78.0% at 88/day; rows written 34.2%, requests < 1%. **Still not run: E8,
+> E9, E10, E11, E13 and the optional E12-b/f/g/h/i** — **E9 is the only one that can still change
+> the architecture** (`docs/implementation/Stage0_Remaining_Steps.md`).
+
 > **Pointer, 2026-10-29 (measured; the "NOT YET RUN" row above is left verbatim).**
 > **Six of the thirteen experiments have now been run**: **E1** (the engine plays a complete
 > match inside `workerd`), **E2** (200 seeds × FULL/MINI × Normal/Classic = 800 matches,
@@ -292,6 +303,11 @@ One decision still blocks a workstream rather than merely shaping it:
 1. **O-06 runtime architecture approval** — cannot be decided before Stage 0; it blocks Ranked
    runtime implementation (E3) and the purchase verifier (§5.9, S8). It does not block Stage 0, the
    engine wave, or the planned sprints S1–S7.
+
+   > **Pointer, 2026-10-30 (the sentence above is history).** **O-06 is DECIDED — Cloudflare**
+   > (`docs/decisions/2026-10-30-runtime-decision-o06-cloudflare.md`; ADR 0003 ACCEPTED). E3 is
+   > now gated on **E9**, not on a runtime choice; **S8's** backend is no longer blocked on the
+   > runtime, only on the purchase design.
 
 The open items now shape scope rather than the rule set: **O-12** voice provider/protocol/cost,
 **O-13** ads/consent provider, **O-15** matchmaking direction, **O-16** IAP/Stage 0 sequencing,
@@ -1127,6 +1143,22 @@ defines what would count as a result; it does not report one.
 Stage 0 does **not** decide the architecture by itself. It produces measurements and a
 recommendation; the owner approves or rejects the runtime through a new ADR (O-06).
 
+> **Pointer, 2026-10-30 (E12 measured; O-06 decided; the E8–E13 rows above are left verbatim).**
+> **E12 has run in four of its platform steps on a throwaway Free account, and the owner has
+> approved the runtime through ADR 0003 — Option B, Cloudflare Workers + Durable Objects + D1, Free
+> plan, no paid subscription.** The measured facts that close the E12 row's question ("does
+> hibernation keep idle cost inside the free tier?"): **hibernation keeps *duration* at ≈ 0 but
+> bills 1,134 DO requests per match; the plain always-awake API bills ≈ 7 requests and
+> 0.128 GB·s per second (115.2 GB·s per 15-minute match); `setAlarm()` costs 0 rows and the fire
+> costs 1 request; `DELETE FROM` costs 428 rows and 0 reads, a row-by-row loop 428 rows and 856
+> reads; the rows-written meter is ×1 on a table with no second index.** The decision's own
+> numbers — **80 matches/day target, 88/day refusal ceiling, plain WebSocket, no failover server in
+> V1, ×1 row shape, RD19's 50 s unchanged** — are in
+> `docs/decisions/2026-10-30-runtime-decision-o06-cloudflare.md`. **E9 is now the gate** for
+> per-Trick persistence; **E8, E10, E11, E13 and E12-b/f/g/h/i remain unrun**, and E6 §14's step 8
+> (driving a meter past 100%) is the one protocol item still open
+> (`docs/implementation/Stage0_Remaining_Steps.md`).
+
 ### 5.4.4 Milestones
 
 | Milestone | Definition of done |
@@ -1622,6 +1654,10 @@ O-07, O-08 and O-09 were all answered between 2026-10-22 and 2026-10-23** and li
 labelled “Engineering investigation” are all in §5.7.3 (T1–T9). Each question has its own row where
 it has its own answer.
 
+> **Pointer, 2026-10-30.** **O-06 is no longer open** — it was decided on 2026-10-30
+> (`docs/decisions/2026-10-30-runtime-decision-o06-cloudflare.md`). The open rows are now
+> **O-10, O-11, O-12, O-13, O-16, O-17 and O-18** (O-15 closed 2026-10-28).
+
 | Q | Topic | Decision as recorded | Label | Source |
 |---|---|---|---|---|
 | Q1 | General Pass | Consumes the round: round 6 all pass → round 7 played ×2. **R-1 / Q51 restates it: the new round is a new round number with a fresh deal, never a replay** | Owner-approved | record §O; A8.7 |
@@ -1724,7 +1760,7 @@ default value in a rule or a test.
 
 | ID | Question | Concrete example | Why it blocks | Blocks |
 |---|---|---|---|---|
-| O-06 | Approve or reject the proposed runtime after Stage 0 | Cloudflare Workers + DO + D1 is a proposal, and **Q40 records that it is not approved**. If Stage 0 passes, approve a runtime by ADR; if it fails, choose a fallback that still meets $0/no-Blaze and Ranked authority | E3 cannot start implementation without an architecture, and **Play Billing verification (S8) needs a deployable backend** | E3, S8, ADR |
+| O-06 | Approve or reject the proposed runtime after Stage 0 | Cloudflare Workers + DO + D1 is a proposal, and **Q40 records that it is not approved**. If Stage 0 passes, approve a runtime by ADR; if it fails, choose a fallback that still meets $0/no-Blaze and Ranked authority. **CLOSED 2026-10-30 (owner): APPROVED on the Stage 0 evidence — Cloudflare Workers + Durable Objects (SQLite) + D1, Free plan, no paid subscription; V1 target 80 completed matches/day with an 88/day refusal ceiling; plain (always-awake) WebSocket, no hibernation; no backup/failover server in V1 (deferred); ×1 row shape (no second index); RD19's 50 s unchanged. ADR 0003 is ACCEPTED. E3 is now gated on E9, not on O-06.** See `docs/decisions/2026-10-30-runtime-decision-o06-cloudflare.md` | E3 cannot start implementation without an architecture, and **Play Billing verification (S8) needs a deployable backend** — **both unblocked on the runtime as of 2026-10-30** | E3, S8, ADR |
 | O-10 | Deletion retention (scope settled by Q44) | Q44 requires **full deletion** of the profile with **no anonymized substitute**, deferred from V1 by Q6. What survives a deletion for integrity (RP ledger, idempotency keys) and for how long still has no ruling | No V1 work while deletion is deferred, but the Data safety form must not describe a deletion behaviour the owner has not chosen | Post-V1 deletion work; store form |
 | O-11 | RP scaling rates | **The four base values are final (Q45): King +30, Second +15, Third −8, Koz −20.** The Mini multiplier and the tier-band scaling rates stay tunable pending a balance pass (RD4) | Ranked can ship on the base values; a later balance pass changes rates, not the four values | E2.9 follow-up, G3 |
 | O-12 | Voice provider, protocol and cost | Voice is **in V1 for Rooms and the Waiting Room and never in Ranked (Q42)**. No vendor, transport, moderation model, microphone-permission policy or hourly cost exists; Spark cannot host a media relay | A V1-scope feature with no design, no estimate and no provider; it is excluded from the 1,626–2,812 h baseline | E7 design, E8, release |

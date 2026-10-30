@@ -274,6 +274,22 @@ and consumes that account's quota, which is exactly what the current brief forbi
 > to Cloudflare has been made") is **no longer true for E12-a**, and the body below is **stale on
 > that point**. **E12-b…E12-f have NOT run** and remain gated, one step at a time. The body
 > below is otherwise unchanged.
+>
+> **POINTER NOTE (2026-10-30 — E12-c, E12-d and E12-e have ALSO NOW RUN; §11's recommended layout
+> is adopted as a rule, and one item below is answered differently than the text expects).**
+> The results, in one line each: **E12-c** — `setAlarm()` costs **0 rows and 0 requests**; the fire
+> is **1 DO request**; a row-by-row delete costs **1 row written + 2 rows read** per row while
+> **`DELETE FROM` costs 1 row written + 0 reads** (the text below asked only about rows — the
+> **reads** are where the shapes differ: 856 per 428-row match). **E12-d** — the Free plan bills
+> **1 DO request per inbound WebSocket message under hibernation** (1,134 for 1,130 messages),
+> **0 under the plain API**, and **outbound messages are free**. **E12-e** — **0.128 GB·s per
+> second** for an open match (115.2 GB·s per 15 minutes), **zero** for an idle hold under
+> hibernation. Report:
+> [`Stage0_E12d_e_c_Platform_Meters_Report.md`](Stage0_E12d_e_c_Platform_Meters_Report.md).
+> **The ×1 layout of §11 is now the engineering rule** ("no second index on the match table");
+> V3 (`WITHOUT ROWID`) stays a candidate until **E12-h** measures it. **E12-b (the KV-style API)
+> and E12-f (the repeat run) did not run** — E12-c served as the repeat on a second table shape.
+> The harness has been removed and the account is empty.
 
 **E12-a — does the local counter equal the billed rows? [x]**
 Deploy one DO with the **V1** and **V2** schemas on a throwaway account. Write exactly **428

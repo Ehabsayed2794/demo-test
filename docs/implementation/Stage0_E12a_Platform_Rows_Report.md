@@ -249,6 +249,16 @@ must describe the meter Cloudflare actually bills.
 measured separately (a point lookup, a count, a full scan, an insert, an upsert), so the read
 meter's definition is measured instead of inferred.
 
+> **POINTER NOTE (2026-10-30 — the hypothesis above is FALSIFIED; the body is left verbatim).**
+> The third E12 step measured an **insert-only** instance and an **insert-plus-delete** instance on
+> the same platform counter: **ten inserts cost 0 rows read**, and each **single-row `DELETE`**
+> costs one implied read while `DELETE FROM` costs none. The **430 reads** this report saw were the
+> harness's own `SELECT COUNT(*) … SUM(LENGTH(payload))` **full scan of the 428 rows** — 2 setup
+> reads + 428 scanned rows — which the DO's reported `rowsRead = 0` never attributed because it
+> summed only the insert cursors. **There is no per-write read charge**, the **V6 ≈ 856 prediction
+> is withdrawn**, and the read axis does **not** grow by 38 %. Corrected rule, arithmetic and the
+> nine other platform facts: `Stage0_E12d_e_c_Platform_Meters_Report.md` §7.
+
 ## 9. The next steps — the owner's list, one at a time
 
 **The owner set the priority order on 2026-10-30 (after E12-a).** These run on the same
@@ -269,6 +279,20 @@ steps: its cron still fires every minute, but the run flag makes it a **no-op** 
 DO instances, no rows. The four DO instances and their rows remain on the throwaway account until
 the account is deleted (the account-deletion policy is **E13**, a separate step). **When the three
 steps are done, the cron and the worker are removed and the owner is asked to revoke the token.**
+
+> **POINTER NOTE (2026-10-30 — all three steps above have NOW RUN; the paragraph is left verbatim).**
+> **E12-d** (WebSocket metering), **E12-e** (duration with and without hibernation) and **E12-c**
+> (alarm + both delete shapes) ran on the same throwaway account, plus a fourth run pair for the
+> idle hold. The headline answers: **the Free plan bills inbound messages 1:1 under hibernation
+> (1,134 requests for 1,130 messages) and 0 under the plain API (7 requests); outbound messages are
+> free; an open match costs 0.128 GB·s per second (115.2 GB·s per 15 minutes) and hibernation makes
+> the idle hold free; `setAlarm()` costs 0 rows and the fire costs 1 DO request; `DELETE FROM` saves
+> 856 reads per match over a row-by-row loop.** Report:
+> [`Stage0_E12d_e_c_Platform_Meters_Report.md`](Stage0_E12d_e_c_Platform_Meters_Report.md), §4–§6.
+> **The harness has been removed**: all four workers deleted, the KV namespace deleted, no Durable
+> Object namespaces left — **the account is empty**, and the owner was asked to revoke the token.
+> **The nine measured facts also closed O-06**: the runtime is **Cloudflare** at **80 matches/day**
+> with an **88/day refusal ceiling** (`docs/decisions/2026-10-30-runtime-decision-o06-cloudflare.md`).
 
 ## 10. Artifacts
 

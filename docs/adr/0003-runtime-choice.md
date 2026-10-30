@@ -1,8 +1,8 @@
 # ADR 0003 — The server runtime for the Ranked authority layer
 
-- **Status:** PROPOSED — **the decision is the owner's (O-06).** This ADR is the
-  skeleton and the evidence; the *Decision* section below is deliberately empty.
-- **Date:** 2026-10-29 (draft)
+- **Status:** **ACCEPTED — option B, Cloudflare Workers + Durable Objects + D1 (owner, 2026-10-30).**
+  O-06 is closed. Record: `docs/decisions/2026-10-30-runtime-decision-o06-cloudflare.md`.
+- **Date:** 2026-10-29 (draft); **decided 2026-10-30**
 - **Decides:** which runtime hosts the Ranked authority layer — the settlement,
   the match state and the statistics. The plan's Stage 0 experiments were run
   to make this decision on measurements rather than on preference.
@@ -33,7 +33,7 @@ Two candidates are on the table:
 | State | Firestore | Durable Objects |
 | Settlement idempotency | Firestore transactions | Durable Object storage |
 | Cost at this scale | Free tier (Spark) | Free tier |
-| Measured today | E1 ✅, E2 ✅ | E1 ✅, E2 ✅, E3 ✅, E4 ✅, E5 ✅, E6 ✅, E7 ✅ (local D1) (this ADR's evidence) |
+| Measured today | E1 ✅, E2 ✅ | E1 ✅, E2 ✅, E3 ✅, E4 ✅, E5 ✅, E6 ✅, E7 ✅ (local D1), **E12-a/c/d/e ✅ (real Free account)** (this ADR's evidence) |
 
 The Stage 0 experiments were designed to answer "does the engine run correctly
 in a server runtime, and what does it cost to start there" without touching
@@ -41,16 +41,25 @@ either vendor's production surface.
 
 ## Decision
 
-> **SLOT — the owner's decision (O-06).** Nothing below this line is a
-> recommendation that has been accepted; the measurements are the inputs.
+> **DECIDED — option B. The Ranked authority layer runs on Cloudflare Workers + Durable Objects
+> (SQLite-backed) + D1, on the Free plan, with no paid subscription.**
 >
-> - [ ] **A — stay on Firebase Cloud Functions (Node.js 22)**, and close O-06 with
->       the Stage 0 evidence recorded in this ADR.
-> - [ ] **B — move the authority layer to Cloudflare Workers + Durable Objects.**
-> - [ ] **Neither yet** — name the missing experiment (E5…E13) that has to run
->       first.
+> - [ ] A — stay on Firebase Cloud Functions (Node.js 22)
+> - [x] **B — move the authority layer to Cloudflare Workers + Durable Objects**
+> - [ ] Neither yet
 >
-> **Decided by:** ____________________ **Date:** ____________
+> **Decided by:** the owner (Ehab Sayed) **Date:** 2026-10-30
+>
+> **The decision's own numbers** (they are part of the decision, not defaults):
+> a **V1 target of 80 completed matches/day** with a **refusal ceiling of 88/day**; the
+> **plain (always-awake) WebSocket API**, not hibernation; **no backup/failover server in V1**
+> (formally deferred); the ×1 row shape (no second index); RD19's 50-second clock unchanged.
+> Full record, evidence and consequences:
+> `docs/decisions/2026-10-30-runtime-decision-o06-cloudflare.md`.
+>
+> **What this decision does not decide:** the persistence granularity (still conditional on E9),
+> D1 atomicity (E8), cleanup/retention (E10), and the failover architecture (post-V1). E9 is the
+> first remaining step: `docs/implementation/Stage0_Remaining_Steps.md`.
 
 ## Evidence
 
@@ -255,6 +264,10 @@ Two figures the capacity model must now carry, both stated rather than silently 
 > measured cadence-5 alternative, left verbatim). Record:
 > `docs/decisions/2026-10-30-cadence-quota-and-e12-preparation.md`. **D-E7-2, D-E7-3, D-E7-5,
 > D-E7-6 and D-E7-7 stay open, and this ADR stays PROPOSED — O-06 is not closed.**
+>
+> **Superseded later the same day (owner, 2026-10-30): O-06 IS closed and this ADR is ACCEPTED —
+> option B, Cloudflare.** The sentence above and the paragraph below it are left verbatim as the
+> state of the evidence at that moment; the decision is in *Decision* at the top of this ADR.
 
 > **What this does NOT settle.** A local D1 does not measure Cloudflare behaviour: the real
 > metering, the real atomicity, a real quota event and a real Free-plan enforcement are all
@@ -262,16 +275,37 @@ Two figures the capacity model must now carry, both stated rather than silently 
 > exist**, so the requirement the loss window implies is a requirement **on an architecture that
 > has not been built**. **E7 does not approve Cloudflare and does not close O-06.**
 
+### E12 — the platform meters, measured on a real Free account ✅ DONE (a/c/d/e)
+
+Two reports, one throwaway account, **no billing**:
+
+- **E12-a — the rows-written meter** (`docs/implementation/Stage0_E12a_Platform_Rows_Report.md`):
+  Cloudflare's metered count **equals** the DO's own cursor — **V1 = 428 (×1)**, **V2 = 856 (×2)**
+  for the same 428 inserts. The ×2 is the platform's number, and it is a **schema choice**.
+- **E12-d/e/c — the WebSocket, duration, alarm and delete meters**
+  (`docs/implementation/Stage0_E12d_e_c_Platform_Meters_Report.md`):
+
+| Fact | Measurement |
+|---|---|
+| Free-plan inbound WebSocket ratio | **1:1 under hibernation** (1,134 DO requests for 1,130 messages); **0 under the plain API** (7 requests) — **no 20:1 ratio exists** |
+| Outgoing messages | **free** in both modes (1,130 outbound, 0 requests); messages are **not** Worker requests |
+| Duration, always-awake | **0.128 GB·s per second** (180 s idle = 22.97 GB·s; a 15-min match = **115.2 GB·s**) |
+| Duration, hibernated | **≈ 0** for the idle hold (0.0406 vs 0.0466 GB·s) — bought with 1,130 requests |
+| `setAlarm()` | **0 rows, 0 requests**; the fire = **1 DO request**, 0 rows, 19.4 ms |
+| Cleanup | `DELETE FROM` = **428 rows written, 0 reads, 1 statement**; row-by-row = 428 rows written, **856 reads**, 428 statements |
+| The read meter | E12-a §8's per-write-read hypothesis is **falsified**: ten inserts cost **0 reads**; the 430 was the harness's own full scan |
+
+**What that leaves as ceilings:** plain mode **112 matches/day** (duration), hibernation
+**88 matches/day** (requests), rows-written **233/day** at ×1. **Duration binds; rows do not.**
+
 ### What is still NOT measured
 
-Stage 0 is thirteen experiments, not one. E8 (D1 atomicity), E9 (durable recovery after an
-interruption), E10 (write/cleanup cost), E12 (hibernation and duration cost,
-**including the free-plan WebSocket metering and rows-per-put facts E6 showed
-are decisive**) and E13 (account deletion and store policy) are **not** run.
-A choice between the two runtimes that depends on those numbers — especially
-E12 (do the platform's real meters leave the 100/125/150 scenarios the headroom
-the documented readings promise?) and E9 (does the state survive at every
-interruption boundary?) — is **not yet decidable on evidence**.
+Stage 0 is thirteen experiments, not one. **E8** (D1 atomicity), **E9** (durable recovery after an
+interruption), **E10** (retention and cleanup), **E11** (anonymous→registered linking), **E13**
+(account deletion and store policy), and the optional platform meters **E12-b/f/g/h/i** are **not
+run**. **E9 is the only remaining experiment that can still change the architecture**: the
+per-Trick persistence ruling is conditional on it. The order and scope:
+`docs/implementation/Stage0_Remaining_Steps.md`.
 
 ## Alternatives considered
 
@@ -306,6 +340,10 @@ broken at the most satisfying moment in the game".
 
 **Status:** **not approved** (O-06, 2026-10-22, `docs/decisions/OPEN_QUESTIONS.md`).
 Stage 0 E1–E6 above are the evidence gathered so far, and they are positive.
+
+> **POINTER NOTE (2026-10-30 — this paragraph is history).** **Option B is ACCEPTED** (see
+> *Decision* above). The E12 meters the "what it needs" list below still names are now measured
+> (§E12), the cost evidence exists, and the remaining gates are **E9 and E8**, not O-06.
 
 **What it needs before it can be adopted:**
 - E12 — the **real free-account verification** of the three meters E6 showed are decisive:
@@ -377,6 +415,12 @@ Whatever is chosen, these do not change:
 
 ## When to reverse this decision
 
+- **If real usage exceeds the 88/day refusal ceiling** — the measured ceiling is **112 matches/day**
+  on duration and 233 on rows, so the ceiling is a product choice with headroom under it, not a
+  platform wall. Exceeding it is a trigger to reopen the **failover** question (deferred), not this
+  runtime choice.
+- **If average match length pushes duration past the 90% guardrail** (≈ 19 minutes at 80/day) —
+  the binding meter would then need the failover or a paid plan, and both re-open the $0 premise.
 - **If E5/E6 show the primary usage scenario does not fit either free tier**,
   the constraint that picked the winner has changed and the ADR re-opens on
   cost, not on preference.

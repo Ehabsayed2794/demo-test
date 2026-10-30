@@ -532,10 +532,42 @@ curl "http://127.0.0.1:8975/?what=capacity-mix&first=1&count=50&gt=FULL&sm=NORMA
    the conservative readings hold, since the trip then fires mid-day.
 6. **O-06** — unchanged; E6 is evidence with its limitations stated, not a decision.
 
+> **POINTER NOTE (2026-10-30 — items 1, 3, 5 and 6 are answered; the list is left verbatim).**
+> **E12 ran on a throwaway Free account and measured the three decisive unknowns.** (i) **Free-plan
+> WebSocket metering: inbound messages are billed 1:1 under the hibernation API (1,134 DO requests
+> for 1,130 messages) and 0 under the plain API** — the 20:1 reading is withdrawn, and **this
+> report's conservative *requests* column is the real one**. (The conservative *rows* column
+> overcharged two items: `setAlarm()` costs **0 rows**, and the "index updates" multiplier applies
+> only if a second index exists — it does not, by rule.) (ii) **Outgoing messages are free**;
+> messages are never Worker requests. (iii) **Duration: 0.128 GB·s per second always-awake** (115.2 GB·s per
+> 15-minute match); hibernation makes the idle hold free but costs 1,130 requests per match.
+> (iv) **`setAlarm()` costs 0 rows** — the fire is **1 DO request**, so this report's chunking cost
+> ("1 row written + 1 invocation" per tick) is **one request, zero rows**, and the rows half of
+> §5.2's fast-forward cost disappears.
+>
+> **The verdict at the owner's target (80/day, 88/day refusal ceiling, plain WebSocket, ×1 rows):**
+> **duration binds at 70.9% / 78.0%**, rows written 34.2% / 37.7%, requests < 1%, D1 2.2% — the
+> guardrail is not reached, and the binding meter is **duration**, exactly as §5 predicted for the
+> ×1 shape without hibernation. Measurement detail and the match-length sensitivity (the 90%
+> guardrail arrives at ≈ 19-minute averages at 80/day):
+> `docs/implementation/Stage0_E12d_e_c_Platform_Meters_Report.md` §10. **O-06 is DECIDED —
+> Cloudflare** (`docs/decisions/2026-10-30-runtime-decision-o06-cloudflare.md`); item 2 (the
+> all-bot continuation) and item 4 (the refuse/queue copy) stay open as product/design questions.
+
 ## 14. E12 protocol — free-account platform-metering experiment (NOT RUN; requires owner approval)
 
 **Status: documentation only. Nothing here has been executed; it needs the owner's explicit
 approval, a real (throwaway) Cloudflare account, and its own acceptance before running.**
+
+> **POINTER NOTE (2026-10-30 — the protocol below HAS NOW RUN, in part; the status line is left
+> verbatim).** Steps 1–7 of §14 were executed on a throwaway Free account as **E12-a** (rows
+> written), **E12-d** (4 clients × 1,130 messages, DO and Worker requests), **E12-e** (idle hold
+> with and without hibernation) and **E12-c** (one `setAlarm`, both delete shapes). **Step 8
+> (driving a meter past 100% and recording the failure order) was NOT run** and stays open — it is
+> the one item in this protocol that still needs a real account. Results and the table of what each
+> result decided: `docs/implementation/Stage0_E12d_e_c_Platform_Meters_Report.md` §4–§10;
+> rows-written leg: `docs/implementation/Stage0_E12a_Platform_Rows_Report.md`. **The account is
+> empty again** (all workers and the KV namespace deleted).
 
 **Goal.** Replace E6's [u]/[x] platform assumptions with measured numbers, using a throwaway
 SQLite-backed Durable Object that mimics the proposed match-DO shape.

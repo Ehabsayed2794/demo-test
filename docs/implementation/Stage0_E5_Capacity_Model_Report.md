@@ -317,3 +317,20 @@ curl "http://127.0.0.1:8974/?what=capacity&first=1&count=50&gt=FULL&sm=NORMAL" \
    binds (~88/day) or not (~1,500/day); E12 confirms the free-plan WS metering.
 4. **O-06 itself** — unchanged: this model is evidence, not a decision. The ADR slot stays open
    until E6–E13 give it the rest of its inputs.
+
+> **POINTER NOTE (2026-10-30 — all four are answered; the list above is left verbatim).**
+> **(1) The target** is **80 completed matches/day** with a **refusal ceiling of 88/day** (the
+> 100/125/150 range is superseded). **(2) The durability granularity** is still conditional on
+> **E9** — the one item here that is *not* closed. **(3) The transport** is **WebSocket, plain
+> (always-awake)**: the free plan bills **1 inbound message = 1 DO request under hibernation** and
+> **0 under the plain API**, and an open match costs **0.128 GB·s per second**. **(4) O-06 is
+> DECIDED — Cloudflare** (`docs/adr/0003-runtime-choice.md`,
+> `docs/decisions/2026-10-30-runtime-decision-o06-cloudflare.md`).
+>
+> **What this model's numbers become:** at the ruled design the **measured** platform cost is
+> **428 DO rows** (×1 shape) and **115.2 GB·s** per 15-minute match, so **duration is the binding
+> meter** — **112 matches/day** hard, **101** at the 90% guardrail — and the per-action rows axis
+> this report modelled (1,135/match) is **not the design** (E9 decides whether any per-action log
+> is needed). Measurements: `Stage0_E12a_Platform_Rows_Report.md` §7,
+> `Stage0_E12d_e_c_Platform_Meters_Report.md` §10. The request axis E5 called binding (~88/day under
+> per-action HTTP) **does not bind under WebSocket + per-Trick**: ≈ 7 DO requests per match.
