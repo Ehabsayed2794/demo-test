@@ -554,6 +554,17 @@ curl "http://127.0.0.1:8975/?what=capacity-mix&first=1&count=50&gt=FULL&sm=NORMA
 > Cloudflare** (`docs/decisions/2026-10-30-runtime-decision-o06-cloudflare.md`); item 2 (the
 > all-bot continuation) and item 4 (the refuse/queue copy) stay open as product/design questions.
 
+> **POINTER NOTE (2026-10-30 — E9 has now run; the rows figure above is unchanged and the A-vs-B
+> consequence is measured, the blockquote is left verbatim).** The ruled design's **34.2% at
+> 80/day** stands (427.92 rows/match [m]). The alternative that would have moved this axis —
+> Design A, one row per card played — was **measured per unit** and **not adopted**: **A1 =
+> 1,346–1,420 rows/match → 107,680–113,600 rows/day at 80 matches/day, 107.7–113.6% of the hard
+> limit**; **A2 = 1,112–1,186 → 88,960–94,880, 89.0–94.9%**, under the guardrail only at the
+> lowest-bid seeds. **A1 does not fit at 80/day; A2 has no headroom; B stands.**
+> `docs/implementation/Stage0_E9_Recovery_Report.md` §5 (per-seed table and capacity table), §3
+> (the eight recovery boundaries). The **platform eviction leg [x]** is the only open E9 item
+> (§1, §8.1).
+
 ## 14. E12 protocol — free-account platform-metering experiment (NOT RUN; requires owner approval)
 
 **Status: documentation only. Nothing here has been executed; it needs the owner's explicit

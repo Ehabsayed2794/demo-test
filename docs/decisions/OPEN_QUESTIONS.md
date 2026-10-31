@@ -55,6 +55,16 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 | **O-06 — the runtime** | **DECIDED 2026-10-30 (owner): Cloudflare Workers + Durable Objects (SQLite) + D1, Free plan, no paid subscription.** V1 **target 80 completed matches/day**, **refusal ceiling 88/day**; **plain (always-awake) WebSocket, not hibernation**; **no backup/failover server in V1** (deferred — the 88/day refusal is the protection); ×1 row shape (**no second index**); **RD19's 50 s unchanged**. Closes **O-06**; supersedes ruling D's 100/125/150 range and the **failover half of ruling F / Q13 for V1**. **E3 is now gated on E9**; S8 is no longer blocked on the runtime | `docs/decisions/2026-10-30-runtime-decision-o06-cloudflare.md`; ADR `0003` (ACCEPTED); `docs/implementation/Stage0_Remaining_Steps.md` |
 | The Stage 0 test account | **RETAINED 2026-10-30 (owner):** the throwaway Cloudflare account stays as the **standing platform test surface** (E9's platform leg, and E12-g/h/i if run). **The token stays valid** — stored outside the repository, never in a report or a message; **deployed code is removed after each leg**; **no billing, ever**; the primary account is never touched. The earlier "account is empty / revoke the token" step is **withdrawn**; E13 applies when platform testing ends | `docs/decisions/2026-10-30-test-account-retained.md` |
 
+> **POINTER NOTE (2026-10-30 — the "Stage 0 capacity…" row's E9 condition is now measured locally;
+> the row is left verbatim).** **E9 ran on 2026-10-30 and its local legs PASS at all eight
+> boundaries** — byte-identical recovery, **exactly one settlement**, 0 duplicate and 0 lost RP
+> rows (`docs/implementation/Stage0_E9_Recovery_Report.md` §3, §6, §9). The row's "conditional on
+> E9" is therefore **discharged on local evidence**; the **platform eviction leg [x]** is the only
+> open E9 item (§1, §8.1 of that report), and the owner decides whether that leg must run before
+> the condition is closed for production. The O-06 row's "E3 is now gated on E9" keeps its
+> direction: the local half of the gate passed, and the **platform leg plus E8** are what remain
+> (`docs/implementation/Stage0_Remaining_Steps.md` §2, §6).
+
 ### Decided on 2026-10-22 and 2026-10-23
 
 | Topic | Status | Basis |

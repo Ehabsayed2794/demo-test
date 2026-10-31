@@ -225,6 +225,13 @@ hibernation بيشيل تكلفة السكتة خالص — بس بيدفع تم
   evidence closes the E7 row, who holds a pending intent, and which DO row layout.
 - **E9 is still E9's.** The action-log re-derivation option (E7 §5) stays **[u] unproven**.
 
+  > **POINTER NOTE (2026-10-30 — E9 has now run locally; the bullet is left verbatim).** E9 ran at
+  > all eight interruption boundaries and PASSED, with one settlement per match and 0 duplicate /
+  > 0 lost ledger rows (`docs/implementation/Stage0_E9_Recovery_Report.md` §3, §6). **The
+  > action-log re-derivation option stays [u] by design**: Design A was measured per unit and
+  > **not adopted**, so no re-derivation path was built or proven (§5 of that report). The
+  > **platform eviction leg [x]** is the one open E9 item (§1, §8.1).
+
 ## 6. Artifacts
 
 | Artifact | Where |

@@ -61,6 +61,15 @@ either vendor's production surface.
 > D1 atomicity (E8), cleanup/retention (E10), and the failover architecture (post-V1). E9 is the
 > first remaining step: `docs/implementation/Stage0_Remaining_Steps.md`.
 
+> **POINTER NOTE (2026-10-30 — E9 has now run locally; the blockquote above is left verbatim).**
+> **E9's local legs PASS at all eight interruption boundaries**: a match recovers byte-identically
+> to the uninterrupted JVM run, settles **exactly once**, and leaves **0 duplicate ledger rows and
+> 0 lost settlements** (`docs/implementation/Stage0_E9_Recovery_Report.md` §3, §5, §9). The
+> per-Trick persistence ruling therefore **stands on local evidence**. What remains open is the
+> **platform eviction leg [x]** on the retained throwaway account (§1, §8.1 of that report) — the
+> owner decides whether local evidence is enough. **E9 is no longer the first remaining step: E8
+> is** (`docs/implementation/Stage0_Remaining_Steps.md` §2).
+
 ## Evidence
 
 Each row is a measurement with its own artifact. The Stage 0 plan
@@ -307,6 +316,14 @@ run**. **E9 is the only remaining experiment that can still change the architect
 per-Trick persistence ruling is conditional on it. The order and scope:
 `docs/implementation/Stage0_Remaining_Steps.md`.
 
+> **POINTER NOTE (2026-10-30 — E9 is no longer unrun; the paragraph above is left verbatim).**
+> **E9 ran locally on 2026-10-30 and PASSED at all eight boundaries** — recovery, exactly-one
+> settlement, 0 duplicate and 0 lost ledger rows
+> (`docs/implementation/Stage0_E9_Recovery_Report.md` §1, §3). The **platform eviction leg [x]**
+> is the only open E9 item (§1, §8.1). The paragraph's other five experiments — E8, E10, E11, E13
+> and E12-b/f/g/h/i — are still unrun, and **E8 is now the first remaining experiment**
+> (`docs/implementation/Stage0_Remaining_Steps.md` §2).
+
 ## Alternatives considered
 
 ### A — Firebase Cloud Functions on Node.js 22 (the status quo)
@@ -323,6 +340,14 @@ ADR 0002; this ADR does not reopen it unless the owner says so.
   *(E7's protocol is now measured — locally, on a local D1 — but **not** on Firestore: the
   duplicate-RP guarantee holds because the rows are absolute and the key is
   `(match_id, seat)`, which is a property of the rows, not of the store. E9 remains open.)*
+
+  > **POINTER NOTE (2026-10-30 — E9 has now run, on the ruled runtime; the bullet is left
+  > verbatim).** E9's local legs PASS at all eight interruption boundaries
+  > (`docs/implementation/Stage0_E9_Recovery_Report.md` §1, §3): byte-identical recovery,
+  > exactly one settlement, 0 duplicate and 0 lost RP rows. **This is evidence about the
+  > Cloudflare/DO runtime, not about a Firestore re-implementation** — moving the authority back
+  > to Firestore would need its own E7/E9 equivalents, so "E9 remains open" stays true **for this
+  > alternative**.
 - E8 — the D1-equivalent atomicity guarantee on Firestore transactions for
   the settlement write.
 
@@ -370,6 +395,13 @@ Stage 0 E1–E6 above are the evidence gathered so far, and they are positive.
   storage: the restore-point rule, the absolute rows and the `(match_id, seat)` key are
   store-independent, while the store-side facts — atomicity across the three bindings, the
   real row metering, a real quota event — are **not**. E8 and E9 remain open.)*
+
+  > **POINTER NOTE (2026-10-30 — the E9 half is measured locally; the two bullets are left
+  > verbatim).** E9 ran on **this** runtime — a Durable Object's recovery from a hard kill at all
+  > eight boundaries — and PASSED, with the settlement applied exactly once and 0 duplicate / 0
+  > lost ledger rows (`docs/implementation/Stage0_E9_Recovery_Report.md` §1, §3, §6). **The
+  > platform eviction leg [x]** is the only E9 item still open (§1, §8.1); a real Cloudflare
+  > eviction did not run. **E8 remains open** by its own criterion (§8.7).
 - **A second data model.** The product's state lives in Firestore today. A
   Workers+DO authority layer means the match state, the settlement and the
   statistics live somewhere else, and the two must agree. That is a migration

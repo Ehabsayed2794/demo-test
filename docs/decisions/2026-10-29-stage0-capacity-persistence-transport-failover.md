@@ -31,6 +31,16 @@ This is a **conditional architecture decision, not permission to ship weaker dur
 testing**. **E9 must validate the full recovery protocol before this persistence policy is
 approved for production use.** E9 must address, at minimum:
 
+> **POINTER NOTE (2026-10-30 — E9 has now run locally; the paragraph above is left verbatim).**
+> **E9's local legs PASS at all eight interruption boundaries** — the recovered match is
+> byte-identical to the uninterrupted run, the settlement is applied **exactly once**, and the
+> ledger has **0 duplicate rows and 0 lost settlements**
+> (`docs/implementation/Stage0_E9_Recovery_Report.md` §3 for the boundary table, §4 for the
+> takeover/alarm boundary, §6 for authority and settlement, §9 for what this discharges). **This
+> discharges the condition on local evidence only**: the **platform eviction leg [x]** on the
+> retained throwaway account is the one open E9 item (§1, §8.1), and the owner decides whether
+> local evidence suffices for production.
+
 1. A server interruption during an **incomplete** Trick.
 2. Preservation and recovery of the last committed state (the last completed-Trick checkpoint).
 3. The possibility of **up to three accepted card actions** existing after the last
@@ -229,6 +239,14 @@ dated pointer with a reason — none is silently edited.
   (§1's eight points), **interrupted-Trick recovery**, **durable intent/replay/idempotency**,
   and the behaviour of ongoing matches when the primary **reaches quota or becomes unavailable**
   (§5 + §6).
+
+  > **POINTER NOTE (2026-10-30 — E9 has now run locally; the bullet is left verbatim).** The
+  > completed-Trick design was validated at all eight boundaries, with durable intent/replay, a
+  > per-action auction resume, and the quota-exhaustion boundary exercised (the match is not
+  > cancelled; the pending intent settles later) —
+  > `docs/implementation/Stage0_E9_Recovery_Report.md` §3 (boundaries 1–8), §6 (intent and
+  > dedup), §9 (ruling A's condition discharged on local evidence). **The platform eviction leg
+  > [x] is open** (§1, §8.1); Cloudflare's own eviction is not measured.
 - **E12 — WebSocket, hibernation and duration.** Validates **WebSocket billing** (§3's
   unverified free-plan metering), **hibernation behaviour**, object lifetime/duration
   consumption, **reconnect behaviour**, and how these affect the 100 / 125 / 150 scenarios.

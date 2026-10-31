@@ -50,6 +50,12 @@ Every meter the Stage 0 experiments could measure now has a number. The two that
 | Cold start on the result screen | hundreds of ms to seconds (R24 risk) | warm median **6.5 ms**, cold median **36.3 ms** local (E4) |
 | Durability story | Firestore transactions | DO single-threaded object + SQL (E7 locally proven; E9 open) |
 
+> **POINTER NOTE (2026-10-30 — the E9 half of the durability row is now measured locally; the row
+> is left verbatim).** E9 ran on 2026-10-30: the DO recovered byte-identically from a hard kill at
+> all eight boundaries and settled **exactly once** with 0 duplicate and 0 lost ledger rows
+> (`docs/implementation/Stage0_E9_Recovery_Report.md` §1, §3, §6). The **platform eviction leg
+> [x]** — a real eviction, not a local process kill — remains open (§1, §8.1).
+
 **Cloudflare is not merely cheaper — it is the only one of the two whose binding meter still has
 headroom at the target.** The Firebase figures are a model [m], not a measurement; the Cloudflare
 figures are measured on the platform [M].
@@ -97,6 +103,13 @@ number, not a local artefact.
 - **E9 — durable recovery after interruption.** The per-Trick persistence ruling is still
   **conditional on E9**. This decision does not bless the persistence granularity; it only fixes
   where it will run.
+
+  > **POINTER NOTE (2026-10-30 — E9 has now run locally; the bullet is left verbatim).** On the
+  > local runtime the per-Trick ruling validated at all eight boundaries
+  > (`docs/implementation/Stage0_E9_Recovery_Report.md` §3, §9): byte-identical recovery, exactly
+  > one settlement, 0 duplicate and 0 lost ledger rows. **The platform eviction leg [x] is the
+  > one open E9 item** (§1, §8.1); the owner decides whether local evidence discharges the
+  > condition for production.
 - **E8 (D1 atomicity), E10 (cleanup/retention), E11 (anonymous→registered linking), E13 (account
   deletion / Play policy).**
 - **E12-b/f/g/h/i** — the KV-style API, the repeat run, the precise read meter (its divergence is
@@ -116,6 +129,12 @@ number, not a local artefact.
 | **Row-by-row cleanup costs 856 reads/match** | `DELETE FROM` only |
 | **Recovery is unproven** | E9 is the first remaining step; the per-Trick ruling stays conditional |
 | **Above 88/day the product refuses matches** | That is the designed behaviour at this scale; the failover server is the post-V1 answer |
+
+> **POINTER NOTE (2026-10-30 — the "Recovery is unproven" row is measured locally; the table is
+> left verbatim).** E9's local legs PASS at all eight boundaries with exactly one settlement
+> (`docs/implementation/Stage0_E9_Recovery_Report.md` §3). **Recovery on the platform (a real
+> eviction) is still unmeasured** and is the only open E9 item (§1, §8.1); **E8 is now the first
+> remaining experiment** (`docs/implementation/Stage0_Remaining_Steps.md` §2).
 
 ## 7. Artifacts
 
@@ -146,3 +165,8 @@ number, not a local artefact.
 
 **اللي لسه شغال ومحتاج قياس:** **E9** (هل المباراة بترجع سليمة بعد أي انقطاع) — وده **أول خطوة
 جاية**، وأي قرار عن حفظ الحالة بعد كل حركة لسه معلّق عليه.
+
+> **POINTER NOTE (2026-10-30 — E9 اشتغلت محلياً؛ السطر فوق زي ما هو).** المباراة رجعت سليمة عند
+> **التمانية حدود**، والتسوية اتحصلت **مرة واحدة** بس، ومن غير صفوف RP مكرّرة ولا تسوية ضايعة
+> (`docs/implementation/Stage0_E9_Recovery_Report.md` §3). **الفاضل حاجة واحدة في E9:** تجربة
+> **الإخلاء الحقيقي على الحساب المؤقت** (§1، §8.1) — مش مقاسة لحد دلوقتي.
