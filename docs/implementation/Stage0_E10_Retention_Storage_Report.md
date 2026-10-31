@@ -469,7 +469,9 @@ intent applies twice.
 **The brief asked for the resulting balances, and the re-run records them.** The keyless
 ledger is read **after** the replay, grouped per seat and per player: the **rows** doubled
 and the **deltas** doubled, while the `rp` stored in each row did not move — the same payload
-wrote the same balance twice, so the ledger doubled, not the number. (The first run recorded
+wrote the same balance twice — the settlement computes each player's balance from `ledger WHERE
+match_id != ?`, so a replay recomputes the same absolute value; what doubles is the row count and
+the delta accounting, not the balance — the ledger doubled, not the number. (The first run recorded
 only the doubled total delta, 146 against 73; the per-seat capture was added on the re-run.)
 
 ### 7.2 A simulated Durable Object loss — the D1 settlement row alone catches it
@@ -834,8 +836,9 @@ disputes, and the storage argument does not constrain the choice.
 
 **الحاجات اللي اتمنعت فعلًا (3 تجارب سلبية، 3 فشلوا زي المفروض — وده النجاح مش الفشل):**
 
-1. نمسح ونعيد التسوية **من غير فيتير** → **نفس النقاط اتطبقت مرتين** (146 بدل 73). ده اللي
-   كنا عايزينه بالظبط.
+1. نمسح ونعيد التسوية **من غير فيتير** → **نفس النقاط اتطبقت مرتين** (146 بدل 73). الرصيد
+   نفسه ما اتضاعفش — اللي اتضاعف الصفوف والفروق؛ والفيتير برضه لازم، لأن أي حساب بيجمع
+   الفروق بيعدّها مرتين. ده اللي كنا عايزينه بالظبط.
 2. مسح بالشرط الغلط (`created_ms >` بدل `<`) → **4,999 صف** بدل 5,000، يعني **العدد لوحده
    مش بيكشف الغلط**؛ اللي كشفه هو مقارنة أول وآخر تاريخ.
 3. دالة على العمود (`created_ms + 0 < ?`) → الـindex اتبطّل و**10,000 صف اتقروا** بدل 501.

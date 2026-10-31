@@ -1433,7 +1433,7 @@ does **not** ship product code.
 > **Pointer, 2026-10-31 (the E1.10 row is now done for the local runtime) [E10 wave — note 5 of
 > 5].** E10's cost and retention note exists: the local report measures the per-store footprint
 > (**854 DO rows written and 27 D1 rows per match**), the sweep cost (**one `DELETE FROM`: 5,000
-> rows in 30 ms; row-by-row 293× slower**), the index's cost (**+1 metered row per insert, reads
+> rows in 23 ms; row-by-row 458× slower**), the index's cost (**+1 metered row per insert, reads
 > 100,000 → 50,001**), the trigger (**a per-match alarm armed once at the end of the window**), and
 > the replay/retention coupling (**the tombstone, 76.889 B content / 127.7952 B physical per
 > match**), and it **costs the retention window at 7 / 30 / 90 / 365 days** — **the window is the
