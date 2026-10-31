@@ -5,7 +5,7 @@
   (tip of `stage0/e8-d1-atomicity`)
 - **Harness:** `D:\cache\stage0\e10\` (outside the repository). The E8 harness
   (`D:\cache\stage0\e8\`) was **not** modified — it is evidence.
-- **Run:** `2026-10-31T14-05-41-907Z` · **65 checks, 0 failures, exit 0**
+- **Run:** `2026-10-31T14-59-47-565Z` · **65 checks, 0 failures, exit 0**
 - **Runtime:** local Miniflare (`wrangler 4.155.0 dev --local --port 8986`) under
   Node `v22.14.0` (Gradle's portable Node, invoked by explicit path). No Cloudflare
   account, no token, no API call, no deploy, no `wrangler --remote`.
@@ -85,22 +85,23 @@ The E10 harness is the **E8 harness plus additions only**. Proofs:
 ```
 diff --unified=0 D:/cache/stage0/e8/worker.mjs D:/cache/stage0/e10/worker.mjs
   removed lines: 0
-  added lines:   1,026   (997 non-blank + 29 blank)
+  added lines:   1,058   (1,029 non-blank + 29 blank)
   e8/worker.mjs:  1,486 lines
-  e10/worker.mjs: 2,512 lines
+  e10/worker.mjs: 2,544 lines
 ```
 
-1,486 + 1,026 = 2,512 — the line counts agree.
+1,486 + 1,058 = 2,544 — the line counts agree.
 
 Every addition is inside the `/e10` code paths (`e10*` methods, the `/e10/*` routes,
-`e10RetentionApply`, `e10CleanupInline`, `e10SizeGauge`, the tombstone schema and the
-`/e10/tombstone/summary` route). The settlement protocol — `/prelude`, `/state`, `/step`,
-`/settle/finalize|enqueue|relay|ack|backup|cleanup` — was not touched.
+`e10RetentionApply`, `e10CleanupInline`, `e10SizeGauge`, the tombstone schema, the
+`/e10/tombstone/summary` route and the `/e10/keyless/balances` route). The settlement
+protocol — `/prelude`, `/state`, `/step`, `/settle/finalize|enqueue|relay|ack|backup|cleanup`
+— was not touched.
 
 | file | sha256 |
 |---|---|
 | `D:/cache/stage0/e8/worker.mjs` (the E8 worker this harness was copied from) | `51611b267ca0c9622d44f34047464733b3c3b959feadb49c0db8afe9ad595c0d` |
-| `D:/cache/stage0/e10/worker.mjs` | `bef48db2a6405e52e77411faf5300085f952e65e09b03bdb164a6aba9534f340` |
+| `D:/cache/stage0/e10/worker.mjs` | `987dbf88c13f4f14311f49d57199c8478679e95590132c6eb76c9a9c7edb8102` |
 
 ### 3.2 The eleven settlement functions are byte-identical
 
@@ -283,9 +284,9 @@ DELETE FROM e10_sweep WHERE created_ms < ?;      -- param 1715768000000
 
 | rows in the table | without an index: rows read | rows written | ms | with an index: rows read | rows written | ms |
 |---|---|---|---|---|---|---|
-| 1,000 | 1,000 | 500 | 3 | **501** | 500 | 2 |
-| 10,000 | 10,000 | 5,000 | 30 | **5,001** | 5,000 | 34 |
-| 100,000 | 100,000 | 50,000 | 424 | **50,001** | 50,000 | 245 |
+| 1,000 | 1,000 | 500 | 4 | **501** | 500 | 5 |
+| 10,000 | 10,000 | 5,000 | 23 | **5,001** | 5,000 | 40 |
+| 100,000 | 100,000 | 50,000 | 373 | **50,001** | 50,000 | 379 |
 
 **Without an index the sweep is a full scan** (it reads the whole table); **with an index it
 reads only the rows it deletes plus one** (the index's own descent). The rows written are
@@ -300,9 +301,9 @@ CREATE INDEX e10_sweep_created ON e10_sweep (created_ms);   -- via d1Run("RP", .
 
 | rows | metered rows written by `CREATE INDEX` | file bytes added | ms |
 |---|---|---|---|
-| 1,000 | 1,001 | 20,480 (20.5 B/row) | 0 |
-| 10,000 | 10,001 | 147,456 (14.7 B/row) | 7 |
-| 100,000 | 100,001 | 1,482,752 (14.8 B/row) | 110 |
+| 1,000 | 1,001 | 20,480 (20.5 B/row) | 2 |
+| 10,000 | 10,001 | 147,456 (14.7 B/row) | 9 |
+| 100,000 | 100,001 | 1,482,752 (14.8 B/row) | 137 |
 
 **Insert cost, 100 inserts, same table:**
 
@@ -326,8 +327,8 @@ DELETE FROM e10_sweep WHERE id = ?;                       -- once per row
 
 | | statements | rows deleted | rows written | metered rows read | ms |
 |---|---|---|---|---|---|
-| one `DELETE FROM` | **1** | 5,000 | 5,000 | 10,000 | **30** |
-| row by row | **5,000** (`DELETE`s; +1 bulk `SELECT` the counter does not include) | 5,000 | 5,000 | 5,000 | **8,791** |
+| one `DELETE FROM` | **1** | 5,000 | 5,000 | 10,000 | **23** |
+| row by row | **5,000** (`DELETE`s; +1 bulk `SELECT` the counter does not include) | 5,000 | 5,000 | 5,000 | **10,543** |
 
 **What E12-c's 856-read shape is, and what reproduced.** E12-c measured the row-by-row
 alternative on the platform as **856 reads for 428 deleted rows = 2 reads per deleted row**,
@@ -335,12 +336,12 @@ which is a `SELECT` and a `DELETE` per row. The local run used **one bulk `SELEC
 one `DELETE` per row, so the accumulated counter shows **1 metered read per deleted row
 (5,000)**; the bulk `SELECT`'s own read count was not accumulated **[u]**. The statement
 shape is the same order of cost (a read and a write per deleted row) but the local figure
-is **not literally E12-c's 2-per-row figure**, and the check's *name* says "2 reads per
-deleted row" while its *assertion* is `rowsRead >= deleted`. Stated plainly rather than
-papered over.
+is **not literally E12-c's 2-per-row figure** — and the check says so in its own name: *"the
+row-by-row shape reads one row per deleted row on the local harness (E12-c's 2-per-row is a
+platform SELECT+DELETE shape)"*. Stated plainly rather than papered over.
 
-What the row-by-row shape does reproduce, unambiguously: **293× the wall clock** (8,791 ms
-vs 30 ms) and **5,000 `DELETE` statements instead of 1** (plus the one bulk `SELECT`, which the
+What the row-by-row shape does reproduce, unambiguously: **458× the wall clock** (10,543 ms
+vs 23 ms) and **5,000 `DELETE` statements instead of 1** (plus the one bulk `SELECT`, which the
 counter does not include). The conclusion is unchanged — **use one `DELETE FROM`; never loop**.
 
 ### 5.4 `setAlarm()` and one alarm fire
@@ -459,14 +460,17 @@ RP settlement **and ledger** rows), and the original payload is replayed:
 | metered rows written by the replay | **10** (the settlement's 5-statement batch) |
 | the keyed store afterwards | 1 settlement row, 4 ledger rows — **it cannot tell** the match was replayed |
 | the keyless control table | 2 settlements, 8 ledger rows, total delta **146** against the expected **73** |
+| the keyless ledger's balances after the replay | every seat's row written **twice**, its delta counted twice — p1/u1 2 rows, deltaSum **112** (2 × 56, rp 1052); p2/u2 2 rows, **0** (2 × 0, rp 1012); p3/u3 2 rows, **−16** (2 × −8, rp 1176); p4/u4 2 rows, **50** (2 × 25, rp 1197) — the stored `rp` is unchanged (spread 0 per seat) |
 | a tombstone was created | **no** |
 
 **This is the failure E10 had to catch, and it reproduced.** Without an anchor, the same
 intent applies twice.
 
-**The brief asked for the resulting balances; the run recorded the doubled total delta instead.**
-The keyless control proves the double-apply (146 against the expected 73) but does not capture
-per-seat balances. That is a gap in the control's record, not in its conclusion.
+**The brief asked for the resulting balances, and the re-run records them.** The keyless
+ledger is read **after** the replay, grouped per seat and per player: the **rows** doubled
+and the **deltas** doubled, while the `rp` stored in each row did not move — the same payload
+wrote the same balance twice, so the ledger doubled, not the number. (The first run recorded
+only the doubled total delta, 146 against 73; the per-seat capture was added on the re-run.)
 
 ### 7.2 A simulated Durable Object loss — the D1 settlement row alone catches it
 
@@ -653,7 +657,7 @@ Every allowance below is quoted from the archived page it came from (accessed
 |---|---|---|---|
 | **DO rows written** | "Rows written 1,2,3,4 100,000 / day" | 68,320 (steady) / 68,400 (with the purge) | **68.32% / 68.4%** |
 | **DO rows read** | "Rows reads 1,2 5 million / day" | **[u]** — not observable locally | — |
-| **DO requests** | "Requests 100,000 / day" | 560 (7 per match) | 0.56% |
+| **DO requests** | "Requests 100,000 / day" | 560 (7 per match), with the recommended alarm: **640 requests/day** | 0.56% / **0.64%** |
 | **DO storage (account)** | "Storage per account Unlimited (Workers Paid) / 5GB (Free)" | 1,554,841,600 B after a year (if the objects survive) | **28.96%** |
 | **DO storage (per object)** | "Storage per Durable Object 10 GB" | 53,248 B per match's object | 0.0005% per object |
 | **D1 rows written** | "Rows written 100,000 / day" | 2,160 (steady) / 2,480 (with the purge) | 2.16% / 2.48% |
@@ -761,7 +765,7 @@ disputes, and the storage argument does not constrain the choice.
 ### Settled (on local evidence)
 
 1. **The cleanup's cost** — one `DELETE FROM` per match; the row-by-row alternative is
-   293× slower and needs 5,000 `DELETE` statements (plus the one bulk `SELECT`); the sweep's
+   458× slower and needs 5,000 `DELETE` statements (plus the one bulk `SELECT`); the sweep's
    read cost scales with the table unless a `created_ms` index exists.
 2. **The index's cost** — a second index doubles every insert (E12-a's V2 ×2 shape
    reproduces) and adds ~15 B per row; it only buys reads. The plan's "no second index"
@@ -810,8 +814,8 @@ disputes, and the storage argument does not constrain the choice.
   **أيوه**، وده بالقياس مش بالتخمين: **65 فحص، صفر فشل**، على 3 ماتشات كاملة لعبناها
   بالبروتوكول الحقيقي (`/prelude` → `/settle/backup` → `/settle/cleanup`).
 - **الحذف نفسه رخيص جدًا.** سطر `DELETE FROM` واحد بيمسح 5,000 صف ويكتب 5,000 صف في
-  **30 مللي**. لو مشينا صف‑صف: **5,000 جملة حذف** (وجملة اختيار واحدة) و**8.8 ثانية** — يعني
-  **293 أضعاف**. فالقاعدة بسيطة: **سطر واحد دايمًا**، زي ما E12-c قال بالحرف.
+  **23 مللي**. لو مشينا صف‑صف: **5,000 جملة حذف** (وجملة اختيار واحدة) و**10.5 ثانية** — يعني
+  **458 أضعاف**. فالقاعدة بسيطة: **سطر واحد دايمًا**، زي ما E12-c قال بالحرف.
 - **اللي بيكلّف فعلًا هو الـlog، مش الحذف.** كل ماتش بيكتب 426 صف في الـDO (سطر لكل خطوة
   من الماتش)، وبعدين **المسح نفسه بيتحسب صف مكتوب تاني**، فالمجموع **854 صف في الـDO لكل
   ماتش**. عند 80 ماتش/يوم = **68,320 صف/يوم = 68.3%** من الـ100,000 المسموح في الخطة
@@ -904,11 +908,11 @@ cd /d/cache/stage0/e10
   --experimental-sqlite driver.mjs
 
 # 3. The run log and the boot log
-logs/driver-run-160541.log
-logs/boot-2026-10-31T14-05-41-907Z.log
+logs/driver-run-165947.log
+logs/boot-2026-10-31T14-59-47-565Z.log
 
 # 4. The results
-results/e10-results-2026-10-31T14-05-41-907Z.json   # the run's own file
+results/e10-results-2026-10-31T14-59-47-565Z.json   # the run's own file
 results/e10-results-latest.json                      # the same bytes
 results/e10-final.json                               # the same bytes
 
@@ -936,20 +940,20 @@ node D:/cache/stage0/node_modules/wrangler/bin/wrangler.js dev --local \
 
 | artefact | sha256 |
 |---|---|
-| `worker.mjs` (E8's worker + the E10 additions) | `bef48db2a6405e52e77411faf5300085f952e65e09b03bdb164a6aba9534f340` |
-| `driver.mjs` (the E10 driver) | `8a5462a45401d5dac4ea48e439106ebcd9c073d7f966c12f092fb75fb19ab9ff` |
+| `worker.mjs` (E8's worker + the E10 additions) | `987dbf88c13f4f14311f49d57199c8478679e95590132c6eb76c9a9c7edb8102` |
+| `driver.mjs` (the E10 driver) | `57151d89618189086829da638c8a4115013b32ad87cbdea44dbffe286ef61289` |
 | `wrangler.toml` | `41bf933eb9984f6a6d10bf68602f54222bbabcbe8e8d4a0f26e902ffd1d214a4` |
 | `hash-functions-e10.mjs` (the 11-function hash check) | `375c343d7d8773f75b93d5c40b62a9d177e10f4607fd2bbca1439219b37d9273` |
 | `results/function-hashes.json` (its output: **11/11 identical, 0 changed**) | `f22279586388eb2269e59b0bbe360de0b086eb5d5de242ac0036a8109c0eef37` |
 | `extract.mjs` (the read-only number extractor) | `0743822c41ed1676a6d4c58ba509b6d2640f96c7a772d7df2621afb2716f4854` |
-| `results/e10-results-2026-10-31T14-05-41-907Z.json` | `17ab31c9345f00e6fe6f01d27fd28b55a3832fed4dad0731a321fed8e2ebad76` |
-| `results/e10-results-latest.json` | `17ab31c9345f00e6fe6f01d27fd28b55a3832fed4dad0731a321fed8e2ebad76` |
-| `results/e10-final.json` | `17ab31c9345f00e6fe6f01d27fd28b55a3832fed4dad0731a321fed8e2ebad76` |
-| `logs/driver-run-160541.log` | `16c0c9df6268b48bb5df171d1e5a11372cec03328ea4e94913c11b8df33d4ec8` |
-| `logs/boot-2026-10-31T14-05-41-907Z.log` | `57762a647aaa6c730c030cb01b4cd9ba98eb86fd2611b68ccbcec545e858d993` |
+| `results/e10-results-2026-10-31T14-59-47-565Z.json` | `f06768514383d19047c94195c9ba612f6de862bf5b620a3df8f41fc8e513d29e` |
+| `results/e10-results-latest.json` | `f06768514383d19047c94195c9ba612f6de862bf5b620a3df8f41fc8e513d29e` |
+| `results/e10-final.json` | `f06768514383d19047c94195c9ba612f6de862bf5b620a3df8f41fc8e513d29e` |
+| `logs/driver-run-165947.log` | `ed1de1bb29c57428f24c885211144bd94713b905e62fcf61c149bbf2aa029627` |
+| `logs/boot-2026-10-31T14-59-47-565Z.log` | `0eac191ab8721f480152aff926daab57071317c0418c170430584289d50071c3` |
 | `k/stage0.js` (the engine bundle) | `46153a843fa81132a8d22c17acc84403724c3e9c68ad4768f0746c6cf89ca372` |
 
-### 15.2 The archived documentation pages (accessed 2026-10-31T14:05:41.912Z)
+### 15.2 The archived documentation pages (accessed 2026-10-31T14:59:47.569Z)
 
 Each page was fetched at run time and archived as **HTML + text**, under
 `D:\cache\stage0\e10\results\docs\`.
@@ -963,7 +967,7 @@ Each page was fetched at run time and archived as **HTML + text**, under
 | Workers limits | https://developers.cloudflare.com/workers/platform/limits/ | 200 | `28eb4e8a29f0c8c685d2a676da9e84a8a7be17ad49bc5fe263ad03f1be75f00e` | `3051ea518d24ba3e6259389fb6b1912de1f09090a26fbf72c137e92f255374d1` |
 | Workers pricing | https://developers.cloudflare.com/workers/platform/pricing/ | 200 | `9c147a7a70f799b38c43653c2ac78de5b5c11c27c4047f2519d4a5753f6d2d05` | `e238fbe42e2cfec30606a38a38e15ecc874bb7af7f8cc567b6c7d80dc2c0b5a7` |
 
-The archives for this run are the `*-2026-10-31T14-05-41-907Z.*` files; earlier runs left
+The archives for this run are the `*-2026-10-31T14-59-47-565Z.*` files; earlier runs left
 their own copies in the same directory.
 
 ### 15.3 The quoted limits, byte-exactly, with their access date
