@@ -11,6 +11,16 @@
   eviction leg [x]**, the only open E9 item.
 - **Labels:** **[M] measured** · **[m] modelled** · **[u] unknown** · **[x] needs a real account**.
 
+> **POINTER NOTE (2026-10-31 — E8's local legs have RUN and PASSED; the title and the "What is
+> left" bullet above are left verbatim).** E8 ran locally on branch `stage0/e8-d1-atomicity`:
+> **53/53 checks, 0 failures** — the settlement batch is **atomic at k = 0…4** (0 settlement rows
+> and 0 ledger rows after a failed batch; the pre-settled duplicate path's 5 rows unchanged), and
+> the **27-row steady protocol reproduced** (RP 10 + OUTBOX 5 + backup 12).
+> **The platform legs [x] have not run**, so **E8 stays open by its own criterion** and **P3 is
+> gated on E9's platform eviction leg AND E8's platform leg**. **E10 is now the first remaining
+> local experiment**; E8's five-step platform checklist waits for per-step approval. Report:
+> `docs/implementation/Stage0_E8_D1_Atomicity_Report.md`.
+
 **The one sentence that matters: E9's local legs passed, and the only part of E9 that can still
 change the architecture is its platform eviction leg.** Everything else either confirms a number
 already modelled or is a policy question.
@@ -122,6 +132,15 @@ unconditional form of ruling A.
 
 ## 2. E8 — D1 atomicity, triggers and query limits
 
+> **POINTER NOTE (2026-10-31 — E8's local legs have RUN and PASSED; the section below is left
+> verbatim).** Measured on `wrangler dev --local` (Miniflare SQLite) with the settlement functions
+> byte-identical to E9's: the **5-statement RP batch is atomic** — a trigger abort or duplicate PK
+> at **k = 0…4** throws and leaves **0 settlement / 0 ledger rows** (k = 1…4) or the pre-existing
+> 5 rows untouched (k = 0) — and the correct batch writes **5 table rows / 10 metered rows** exactly
+> once. **The documented limits are not all enforced locally**: 100 bound parameters and the
+> 100,000-byte SQL cap are; the **2 MB row size and the 50-query Free cap are not**. The real-D1
+> leg remains **[x]**. Report: `docs/implementation/Stage0_E8_D1_Atomicity_Report.md`.
+
 **Question.** Does D1 give the settlement the atomicity E7's protocol assumes — one batch that
 applies RP + OUTBOX + backup or none of it — inside the documented limits?
 
@@ -179,11 +198,22 @@ corresponding meter.
 | **P3 — the Ranked authority layer** | **gated on E8** and on **E9's platform eviction leg [x]**; E9's local legs passed on 2026-10-30 (§1) |
 | **The capacity model** | now carries **measured** meters at **80/day** (see the E12 reports §10) |
 
+> **POINTER NOTE (2026-10-31 — the P3 row's E8 condition is now half-measured; the row is left
+> verbatim).** E8's **local** legs PASS: the settlement batch is atomic within every documented
+> limit it touches, and a failed batch leaves no partial row
+> (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md` §4, §7, §12). **P3 stays gated on two
+> platform legs** — E9's eviction and E8's real-D1 run; the local evidence closes neither.
+
 ## 7. The order, in one line
 
 **E8 → E10 → (E12-g/h/i as needed) → E13 → E11**, with **E3.1** starting in parallel because the
 runtime is decided, and **E9's platform eviction leg [x]** whenever the owner approves it. **E9's
 local legs passed on 2026-10-30; only its platform leg can still change the architecture.**
+
+> **POINTER NOTE (2026-10-31 — E8's local legs have run; the order line above is left verbatim).**
+> On the local side the order is now **E10 → (E12-g/h/i as needed) → E13 → E11**; **E8's platform
+> leg** and **E9's platform eviction leg** wait on their own per-step owner approval. E8 is no
+> longer first on the local side.
 
 ## 8. Owner summary (Egyptian Arabic)
 
@@ -194,6 +224,13 @@ local legs passed on 2026-10-30; only its platform leg can still change the arch
    (`docs/implementation/Stage0_E9_Recovery_Report.md` §3). **الفاضل بس تجربة الإخلاء الحقيقي على
    الحساب المؤقت** — مش اتعملت. يعني قرار "نحفظ بعد كل حركة" بقى متأكد على الدليل المحلي.
 2. **E8 — هل D1 بيكتب التسوية كلها مرة واحدة أو مفيش؟** (محلي الأول، وبعدين على الحساب).
+
+> **POINTER NOTE (2026-10-31 — بند E8 العربي فوق اتساب زي ما هو).** E8 المحلي خلص ونجح:
+> **53/53 فحص، صفر فشل**، والتسوية إما بتتكتب كلها أو مفيش حاجة — **صفر صف تسوية وصفر صف دفتر**
+> بعد الفشل، والتسوية الصح **10 صفوف محسوبة**، والبروتوكول **27 صف**. الفاضل **تجربة D1 الحقيقية
+> على الحساب المؤقت** و**تجربة الإخلاء بتاعة E9**، وكل واحدة بتستأذن لوحدها. التقرير:
+> `docs/implementation/Stage0_E8_D1_Atomicity_Report.md`.
+
 3. **E10 — الحذف والاحتفاظ والتخزين.** الحذف نفسه اتقاس (سطر واحد، صفر قراءات)، فاضل سياسة
    الاحتفاظ.
 4. **E12-g/h/i — اختيارية.** مش بتوقف أي حاجة، والقراءات عند 1.8% من حدها.

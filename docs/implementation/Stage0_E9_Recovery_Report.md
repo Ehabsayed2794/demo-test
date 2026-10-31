@@ -293,6 +293,13 @@ statement cursors** (`rowsWritten`), which is what E12-a proved the platform met
 7. **The local D1 is Miniflare's SQLite.** E8 — real D1 atomicity, triggers and query limits — remains
    open by its own report; the local D1 legs exercised the real DO→D1 binding, not the platform's limits.
 
+> **POINTER NOTE (2026-10-31 — E8's local legs have now run; item 7 is left verbatim).** E8 ran
+> locally on 2026-10-31 and PASSED its local criterion: the settlement batch is atomic at k = 0…4
+> with **0 partial rows**, triggers abort the whole batch, and the documented 100-parameter /
+> 100,000-byte limits are enforced (the 2 MB row cap and the 50-query Free cap are **not**). **The
+> real-D1 leg remains [x]**, so item 7's caveat still applies to platform limits. Report:
+> `docs/implementation/Stage0_E8_D1_Atomicity_Report.md`.
+
 ---
 
 ## 9. What this settles
@@ -307,6 +314,11 @@ statement cursors** (`rowsWritten`), which is what E12-a proved the platform met
    measured units; the object exposes no endpoint that writes more than one unit per event.
 3. **P3's gate state:** local evidence **passed**; the platform leg **open**; E8 still open by its own
    criterion. The owner decides the gate.
+
+> **POINTER NOTE (2026-10-31 — the E8 half of §9.3 is now local evidence; the bullet is left
+> verbatim).** E8's local legs PASS (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md` §4, §7,
+> §12); **E8 is still open by its own criterion for the platform**, so P3's gate is unchanged in
+> kind: E9's platform eviction leg **and** E8's real-D1 leg.
 
 ---
 
