@@ -44,7 +44,7 @@ trigger behaviour, query-limit tests".
    (duplicate primary key) and the second through the fifth (a `BEFORE INSERT` trigger abort on
    ledger row k) — throws, and the store afterwards holds **0 settlement rows and 0 ledger rows**
    for that match (k = 1…4), or the **pre-existing 5 rows unchanged** (k = 0). No partial row was
-   ever visible.
+   ever committed.
 2. **The correct batch is exactly 5 table rows / 10 metered rows**, applied once, and a replay is
    a **duplicate with 0 writes**.
 3. **The documented limits the settlement path touches** are enforced locally for **100 bound
@@ -237,7 +237,7 @@ Documented vocabulary, quoted verbatim:
 > 100,000 bytes (100 KB) Maximum bound parameters per query 100 … Maximum SQL query duration 30
 > seconds … Maximum query result size 50 MB" — D1 limits.
 
-> "Queries per Worker invocation (read subrequest limits) 1000 (Workers Paid) / 50 (Free)" — same page.
+> "Queries per Worker invocation (read subrequest limits ) 1000 (Workers Paid) / 50 (Free)" — same page.
 
 > "Limits for individual queries (listed above) apply to each individual statement contained within
 > a batch statement. … The Queries per Worker invocation limit is an exception: a `db.batch()` call
