@@ -61,6 +61,12 @@ either vendor's production surface.
 > D1 atomicity (E8), cleanup/retention (E10), and the failover architecture (post-V1). E9 is the
 > first remaining step: `docs/implementation/Stage0_Remaining_Steps.md`.
 
+> **POINTER NOTE (2026-10-31 — E8's local legs have RUN; the blockquote above is left verbatim).**
+> D1 atomicity (E8) is now measured **locally**: the settlement's 5-statement batch commits or rolls
+> back whole with **0 partial rows**, and the 27-row protocol reproduced
+> (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md` §4, §7, §9). **E8's real-D1 leg is still
+> open**, as is E9's platform eviction leg; E10 and the failover architecture are unchanged.
+
 > **POINTER NOTE (2026-10-30 — E9 has now run locally; the blockquote above is left verbatim).**
 > **E9's local legs PASS at all eight interruption boundaries**: a match recovers byte-identically
 > to the uninterrupted JVM run, settles **exactly once**, and leaves **0 duplicate ledger rows and
@@ -69,6 +75,11 @@ either vendor's production surface.
 > **platform eviction leg [x]** on the retained throwaway account (§1, §8.1 of that report) — the
 > owner decides whether local evidence is enough. **E9 is no longer the first remaining step: E8
 > is** (`docs/implementation/Stage0_Remaining_Steps.md` §2).
+
+> **POINTER NOTE (2026-10-31 — E8's local legs have now run; the pointer above is left verbatim).**
+> **E10 is the first remaining local experiment.** E8's **platform** legs — real-D1 atomicity,
+> triggers, limits and the cross-database question — wait on per-step approval
+> (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md` §13).
 
 ## Evidence
 
@@ -324,6 +335,12 @@ per-Trick persistence ruling is conditional on it. The order and scope:
 > and E12-b/f/g/h/i — are still unrun, and **E8 is now the first remaining experiment**
 > (`docs/implementation/Stage0_Remaining_Steps.md` §2).
 
+> **POINTER NOTE (2026-10-31 — E8 is no longer wholly unrun; the paragraph above is left
+> verbatim).** **E8's local legs PASS** — batch atomicity at k = 0…4, trigger abort and query
+> limits measured on the local D1, the 27-row protocol reproduced
+> (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md`). **E8's platform leg** and **E9's
+> platform eviction leg** remain unrun; so do E10, E11, E13 and E12-b/f/g/h/i.
+
 ## Alternatives considered
 
 ### A — Firebase Cloud Functions on Node.js 22 (the status quo)
@@ -351,6 +368,11 @@ ADR 0002; this ADR does not reopen it unless the owner says so.
 - E8 — the D1-equivalent atomicity guarantee on Firestore transactions for
   the settlement write.
 
+  > **POINTER NOTE (2026-10-31 — E8's D1 half is measured locally; the bullet is left verbatim).**
+  > E8 proves D1's batch atomicity on the **local** runtime only; it says nothing about Firestore
+  > transactions, so this bullet stays open **for alternative A**
+  > (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md` §12).
+
 **Strengths:** already built and shipped in the repo; the Firebase emulator and
 CI are wired; Firestore is the store the whole product already reads and
 writes, so there is **one** data model rather than two.
@@ -369,6 +391,10 @@ Stage 0 E1–E6 above are the evidence gathered so far, and they are positive.
 > **POINTER NOTE (2026-10-30 — this paragraph is history).** **Option B is ACCEPTED** (see
 > *Decision* above). The E12 meters the "what it needs" list below still names are now measured
 > (§E12), the cost evidence exists, and the remaining gates are **E9 and E8**, not O-06.
+
+> **POINTER NOTE (2026-10-31 — E8's local half measured; the pointer above is left verbatim).**
+> The gates are now the **platform legs**: E9's real eviction and E8's real-D1 run. E8's local legs
+> passed on 2026-10-31 (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md`).
 
 **What it needs before it can be adopted:**
 - E12 — the **real free-account verification** of the three meters E6 showed are decisive:
@@ -402,6 +428,13 @@ Stage 0 E1–E6 above are the evidence gathered so far, and they are positive.
   > lost ledger rows (`docs/implementation/Stage0_E9_Recovery_Report.md` §1, §3, §6). **The
   > platform eviction leg [x]** is the only E9 item still open (§1, §8.1); a real Cloudflare
   > eviction did not run. **E8 remains open** by its own criterion (§8.7).
+
+  > **POINTER NOTE (2026-10-31 — E8's local half measured; the pointer above is left verbatim).**
+  > E8's local report exists and passes its criterion **on the local runtime**
+  > (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md` §4, §12). **E8 remains open** for the
+  > platform, and the three-bindings question (D-E7-3) is informed, not decided — three databases
+  > cannot share one atomic batch (§6 of that report).
+
 - **A second data model.** The product's state lives in Firestore today. A
   Workers+DO authority layer means the match state, the settlement and the
   statistics live somewhere else, and the two must agree. That is a migration

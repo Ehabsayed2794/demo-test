@@ -65,6 +65,12 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 > direction: the local half of the gate passed, and the **platform leg plus E8** are what remain
 > (`docs/implementation/Stage0_Remaining_Steps.md` §2, §6).
 
+> **POINTER NOTE (2026-10-31 — E8's local half has now run; the "platform leg plus E8" clause above
+> is left verbatim).** E8's local legs PASS: the settlement batch is atomic with **0 partial rows**
+> on failure, the correct batch is 5 statements / 10 metered rows applied once, and the 27-row
+> steady protocol reproduced (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md`). What remains
+> is **E9's platform eviction leg and E8's real-D1 leg**.
+
 ### Decided on 2026-10-22 and 2026-10-23
 
 | Topic | Status | Basis |
@@ -95,6 +101,13 @@ Egyptian Arabic; priority P1 blocks Stage 1 design, P2 blocks a later phase.
 | T7 | Anonymous→registered link keeps uid; `sign_in_provider` claim value | Firebase Auth emulator |
 | T8 | Hibernation/duration billing for a shared host | GB-s per match |
 | T9 | Current Play account-deletion policy | policy citation |
+
+> **POINTER NOTE (2026-10-31 — T5's local half is done; the row above is left verbatim).** On the
+> local runtime `db.batch()` is a SQL transaction: a trigger abort or duplicate PK at k = 0…4
+> leaves **0 partial rows**; 100 bound parameters and 100,000-byte SQL are **enforced**, and the
+> 2 MB row cap / 50-query Free cap are **not**. The "approved cloud" half is now E8's five-step
+> platform checklist, waiting on per-step approval
+> (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md` §8, §13).
 
 ## D. Answered (recorded in the decision records; do not ask again)
 | ID | Answer |

@@ -118,6 +118,13 @@ number, not a local artefact.
 - **The failover architecture.** V1 refuses above 88/day; a quota-isolated secondary server is
   **deferred beyond V1**. Nothing may be built assuming it exists.
 
+> **POINTER NOTE (2026-10-31 — E8's local legs have RUN; the E8 bullet above is left verbatim).**
+> E8's **local** atomicity, trigger and limit legs PASS (53/53 checks; 0 partial rows at k = 0…4;
+> the documented 100-parameter and 100,000-byte limits enforced, the 2 MB row cap and 50-query Free
+> cap **not** enforced locally). **E8's real-D1 leg is [x]**, so the item stays open; E10, E11,
+> E13, E12-b/f/g/h/i and D-E7-2/3/5/6/7 are unchanged. Report:
+> `docs/implementation/Stage0_E8_D1_Atomicity_Report.md`.
+
 ## 6. Consequences and risks
 
 | Risk | What this decision does about it |
@@ -135,6 +142,10 @@ number, not a local artefact.
 > (`docs/implementation/Stage0_E9_Recovery_Report.md` §3). **Recovery on the platform (a real
 > eviction) is still unmeasured** and is the only open E9 item (§1, §8.1); **E8 is now the first
 > remaining experiment** (`docs/implementation/Stage0_Remaining_Steps.md` §2).
+
+> **POINTER NOTE (2026-10-31 — E8's local legs have run; the pointer above is left verbatim).**
+> **E10 is now the first remaining local experiment**; E8's real-D1 leg and E9's platform eviction
+> leg wait on per-step approval (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md` §13).
 
 ## 7. Artifacts
 

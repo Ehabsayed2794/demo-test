@@ -47,6 +47,12 @@
 > (§1, §8.1). **E8 is now the first remaining experiment**; E10, E11, E13 and E12-b/f/g/h/i stay
 > unrun (`docs/implementation/Stage0_Remaining_Steps.md`).
 
+> **Pointer, 2026-10-31 (E8 measured locally; the "Still not run: E8, E9…" clauses above are left
+> verbatim).** **E8's local legs PASS** — 53/53 checks, the settlement batch atomic at k = 0…4 with
+> **0 partial rows**, the duplicate path unchanged, and the **27-row steady protocol reproduced**
+> (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md` §4, §7, §9). **Still not run: E8's real-D1
+> leg, E9's platform eviction leg, E10, E11, E13 and E12-b/f/g/h/i.**
+
 > **Pointer, 2026-10-29 (measured; the "NOT YET RUN" row above is left verbatim).**
 > **Six of the thirteen experiments have now been run**: **E1** (the engine plays a complete
 > match inside `workerd`), **E2** (200 seeds × FULL/MINI × Normal/Classic = 800 matches,
@@ -88,6 +94,11 @@
 > `docs/implementation/Stage0_E7_Backup_Outbox_Report.md`. **E8–E13 are still not run**, so the
 > runtime decision (O-06) is **still not decidable on evidence**: E7 measured the protocol, not
 > Cloudflare, and the independent quota-isolated secondary server **does not exist**.
+
+> **Pointer, 2026-10-31 (E8 measured locally; the "E8–E13 are still not run" clause above is left
+> verbatim).** E8 has now run **locally** — atomicity k = 0…4, triggers, query limits and the
+> 27-row protocol (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md`); **E8's platform leg,
+> E10, E11, E13 and E12-b/f/g/h/i remain unrun.**
 
 ### Source-of-truth hierarchy
 
@@ -321,6 +332,10 @@ One decision still blocks a workstream rather than merely shaping it:
    > PASSED at all eight boundaries (`docs/implementation/Stage0_E9_Recovery_Report.md` §1, §3).
    > E3's gate is now the **platform eviction leg [x]** plus **E8** — the owner decides whether
    > local evidence is enough (`docs/implementation/Stage0_Remaining_Steps.md` §6).
+
+   > **Pointer, 2026-10-31 (E8's local half measured).** E3's gate is now **E9's platform eviction
+   > leg + E8's real-D1 leg**; E8's local legs passed on the local runtime
+   > (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md`) and do not close the row.
 
 The open items now shape scope rather than the rule set: **O-12** voice provider/protocol/cost,
 **O-13** ads/consent provider, **O-15** matchmaking direction, **O-16** IAP/Stage 0 sequencing,
@@ -1127,6 +1142,14 @@ defines what would count as a result; it does not report one.
 > the requirement the loss window implies (the intent queue must not share the primary's failure
 > domain) is a requirement **on an architecture that has not been built**. **E7 does not approve
 > Cloudflare and does not close O-06.** Report: `docs/implementation/Stage0_E7_Backup_Outbox_Report.md`.
+>
+> **Pointer, 2026-10-31 (inserted here; the "E8–E13 have not" sentence at the top of this
+> blockquote is left verbatim).** E8 has now run **locally**: the settlement batch is a transaction
+> at k = 0…4 with **0 partial rows**, the documented 100-parameter and 100,000-byte limits are
+> enforced (the 2 MB row cap and the 50-query Free cap are **not**), and the 27-row steady protocol
+> reproduced (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md` §4, §7, §9). **E8's real-D1
+> leg, E10, E11, E13 and E12-b/f/g/h/i remain unrun.**
+>
 > **Pending owner decisions (listed, not decided): D-E7-1** the production backup cadence,
 > **D-E7-2** where the intent queue must live, **D-E7-3** the protocol figure and the
 > three-databases-or-one question, **D-E7-4** confirmation that a quota/write failure is never
@@ -1166,6 +1189,12 @@ defines what would count as a result; it does not report one.
 > 0 duplicate and 0 lost ledger rows (`docs/implementation/Stage0_E9_Recovery_Report.md` §3, §6).
 > **The platform eviction leg [x] is the one open E9 item** (§1, §8.1 of that report).
 
+> **Pointer, 2026-10-31 (E8 measured locally; the E8 row above is left verbatim).** The E8 row's
+> pass criterion — "settlement can be atomic within documented limits" — is met **locally**: the
+> 5-statement settlement batch commits or rolls back whole (0 partial rows at k = 0…4), while the
+> **2 MB row cap and the 50-query Free cap are not enforced locally**, so those two stay **open**
+> pending the platform leg (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md` §4, §7, §12).
+
 Stage 0 does **not** decide the architecture by itself. It produces measurements and a
 recommendation; the owner approves or rejects the runtime through a new ADR (O-06).
 
@@ -1184,6 +1213,11 @@ recommendation; the owner approves or rejects the runtime through a new ADR (O-0
 > per-Trick persistence; **E8, E10, E11, E13 and E12-b/f/g/h/i remain unrun**, and E6 §14's step 8
 > (driving a meter past 100%) is the one protocol item still open
 > (`docs/implementation/Stage0_Remaining_Steps.md`).
+
+> **Pointer, 2026-10-31 (E8 measured locally; the "E8 … remain unrun" clause above is left
+> verbatim).** E8's local legs PASS — 53/53 checks, atomic at k = 0…4, the 27-row protocol
+> reproduced (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md`); **E8's real-D1 leg remains
+> [x]**, so the row is not closed and P3 keeps both platform gates (E9's eviction, E8's real D1).
 
 > **Pointer, 2026-10-30 (the "E9 is now the gate" sentence above is history in its local half).**
 > E9's local legs PASS at all eight boundaries (`docs/implementation/Stage0_E9_Recovery_Report.md`
@@ -1351,6 +1385,10 @@ does **not** ship product code.
 | E1.11 | E11 auth linking | Linking result and uid evidence | 2–4 | Medium |
 | E1.12 | E12 hibernation/duration | Idle-cost measurement | 2–4 | Medium |
 | E1.13 | E13 policy verification | Checklist with source URLs and access date | 2–4 | High |
+
+> **Pointer, 2026-10-31 (the E1.8 row is now half-done).** E8's atomicity and limit report exists
+> for the **local** runtime (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md`); the platform
+> leg is scheduled per step and has not run.
 
 Commands are experiment-specific; the shared build command is
 `native/gradlew -p native :functions:jsNodeTest`. Evidence: `stage0-report.md` with raw
@@ -1836,6 +1874,13 @@ measured, not voted on.
 > settlements / 28 ledger rows, Δ 514) —
 > `docs/implementation/Stage0_E9_Recovery_Report.md` §3 (the eight boundaries), §6 (the settlement
 > audit). The **platform eviction leg [x]** remains open (§1, §8.1).
+
+> **Pointer, 2026-10-31 (T5 answered locally; the table above is left verbatim).** T5's local half
+> is answered: `db.batch()` is a SQL transaction on the local D1 — a trigger abort or duplicate PK
+> at **k = 0…4** rolls the whole 5-statement settlement back with **0 partial rows** — and the
+> documented 100-parameter / 100,000-byte limits are enforced, while the **2 MB row cap and the
+> 50-query Free cap are not**. Report:
+> `docs/implementation/Stage0_E8_D1_Atomicity_Report.md`.
 
 ### 5.7.4 Deferred beyond V1
 
