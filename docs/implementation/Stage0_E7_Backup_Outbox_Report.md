@@ -618,6 +618,15 @@ which §4 shows is not necessary.
    tested recovery from **store-level** faults, not from an interrupted match. **S6b tested a
    store-level restart, not an interrupted match** — the action-log re-derivation option in §5
    therefore stays **[u]** until E9 runs.
+
+   > **POINTER NOTE (2026-10-30 — E9 has now run; item 4's E9 half is answered, the item is left
+   > verbatim).** E9 exercised this protocol at a **real DO→D1 binding boundary** (locally, under
+   > `workerd` + Miniflare's D1): recovery at all eight interruption boundaries, **exactly one
+   > settlement**, 0 duplicate and 0 lost ledger rows, with the intent frozen before any D1 write
+   > and deduped by key (`docs/implementation/Stage0_E9_Recovery_Report.md` §6; the boundaries in
+   > §3). **The action-log re-derivation option in §5 is still not adopted** — Design A was
+   > measured and not chosen (§5 of that report). **The platform eviction leg [x]** is the one
+   > open E9 item (§1, §8.1); E8, E10, E12 and E13 remain unrun.
 5. **Not a settlement-correctness proof for the product.** The battery is one seed range, one
    game type, one scoring mode, four bot seats. The RD7 demotion shield and the Highest-Rank
    fold are settlement-layer state that never reaches the RP ledger row E7 persists; they are

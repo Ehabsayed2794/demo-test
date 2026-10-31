@@ -1,20 +1,66 @@
-# Stage 0 — the remaining steps, in order, starting with E9
+# Stage 0 — the remaining steps, in order, starting with E8
 
-- **Date:** 2026-10-30
+- **Date:** 2026-10-30 (updated the same day: E9's local legs ran and passed)
 - **Status:** PLAN OF RECORD for the remainder of Stage 0, written after the runtime decision
   (`docs/decisions/2026-10-30-runtime-decision-o06-cloudflare.md`).
-- **What is already done:** E1, E2, E3, E4, E5, E6, E7 (local), E7b (local), and the E12 platform
-  measurements **a / c / d / e** on a throwaway Free account.
-- **What is left:** **E9** (the gate), **E8**, **E10**, then the optional platform meters
-  **E12-g/h/i** (and **b/f**, both skippable), then **E13** and **E11**.
+- **What is already done:** E1, E2, E3, E4, E5, E6, E7 (local), E7b (local), **E9 (local legs, all
+  eight boundaries)**, and the E12 platform measurements **a / c / d / e** on a throwaway Free
+  account. E9's report: `docs/implementation/Stage0_E9_Recovery_Report.md`.
+- **What is left:** **E8** (the first remaining experiment), **E10**, the optional platform meters
+  **E12-g/h/i** (and **b/f**, both skippable), then **E13** and **E11** — plus **E9's platform
+  eviction leg [x]**, the only open E9 item.
 - **Labels:** **[M] measured** · **[m] modelled** · **[u] unknown** · **[x] needs a real account**.
 
-**The one sentence that matters: E9 is the only remaining experiment that can still change the
-architecture.** Everything else either confirms a number already modelled or is a policy question.
+**The one sentence that matters: E9's local legs passed, and the only part of E9 that can still
+change the architecture is its platform eviction leg.** Everything else either confirms a number
+already modelled or is a policy question.
+
+> **POINTER NOTE (2026-10-30 — E9's local legs have RUN and PASSED; the question, boundaries and
+> method in §1 are left verbatim below the verdict.)** The evidence: **144/144 checks, 0
+> failures**, 12 boots, **11 fault-injection kills at the eight boundaries + 1 final shutdown**,
+> every assertion read from store contents after the kill —
+> `docs/implementation/Stage0_E9_Recovery_Report.md` §3 (the eight boundaries), §6 (settlement),
+> §8 (residual limits), §10 (reproduction). **The only open E9 item is §1.3's platform eviction
+> leg [x]** on the retained throwaway account; it did not run, and the owner decides whether it
+> must run before ruling A is closed for production (§1, §8.1, §9.1 of the report).
 
 ---
 
-## 1. E9 — durable recovery after interruption — **the gate**
+## 1. E9 — durable recovery after interruption — **PASS locally; the platform leg is open**
+
+**Verdict (2026-10-30).** **PASS at all eight boundaries on the local `workerd` runtime** [M]:
+**144/144 checks, 0 failures**, **12 boots**, **11 fault-injection kills at the eight boundaries +
+1 final shutdown**, and at every boundary the recovered match is **byte-identical** to the
+uninterrupted JVM run at the same prefix, **one settlement per match**, **0 duplicate and 0 lost
+ledger rows** (E7's two negative controls included). **Design A was measured and not adopted; B
+stands. The only remaining E9 item is the platform eviction leg [x]** in §1.3 step 2 — a real
+eviction on the retained throwaway account, never run, needing its own per-step approval. **E8 is
+now the first remaining experiment (§2).** Report:
+`docs/implementation/Stage0_E9_Recovery_Report.md` §1, §3, §5, §6, §8, §9.
+
+**The eight boundaries, in one table** (seed `50…57` = boundary `1…8`; the final digest is the
+JVM log of the same seed, and the recovered object matches it row for row — except boundary 7,
+whose match deliberately never finishes, so its evidence is the JVM's prefix-1 digest `c2bdb9f4`,
+matched row for row):
+
+| # | Boundary | Seed | Units | Rows at kill | Final digest | Settlement |
+|---|---|---|---|---|---|---|
+| 1 | before a Trick checkpoint | 50 | 484 | 11 = JVM prefix 11 | `b7b6c3a7` | 1 × 4 ledger, Δ 64 |
+| 2 | after the checkpoint, before the ack | 51 | 410 | 13 | `dbcde317` | 1 × 4, Δ 67 |
+| 3 | mid-auction | 52 | 438 | 5 | `e3a3aac5` | 1 × 4, Δ 81 |
+| 4 | at the last trick (With/Koz) | 53 | 453 | 452, 0 settled | `063bdb6c` | 1 × 4, Δ 75 |
+| 5 | during settlement | 54 | 432 | intent + 1 settlement + 4 ledger rows, outbox unacked | `76436647` | 1 × 4, Δ 82 |
+| 6 | after settlement, before the result | 55 | 437 | settled | `005477b0` | 1 × 4, Δ 68 |
+| 7 | during a bot takeover / alarm tick | 56 | 424 | 0 | `c2bdb9f4` = JVM prefix 1 (never finishes) | none — deliberately unfinished |
+| 8 | at quota exhaustion | 57 | 439 | intent pending, 0 RP | `2e39c379` | 1 × 4, Δ 77 |
+
+**Design A vs B (measured per seed):** **B stands** — B is 410–484 rows/match; **A1 = 1,346–1,420**
+and **A2 = 1,112–1,186**, i.e. **107.7–113.6%** and **89.0–94.9%** of the 100,000-row hard limit at
+80 matches/day (the 90,000 guardrail caps A1 at **63–66/day** and A2 at **75–80/day**). A was
+**measured, not adopted**, so no recovery proof is owed for it
+(`docs/implementation/Stage0_E9_Recovery_Report.md` §5).
+
+**Under the verdict, the original text, verbatim:**
 
 **Question.** Does a match survive an interruption at **every** boundary — the process, the
 object, the network, the quota — and come back with the same state, exactly one settlement, and no
@@ -79,8 +125,10 @@ unconditional form of ruling A.
 **Question.** Does D1 give the settlement the atomicity E7's protocol assumes — one batch that
 applies RP + OUTBOX + backup or none of it — inside the documented limits?
 
-**Why after E9.** E7 proved the *protocol* on a local D1; E8 proves the *store*. The settlement is
-the one write that must never half-apply, and it is the write the whole RP economy rests on.
+**Why it is first now.** E7 proved the *protocol* on a local D1, and E9 proved it again at the real
+DO→D1 binding under interruption; E8 proves the *store's* mechanism — that D1 applies the batch
+atomically or not at all, inside the documented limits. The settlement is the one write that must
+never half-apply, and it is the write the whole RP economy rests on.
 
 **Method.** Batched settlement writes at the real row counts (10 RP + 5 OUTBOX + 12 backup = 27),
 a failure injected inside the batch, trigger behaviour if triggers are used, and the query-limit
@@ -128,22 +176,23 @@ corresponding meter.
 |---|---|
 | **E3.1 — runtime scaffold for the approved architecture** | **unblocked** (was gated on O-06); 48–88 h |
 | **S8 / Play Billing verification** | **no longer blocked on the runtime** — it needs a deployable backend, and one is now chosen; it still needs the purchase design |
-| **P3 — the Ranked authority layer** | **gated on E9**, not on O-06 |
+| **P3 — the Ranked authority layer** | **gated on E8** and on **E9's platform eviction leg [x]**; E9's local legs passed on 2026-10-30 (§1) |
 | **The capacity model** | now carries **measured** meters at **80/day** (see the E12 reports §10) |
 
 ## 7. The order, in one line
 
-**E9 → E8 → E10 → (E12-g/h/i as needed) → E13 → E11**, with **E3.1** starting in parallel because
-the runtime is decided. **E9 is the only one that can still change the architecture.**
+**E8 → E10 → (E12-g/h/i as needed) → E13 → E11**, with **E3.1** starting in parallel because the
+runtime is decided, and **E9's platform eviction leg [x]** whenever the owner approves it. **E9's
+local legs passed on 2026-10-30; only its platform leg can still change the architecture.**
 
 ## 8. Owner summary (Egyptian Arabic)
 
-**اللي فاضل بالترتيب، وأول حاجة E9:**
+**اللي فاضل بالترتيب، وأول حاجة E8:**
 
-1. **E9 — هل المباراة بترجع سليمة بعد أي انقطاع؟** بنقطّع عند كل نقطة ممكنة (قبل الحفظ، بعد
-   الحفظ، في نص المزاد، عند التسوية، في نص مؤقت البوت) ونتأكد إن الحالة رجعت زي ما هي، والتسوية
-   اتحصلت **مرة واحدة** بس. **دي الحاجة الوحيدة اللي لسه تقدر تغيّر التصميم** — لأن قرار "نحفظ بعد
-   كل حركة" لسه معلّق عليها.
+1. **E9 — اتعملت محلياً ونجحت.** المباراة رجعت سليمة عند **التمانية حدود**، والتسوية اتحصلت
+   **مرة واحدة** بس، ومن غير صفوف RP مكرّرة ولا تسوية ضايعة
+   (`docs/implementation/Stage0_E9_Recovery_Report.md` §3). **الفاضل بس تجربة الإخلاء الحقيقي على
+   الحساب المؤقت** — مش اتعملت. يعني قرار "نحفظ بعد كل حركة" بقى متأكد على الدليل المحلي.
 2. **E8 — هل D1 بيكتب التسوية كلها مرة واحدة أو مفيش؟** (محلي الأول، وبعدين على الحساب).
 3. **E10 — الحذف والاحتفاظ والتخزين.** الحذف نفسه اتقاس (سطر واحد، صفر قراءات)، فاضل سياسة
    الاحتفاظ.

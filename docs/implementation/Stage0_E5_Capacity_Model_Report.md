@@ -334,3 +334,14 @@ curl "http://127.0.0.1:8974/?what=capacity&first=1&count=50&gt=FULL&sm=NORMAL" \
 > is needed). Measurements: `Stage0_E12a_Platform_Rows_Report.md` §7,
 > `Stage0_E12d_e_c_Platform_Meters_Report.md` §10. The request axis E5 called binding (~88/day under
 > per-action HTTP) **does not bind under WebSocket + per-Trick**: ≈ 7 DO requests per match.
+
+> **POINTER NOTE (2026-10-30 — E9 has now run; the per-action question in the blockquote above is
+> answered, the text is left verbatim).** **B stands: per-Trick checkpoint + per-action auction.**
+> E9 measured the adjacent card-log design (Design A) on the same per-unit driver and did **not**
+> adopt it: **A1 = 1,346–1,420 rows/match** (1,346 = the lowest-bid seed, 1,420 the highest) and
+> **A2 = 1,112–1,186** — at 80 matches/day that is **107.7–113.6%** of the 100,000-row hard limit
+> for A1 and **89.0–94.9%** for A2, so the 90,000-row guardrail caps A1 at **63–66/day** and A2 at
+> **75–80/day**. **No per-action log is needed, and none is adopted.**
+> `docs/implementation/Stage0_E9_Recovery_Report.md` §5 (the per-seed table and the ruling), §3
+> (the eight recovery boundaries). The **platform eviction leg [x]** is the only open E9 item
+> (§1, §8.1).

@@ -39,6 +39,14 @@
 > E9, E10, E11, E13 and the optional E12-b/f/g/h/i** — **E9 is the only one that can still change
 > the architecture** (`docs/implementation/Stage0_Remaining_Steps.md`).
 
+> **Pointer, 2026-10-30 (E9 measured locally; the "Still not run: E8, E9…" clause above is left
+> verbatim).** **E9's local legs PASS at all eight interruption boundaries** — byte-identical
+> recovery, **exactly one settlement**, 0 duplicate and 0 lost RP rows
+> (`docs/implementation/Stage0_E9_Recovery_Report.md` §3, §6). The per-Trick ruling's condition is
+> **discharged on local evidence**; the **platform eviction leg [x]** is the only open E9 item
+> (§1, §8.1). **E8 is now the first remaining experiment**; E10, E11, E13 and E12-b/f/g/h/i stay
+> unrun (`docs/implementation/Stage0_Remaining_Steps.md`).
+
 > **Pointer, 2026-10-29 (measured; the "NOT YET RUN" row above is left verbatim).**
 > **Six of the thirteen experiments have now been run**: **E1** (the engine plays a complete
 > match inside `workerd`), **E2** (200 seeds × FULL/MINI × Normal/Classic = 800 matches,
@@ -308,6 +316,11 @@ One decision still blocks a workstream rather than merely shaping it:
    > (`docs/decisions/2026-10-30-runtime-decision-o06-cloudflare.md`; ADR 0003 ACCEPTED). E3 is
    > now gated on **E9**, not on a runtime choice; **S8's** backend is no longer blocked on the
    > runtime, only on the purchase design.
+
+   > **Pointer, 2026-10-30 (E9 measured locally).** The gate's **local** half is discharged: E9
+   > PASSED at all eight boundaries (`docs/implementation/Stage0_E9_Recovery_Report.md` §1, §3).
+   > E3's gate is now the **platform eviction leg [x]** plus **E8** — the owner decides whether
+   > local evidence is enough (`docs/implementation/Stage0_Remaining_Steps.md` §6).
 
 The open items now shape scope rather than the rule set: **O-12** voice provider/protocol/cost,
 **O-13** ads/consent provider, **O-15** matchmaking direction, **O-16** IAP/Stage 0 sequencing,
@@ -1079,6 +1092,13 @@ defines what would count as a result; it does not report one.
 > WebSocket billing, hibernation, duration and reconnects. No experiment's acceptance criterion
 > is changed by these rulings.
 >
+> **Pointer, 2026-10-30 (E9 measured locally; ruling A's condition is discharged on local
+> evidence — the rulings above are left verbatim).** **(A)**'s "conditional on E9's recovery
+> validation" is met on the local runtime: all eight interruption boundaries recover
+> byte-identically and settle **exactly once**, with **0 duplicate and 0 lost ledger rows**
+> (`docs/implementation/Stage0_E9_Recovery_Report.md` §3, §6, §9). The **platform eviction leg
+> [x]** is the one open E9 item (§1, §8.1); **E8 is now the first remaining experiment**.
+>
 > **Pointer, 2026-10-30 (E7 measured locally; the E7 row above is left verbatim).**
 > **E1, E2, E3, E4, E5, E6 and E7 have been run**; **E8–E13 have not**. The E7 row's pass
 > criterion — "No duplicate RP; lag measured; recovery documented" — is met **locally**: across a
@@ -1140,6 +1160,12 @@ defines what would count as a result; it does not report one.
 | E12 | Hibernation and duration cost | Does hibernation keep idle cost inside the free tier? | Idle table for a full match duration; measure | No billing trigger; duration cost recorded | P3 |
 | E13 | Account deletion and store policy | What does current Play policy require for closed testing and for account deletion, and what risk does the V1 deferral carry? | Verify current Play policy pages and API behaviour | Written checklist with source URLs and access date | P10, G8 |
 
+> **Pointer, 2026-10-30 (E9 measured locally; the E9 row above is left verbatim).** The E9 row's
+> pass criterion — "consistent recovery at every boundary" — is met **locally** at all eight
+> boundaries: byte-identical recovery against the uninterrupted JVM run, exactly one settlement,
+> 0 duplicate and 0 lost ledger rows (`docs/implementation/Stage0_E9_Recovery_Report.md` §3, §6).
+> **The platform eviction leg [x] is the one open E9 item** (§1, §8.1 of that report).
+
 Stage 0 does **not** decide the architecture by itself. It produces measurements and a
 recommendation; the owner approves or rejects the runtime through a new ADR (O-06).
 
@@ -1157,6 +1183,12 @@ recommendation; the owner approves or rejects the runtime through a new ADR (O-0
 > `docs/decisions/2026-10-30-runtime-decision-o06-cloudflare.md`. **E9 is now the gate** for
 > per-Trick persistence; **E8, E10, E11, E13 and E12-b/f/g/h/i remain unrun**, and E6 §14's step 8
 > (driving a meter past 100%) is the one protocol item still open
+> (`docs/implementation/Stage0_Remaining_Steps.md`).
+
+> **Pointer, 2026-10-30 (the "E9 is now the gate" sentence above is history in its local half).**
+> E9's local legs PASS at all eight boundaries (`docs/implementation/Stage0_E9_Recovery_Report.md`
+> §3, §9), so per-Trick persistence no longer waits on the local experiment; **E8 is now the first
+> remaining experiment**, and the **platform eviction leg [x]** is the only open E9 item
 > (`docs/implementation/Stage0_Remaining_Steps.md`).
 
 ### 5.4.4 Milestones
@@ -1797,6 +1829,13 @@ measured, not voted on.
 | T7 | Anonymous→registered link keeps uid | E11 | UID and claim evidence |
 | T8 | Hibernation/duration billing for a shared host | E12 | GB-s per match |
 | T9 | Current Play account-deletion policy | E13 | Citation with access date |
+
+> **Pointer, 2026-10-30 (T6 ran; the table above is left verbatim).** **T6 is answered locally**:
+> durable recovery mid-trick and between the result and D1, with **replay equality** (byte-identical
+> digests against the uninterrupted run) and **exactly one ledger row set per match** (7
+> settlements / 28 ledger rows, Δ 514) —
+> `docs/implementation/Stage0_E9_Recovery_Report.md` §3 (the eight boundaries), §6 (the settlement
+> audit). The **platform eviction leg [x]** remains open (§1, §8.1).
 
 ### 5.7.4 Deferred beyond V1
 

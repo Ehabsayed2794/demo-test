@@ -210,6 +210,15 @@ The E5 model's other rows-written axis (**1 row per applied action = 1,135 rows/
 scenario under either shape**. Whether that axis applies at all is **E9's** question — the ruled
 design persists per Trick, not per action.
 
+> **POINTER NOTE (2026-10-30 — E9 has now run; §7's axis question is answered, the text above is
+> left verbatim).** The ruled design is unchanged — **B (per-Trick checkpoint + per-action
+> auction)** stands, so the per-action *state-write* axis this section describes does not apply.
+> E9 also measured the adjacent card-log design on the same per-unit driver — **A1 = 1,346–1,420
+> rows/match, A2 = 1,112–1,186** — and did **not** adopt it (**A1 overruns the 100,000/day limit
+> at 80 matches/day; A2 sits at 89.0–94.9%**). Report:
+> `docs/implementation/Stage0_E9_Recovery_Report.md` §5. The **platform eviction leg [x]** is the
+> only open E9 item (§1, §8.1).
+
 ### 7.3 Document by document
 
 | Document | Before this run | After |
@@ -344,6 +353,11 @@ built-ins and the pinned local wrangler — no installs, no PATH or admin change
    الـ100,000 صف/يوم تحت ×1، و**85.6% / 107% / 128%** تحت ×2 — يعني **125 و150 بتتجاوز الحد**
    لو اخترنا الشكل ×2. (محور الـper-action — 1,135/2,270 — ده محور تاني مش متقيس، وE9 هو
    اللي بيحسم هل هو أصلاً applies.)
+
+   > **POINTER NOTE (2026-10-30).** E9 اشتغلت: التصميم المحسوم **per-Trick** فضل زي ما هو،
+   > ومحور الـper-action **مش مستخدم**. E9 قاست بديل تاني (سطر لكل كارت) و**متبنّاش**:
+   > **A1 = 1,346–1,420 صف/مباراة** (بيتجاوز حد الـ100,000 عند 80 مباراة/يوم)، و**A2 =
+   > 1,112–1,186** (89.0–94.9%). التفاصيل: `docs/implementation/Stage0_E9_Recovery_Report.md` §5.
 3. **في اختلاف جديد في عدّ القراءات:** Cloudflare عدّ **430 صف مقروء** في كل instance، بينما الـDO
    نفسه سجّل **صفر**. يعني عدّ القراءات محتاج قياس لوحده (E12-g) — لكن ده **مش** مشكلة سعة
    (القراءة بعيدة تحت الحد)، بس الرقم في الموديل لازم يتظبط.
