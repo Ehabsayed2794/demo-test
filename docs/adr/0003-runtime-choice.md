@@ -61,11 +61,27 @@ either vendor's production surface.
 > D1 atomicity (E8), cleanup/retention (E10), and the failover architecture (post-V1). E9 is the
 > first remaining step: `docs/implementation/Stage0_Remaining_Steps.md`.
 
+> **POINTER NOTE (2026-10-31 — E10 has now run locally; the blockquote above is left verbatim)
+> [E10 wave — note 1 of 4].** Cleanup/retention (E10) is now measured **locally**: retention and
+> cleanup **fit the free tier**, and the binding meter is **DO rows written — 854 rows per match,
+> 68.32% of the free allowance at 80 matches/day** — not storage (D1 0.157%, DO 28.96% after a
+> year). The **ledger (the player's balance) is never pruned**; a **tombstone** row per match
+> (76.889 B content / 127.7952 B physical) is the idempotency anchor, and the negative control
+> proves that without it a replay double-applies. The **retention window is the owner's decision**
+> (the report recommends **30 days**). E10's platform legs [x] did not run. Report:
+> `docs/implementation/Stage0_E10_Retention_Storage_Report.md`.
+
 > **POINTER NOTE (2026-10-31 — E8's local legs have RUN; the blockquote above is left verbatim).**
 > D1 atomicity (E8) is now measured **locally**: the settlement's 5-statement batch commits or rolls
 > back whole with **0 partial rows**, and the 27-row protocol reproduced
 > (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md` §4, §7, §9). **E8's real-D1 leg is still
 > open**, as is E9's platform eviction leg; E10 and the failover architecture are unchanged.
+
+> **POINTER NOTE (2026-10-31 — E10 has now run locally; the sentence "E10 … unchanged" above is
+> left verbatim) [E10 wave — note 2 of 4].** E10 ran on 2026-10-31 with **65 checks, 0 failures**,
+> so it is no longer unchanged: **retention and cleanup fit the free tier**
+> (`docs/implementation/Stage0_E10_Retention_Storage_Report.md` §2, §9). The **failover
+> architecture remains unchanged** and is still deferred beyond V1.
 
 > **POINTER NOTE (2026-10-30 — E9 has now run locally; the blockquote above is left verbatim).**
 > **E9's local legs PASS at all eight interruption boundaries**: a match recovers byte-identically
@@ -80,6 +96,15 @@ either vendor's production surface.
 > **E10 is the first remaining local experiment.** E8's **platform** legs — real-D1 atomicity,
 > triggers, limits and the cross-database question — wait on per-step approval
 > (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md` §13).
+
+> **POINTER NOTE (2026-10-31 — E10 has now run locally; the pointer above is left verbatim)
+> [E10 wave — note 3 of 4].** E10 is no longer first: it ran on 2026-10-31 with **65 checks,
+> 0 failures** and **retention and cleanup fit the free tier**
+> (`docs/implementation/Stage0_E10_Retention_Storage_Report.md` §2, §9). The next remaining local
+> experiments are **E13 and E11**; E12-g/h/i stay optional. The **retention window** is now the
+> owner's decision (the report recommends **30 days**), and one new open item came out of E10: the
+> **D1 rows-read meter is crossed after ≈195 days** at 80 matches/day, because the ledger is never
+> pruned — a separate change to `balances()`, not a retention patch (report §9.1, §12).
 
 ## Evidence
 
@@ -340,6 +365,16 @@ per-Trick persistence ruling is conditional on it. The order and scope:
 > limits measured on the local D1, the 27-row protocol reproduced
 > (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md`). **E8's platform leg** and **E9's
 > platform eviction leg** remain unrun; so do E10, E11, E13 and E12-b/f/g/h/i.
+
+> **POINTER NOTE (2026-10-31 — E10 is no longer unrun; the paragraph and the pointer above are
+> left verbatim) [E10 wave — note 4 of 4].** **E10 ran locally on 2026-10-31 and PASSED** —
+> **65 checks, 0 failures** — and **retention and cleanup fit the free tier**: the binding meter
+> is **DO rows written (854 per match, 68.32% at 80 matches/day)**, not storage; the **ledger is
+> never pruned**; a **tombstone** row per match is the idempotency anchor, without which a replay
+> double-applies (the negative control measured it). The **retention window is the owner's
+> decision** (the report recommends **30 days**), and E10's platform legs [x] did not run.
+> **E8's platform leg, E9's platform eviction leg, E11, E13 and E12-b/f/g/h/i remain unrun.**
+> Report: `docs/implementation/Stage0_E10_Retention_Storage_Report.md`.
 
 ## Alternatives considered
 
