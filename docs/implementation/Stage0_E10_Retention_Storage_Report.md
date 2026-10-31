@@ -760,6 +760,12 @@ deleted (2.38% of the allowance), and the extra 60 days of 90-day window would c
 the same at every window) — in which case pick the window that answers the most
 disputes, and the storage argument does not constrain the choice.
 
+> **POINTER NOTE (2026-10-31 — the owner has ruled; the recommendation above is left verbatim).**
+> **The retention window is 30 days after `finished_ms` (2,592,000,000 ms)** — owner ruling,
+> 2026-10-31: «اوك 30 يوم». Decision record:
+> `docs/decisions/2026-10-31-retention-window-30-days.md`. The ruling changes no measured figure;
+> run `2026-10-31T14-59-47-565Z` and every figure in this report stand.
+
 ---
 
 ## 12. What E10 settles, and what it does not
@@ -877,6 +883,12 @@ disputes, and the storage argument does not constrain the choice.
 **توصيتنا: 30 يوم.** شهر بيكفي لتحدي الشهر ومراجعة المواسم، وكل جرعة زيادة بتكلّف فلوس على
 حاجة محدش بيقراها بعد الموسم. ولو كائنات الـDO ما اتمسحتش (وده **[x]**، مش معروف لسه)، فالمدة
 **مش بتفرق في التخزين خالص** — فاختار المدة اللي بتجاوب على أكثر خلافات.
+
+> **ملاحظة (2026-10-31 — القرار اتاخد من المالك؛ التوصية فوق اتسابت زي ما هي).**
+> **مدة الاحتفاظ بقت 30 يوم بعد `finished_ms` (2,592,000,000 مللي ثانية)** — قرار المالك،
+> 2026-10-31: «اوك 30 يوم». سجل القرار:
+> `docs/decisions/2026-10-31-retention-window-30-days.md`. القرار ده مش بيغيّر أي رقم مقاس؛
+> تشغيل `2026-10-31T14-59-47-565Z` وكل الأرقام في التقرير ده زي ما هي.
 
 ---
 

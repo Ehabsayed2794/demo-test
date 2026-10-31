@@ -256,6 +256,12 @@ local legs passed on 2026-10-30; only its platform leg can still change the arch
 > report recommends **30**) and the **D1 rows-read crossing at ≈195 days**, which needs a
 > deliberate change to `balances()`. Report:
 > `docs/implementation/Stage0_E10_Retention_Storage_Report.md` §9.1, §11, §12.
+>
+> **UPDATE (2026-10-31 — owner ruling; the "two things" line above is left verbatim).** The
+> **retention window is decided: 30 days** after `finished_ms` — owner ruling of 2026-10-31,
+> «اوك 30 يوم» (`docs/decisions/2026-10-31-retention-window-30-days.md`). **The only owner item
+> left from E10 is the D1 rows-read crossing at ≈195 days**, which needs a deliberate change to
+> `balances()`. Run `2026-10-31T14-59-47-565Z` and every measured figure stand unchanged.
 
 ## 8. Owner summary (Egyptian Arabic)
 
@@ -274,7 +280,9 @@ local legs passed on 2026-10-30; only its platform leg can still change the arch
 > `docs/implementation/Stage0_E8_D1_Atomicity_Report.md`.
 
 3. **E10 — الحذف والاحتفاظ والتخزين.** الحذف نفسه اتقاس (سطر واحد، صفر قراءات)، فاضل سياسة
-   الاحتفاظ.
+   الاحتفاظ. **تحديث 2026-10-31: السياسة اتقررت — 30 يوم** (قرار المالك «اوك 30 يوم»،
+   `docs/decisions/2026-10-31-retention-window-30-days.md`)؛ الفاضل من E10 بس تعدية عدّاد قراءة
+   D1 عند ≈195 يوم.
 
 > **POINTER NOTE (2026-10-31 — بند E10 العربي فوق اتساب زي ما هو) [E10 wave — note 5 of 5].**
 > E10 المحلي خلص ونجح: **65 فحص، صفر فشل**، والحذف والاحتفاظ **بيدخلوا في الخط المجاني**. الرقم
@@ -283,6 +291,12 @@ local legs passed on 2026-10-30; only its platform leg can still change the arch
 > (بصمة على العقد) هو اللي بيمنع التسوية مرتين. **الفاضل قرار منك:** نحتفظ بتفاصيل الماتش **7 ولا
 > 30 ولا 90 يوم** — التوصية **30 يوم**. التقرير:
 > `docs/implementation/Stage0_E10_Retention_Storage_Report.md`.
+>
+> **تحديث (2026-10-31 — قرار المالك؛ الكلام فوق اتساب زي ما هو).** **مدة الاحتفاظ اتقررت: 30 يوم**
+> بعد `finished_ms` — «اوك 30 يوم» (سجل القرار:
+> `docs/decisions/2026-10-31-retention-window-30-days.md`). **الحاجة الوحيدة اللي فاضلة من E10
+> هي تعدية عدّاد قراءة D1 عند ≈195 يوم**، ومحتاجة تغيير متعمّد في `balances()`. تشغيل
+> `2026-10-31T14-59-47-565Z` وكل الأرقام المقاسة زي ما هي.
 
 4. **E12-g/h/i — اختيارية.** مش بتوقف أي حاجة، والقراءات عند 1.8% من حدها.
 5. **E13 و E11** — بتاعة المتجر وتسجيل الدخول، مش بتاعة السيرفر.
