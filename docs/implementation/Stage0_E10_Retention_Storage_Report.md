@@ -71,8 +71,8 @@ At the plan's target of **80 matches/day**:
 > The DO rows-written meter binds in the steady state; the D1 rows-read meter bounds the
 > product's age (~195 days at 80/day) and no retention window can move it.
 
-The retention policy itself (the window) is **the owner's decision** — §11 gives three
-costed options and one recommendation.
+The retention policy itself (the window) is **the owner's decision** — §11 costs four
+windows (7 / 30 / 90 / 365 days) and recommends one.
 
 ---
 
@@ -85,10 +85,12 @@ The E10 harness is the **E8 harness plus additions only**. Proofs:
 ```
 diff --unified=0 D:/cache/stage0/e8/worker.mjs D:/cache/stage0/e10/worker.mjs
   removed lines: 0
-  added lines:   997
+  added lines:   1,026   (997 non-blank + 29 blank)
   e8/worker.mjs:  1,486 lines
   e10/worker.mjs: 2,512 lines
 ```
+
+1,486 + 1,026 = 2,512 — the line counts agree.
 
 Every addition is inside the `/e10` code paths (`e10*` methods, the `/e10/*` routes,
 `e10RetentionApply`, `e10CleanupInline`, `e10SizeGauge`, the tombstone schema and the
@@ -367,7 +369,7 @@ again:
 | physical bytes per tombstone (file delta ÷ rows) | **127.7952** (1,277,952 B over 10,000 rows) |
 | the file after deleting all 10,000 | back to 40,960 B — **the pages become free list; the file does not shrink** |
 
-**At 80 matches/day, one year:** 29,200 tombstones → **3,732,070 B (3.56 MiB) physical**
+**At 80 matches/day, one year:** 29,200 tombstones → **3,731,620 B (3.56 MiB) physical**
 or **2,245,159 B (2.14 MiB) content** [m, extrapolated from the measured per-row figures].
 That is the entire price of the idempotency anchor for a year of matches.
 
@@ -462,6 +464,10 @@ RP settlement **and ledger** rows), and the original payload is replayed:
 **This is the failure E10 had to catch, and it reproduced.** Without an anchor, the same
 intent applies twice.
 
+**The brief asked for the resulting balances; the run recorded the doubled total delta instead.**
+The keyless control proves the double-apply (146 against the expected 73) but does not capture
+per-seat balances. That is a gap in the control's record, not in its conclusion.
+
 ### 7.2 A simulated Durable Object loss — the D1 settlement row alone catches it
 
 Only the DO's frozen intent is deleted (scope `do-intent`); the D1 rows are untouched, and
@@ -495,7 +501,7 @@ Then the payload rows are deleted and **the same E8 payload** is replayed:
 | | observed |
 |---|---|
 | the replay | `mode: "tombstone"`, `applied: false`, `duplicate: true`, **rowsWritten: 0** |
-| the balances | unchanged (`u1 1133, u2 1006, u3 1224, u4 1299`) |
+| the balances | unchanged (`u1 1052, u2 1012, u3 1176, u4 1197` — measured before the purge and after the purge + replay) |
 | the store afterwards | 4 ledger rows kept, the settlement row gone, **1 tombstone row** |
 
 ### 7.4 A second, accidental anchor — and why the tombstone is still needed
@@ -582,6 +588,9 @@ count (one frozen intent per live match), because a Durable Object's rows are no
 **The D1 rows-read column does not change with the window.** That is the whole point of the
 "the ledger is never pruned" rule, and it is why the window cannot fix the read meter.
 
+**OUTBOX is 0 rows and 0 bytes in every cell** — the steady protocol drains it — and is omitted
+from both tables.
+
 ### 8.2 Bytes per store, and the % of each quoted limit
 
 | rate | window | RP bytes | % of the 500 MB D1 database limit | % of the 5 GB D1 account limit | BACKUP bytes | % of the 5 GB account limit | DO bytes **if the object is deleted at the purge** | % of the 5 GB DO account limit | DO bytes **if the object survives** | % of the 5 GB DO account limit | total bytes |
@@ -602,6 +611,10 @@ count (one frozen intent per live match), because a Durable Object's rows are no
 | 150 | 30 | 9,108,673 | 1.737% | 0.170% | 4,899,000 | 0.091% | 239,616,000 | 4.463% | 2,915,328,000 | 54.302% | 253,623,673 |
 | 150 | 90 | 9,270,673 | 1.768% | 0.173% | 5,061,000 | 0.094% | 718,848,000 | 13.390% | 2,915,328,000 | 54.302% | 733,179,673 |
 | 150 | 365 | 10,013,173 | 1.910% | 0.187% | 5,803,500 | 0.108% | 2,915,328,000 | 54.302% | 2,915,328,000 | 54.302% | 2,931,144,673 |
+
+**The two bases differ deliberately.** The RP and BACKUP bytes are *content* bytes (the sum of
+the stored values; the tombstone at 76.889 B/row); the DO columns are *file* bytes (53,248 B per
+match). D1's file does not grow per match; the DO's high-water file does.
 
 **Read the two DO columns together.** The purge does **not** shrink the DO's file (measured:
 53,248 B before and after), so a retired match's object still holds its high-water file
