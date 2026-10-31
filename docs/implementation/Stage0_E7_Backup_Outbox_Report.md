@@ -636,6 +636,17 @@ which §4 shows is not necessary.
    > E12 and E13 remain unrun**, and `meta.rows_written`'s billing meaning is still **[x]** (§12.1
    > stands).
 
+   > **POINTER NOTE (2026-10-31 — E10 has now run locally; item 4 and the two pointers above are
+   > left verbatim) [E10 wave — note 1 of 1].** E10 ran locally on branch `stage0/e10-retention` —
+   > **65 checks, 0 failures** — and it **answers this report's E10 row**: retention and cleanup
+   > **fit the free tier**. The binding meter is **DO rows written (854 per match, 68.32% at 80
+   > matches/day)**, not storage; the **ledger (the player's balance) and its backup copy are never
+   > pruned**, and a **tombstone** row per match is the idempotency anchor — the negative control
+   > measured the **double-apply** when the tombstone is absent, which is exactly the failure E7's
+   > outbox had to prevent. The **retention window is the owner's decision** (the report recommends
+   > **30 days**). **E10's platform legs [x] did not run**; E8's platform leg, E12 and E13 remain
+   > unrun. Report: `docs/implementation/Stage0_E10_Retention_Storage_Report.md`.
+
 5. **Not a settlement-correctness proof for the product.** The battery is one seed range, one
    game type, one scoring mode, four bot seats. The RD7 demotion shield and the Highest-Rank
    fold are settlement-layer state that never reaches the RP ledger row E7 persists; they are

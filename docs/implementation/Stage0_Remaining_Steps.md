@@ -11,6 +11,14 @@
   eviction leg [x]**, the only open E9 item.
 - **Labels:** **[M] measured** · **[m] modelled** · **[u] unknown** · **[x] needs a real account**.
 
+> **POINTER NOTE (2026-10-31 — E10 has now run locally; the "What is left" bullet above is left
+> verbatim) [E10 wave — note 1 of 5].** E10 ran locally on branch `stage0/e10-retention`:
+> **65 checks, 0 failures**. The verdict is that **retention and cleanup fit the free tier** — but
+> the binding meter is **DO rows written (68.32% at 80 matches/day)**, not storage, and the
+> **ledger (the player's balance) is never pruned**. The **retention window is the owner's
+> decision** (the report recommends **30 days**). E10's platform legs [x] did not run. Report:
+> `docs/implementation/Stage0_E10_Retention_Storage_Report.md`.
+
 > **POINTER NOTE (2026-10-31 — E8's local legs have RUN and PASSED; the title and the "What is
 > left" bullet above are left verbatim).** E8 ran locally on branch `stage0/e8-d1-atomicity`:
 > **53/53 checks, 0 failures** — the settlement batch is **atomic at k = 0…4** (0 settlement rows
@@ -20,6 +28,16 @@
 > gated on E9's platform eviction leg AND E8's platform leg**. **E10 is now the first remaining
 > local experiment**; E8's five-step platform checklist waits for per-step approval. Report:
 > `docs/implementation/Stage0_E8_D1_Atomicity_Report.md`.
+
+> **POINTER NOTE (2026-10-31 — E10 has now run locally; the sentence "E10 is now the first
+> remaining local experiment" above is left verbatim) [E10 wave — note 2 of 5].** E10 is no
+> longer pending: it ran on 2026-10-31 with **65 checks, 0 failures**, and the next remaining
+> local experiments are **E13 and E11** (the two non-runtime ones); E12-g/h/i stay optional. The
+> item the note above left open — the **retention window** — is now the owner's to choose; E10
+> costed 7 / 30 / 90 / 365 days and recommends **30 days**. One new open item came out of E10:
+> the **D1 rows-read meter is crossed after ≈195 days** at 80 matches/day, because the ledger is
+> never pruned — and fixing that is a separate, deliberate change to `balances()`, not a retention
+> patch. Report: `docs/implementation/Stage0_E10_Retention_Storage_Report.md` §9.1, §11, §12.
 
 **The one sentence that matters: E9's local legs passed, and the only part of E9 that can still
 change the architecture is its platform eviction leg.** Everything else either confirms a number
@@ -169,6 +187,21 @@ and the cleanup trigger (alarm vs sweep).
 measure a real cleanup sweep on a throwaway account if the model shows pressure.
 **Effort:** 6–10 h. **Blocks:** G5.
 
+> **POINTER NOTE (2026-10-31 — E10 has now run; §3's question, method and effort are left
+> verbatim) [E10 wave — note 3 of 5].** E10 ran locally on 2026-10-31 — **65 checks, 0 failures** —
+> and answers §3's question **"yes"**: retention and cleanup **fit** the free tier. The
+> **"still open" list above is now closed by measurement:** the retention policy is costed at
+> 7 / 30 / 90 / 365 days (**the window is the owner's decision; the recommendation is 30 days**),
+> the storage sizing that follows from it is modelled per store, and the cleanup trigger was
+> measured four ways (the recommendation is a per-match alarm **armed once** at the end of the
+> window). The measured numbers that changed the model: **854 DO rows written per match** (E12-a's
+> 428 was insert-only and did not count the purge), **27 D1 rows per match** (29 on the first
+> settlement), **53,248 B of DO file per match that a purge does not return**, and a **tombstone**
+> of **76.889 B content / 127.7952 B physical** per match as the clean idempotency anchor — with
+> the negative control proving that **without it the replay double-applies**. **The ledger and
+> its backup copy are never pruned.** Report:
+> `docs/implementation/Stage0_E10_Retention_Storage_Report.md`.
+
 ## 4. The optional platform meters — E12-g / h / i (and b / f)
 
 | Step | Question | Status | Why it is optional now |
@@ -215,6 +248,15 @@ local legs passed on 2026-10-30; only its platform leg can still change the arch
 > leg** and **E9's platform eviction leg** wait on their own per-step owner approval. E8 is no
 > longer first on the local side.
 
+> **POINTER NOTE (2026-10-31 — E10 has now run; the order line and the pointer above are left
+> verbatim) [E10 wave — note 4 of 5].** The local order in the pointer above is **done**: E10 ran
+> on 2026-10-31 with **65 checks, 0 failures**. **What is left on the local side is E13 and E11**
+> (the two non-runtime experiments); E12-g/h/i stay optional. Two things are now waiting on the
+> **owner** rather than on another experiment: the **retention window** (7 / 30 / 90 days — the
+> report recommends **30**) and the **D1 rows-read crossing at ≈195 days**, which needs a
+> deliberate change to `balances()`. Report:
+> `docs/implementation/Stage0_E10_Retention_Storage_Report.md` §9.1, §11, §12.
+
 ## 8. Owner summary (Egyptian Arabic)
 
 **اللي فاضل بالترتيب، وأول حاجة E8:**
@@ -233,6 +275,15 @@ local legs passed on 2026-10-30; only its platform leg can still change the arch
 
 3. **E10 — الحذف والاحتفاظ والتخزين.** الحذف نفسه اتقاس (سطر واحد، صفر قراءات)، فاضل سياسة
    الاحتفاظ.
+
+> **POINTER NOTE (2026-10-31 — بند E10 العربي فوق اتساب زي ما هو) [E10 wave — note 5 of 5].**
+> E10 المحلي خلص ونجح: **65 فحص، صفر فشل**، والحذف والاحتفاظ **بيدخلوا في الخط المجاني**. الرقم
+> اللي بيوجع مخك مش التخزين — ده **صفوف الـDO: 854 صف لكل ماتش** (المسح بيتحسب مع الكتابة)، يعني
+> **68.3%** من الحد المجاني عند 80 ماتش/يوم. **ورصيد اللاعب (الـledger) ما ينمسحش أبدًا**، والفيتير
+> (بصمة على العقد) هو اللي بيمنع التسوية مرتين. **الفاضل قرار منك:** نحتفظ بتفاصيل الماتش **7 ولا
+> 30 ولا 90 يوم** — التوصية **30 يوم**. التقرير:
+> `docs/implementation/Stage0_E10_Retention_Storage_Report.md`.
+
 4. **E12-g/h/i — اختيارية.** مش بتوقف أي حاجة، والقراءات عند 1.8% من حدها.
 5. **E13 و E11** — بتاعة المتجر وتسجيل الدخول، مش بتاعة السيرفر.
 

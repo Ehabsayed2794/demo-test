@@ -125,6 +125,17 @@ number, not a local artefact.
 > E13, E12-b/f/g/h/i and D-E7-2/3/5/6/7 are unchanged. Report:
 > `docs/implementation/Stage0_E8_D1_Atomicity_Report.md`.
 
+> **POINTER NOTE (2026-10-31 — E10 has now run locally; the E10 bullet above is left verbatim)
+> [E10 wave — note 1 of 2].** E10 ran locally on 2026-10-31 — **65 checks, 0 failures** — and
+> **retention and cleanup fit the free tier**. The binding meter is **DO rows written (854 per
+> match, 68.32% of the free allowance at 80 matches/day)**; storage is not binding (D1 0.157%,
+> DO 28.96% after a year). The **ledger (the player's balance) and its backup copy are never
+> pruned**, and a **tombstone** row per match (76.889 B content / 127.7952 B physical) is the
+> idempotency anchor — the negative control measured the double-apply without it. The
+> **retention window is the owner's decision** (the report recommends **30 days**). E10's platform
+> legs [x] did not run; E11, E13, E12-b/f/g/h/i and D-E7-2/3/5/6/7 are unchanged. Report:
+> `docs/implementation/Stage0_E10_Retention_Storage_Report.md`.
+
 ## 6. Consequences and risks
 
 | Risk | What this decision does about it |
@@ -146,6 +157,16 @@ number, not a local artefact.
 > **POINTER NOTE (2026-10-31 — E8's local legs have run; the pointer above is left verbatim).**
 > **E10 is now the first remaining local experiment**; E8's real-D1 leg and E9's platform eviction
 > leg wait on per-step approval (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md` §13).
+
+> **POINTER NOTE (2026-10-31 — E10 has now run locally; the pointer above is left verbatim)
+> [E10 wave — note 2 of 2].** E10 is no longer pending: it ran on 2026-10-31 with **65 checks,
+> 0 failures** and **retention and cleanup fit the free tier**
+> (`docs/implementation/Stage0_E10_Retention_Storage_Report.md` §2, §9). The next remaining local
+> experiments are **E13 and E11**. Two things are now the owner's rather than an experiment's: the
+> **retention window** (the report recommends **30 days**) and the **D1 rows-read crossing at
+> ≈195 days** at 80 matches/day, which needs a separate, deliberate change to `balances()`
+> (report §9.1, §11, §12). E8's real-D1 leg and E9's platform eviction leg wait on per-step
+> approval.
 
 ## 7. Artifacts
 

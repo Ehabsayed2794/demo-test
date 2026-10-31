@@ -100,6 +100,16 @@
 > 27-row protocol (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md`); **E8's platform leg,
 > E10, E11, E13 and E12-b/f/g/h/i remain unrun.**
 
+> **Pointer, 2026-10-31 (E10 measured locally; the "Still not run: E8, E9, E10…" clause and the
+> two pointers above are left verbatim) [E10 wave — note 1 of 5].** E10 has now run **locally** —
+> **65 checks, 0 failures** — and it **fits the free tier**: the binding meter is **DO rows written
+> (854 per match, 68.32% at 80 matches/day)**, not storage; the **ledger (the player's balance) is
+> never pruned**; a **tombstone** row per match is the idempotency anchor, without which a replay
+> double-applies (measured). The **retention window is the owner's decision** (the report
+> recommends **30 days**). **E10's platform legs [x] did not run**; **E11, E13 and E12-b/f/g/h/i
+> remain unrun**, and E8's real-D1 leg and E9's platform eviction leg remain open. Report:
+> `docs/implementation/Stage0_E10_Retention_Storage_Report.md`.
+
 ### Source-of-truth hierarchy
 
 When two sources disagree, the higher row wins. This hierarchy is the one the owner set for this
@@ -1167,6 +1177,15 @@ defines what would count as a result; it does not report one.
 > `docs/decisions/2026-10-30-cadence-quota-and-e12-preparation.md`. **D-E7-2, D-E7-3 (the
 > three-databases-or-one half), D-E7-5, D-E7-6 and D-E7-7 stay open**, and **O-06 stays open**.
 
+> **Pointer, 2026-10-31 (E10 measured locally; the clause "E10, E11, E13 and E12-b/f/g/h/i remain
+> unrun" above is left verbatim) [E10 wave — note 2 of 5].** E10 has now run **locally** —
+> **65 checks, 0 failures** — and **retention and cleanup fit the free tier**: the binding meter is
+> **DO rows written (854 per match, 68.32% at 80 matches/day)**, the **ledger is never pruned**,
+> and a **tombstone** row per match is the idempotency anchor. The **retention window is the
+> owner's decision** (the report recommends **30 days**). **E10's platform legs [x] did not run**;
+> E11, E13 and E12-b/f/g/h/i remain unrun. Report:
+> `docs/implementation/Stage0_E10_Retention_Storage_Report.md`.
+
 | ID | Experiment | Question answered | Method | Pass / decision criterion | Blocks |
 |---|---|---|---|---|---|
 | E1 | Engine under `workerd` | Does the Kotlin/JS engine run in the proposed worker runtime? | Bundle the engine, load it in a local `workerd`, execute one full match | Full match completes; no unsupported API | P3 |
@@ -1195,6 +1214,20 @@ defines what would count as a result; it does not report one.
 > **2 MB row cap and the 50-query Free cap are not enforced locally**, so those two stay **open**
 > pending the platform leg (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md` §4, §7, §12).
 
+> **Pointer, 2026-10-31 (E10 measured locally; the E10 row above is left verbatim) [E10 wave —
+> note 3 of 5].** The E10 row's pass criterion — **"fits free tier; retention policy costed"** — is
+> met **locally**: **65 checks, 0 failures**, three fully played matches through the real protocol.
+> The policy is costed at **7 / 30 / 90 / 365 days** over four rates (50 / 80 / 88 / 150 per day),
+> **the window itself is the owner's decision** (the report recommends **30 days**), and the
+> measured per-store footprint is **854 DO rows written and 27 D1 rows per match** (29 on the first
+> settlement) with **53,248 B of DO file per match that a purge does not return**. **The binding
+> meter is DO rows written (68.32% at 80/day)**, not storage (D1 0.157%, DO 28.96% after a year).
+> **The ledger and its backup copy are never pruned**; the **tombstone** (76.889 B content /
+> 127.7952 B physical per match) is the idempotency anchor, and the negative control measured the
+> **double-apply** without it. E10's platform legs [x] did not run, and the **D1 rows-read meter
+> is crossed after ≈195 days** at 80/day — a separate change to `balances()`, not E10's. Report:
+> `docs/implementation/Stage0_E10_Retention_Storage_Report.md` §4, §8, §9, §11, §12.
+
 Stage 0 does **not** decide the architecture by itself. It produces measurements and a
 recommendation; the owner approves or rejects the runtime through a new ADR (O-06).
 
@@ -1213,6 +1246,13 @@ recommendation; the owner approves or rejects the runtime through a new ADR (O-0
 > per-Trick persistence; **E8, E10, E11, E13 and E12-b/f/g/h/i remain unrun**, and E6 §14's step 8
 > (driving a meter past 100%) is the one protocol item still open
 > (`docs/implementation/Stage0_Remaining_Steps.md`).
+
+> **Pointer, 2026-10-31 (E10 measured locally; the clause "E8, E10, E11, E13 and E12-b/f/g/h/i
+> remain unrun" above is left verbatim) [E10 wave — note 4 of 5].** E10 is no longer unrun: it ran
+> **locally** on 2026-10-31 with **65 checks, 0 failures** and **retention and cleanup fit the
+> free tier** (`docs/implementation/Stage0_E10_Retention_Storage_Report.md` §2, §9). **E8's real-D1
+> leg, E11, E13 and E12-b/f/g/h/i remain unrun**, and the **retention window** is now the owner's
+> decision (the report recommends **30 days**).
 
 > **Pointer, 2026-10-31 (E8 measured locally; the "E8 … remain unrun" clause above is left
 > verbatim).** E8's local legs PASS — 53/53 checks, atomic at k = 0…4, the 27-row protocol
@@ -1389,6 +1429,17 @@ does **not** ship product code.
 > **Pointer, 2026-10-31 (the E1.8 row is now half-done).** E8's atomicity and limit report exists
 > for the **local** runtime (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md`); the platform
 > leg is scheduled per step and has not run.
+
+> **Pointer, 2026-10-31 (the E1.10 row is now done for the local runtime) [E10 wave — note 5 of
+> 5].** E10's cost and retention note exists: the local report measures the per-store footprint
+> (**854 DO rows written and 27 D1 rows per match**), the sweep cost (**one `DELETE FROM`: 5,000
+> rows in 30 ms; row-by-row 293× slower**), the index's cost (**+1 metered row per insert, reads
+> 100,000 → 50,001**), the trigger (**a per-match alarm armed once at the end of the window**), and
+> the replay/retention coupling (**the tombstone, 76.889 B content / 127.7952 B physical per
+> match**), and it **costs the retention window at 7 / 30 / 90 / 365 days** — **the window is the
+> owner's decision** and the report recommends **30 days**
+> (`docs/implementation/Stage0_E10_Retention_Storage_Report.md` §4, §5, §6, §11). **E10's platform
+> legs [x] did not run.**
 
 Commands are experiment-specific; the shared build command is
 `native/gradlew -p native :functions:jsNodeTest`. Evidence: `stage0-report.md` with raw
