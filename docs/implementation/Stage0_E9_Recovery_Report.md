@@ -104,9 +104,11 @@ compared with the JVM run of the same seed.
 | 7 | **During a bot takeover / an alarm tick** | 56 | 424 | inside the alarm handler, before the marker | **0** | exactly **one takeover** and **one applied move** (digest = JVM prefix 1), byte-identical; a duplicate delivery answers `duplicate` and writes **0 rows** (§4) | none — the match deliberately never finishes |
 | 8 | **At quota exhaustion** | 57 | 439 | relay refused **507**, then a kill with the intent pending | intent frozen + queued; **0 RP rows** | the match is **not cancelled**; the intent stays pending; it lands **exactly once on the next boot** (RP 10 local D1 rows, outbox ack 1, backup 12); final **`2e39c379`** | 1 × 4, Δ **77** = 77 |
 
-**Per-boundary note on the digests.** `b1…b8` above are the JVM's own final digests for those seeds; each
-is also the digest of the recovered object at the same unit count, row for row (`stateDocument()` — the
-transient parts included: the in-flight trick, the remaining hands, the auction in progress).
+**Per-boundary note on the digests.** `b1…b6` and `b8` above are the JVM's own final digests for those
+seeds, and each is also the digest of the recovered object at the same unit count, row for row
+(`stateDocument()` — the transient parts included: the in-flight trick, the remaining hands, the
+auction in progress). Boundary 7 is the exception by construction: that match never finishes, so its
+evidence is the **prefix-1** digest (`c2bdb9f4`), matched row for row, and no final digest exists.
 
 **Boundary 7's three kill points** (the brief's (c)) are covered in §4: the matrix row above (kill before
 the marker, seed 56), the kill **after the takeover row, before the ack** (seed 58), and the kill **while

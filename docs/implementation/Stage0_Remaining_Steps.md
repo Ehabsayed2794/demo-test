@@ -39,7 +39,9 @@ now the first remaining experiment (§2).** Report:
 `docs/implementation/Stage0_E9_Recovery_Report.md` §1, §3, §5, §6, §8, §9.
 
 **The eight boundaries, in one table** (seed `50…57` = boundary `1…8`; the final digest is the
-JVM log of the same seed, and the recovered object matches it row for row):
+JVM log of the same seed, and the recovered object matches it row for row — except boundary 7,
+whose match deliberately never finishes, so its evidence is the JVM's prefix-1 digest `c2bdb9f4`,
+matched row for row):
 
 | # | Boundary | Seed | Units | Rows at kill | Final digest | Settlement |
 |---|---|---|---|---|---|---|
@@ -49,7 +51,7 @@ JVM log of the same seed, and the recovered object matches it row for row):
 | 4 | at the last trick (With/Koz) | 53 | 453 | 452, 0 settled | `063bdb6c` | 1 × 4, Δ 75 |
 | 5 | during settlement | 54 | 432 | intent + 1 settlement + 4 ledger rows, outbox unacked | `76436647` | 1 × 4, Δ 82 |
 | 6 | after settlement, before the result | 55 | 437 | settled | `005477b0` | 1 × 4, Δ 68 |
-| 7 | during a bot takeover / alarm tick | 56 | 424 | 0 | `2b1c6311` | none — deliberately unfinished |
+| 7 | during a bot takeover / alarm tick | 56 | 424 | 0 | `c2bdb9f4` = JVM prefix 1 (never finishes) | none — deliberately unfinished |
 | 8 | at quota exhaustion | 57 | 439 | intent pending, 0 RP | `2e39c379` | 1 × 4, Δ 77 |
 
 **Design A vs B (measured per seed):** **B stands** — B is 410–484 rows/match; **A1 = 1,346–1,420**
