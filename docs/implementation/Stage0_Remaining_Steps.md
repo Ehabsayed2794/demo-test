@@ -159,6 +159,12 @@ unconditional form of ruling A.
 > 100,000-byte SQL cap are; the **2 MB row size and the 50-query Free cap are not**. The real-D1
 > leg remains **[x]**. Report: `docs/implementation/Stage0_E8_D1_Atomicity_Report.md`.
 
+> **POINTER NOTE (2026-11-01, later — the real-D1 leg has RUN; the note above is left verbatim).**
+> Step 3 ran the same 53 assertions against the **deployed** module on account B with no redeploy:
+> **53/53 passed**, and **all 21 limit outcomes are identical to the local run** — including the two
+> caps the note calls unenforced, which are unenforced on the platform too. The real-D1 leg is
+> **[✓]**, not **[x]**. Only **step 4 (cleanup)** remains.
+
 **Question.** Does D1 give the settlement the atomicity E7's protocol assumes — one batch that
 applies RP + OUTBOX + backup or none of it — inside the documented limits?
 
@@ -243,6 +249,15 @@ corresponding meter.
 > 2026-10-31, and **step 2** (the deploy to account B) ran on 2026-11-01 — the deployed worker is
 > **verified byte-identical** to the locally measured harness. **Steps 3 (the real-D1 measurement)
 > and 4 (cleanup) remain open**, so **P3 stays gated**: the platform leg is still unmeasured.
+
+> **POINTER NOTE (2026-11-01, later — step 3 has RUN; the two notes above are left verbatim).**
+> E8's **step 3** (the real-D1 measurement) ran against the same deployed module with **no
+> redeploy**: **53/53 checks**, the 5-statement batch atomic at k = 0…4, **27 / 29** rows, the
+> 100-parameter and 100 KB caps enforced, and literal cap errors recorded. **The platform leg is
+> measured; E8 is closed on its criterion.** Two documented caps (the 2 MB row and the 50-query Free
+> cap) are enforced on **neither** runtime — a capacity-model caveat, not a settlement-path risk.
+> **P3 is now gated on E9's platform eviction leg alone.** E8's **step 4 (cleanup)** is the only
+> step left and it is a teardown, not a measurement. Report §13, note 3.
 
 ## 7. The order, in one line
 

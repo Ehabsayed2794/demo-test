@@ -6,17 +6,19 @@
   written as a five-step, separately approved checklist in §13; nothing in this report touched
   Cloudflare, created an account, or read a token.
 
-> **POINTER NOTE (2026-11-01 — platform steps 0–2 have now RUN; the Status bullet above is left
-> verbatim) [E8 platform wave — note 1 of 2].** The bullet's clause *"nothing in this report touched
+> **POINTER NOTE (2026-11-01 — platform steps 0–3 have now RUN; the Status bullet above is left
+> verbatim) [E8 platform wave — note 1 of 3].** The bullet's clause *"nothing in this report touched
 > Cloudflare, created an account, or read a token"* is **superseded**: the §13 platform checklist is
 > no longer unwritten. **Step 0** (account B confirmed) and **step 1** (the three D1 databases
-> created) ran on **2026-10-31**, and **step 2** (the deploy to account B) ran on **2026-11-01** and
-> was **verified byte-identical** to the local harness — see §13's dated note below. **Steps 3 (the
-> real-D1 measurement) and 4 (cleanup) remain open.**
-> **The platform leg is still NOT measured** — the settlement has not been run against real D1, so
-> the 2 MB row cap, the 50-query Free cap, the batch-versus-query accounting, the real row meter and
-> the platform's cross-binding behaviour are all still undecided. **The verdict in §2 is unchanged:
-> E8 is not closed, and P3 stays gated.**
+> created) ran on **2026-10-31**; **step 2** (the deploy to account B) ran on **2026-11-01** and was
+> **verified byte-identical** to the local harness; **step 3** (the real-D1 measurement) ran on
+> **2026-11-01** against that same deployed module with **no redeploy** — 53/53 checks, 0 failures.
+> See §13's dated notes below. **Step 4 (cleanup) remains open.**
+> **The platform leg IS now measured**, and it **confirms** §2: the batch is a transaction on real
+> D1, the 27-row protocol reproduces, and the two documented caps the local run did not enforce
+> (the 2 MB row and the 50-query Free cap) **are not enforced on the platform either** — a
+> documentation-versus-runtime gap, identical on both runtimes, recorded in §13's note 3 and in the
+> §14 pointer. **E8 is closed on its criterion, and P3 stays gated on E9's eviction leg alone.**
 
 - **Harness:** `D:/cache/stage0/e8/` — outside the repository, nothing from it is committed. It is
   E9's harness with **only additions** (§3).
@@ -71,6 +73,18 @@ trigger behaviour, query-limit tests".
    writes fail `no such table`, and no row changes. The three-database layout therefore cannot put
    "RP + OUTBOX + backup" in one atomic batch — the protocol's protection is the frozen intent plus
    idempotent replay, not a cross-store transaction (§6). **D-E7-3 stays open.**
+
+> **POINTER NOTE (2026-11-01 — the verdict has now been measured on real D1; the list above is left
+> verbatim) [E8 platform wave — note 1 of 3].** Step 3 ran the same 53 assertions against the
+> **deployed** module on account B: **53/53 passed**, and every number in items 1, 2, 4 and 5
+> reproduced exactly (5 statements / 10 metered rows; `UNIQUE constraint failed:
+> settlement.match_id` at k = 0; `e8-sentinel-abort` at k = 1…4 with **0 settlement / 0 ledger**;
+> **27** and **29** rows; `no such table` on the cross-binding write). Item 3's *"enforced
+> locally"* now reads **"enforced on both runtimes"**: the 100-parameter and 100 KB caps are
+> enforced on the platform too, and the **2 MB row and the 50-query Free cap are enforced on
+> neither** — the platform is not stricter than the local simulator, it is the same engine. **The
+> verdict therefore holds on the platform: PASS on both runtime halves of the criterion.** Step 4
+> (cleanup) is the only step left; see §13's note 3.
 
 ---
 
@@ -384,7 +398,7 @@ the real settlements.
 **⏸ إيقاف — لحد ما تقول "موافق على خطوة N"، محدش يعمل الخطوة دي.**
 
 > **POINTER NOTE (2026-11-01 — step 2 ran on account B and was verified byte-identical; the checklist
-> above is left verbatim) [E8 platform wave — note 2 of 2].** **خطوة 2 اتنفذت على الحساب B بس.**
+> above is left verbatim) [E8 platform wave — note 2 of 3].** **خطوة 2 اتنفذت على الحساب B بس.**
 > The **☐ step 2** box above has been executed; steps 0 and 1 ran on 2026-10-31, and **steps 3 and 4
 > remain open.**
 >
@@ -433,6 +447,106 @@ the real settlements.
 > `D:/cache/stage0/e8/results/platform-step2-verify-2026-11-01T07-50-37-090Z.json`,
 > `D:/cache/stage0/e8/results/platform-step2-delta-2026-11-01T07-51-03-429Z.json`, and step 1's
 > `D:/cache/stage0/e8/results/platform-step1-2026-10-31T12-06-02-697Z.json`.
+
+> **POINTER NOTE (2026-11-01 — step 3 ran the protocol against real D1 on the deployed module; the
+> checklist above is left verbatim) [E8 platform wave — note 3 of 3].** **خطوة 3 اتنفذت على الحساب B
+> بس، والـmodule اللي اتقاس هو نفسه اللي اتنشر — مفيش إعادة نشر.** Ran **2026-11-01
+> 09:01:59→09:04:54Z**: **53/53 checks, 0 failures**, exit 0. The code under test was the live module
+> `4177f5b6…` (998,854 B) — re-hashed at **08:51:47** and again at **09:13:10**, **identical**, with
+> the worker's `modified_on` still `2026-11-01T07:49:57Z` and version `e3251b85…` / deployment
+> `d0a91f82…` unchanged. **Nothing was redeployed, edited, deleted or billed; account A was never
+> called.**
+>
+> **The numbers.** `/prelude` → `{RP:4, RP_BACKUP:3, OUTBOX:1}`; `/e8/info` → bindings
+> `["RP","RP_BACKUP","OUTBOX"]`, triggers `[]`, all eight globals **0**. `/summary` after the run →
+> **7 settlements / 28 ledger rows**, Δ **499** on both sides, outbox **0**, backup **8** ledger
+> rows. The independent audit agrees seat by seat: match A `56/−8/25/0` (Σ **73**), match B
+> `40/0/39/−8` (Σ **71**), k=0…4 **71** each; RP is continuous across A→B (956→996, 1145→1184,
+> 1180→1172); keyless control **2 settlements / 8 rows**; `e8_big` **2**; outbox **0**; backup
+> watermark **2**. The clean-state proof taken **before** the first write shows all **nine** E8
+> tables **absent** in all three databases.
+>
+> | §14 row | Expected | **Actual on real D1** |
+> |---|---|---|
+> | one correct settlement batch | 5 stmts / 10 metered rows, applied once | **5 / `[2,2,2,2,2]` = 10 / `changes [1,1,1,1,1]`** |
+> | replay | duplicate, 0 writes | **duplicate, 0 writes** |
+> | k = 0 duplicate | `UNIQUE constraint failed: settlement.match_id`; 5 rows unchanged | **`D1_ERROR: UNIQUE constraint failed: settlement.match_id: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_PRIMARYKEY)`**; globals byte-identical |
+> | k = 1…4 trigger abort | 0 settlement / 0 ledger; globals unchanged | **`D1_ERROR: e8-sentinel-abort: SQLITE_CONSTRAINT (extended: SQLITE_CONSTRAINT_TRIGGER)`**; **0 / 0**; globals byte-identical |
+> | 100 / 101 params | accepted / rejected | **accepted / `D1_ERROR: too many SQL variables at offset 207: SQLITE_ERROR`** |
+> | SQL 100,000 / 100,001 | accepted / rejected | **accepted / `D1_ERROR: statement too long: SQLITE_TOOBIG`** |
+> | row 2,000,000 / 2,000,001 B | accepted / **rejected** | **accepted / accepted** — see A4 |
+> | 50 / 51 queries in one invocation | accepted / **rejected** | **accepted / accepted** — see A4 |
+> | 5-statement batch = 1 query | **[doc]** | **[doc]** — the archived limits page: *"a `db.batch()` call counts as a single query against it, not one query per statement"* |
+> | cross-binding statement | explicit error, not silent | **`no such table: outbox` / `no such table: ledger`** |
+> | second settlement | 27 (RP 10 / OUTBOX 5 / BACKUP 12) | **27** |
+> | first settlement | 29 (backup 14) | **29** |
+>
+> **A1 — the transport premise changed, and the run used HTTP.** E12a §3.2 recorded
+> `*.workers.dev` as unreachable from this machine (an SNI filter). On 2026-11-01 the deployed
+> worker's `/health` answered **200 `{"ok":true}`**, so the protocol ran **over HTTP against the
+> deployed module** — no cron driver, no KV outbox, no redeploy, and therefore **no change to the
+> code under test**. `wrangler d1 execute --remote` was used only as an **independent audit read**.
+> This supersedes the step-3 sentence above that named it the primary path.
+>
+> **A2 — the RUN_TAG could not be a suffix (the brief was wrong).** The worker accepts a Durable
+> Object name only if it matches `/^e9-s(\d+)-(full|mini)-(normal|classic)$/` (`worker.mjs:49`) and
+> poisons any other instance (`worker.mjs:100-103`). Measured live: `…-p1` and `p1-…` both return
+> **503 `unrecognised DO name`**, while zero-padded seeds reach the DO. The run therefore tagged by
+> **zero-padding the seed digits** (`e9-s42-…` → `e9-s0042-…`): the seed (the match) is unchanged,
+> the instance id and the `match_id` are new, and a retry gets clean state without a redeploy.
+>
+> **A3 — 21 limit cases, not 22.** The brief's count was wrong: 7 `stmts` + 3 `params` + 3
+> `batchparams` + 2 `sql` + 2 `row` + 2 `queries` + 2 `batches` = **21**, plus the 5 atomicity cases
+> = the 26-row scorecard. All 21 ran.
+>
+> **A4 — the two "expected rejections" did not happen, and they did not happen locally either.**
+> The **2,000,001-byte row** was stored in full (`storedLength 2,000,001`) and **51 queries** (and 51
+> batches) completed in one invocation. **All 21 limit outcomes are identical between the local and
+> platform runs** — same accept/reject verdict and the same error text. So the divergence is
+> **documented cap versus runtime**, not local versus platform. Account B is **Workers Free** (step
+> 0's owner dashboard, sha256 `8cc78cee…`, re-hashed in this audit), so the 51-query result is
+> against the documented **Free 50** cap, not the Paid 1,000.
+>
+> **A5 — no platform layer refused anything.** There was no `1101`, no `1102`, and no "too many
+> subrequests" anywhere in the run; the only five non-200 responses were the **expected**
+> split-brain `503`s at k = 0…4. Where the runtime refused, the refusing layer was always **D1**.
+>
+> **A6 — one extra write, disclosed and measured.** Before the tagging strategy was settled, a
+> **3-step manual probe** was sent to match A's Durable Object. It wrote **only to the DO's own log**
+> and **zero D1 rows**; verified independently — match A's D1 ledger still equals the driver's
+> payload seat for seat (Σ 73). The log was removed by the cleanup rule; the instance now reads
+> **rows 0 / applied 0 / final.cleaned 1**. The `applied 3` visible in the 09:08Z snapshot was
+> **in-memory only** and is gone after reconstruction.
+>
+> **A7 — two corrections to the chat report.** (i) The keyless `2/8`, `e8_big` `2` and ledger-total
+> `28` figures come from `platform-step3-postread-…`, **not** from the `integrity` file (which holds
+> the seven settlements, the A/B ledgers, the backup rows, `meta` and an empty outbox). (ii) The
+> "plan unreadable" caveat is unnecessary — step 0 established **Workers Free** from the owner's
+> dashboard, so the Free caps are the right comparison.
+>
+> **A8 — token scan.** The step's own scan covered the **49 files written that day** (149 in the
+> tree); this audit re-scanned **all 176 files** under the harness after every artefact existed —
+> **0 hits** (token sha256 prefix `fe1038b0…`, never printed, never written).
+>
+> **What this changes for the plan.** The settlement path touches **none** of the caps that went
+> unenforced — 5 statements, ≤ 100 parameters, ≤ 100 KB of SQL — so **D-E7-3 and the E7/E9
+> protocol stand**, and the two gaps are a **capacity-model caveat**: anything that later relies on
+> the 2 MB row cap or the 50-query Free cap must not assume the runtime enforces them.
+>
+> **Evidence (outside the repository):**
+> `D:/cache/stage0/e8/results/e8-platform-results-2026-11-01T09-02-00-408Z.json` (53 checks),
+> `…/platform-step3-scorecard-2026-11-01T09-02-00-408Z.{json,md}` (26 rows),
+> `…/platform-step3-run-2026-11-01T09-01-59-466Z.json` (prelude → info → driver → summary),
+> `…/platform-step3-preflight-api-2026-11-01T08-52-37-859Z.json`,
+> `…/platform-step3-cleanstate-2026-11-01T08-52-45-002Z.json`,
+> `…/platform-step3-nameprobe-2026-11-01T08-54-56-625Z.json`,
+> `…/platform-step3-postread-2026-11-01T09-08-17-326Z.json`,
+> `…/platform-step3-integrity-2026-11-01T09-12-31-305Z.json`,
+> `…/platform-step3-tokenscan-2026-11-01T09-08-16-958Z.json`,
+> `…/platform-step2-verify-2026-11-01T09-13-10-419Z.json` (post-run re-hash),
+> `D:/cache/stage0/e8/logs/platform-step3-2026-11-01T09-02-00-408Z.txt`, and
+> `D:/cache/stage0/e8/logs/driver-platform-diff.txt` (transport only; the five test functions and
+> all 26 `check(` call sites are byte-identical to `driver.local-copy.mjs`).
 
 ### القرارات (2026-10-31)
 
@@ -517,6 +631,14 @@ If the platform behaves like the local runtime, the platform leg's evidence file
 Two of these are **expected to diverge** from the local run (the 2 MB row cap and the 50-query cap).
 A platform result identical to local on those two would mean the platform is not enforcing its own
 documented limits — a finding to record, not a pass.
+
+> **POINTER NOTE (2026-11-01 — this table has now been measured; the text above is left verbatim)
+> [E8 platform wave — note 3 above].** Step 3 produced every row on real D1 (53/53 checks): **12 of
+> the 15 rows matched exactly**; **the two "expected to diverge" rows did not diverge** — the 2,000,001-byte
+> row and the 51-query invocation were **accepted on the platform and on the local runtime alike**,
+> so the failing assumption is the **documented cap**, not the platform. The "5-statement batch = 1
+> query" row stays **[doc]**: it is not observable over HTTP, and the archived limits page states it
+> directly. Full numbers and the five other corrections are in §13's note 3 (A1–A8).
 
 ---
 
