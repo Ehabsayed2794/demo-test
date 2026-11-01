@@ -7,7 +7,7 @@
   Cloudflare, created an account, or read a token.
 
 > **POINTER NOTE (2026-11-01 — platform steps 0–3 have now RUN; the Status bullet above is left
-> verbatim) [E8 platform wave — note 1 of 3].** The bullet's clause *"nothing in this report touched
+> verbatim) [E8 platform wave — note 1 of 4].** The bullet's clause *"nothing in this report touched
 > Cloudflare, created an account, or read a token"* is **superseded**: the §13 platform checklist is
 > no longer unwritten. **Step 0** (account B confirmed) and **step 1** (the three D1 databases
 > created) ran on **2026-10-31**; **step 2** (the deploy to account B) ran on **2026-11-01** and was
@@ -75,7 +75,7 @@ trigger behaviour, query-limit tests".
    idempotent replay, not a cross-store transaction (§6). **D-E7-3 stays open.**
 
 > **POINTER NOTE (2026-11-01 — the verdict has now been measured on real D1; the list above is left
-> verbatim) [E8 platform wave — note 1 of 3].** Step 3 ran the same 53 assertions against the
+> verbatim) [E8 platform wave — note 1 of 4].** Step 3 ran the same 53 assertions against the
 > **deployed** module on account B: **53/53 passed**, and every number in items 1, 2, 4 and 5
 > reproduced exactly (5 statements / 10 metered rows; `UNIQUE constraint failed:
 > settlement.match_id` at k = 0; `e8-sentinel-abort` at k = 1…4 with **0 settlement / 0 ledger**;
@@ -398,7 +398,7 @@ the real settlements.
 **⏸ إيقاف — لحد ما تقول "موافق على خطوة N"، محدش يعمل الخطوة دي.**
 
 > **POINTER NOTE (2026-11-01 — step 2 ran on account B and was verified byte-identical; the checklist
-> above is left verbatim) [E8 platform wave — note 2 of 3].** **خطوة 2 اتنفذت على الحساب B بس.**
+> above is left verbatim) [E8 platform wave — note 2 of 4].** **خطوة 2 اتنفذت على الحساب B بس.**
 > The **☐ step 2** box above has been executed; steps 0 and 1 ran on 2026-10-31, and **steps 3 and 4
 > remain open.**
 >
@@ -449,7 +449,7 @@ the real settlements.
 > `D:/cache/stage0/e8/results/platform-step1-2026-10-31T12-06-02-697Z.json`.
 
 > **POINTER NOTE (2026-11-01 — step 3 ran the protocol against real D1 on the deployed module; the
-> checklist above is left verbatim) [E8 platform wave — note 3 of 3].** **خطوة 3 اتنفذت على الحساب B
+> checklist above is left verbatim) [E8 platform wave — note 3 of 4].** **خطوة 3 اتنفذت على الحساب B
 > بس، والـmodule اللي اتقاس هو نفسه اللي اتنشر — مفيش إعادة نشر.** Ran **2026-11-01
 > 09:01:59→09:04:54Z**: **53/53 checks, 0 failures**, exit 0. The code under test was the live module
 > `4177f5b6…` (998,854 B) — re-hashed at **08:51:47** and again at **09:13:10**, **identical**, with
@@ -547,6 +547,73 @@ the real settlements.
 > `D:/cache/stage0/e8/logs/platform-step3-2026-11-01T09-02-00-408Z.txt`, and
 > `D:/cache/stage0/e8/logs/driver-platform-diff.txt` (transport only; the five test functions and
 > all 26 `check(` call sites are byte-identical to `driver.local-copy.mjs`).
+
+> **POINTER NOTE (2026-11-01 — step 4, the teardown, has RUN; the checklist and the notes above are
+> left verbatim) [E8 platform wave — note 4 of 4].** **خطوة 4 — الـteardown — اتنفذت على الحساب B
+> بس، والحساب A ما اتلمسش خالص.** This note supersedes note 1's "**Step 4 (cleanup) remains open**"
+> and note 2's "**steps 3 and 4 remain open**"; the bodies are left as written.
+>
+> **What was deleted, in this order.** The step ran **2026-11-01T09:25:42Z → 09:26:51Z**: **four
+> DELETE calls, every one HTTP 200 with `ok=true` and no `errors`** — (1) the Worker script
+> `stage0-e8`, then the three D1 databases (2) `stage0-e8-rp-2026-10-31`
+> `fc7cb238-975a-4ab6-b75b-7cb52fca66ee`, (3) `stage0-e8-rp-backup-2026-10-31`
+> `a308600e-d171-4658-a755-d78655a1dc6a`, (4) `stage0-e8-outbox-2026-10-31`
+> `9c849bdf-d681-4d66-91c3-f5a45a0f37e6`. **KV was 0 before and after** — none was ever created —
+> and **deleting the script removed its Durable Object namespace** (`ac49ba2d564a4c7fb32e17d81b2ed624`,
+> note 2) with it. Preflight ran **before** the first DELETE and re-hashed the live module to step 3's
+> `4177f5b6…` (**998,854 B**), so the artefact destroyed is the artefact that produced §14's numbers.
+>
+> **The backup taken first.** `wrangler d1 export --remote --output` of all three databases,
+> hash-verified, stored **outside** the harness tree — `D:/cache/stage0/e8-step4-export/` — because
+> §16 cites that directory:
+>
+> | export | bytes | lines / INSERTs | rows per table | sha256 |
+> |---|---|---|---|---|
+> | `stage0-e8-rp-2026-10-31.sql` | **4,005,612** | **53 / 47** | `ledger` 28, `ledger_nokey` 8, `settlement` 7, `settlement_nokey` 2, `e8_big` 2 | `823af5509158157c8d8b3e4f7958fcc4493e062294f1098cad5d79d4f041bedd` |
+> | `stage0-e8-rp-backup-2026-10-31.sql` | **1,690** | 16 / 12 | `ledger_copy` 8, `settlement_copy` 2, `meta` 2 | `d500e1f9e499f76fd470c3b83fa2a9090434a89d2905630ffc004578429b8b34` |
+> | `stage0-e8-outbox-2026-10-31.sql` | **340** | 4 / 1 | **0 rows** in `outbox`; the one INSERT is `sqlite_sequence` `('outbox',2)` | `2b7e46436c768029b00d44e44c572c214b0c38984f8abacc07bc0b0e78d5e711` |
+>
+> **The exports reproduce step 3 exactly.** `settlement`: `e9-s0042-full-normal` → **73**,
+> `e9-s0043-full-normal` → **71**, and `e9-s0900`…`e9-s0904-full-normal` → **71** each (the five
+> k = 0…4 cases). Match A's `ledger`: `56 / −8 / 25 / 0` with rp `956 / 1012 / 1145 / 1180`. **The
+> divergent 2,000,001-byte row survives** in the export as the two `e8_big` lines of **2,000,038**
+> and **2,000,039** bytes — the A4 evidence is text now, not a live row.
+>
+> **Where the evidence lives after this step.** The databases are gone, so **the step-3 result JSON
+> plus these three exports are the record**. Any future re-check reads the exports, **not** the
+> databases — there is no live D1 left to query, and re-measuring E8 means re-creating the databases
+> and re-deploying the worker, which is a fresh owner approval, not a re-run.
+>
+> **Post-delete independent read** (a second process, `2026-11-01T09:41:29Z`):
+> `GET /workers/scripts` → **[]**, `GET /d1/database` → **[]**, `GET /storage/kv/namespaces` → **[]**,
+> `GET /workers/durable_objects/namespaces` → **[]**, `GET /workers/scripts/stage0-e8` → **404**
+> `{"code":10007,"message":"This Worker does not exist on your account."}`, and
+> `https://stage0-e8.estemshan-e12.workers.dev/health` → **404** with Cloudflare error **1042**. Of
+> those, the artefacts store the status and the page head only — **1042 is as reported, not a
+> measured field**; every other number in this note is read off an artefact.
+>
+> **`accountACalled` false, `refusedAccountA` 0.** Nothing on account A `7e9c5a16…` was read,
+> written, listed or resolved; the script throws on sight of that id in any URL or resource name.
+> The token was read in-process from `D:/cache/stage0/e12/cf.env`, given to wrangler through the
+> child environment only, **never printed and never written**. The post-teardown scan read **7,162
+> files** — the 101 written that day under `D:/cache/stage0`, including every step-4 artefact, plus
+> the 7,061 files of the repository working tree — **0 hits**; the auditor's own scan read **201**
+> files across the harness and the export tree, **0 hits**. `D:/cache/stage0/e8` was **not touched**:
+> 0 files have an mtime at or after `09:25:42Z` (newest: the step-3 scorecard, `09:13:58Z`), and
+> `worker.mjs` `51611b26…`, `driver.platform.mjs` `36068420…` and `driver.mjs` `e9cf8fe4…` are
+> unchanged. No `wrangler deploy`, no billing action, no Firestore change; the teardown step itself
+> committed nothing, and this note is recorded by a separate docs-only commit on the existing branch.
+>
+> **Evidence (outside the repository, and deliberately outside the harness tree):**
+> `D:/cache/stage0/e8-step4-export/platform-step4-2026-11-01T09-25-42-128Z.json` (the dry run —
+> preflight and backup only, nothing deleted),
+> `…/platform-step4-2026-11-01T09-26-51-540Z.{json,txt}` (the four deletes and the four empty-state
+> checks), `…/platform-step4-verify-2026-11-01T09-27-59-991Z.json` (hashes, token scan, `e8`
+> untouched), `…/platform-step4-independent-2026-11-01T09-41-29-617Z.json` (the auditor's read),
+> `…/platform-step4-report.md`, and the three `.sql` exports in the table above.
+>
+> **That is the last checklist item.** **The token may now be revoked, by the owner** — nothing on
+> account B still needs it. E8 is closed on its criterion and the platform checklist is complete.
 
 ### القرارات (2026-10-31)
 
