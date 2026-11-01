@@ -142,6 +142,15 @@ target is re-run.
    uninterrupted match, the settlement is applied **exactly once**, and the RP ledger has **0
    duplicate rows and 0 lost settlements** — the same two negative controls E7 used.
 
+> **POINTER NOTE (2026-11-01 — E8's platform step 4 has RUN and the account-B token is now
+> revocable; the list above is left verbatim).** Item 2's clause **"the token stays valid"** is
+> **superseded** as to the token, not as to the account. E8 is fully torn down (§2's step-4 note;
+> report §13 note 4), nothing on account B still needs credentials, and **the owner may now revoke
+> the token** — no agent revoked it. **E9's platform eviction leg will need a freshly minted token
+> when it starts**, on its own approval. What the 2026-10-30 decision retains is **the account** —
+> `c6321eda25af9e06234358928272a0fa`, empty as of 2026-11-01 — and the practice of removing the
+> deployed code after each leg, no billing, per-step approval.
+
 **Effort:** 10–18 h (plan §5.6, E1.9). **Needs:** no account for the local leg; the throwaway
 account for the platform leg. **Blocks:** P3 (the Ranked authority layer), G4, and the
 unconditional form of ruling A.
@@ -158,6 +167,37 @@ unconditional form of ruling A.
 > once. **The documented limits are not all enforced locally**: 100 bound parameters and the
 > 100,000-byte SQL cap are; the **2 MB row size and the 50-query Free cap are not**. The real-D1
 > leg remains **[x]**. Report: `docs/implementation/Stage0_E8_D1_Atomicity_Report.md`.
+
+> **POINTER NOTE (2026-11-01, later — the real-D1 leg has RUN; the note above is left verbatim).**
+> Step 3 ran the same 53 assertions against the **deployed** module on account B with no redeploy:
+> **53/53 passed**, and **all 21 limit outcomes are identical to the local run** — including the two
+> caps the note calls unenforced, which are unenforced on the platform too. The real-D1 leg is
+> **[✓]**, not **[x]**. Only **step 4 (cleanup)** remains.
+
+> **POINTER NOTE (2026-11-01, later still — step 4 has RUN; the notes above are left verbatim).**
+> **Platform step 4 (cleanup/teardown) ran on 2026-11-01, 09:25:42Z→09:26:51Z**, on account B only:
+> **four DELETE calls, all HTTP 200 `ok=true`** — the Worker script `stage0-e8`, then the three D1
+> databases `stage0-e8-rp-2026-10-31`, `stage0-e8-rp-backup-2026-10-31`,
+> `stage0-e8-outbox-2026-10-31`. Afterwards `GET /workers/scripts`, `/d1/database` and
+> `/storage/kv/namespaces` each return **`[]`**, `/workers/durable_objects/namespaces` returns **`[]`**
+> (the DO namespace went with the script), and `GET /workers/scripts/stage0-e8` is **404** code 10007.
+> KV was 0 before and after. **E8's platform checklist — steps 0, 1, 2, 3, 4 — is complete.**
+>
+> Before any delete, all three databases were exported with `wrangler d1 export --remote --output`
+> and hash-verified, stored **outside** the harness tree in `D:/cache/stage0/e8-step4-export/`:
+>
+> | export | bytes | rows | sha256 |
+> |---|---|---|---|
+> | `stage0-e8-rp-2026-10-31.sql` | **4,005,612** | 53 lines / 47 INSERTs — `ledger` 28, `ledger_nokey` 8, `settlement` 7, `settlement_nokey` 2, `e8_big` 2 | `823af5509158157c8d8b3e4f7958fcc4493e062294f1098cad5d79d4f041bedd` |
+> | `stage0-e8-rp-backup-2026-10-31.sql` | **1,690** | `ledger_copy` 8, `settlement_copy` 2, `meta` 2 | `d500e1f9e499f76fd470c3b83fa2a9090434a89d2905630ffc004578429b8b34` |
+> | `stage0-e8-outbox-2026-10-31.sql` | **340** | `outbox` **0 rows**; one `sqlite_sequence` row `('outbox',2)` | `2b7e46436c768029b00d44e44c572c214b0c38984f8abacc07bc0b0e78d5e711` |
+>
+> The exports reproduce step 3 row for row (`e9-s0042` Δ 73, `e9-s0043` Δ 71, `e9-s0900…0904` Δ 71
+> each; match A ledger `56/−8/25/0`, rp `956/1012/1145/1180`), and they carry the divergent
+> 2,000,001-byte row as the two `e8_big` lines of 2,000,038 / 2,000,039 bytes. **From here E8's
+> platform evidence is step 3's result JSON plus these exports — there is no live D1 left to query,
+> and re-measuring E8 means re-creating the databases and re-deploying the worker, which needs a
+> fresh owner approval.** Report §13, note 4.
 
 **Question.** Does D1 give the settlement the atomicity E7's protocol assumes — one batch that
 applies RP + OUTBOX + backup or none of it — inside the documented limits?
@@ -243,6 +283,21 @@ corresponding meter.
 > 2026-10-31, and **step 2** (the deploy to account B) ran on 2026-11-01 — the deployed worker is
 > **verified byte-identical** to the locally measured harness. **Steps 3 (the real-D1 measurement)
 > and 4 (cleanup) remain open**, so **P3 stays gated**: the platform leg is still unmeasured.
+
+> **POINTER NOTE (2026-11-01, later — step 3 has RUN; the two notes above are left verbatim).**
+> E8's **step 3** (the real-D1 measurement) ran against the same deployed module with **no
+> redeploy**: **53/53 checks**, the 5-statement batch atomic at k = 0…4, **27 / 29** rows, the
+> 100-parameter and 100 KB caps enforced, and literal cap errors recorded. **The platform leg is
+> measured; E8 is closed on its criterion.** Two documented caps (the 2 MB row and the 50-query Free
+> cap) are enforced on **neither** runtime — a capacity-model caveat, not a settlement-path risk.
+> **P3 is now gated on E9's platform eviction leg alone.** E8's **step 4 (cleanup)** is the only
+> step left and it is a teardown, not a measurement. Report §13, note 3.
+
+> **POINTER NOTE (2026-11-01, later still — that teardown has RUN; the notes above are left
+> verbatim).** E8's **step 4** ran on 2026-11-01: the worker script and all three D1 databases are
+> deleted, every empty-state check reads **`[]`**, and the deleted script's route is **404**. **E8 is
+> closed on both halves of its criterion and has no open step.** **P3 is gated on E9's platform
+> eviction leg alone** — unchanged by this step, which measured nothing. Report §13, note 4.
 
 ## 7. The order, in one line
 
