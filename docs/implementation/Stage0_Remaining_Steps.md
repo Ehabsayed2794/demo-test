@@ -237,6 +237,13 @@ corresponding meter.
 > (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md` §4, §7, §12). **P3 stays gated on two
 > platform legs** — E9's eviction and E8's real-D1 run; the local evidence closes neither.
 
+> **POINTER NOTE (2026-11-01 — 3 of E8's 5 platform checklist steps are done; the P3 row above is
+> left verbatim).** E8's platform checklist (`docs/implementation/Stage0_E8_D1_Atomicity_Report.md`
+> §13): **step 0** (account B confirmed) and **step 1** (the three D1 databases created) ran on
+> 2026-10-31, and **step 2** (the deploy to account B) ran on 2026-11-01 — the deployed worker is
+> **verified byte-identical** to the locally measured harness. **Steps 3 (the real-D1 measurement)
+> and 4 (cleanup) remain open**, so **P3 stays gated**: the platform leg is still unmeasured.
+
 ## 7. The order, in one line
 
 **E8 → E10 → (E12-g/h/i as needed) → E13 → E11**, with **E3.1** starting in parallel because the

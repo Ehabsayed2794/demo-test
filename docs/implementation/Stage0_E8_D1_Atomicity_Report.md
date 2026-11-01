@@ -5,6 +5,19 @@
 - **Status:** **LOCAL LEGS MEASURED AND PASSED [M].** **The platform legs are [x] — not run.** They are
   written as a five-step, separately approved checklist in §13; nothing in this report touched
   Cloudflare, created an account, or read a token.
+
+> **POINTER NOTE (2026-11-01 — platform steps 0–2 have now RUN; the Status bullet above is left
+> verbatim) [E8 platform wave — note 1 of 2].** The bullet's clause *"nothing in this report touched
+> Cloudflare, created an account, or read a token"* is **superseded**: the §13 platform checklist is
+> no longer unwritten. **Step 0** (account B confirmed) and **step 1** (the three D1 databases
+> created) ran on **2026-10-31**, and **step 2** (the deploy to account B) ran on **2026-11-01** and
+> was **verified byte-identical** to the local harness — see §13's dated note below. **Steps 3 (the
+> real-D1 measurement) and 4 (cleanup) remain open.**
+> **The platform leg is still NOT measured** — the settlement has not been run against real D1, so
+> the 2 MB row cap, the 50-query Free cap, the batch-versus-query accounting, the real row meter and
+> the platform's cross-binding behaviour are all still undecided. **The verdict in §2 is unchanged:
+> E8 is not closed, and P3 stays gated.**
+
 - **Harness:** `D:/cache/stage0/e8/` — outside the repository, nothing from it is committed. It is
   E9's harness with **only additions** (§3).
 - **Canonical run:** `2026-10-31T11-29-13-395Z`, **53/53 checks, 0 failures** on
@@ -369,6 +382,57 @@ the real settlements.
 **الحالة: مستنيّ. ولا خطوة واحدة اتنفّذت، ومفيش أي حاجة اتعملت على Cloudflare.**
 
 **⏸ إيقاف — لحد ما تقول "موافق على خطوة N"، محدش يعمل الخطوة دي.**
+
+> **POINTER NOTE (2026-11-01 — step 2 ran on account B and was verified byte-identical; the checklist
+> above is left verbatim) [E8 platform wave — note 2 of 2].** **خطوة 2 اتنفذت على الحساب B بس.**
+> The **☐ step 2** box above has been executed; steps 0 and 1 ran on 2026-10-31, and **steps 3 and 4
+> remain open.**
+>
+> | | |
+> |---|---|
+> | Worker | `stage0-e8`, on **account B** `c6321eda25af9e06234358928272a0fa` — **account A `7e9c5a16c04380f81cfd730b76d8684b` was never called** (every request in the run asserts it) |
+> | Deployment | `d0a91f82-3742-466b-a62f-b5f168009ef0`, created **2026-11-01T07:49:55.333572Z** (source `wrangler`, strategy `percentage`, 100%) |
+> | Version | `e3251b85-c283-4039-a146-9fc204c07c9d` — number **1**, 100% |
+> | URL | `https://stage0-e8.estemshan-e12.workers.dev` — the `estemshan-e12` workers.dev subdomain **already existed from E12**, so it was **reused, not created** |
+> | Source deployed | `worker.mjs` — **sha256 `51611b267ca0c9622d44f34047464733b3c3b959feadb49c0db8afe9ad595c0d`**, **62,076 B** — the exact file the local run measured (§16) |
+> | Dry-run bundle | `worker.js` — **sha256 `4177f5b61d53d75b3c4eac1e5ea2de1e8d1d5723c5cf5793bbdd88f7600c7c5b`**, **998,854 B** |
+> | Live module | the `worker.js` part **fetched back from the API** has the **same 998,854 B and the same sha256** — **the deployed executable is byte-identical to the local one** |
+> | Engine bundle | `k/stage0.js` — **sha256 `46153a843fa81132a8d22c17acc84403724c3e9c68ad4768f0746c6cf89ca372`**, **303,457 B** — unchanged |
+> | Bindings | `MATCH_DO` → durable_object_namespace `ac49ba2d564a4c7fb32e17d81b2ed624` (SQLite class `MatchDO`); `RP` → `fc7cb238-975a-4ab6-b75b-7cb52fca66ee`; `RP_BACKUP` → `a308600e-d171-4658-a755-d78655a1dc6a`; `OUTBOX` → `9c849bdf-d681-4d66-91c3-f5a45a0f37e6` — the three D1 ids **match the step-1 creation evidence** |
+> | KV namespaces | `[]` |
+> | Config equivalence | `compatibility_date = "2026-10-29"` and `migrations.new_sqlite_classes = ["MatchDO"]` are **identical to the harness**; only the real D1 ids, the pinned `account_id` and `workers_dev = true` differ |
+>
+> **What this step proves, and what it does not.** It proves the **deploy is faithful** — the bytes
+> that run on Cloudflare are the bytes measured locally — and **nothing about D1's behaviour**. The
+> settlement has not been run against real D1, so **§14's numbers are still unmeasured**.
+>
+> **Corrected figures for this step** (these supersede the earlier chat report):
+>
+> - **Token scan.** The scan covered **17 files written today** under `D:/cache/stage0/e8` — **25**
+>   written after step 0 and **117** in total under that tree — and **zero files contain the token**.
+> - **Source maps.** The **raw live** `worker.js.map` part is
+>   `5d394166695ffa17e5bd036cd1fcd07e2fc2ce996533c5b7d56bfaf06be44e40` (**1,511,606 B**); the local
+>   map is `64b4e060340d566fb754af59205069f90d51c6e2ef9a4c7cfc8099858b56788d` (**1,505,598 B**) — the
+>   raw bytes differ by **6,008 B** (path encoding, and a `file` field present in the live map). The
+>   **decoded `mappings` and `sourcesContent` are identical**, so the code is the same — but the raw
+>   map parts are **not** byte-identical. The `liveSha256`
+>   `55de90997a191dbca68f4fed8e51fba37c268919d331808b52b020777a445a16` in the delta file is the
+>   **re-serialized** map, **not** the raw part.
+> - **DO namespace listing.** The delta file's account-level listing called
+>   `/accounts/{B}/durable_objects/namespaces` — **missing the `/workers` segment** — and returned
+>   **404**. The namespace id is proven by the **script-settings binding**; **the 404 is not
+>   evidence.**
+> - **Billing.** **No billing action was taken** in this step. (The plan check was step 0's; this
+>   step deployed and verified bytes.)
+>
+> **Evidence (outside the repository):**
+> `D:/cache/stage0/e8/results/platform-step2-preflight-2026-11-01T07-48-16-735Z.json`,
+> `D:/cache/stage0/e8/results/bundle-step2-2026-11-01T07-49-36-608Z/worker.js` (and `worker.js.map`),
+> `D:/cache/stage0/e8/logs/platform-step2-dryrun-2026-11-01T07-49-36-608Z.txt`,
+> `D:/cache/stage0/e8/logs/platform-step2-deploy-2026-11-01T07-49-46-212Z.txt`,
+> `D:/cache/stage0/e8/results/platform-step2-verify-2026-11-01T07-50-37-090Z.json`,
+> `D:/cache/stage0/e8/results/platform-step2-delta-2026-11-01T07-51-03-429Z.json`, and step 1's
+> `D:/cache/stage0/e8/results/platform-step1-2026-10-31T12-06-02-697Z.json`.
 
 ### القرارات (2026-10-31)
 
