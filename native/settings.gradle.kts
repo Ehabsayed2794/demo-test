@@ -53,3 +53,7 @@ include(":services")
 // E6b (S42): the Ranked authority layer — Kotlin/JS on Node, sharing :engine.
 // See docs/adr/0002-functions-runtime.md.
 include(":functions")
+// E3.1 engine seam: the pure authority core shared by :functions (Firebase)
+// and the Cloudflare Worker bundle (native/worker, O-06). Kept firebase-free
+// on purpose — see native/authority-core/build.gradle.kts.
+include(":authority-core")

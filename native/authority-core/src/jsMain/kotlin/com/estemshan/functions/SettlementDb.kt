@@ -1,18 +1,12 @@
 package com.estemshan.functions
 
-import com.estemshan.functions.Settlement.ConvergedMatch
 import com.estemshan.functions.Settlement.SettleDecision
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.await
-import kotlinx.coroutines.promise
 
 /**
  * S50 settlement I/O + orchestration (RD12/RD13).
  *
  * The once-only contract: claim-check, recompute, correction write and
- * settlement record commit inside ONE Admin transaction on the claim doc
+ * settlement record commit inside ONE transaction on the claim doc
  * (`matches/{matchId}/settlement/settle`). Two racers read absent, one
  * commits, the other retries into the recorded outcome — correction
  * writes and the claim can never diverge, so a crash cannot leave a
@@ -23,9 +17,11 @@ import kotlinx.coroutines.promise
  * what this guarantees instead, and S51 composes the guard itself for RP
  * application per S42's own note.
  *
- * Ports keep every Firestore touch behind interfaces so the whole
- * orchestration (gate → recompute → write/replay) is unit-testable with
- * fakes; only AdminSettlementDb loads the SDK.
+ * Ports keep every storage touch behind the [SettlementDb] interface so the
+ * whole orchestration (gate → recompute → write/replay) is unit-testable
+ * with fakes; only the runtime adapters touch real storage — the Firebase
+ * Admin SDK in :functions, the Cloudflare Durable Object / D1 in the O-06
+ * slice. The claim path itself is the adapter's business.
  */
 interface SettlementDb {
   suspend fun readMatch(matchId: String): Map<String, Any?>?
@@ -38,9 +34,6 @@ interface SettlementDb {
     fun writeClaim(matchId: String, record: Map<String, Any?>)
   }
 }
-
-private const val CLAIM_PATH = "settlement"
-private const val CLAIM_DOC = "settle"
 
 /** Callable response when the mode gate declines (ROOM/UNRANKED never settle). */
 fun noOpResponse(mode: String): Map<String, Any?> = mapOf(
@@ -71,48 +64,55 @@ private fun claimRecord(
   response: Map<String, Any?>,
 ): Map<String, Any?> = mapOf(
   "settledBy" to uid,
-  "settledAt" to FieldValue.serverTimestamp(),
+  // A sentinel, not a timestamp: the storage adapter resolves it at commit
+  // time (Firebase: FieldValue.serverTimestamp(); DO/D1: SQL now()).
+  "settledAt" to AuthoritySentinels.serverTimestamp(),
   "outcome" to response,
 )
 
 /**
  * Runs one settlement: auth → read → gate → recompute → transacted
- * claim/write. Throws HttpsError on every denial (the client switches on
- * code). Returns Kotlin maps throughout so the orchestration stays
- * unit-testable — the callable handler applies toPlain() once, at the
- * serialization boundary (plain JS objects fail Kotlin Map reads).
+ * claim/write. The caller (a runtime adapter) has already verified the
+ * caller's identity and passes the verified [uid]; [data] is the raw
+ * callable payload and is converted here because both runtimes hand it
+ * over as a plain JS object, never a Kotlin map.
+ *
+ * Throws [AuthorityError] on every denial (the adapter maps the code onto
+ * its wire envelope — Firebase: `HttpsError`; Worker: the callable
+ * envelope). Returns Kotlin maps throughout so the orchestration stays
+ * unit-testable — the adapter applies toPlain() once, at the serialization
+ * boundary (plain JS objects fail Kotlin Map reads).
  */
-suspend fun settleOnce(db: SettlementDb, request: CallableRequest): Map<String, Any?> {
-  // The runtime delivers request.data as a PLAIN JS OBJECT, not a Kotlin map —
+suspend fun settleOnce(db: SettlementDb, uid: String, data: Any?): Map<String, Any?> {
+  // The runtime delivers the payload as a PLAIN JS OBJECT, not a Kotlin map —
   // `as? Map` returns null on one, silently rejecting every real call with
   // "matchId is required". Convert at the boundary, as below.
-  val data = dynamicToKotlin(request.data) as? Map<*, *>
-  val matchId = data?.get("matchId") as? String
+  val converted = dynamicToKotlin(data) as? Map<*, *>
+  val matchId = converted?.get("matchId") as? String
   if (matchId.isNullOrEmpty()) {
-    throw HttpsError("invalid-argument", "settleMatch: matchId is required.")
+    throw AuthorityError("invalid-argument", "settleMatch: matchId is required.")
   }
-  val uid = CallableAuth.requireUid(request)
 
   val fields = db.readMatch(matchId)
-    ?: throw HttpsError("not-found", "settleMatch: match '$matchId' was not found.")
+    ?: throw AuthorityError("not-found", "settleMatch: match '$matchId' was not found.")
   val parsed = Settlement.parseMatch(matchId, fields)
-    ?: throw HttpsError(
+    ?: throw AuthorityError(
       "failed-precondition",
       "settleMatch: match '$matchId' is not a match document.",
     )
   when (val gate = Settlement.decide(uid, parsed)) {
     is SettleDecision.NoOp -> return noOpResponse(gate.mode.name)
-    is SettleDecision.Failed -> throw HttpsError(
+    is SettleDecision.Failed -> throw AuthorityError(
       if (gate.reason == Settlement.Reason.NOT_MEMBER) "permission-denied" else "failed-precondition",
       gate.message,
     )
     SettleDecision.Proceed -> Unit
-    else -> throw HttpsError("internal", "settleMatch: unreachable gate.")
+    else -> throw AuthorityError("internal", "settleMatch: unreachable gate.")
   }
 
   val archives = db.readArchives(matchId).mapNotNull { (docId, archiveFields) ->
     Settlement.parseArchive(docId, archiveFields)?.let { docId to it }
-      ?: throw HttpsError(
+      ?: throw AuthorityError(
         "failed-precondition",
         "settleMatch: roundArchive/$docId is malformed.",
       )
@@ -123,8 +123,8 @@ suspend fun settleOnce(db: SettlementDb, request: CallableRequest): Map<String, 
   val recomputed = when (decision) {
     is SettleDecision.Agreed -> decision.recomputed
     is SettleDecision.Corrected -> decision.recomputed
-    is SettleDecision.Failed -> throw HttpsError("failed-precondition", decision.message)
-    else -> throw HttpsError("internal", "settleMatch: unreachable recompute.")
+    is SettleDecision.Failed -> throw AuthorityError("failed-precondition", decision.message)
+    else -> throw AuthorityError("internal", "settleMatch: unreachable recompute.")
   }
 
   return db.transact { tx ->
@@ -132,7 +132,7 @@ suspend fun settleOnce(db: SettlementDb, request: CallableRequest): Map<String, 
     if (existing != null) {
       @Suppress("UNCHECKED_CAST")
       val recorded = existing["outcome"] as? Map<String, Any?>
-        ?: throw HttpsError(
+        ?: throw AuthorityError(
           "failed-precondition",
           "settleMatch: settlement record for '$matchId' is malformed.",
         )
@@ -147,78 +147,5 @@ suspend fun settleOnce(db: SettlementDb, request: CallableRequest): Map<String, 
     val response = executedResponse(recomputed, matchId)
     tx.writeClaim(matchId, claimRecord(uid, response))
     response
-  }
-}
-
-/** Admin-SDK implementation. Reads normalize through dynamicToKotlin;
- *  writes normalize through toPlain. */
-class AdminSettlementDb : SettlementDb {
-  // Before getFirestore() resolves the default app — see ensureDefaultAdminApp.
-  init { ensureDefaultAdminApp() }
-
-  private val db = getFirestore()
-
-  private fun matchRef(matchId: String): DocRef =
-    db.collection("matches").doc(matchId)
-
-  override suspend fun readMatch(matchId: String): Map<String, Any?>? {
-    val snap = matchRef(matchId).get().await()
-    if (!snap.exists) return null
-    @Suppress("UNCHECKED_CAST")
-    return dynamicToKotlin(snap.data()) as? Map<String, Any?>
-  }
-
-  override suspend fun readArchives(matchId: String): Map<String, Map<String, Any?>> {
-    val snapshot = matchRef(matchId).collection("roundArchive").get().await()
-    val out = LinkedHashMap<String, Map<String, Any?>>()
-    for (doc in snapshot.docs) {
-      @Suppress("UNCHECKED_CAST")
-      val fields = dynamicToKotlin(doc.data()) as? Map<String, Any?> ?: continue
-      out[doc.id] = fields
-    }
-    return out
-  }
-
-  override suspend fun <T> transact(block: suspend (SettlementDb.SettlementTx) -> T): T {
-    val outcome = db.runTransaction { tx ->
-      TxScope.promise { block(AdminTx(tx)) }
-    }.await()
-    @Suppress("UNCHECKED_CAST")
-    return outcome as T
-  }
-
-  private inner class AdminTx(private val tx: Transaction) : SettlementDb.SettlementTx {
-    override suspend fun readClaim(matchId: String): Map<String, Any?>? {
-      val snap = tx.get(matchRef(matchId).collection(CLAIM_PATH).doc(CLAIM_DOC)).await()
-      if (!snap.exists) return null
-      @Suppress("UNCHECKED_CAST")
-      return dynamicToKotlin(snap.data()) as? Map<String, Any?>
-    }
-
-    override fun writeCorrection(
-      matchId: String,
-      scores: Map<String, Int>,
-      winners: List<String>,
-      version: Int,
-    ) {
-      tx.update(
-        matchRef(matchId),
-        toPlain(
-          mapOf(
-            "finalScores" to scores,
-            "winnerIds" to winners,
-            "version" to version,
-          ),
-        ),
-      )
-    }
-
-    override fun writeClaim(matchId: String, record: Map<String, Any?>) {
-      tx.set(matchRef(matchId).collection(CLAIM_PATH).doc(CLAIM_DOC), toPlain(record))
-    }
-  }
-
-  companion object {
-    private val TxScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
   }
 }

@@ -1,0 +1,20 @@
+{
+  "name": "estemshan-worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Cloudflare Worker + MatchDO for the Ranked authority layer (E3.1 + O-06; ADR 0003 option B).",
+  "engines": {
+    "node": "22"
+  },
+  "scripts": {
+    "test": "node --test",
+    "dev": "wrangler dev --local --ip 127.0.0.1 --port 8799",
+    "dev:e2e": "wrangler dev --local --ip 127.0.0.1 --port 8799 --show-interactive-dev-session=false --config wrangler.e2e.toml",
+    "e2e:preflight": "node scripts/e2e.mjs --preflight",
+    "e2e": "node scripts/e2e.mjs",
+    "e2e:seed": "node scripts/seed-e2e.mjs",
+    "e2e:verify": "node scripts/seed-e2e.mjs --verify",
+    "e2e:verify-settled": "node scripts/seed-e2e.mjs --verify --expect-settled"
+  }
+}

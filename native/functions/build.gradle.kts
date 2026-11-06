@@ -22,6 +22,11 @@ kotlin {
   sourceSets {
     val jsMain by getting {
       dependencies {
+        // The pure authority core (E3.1 engine seam): the orchestrations,
+        // the engine re-runs and the ports live there — firebase-free, shared
+        // with the Worker bundle. This module adds ONLY the Admin-SDK / callable
+        // adapter on top of it.
+        implementation(project(":authority-core"))
         implementation(project(":engine"))
         // 2nd-gen callables + the Admin SDK. Admin bypasses firestore.rules,
         // which stays byte-identical — the Functions are the only legitimate

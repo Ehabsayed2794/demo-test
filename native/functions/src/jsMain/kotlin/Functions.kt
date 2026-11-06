@@ -11,6 +11,8 @@
 import com.estemshan.engine.Dealer
 import com.estemshan.functions.AdminSettlementDb
 import com.estemshan.functions.AdminTimeoutDb
+import com.estemshan.functions.AuthorityError
+import com.estemshan.functions.HttpsError
 import com.estemshan.functions.CallableAuth
 import com.estemshan.functions.DecisionClock
 import com.estemshan.functions.onCall
@@ -62,12 +64,24 @@ private val SettleScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
  * settler must be a player); exactly-once per match (a replayed call
  * returns the recorded outcome).
  */
+// The adapter boundary keeps the wire identical to the pre-extraction
+// behaviour: the core throws [AuthorityError] with Firebase's canonical
+// lowercase-dash codes, which map 1:1 onto HttpsError for the client.
 @JsExport
 @JsName("settleMatch")
 val settleMatch = onCall { request ->
+  val uid = CallableAuth.requireUid(request)
   // toPlain at the serialization boundary: settleOnce stays in Kotlin
   // maps (unit-testable reads), the runtime JSON-serializes plain data.
-  SettleScope.promise { toPlain(settleOnce(AdminSettlementDb(), request)) }
+  SettleScope.promise {
+    toPlain(
+      try {
+        settleOnce(AdminSettlementDb(), uid, request.data)
+      } catch (e: AuthorityError) {
+        throw HttpsError(e.code, e.message)
+      },
+    )
+  }
 }
 
 /**
@@ -91,8 +105,15 @@ val settleMatch = onCall { request ->
 @JsExport
 @JsName("resolveDecisionTimeout")
 val resolveDecisionTimeout = onCall { request ->
+  val uid = CallableAuth.requireUid(request)
   SettleScope.promise {
-    toPlain(resolveTimeoutOnce(AdminTimeoutDb(), request, ServerClock))
+    toPlain(
+      try {
+        resolveTimeoutOnce(AdminTimeoutDb(), uid, request.data, ServerClock)
+      } catch (e: AuthorityError) {
+        throw HttpsError(e.code, e.message)
+      },
+    )
   }
 }
 

@@ -44,14 +44,16 @@ import com.estemshan.engine.trickWinner
  * player's own app could ever compute it. Resolution would then depend
  * entirely on that one client being foregrounded — the exact failure mode the
  * owner ruled out (backgrounded, disconnected, or terminated). So resolution
- * runs here instead: [FirebaseAdmin]'s admin SDK bypasses firestore.rules the
- * way settlement does, the hand is read server-side, the decision is computed,
+ * runs here instead: the storage adapter bypasses firestore.rules the
+ * way settlement does (Firebase: the Admin SDK; Cloudflare: the DO/D1
+ * transaction), the hand is read server-side, the decision is computed,
  * and only the DECISION is written back. No hand ever crosses the wire to any
  * client — not in the response, not in the doc.
  *
  * **The deadline needs no new field.** Every decision-changing write already
- * stamps `updatedAt` with `FieldValue.serverTimestamp()` (all nine sites in
- * MatchService, plus dealRound). That timestamp is the anchor; the deadline is
+ * stamps `updatedAt` with a server timestamp (MatchService writes
+ * `FieldValue.serverTimestamp()`; the authority layer's own writes carry the
+ * same value via the storage sentinel). That timestamp is the anchor; the deadline is
  * `updatedAt + duration`, derived exactly the way the rematch vote derives
  * `createdAt + 30s`. Consequently Stage 1 touches no MatchDoc field, no
  * firestore.rules line, and no rules SHA — the existing game flow stays
@@ -73,7 +75,7 @@ import com.estemshan.engine.trickWinner
  */
 object TimeoutResolution {
 
-  /** Canonical failure reasons. The seam maps these to HttpsError codes. */
+  /** Canonical failure reasons. The seam maps these to AuthorityError codes. */
   object Reason {
     /** Caller is not a player in this match (permission-denied). */
     const val NOT_MEMBER = "NOT_MEMBER"
@@ -672,7 +674,7 @@ object TimeoutResolution {
             "biddingOpen" to !allSubmitted,
             "lastBidSeat" to seatId,
             "version" to (num(fields["version"]) ?: 0) + 1,
-            "updatedAt" to FieldValue.serverTimestamp(),
+            "updatedAt" to AuthoritySentinels.serverTimestamp(),
           ),
           decided = mapOf(
             "phase" to state.subPhase.name,
@@ -756,13 +758,9 @@ object TimeoutResolution {
     decided: Map<String, Any?>,
   ): Resolution = Resolution.Applied(DecisionWrite(
     updates = mapOf(
-      // toPlain at construction, not at updateMatch: the arrayUnion sentinel
-      // passes toPlain by reference, so a Kotlin map handed to it here keeps
-      // its custom prototype all the way to Firestore, which rejects it with
-      // "Firestore doesn't support JavaScript objects with custom prototypes".
-      "biddingLog" to FieldValue.arrayUnion(toPlain(entry)),
+      "biddingLog" to AuthoritySentinels.arrayUnion(toPlain(entry)),
       "version" to (num(fields["version"]) ?: 0) + 1,
-      "updatedAt" to FieldValue.serverTimestamp(),
+      "updatedAt" to AuthoritySentinels.serverTimestamp(),
     ),
     decided = decided,
   ))
@@ -869,12 +867,12 @@ object TimeoutResolution {
     return Resolution.Applied(DecisionWrite(
       updates = mapOf(
         // See biddingWrite: the entry must be plain JS before arrayUnion.
-        "cardLog" to FieldValue.arrayUnion(toPlain(entry)),
+        "cardLog" to AuthoritySentinels.arrayUnion(toPlain(entry)),
         "lastCardSeat" to seatId,
         "turn" to nextTurnUid,
         "cardPhase" to preview.nextPhase?.name,
         "version" to (num(fields["version"]) ?: 0) + 1,
-        "updatedAt" to FieldValue.serverTimestamp(),
+        "updatedAt" to AuthoritySentinels.serverTimestamp(),
       ),
       decided = mapOf(
         "phase" to "CARD",
