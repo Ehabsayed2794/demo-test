@@ -22,8 +22,34 @@ import {
   methodNotAllowed,
   ok,
 } from "./callable.js";
+import { createFirebaseVerifier } from "./verifier.js";
+import { logEvent } from "./logging.js";
 
 const SERVICE = "estemshan-ranked";
+
+// Production verifier, built once per project from the Worker env.
+// FIREBASE_PROJECT_ID is read per request from `env` (workerd passes a
+// fresh env object per fetch). No project id -> no verifier -> deny-all.
+// The JWKS fetch lives behind the verifier's own cache; a network failure
+// throws and the dispatch layer answers 503, never 401.
+let cachedVerifier = null;
+function verifierForEnv(env) {
+  const projectId = env?.FIREBASE_PROJECT_ID;
+  if (typeof projectId !== "string" || projectId.length === 0) {
+    return async () => null;
+  }
+  if (!cachedVerifier || cachedVerifier.projectId !== projectId) {
+    const jwksUrl = env?.FIREBASE_JWKS_URL;
+    cachedVerifier = {
+      projectId,
+      verifier: createFirebaseVerifier({
+        projectId,
+        ...(typeof jwksUrl === "string" && jwksUrl.length > 0 ? { jwksUrl } : {}),
+      }),
+    };
+  }
+  return cachedVerifier.verifier;
+}
 
 // Boot-time guard: a manifest/handler mismatch must stop the Worker, not turn
 // into a runtime 500 on the first request.
@@ -123,7 +149,7 @@ async function dispatch(request, name, verifyToken, handlers) {
  * bound (wrangler.toml) — no restart or code change needed.
  */
 export function createWorker({
-  verifyToken = async () => null,
+  verifyToken = undefined,
   handlers,
   engine,
 } = {}) {
@@ -154,12 +180,23 @@ export function createWorker({
           }
           // Route storage-backed callables to the Durable Object when the
           // binding is present; otherwise the fallback table is used.
-          return await dispatch(
+          // Admission: an explicitly injected verifier wins; otherwise the
+          // production verifier is built from the Worker env; absent a
+          // project id the fallback still denies every request.
+          const started = Date.now();
+          const effectiveVerifier = verifyToken ?? verifierForEnv(env);
+          const response = await dispatch(
             request,
             name,
-            verifyToken,
+            effectiveVerifier,
             resolveHandlers({ env, fallback: table }),
           );
+          logEvent("callable", {
+            name,
+            status: response.status,
+            ms: Date.now() - started,
+          });
+          return response;
         }
 
         return fail("NOT_FOUND", `No route for ${url.pathname}.`);

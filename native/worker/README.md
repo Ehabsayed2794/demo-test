@@ -32,10 +32,17 @@ system of record and the authority path never reads D1.
 
 - **No D1.** There is no D1 binding, no outbox, no alarm drain. D1 is O-06 slice 2 and is
   never queried by the authority path.
-- **No production token verification.** The default verifier rejects every request. The
-  seeded E2E uses `scripts/e2e-entry.mjs`, a **test-only** entry whose `e2e:<uid>` token
-  exists only for the local run; the production entry (`src/index.js`) is unchanged and
-  still rejects every request.
+- **No production token verification (wired to a real project).** The verifier
+  (`src/verifier.js` + `test/verifier.test.mjs`) is implemented and tested locally:
+  real RS256 signature + issuer/audience/exp checks against a stubbed JWKS. It is
+  **not** wired to a live Firebase project — with no `FIREBASE_PROJECT_ID` in `env`
+  the production wiring still rejects every request. The seeded E2E uses
+  `scripts/e2e-entry.mjs`, a **test-only** entry whose `e2e:<uid>` token exists only
+  for the local run; the production entry (`src/index.js`) is unchanged and still
+  rejects every request.
+- **Structured logging is local only.** `src/logging.js` emits one JSON object per
+  callable (event/name/status/ms) and never logs the bearer token; no log
+  pipeline is deployed.
 - **No staging deployment.** No `account_id`, no routes, no `wrangler deploy`. A staging
   deployment needs explicit owner approval and a separate safety review.
 - **No Firebase `index.js` UMD/ESM fix.** It remains a pre-deploy blocker on the Firebase
@@ -106,8 +113,9 @@ Then:
 Invoke-RestMethod http://127.0.0.1:8799/health
 ```
 
-A call without a token returns `401 UNAUTHENTICATED`; the same call with any token also
-returns `401` until a real verifier is injected.
+A call without a token returns `401 UNAUTHENTICATED`; the same call with any token
+also returns `401` until a real verifier is injected, or `FIREBASE_PROJECT_ID` is set
+in the Worker `env` (see `src/verifier.js`).
 
 ## Seeded E2E (O-06 slice 1)
 
