@@ -1,6 +1,8 @@
 package com.estemshan.functions
 
 import com.estemshan.engine.Card
+import com.estemshan.engine.DisconnectVoteState
+import com.estemshan.engine.InactiveTakeover
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -86,11 +88,61 @@ class AdminTimeoutDb : TimeoutDb {
     override fun writeTimeoutCount(matchId: String, uid: String, count: Int) {
       tx.set(countRef(matchId, uid), toPlain(mapOf(COUNT_FIELD to count)))
     }
+
+    /**
+     * S73 (RD19): the whole private document, normalized exactly like the match
+     * read, so a JS object handed to [InactivityClock.fromStored]'s validators
+     * behaves the same as one built in a test. Missing doc ⇒ null ⇒ "never
+     * recorded", which is the trusted first-window state.
+     */
+    override suspend fun readInactivity(matchId: String, uid: String): Map<String, Any?>? {
+      val snap = tx.get(inactivityRef(matchId, uid)).await()
+      if (!snap.exists) return null
+      @Suppress("UNCHECKED_CAST")
+      return dynamicToKotlin(snap.data()) as? Map<String, Any?>
+    }
+
+    /**
+     * Replacement write, the counter's own idiom: the three fields ARE this
+     * mechanism's complete state for the player, so merging could only leave a
+     * stale cursor or an accumulation the takeover was supposed to zero.
+     */
+    override fun writeInactivity(matchId: String, uid: String, fields: Map<String, Any?>) {
+      tx.set(inactivityRef(matchId, uid), toPlain(Sentinels.translate(fields)))
+    }
+
+    /**
+     * S7 (A8.2): the ballot document's tombstone, against the same
+     * admin-only-by-construction path `DisconnectVoteDb` uses — the
+     * subcollection has no rules block at all, so the delete is an admin
+     * action by construction and `firestore.rules` stays byte-identical.
+     */
+    override suspend fun deleteBallot(matchId: String, uid: String) {
+      tx.delete(ballotRef(matchId, uid))
+    }
   }
 
   /** `matches/{matchId}/timeoutCounts/{uid}` — owner-read-only by the rules. */
   private fun countRef(matchId: String, uid: String): DocRef =
     matchRef(matchId).collection("timeoutCounts").doc(uid)
+
+  /**
+   * `matches/{matchId}/inactivity/{uid}` — RD19's private accumulator, keyed by
+   * PLAYER like the counter and for the same reason: how long someone has been
+   * ignoring the table is not their opponents' business. It has NO rules block
+   * at all, which is what makes it admin-only: an admin-written field no
+   * validator names is unwritable by every client (the update dispatch falls
+   * through to `false`) while the match's own whole-document `allow get` still
+   * lets every seat read the marker on the match. `firestore.rules` is
+   * therefore byte-identical for S73 — the same zero-rules path
+   * `timeoutRemovedUids` proved.
+   */
+  private fun inactivityRef(matchId: String, uid: String): DocRef =
+    matchRef(matchId).collection(InactiveTakeover.INACTIVITY_COLLECTION).doc(uid)
+
+  /** `matches/{matchId}/disconnectVotes/{uid}` — S7's ballot cancellation target. */
+  private fun ballotRef(matchId: String, uid: String): DocRef =
+    matchRef(matchId).collection(DisconnectVoteState.BALLOT_COLLECTION).doc(uid)
 
   companion object {
     private val TxScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)

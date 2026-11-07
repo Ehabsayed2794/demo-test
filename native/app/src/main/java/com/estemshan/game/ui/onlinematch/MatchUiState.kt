@@ -3,6 +3,7 @@ package com.estemshan.game.ui.onlinematch
 import com.estemshan.engine.BiddingState
 import com.estemshan.engine.TableState
 import com.estemshan.game.ui.standings.FinalStandingsUiState
+import com.estemshan.game.ui.standings.RankedResultUiState
 
 /**
  * One screen's worth of online-match state — everything [OnlineMatchViewModel]
@@ -58,8 +59,18 @@ sealed interface MatchUiState {
     val isLastRound: Boolean,
   ) : MatchUiState
 
-  /** Terminal: status:complete on the document. Kings and their totals. */
-  data class MatchComplete(val standings: FinalStandingsUiState) : MatchUiState
+  /**
+   * Terminal: status:complete on the document. Kings and their totals.
+   * [ranked] is the settled RP movement the settlement callable returned
+   * for the CALLING player — null until it lands (plain standings only).
+   * It is never computed client-side (RD13): a client cannot read another
+   * player's rank, so the movement can only be the server's own answer,
+   * and an absent one reveals nothing.
+   */
+  data class MatchComplete(
+    val standings: FinalStandingsUiState,
+    val ranked: RankedResultUiState? = null,
+  ) : MatchUiState
 
   /**
    * The signed-in player holds no seat in this match, or the match document

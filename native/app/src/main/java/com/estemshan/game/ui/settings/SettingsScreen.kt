@@ -18,11 +18,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.estemshan.game.BuildConfig
+import com.estemshan.game.R
 import com.estemshan.game.ui.theme.EstemshanTheme
 
 /**
@@ -60,7 +62,7 @@ fun SettingsScreen(
     verticalArrangement = Arrangement.spacedBy(16.dp),
     horizontalAlignment = Alignment.CenterHorizontally,
   ) {
-    Text("Settings", style = MaterialTheme.typography.headlineMedium)
+    Text(stringResource(R.string.settings_title), style = MaterialTheme.typography.headlineMedium)
 
     Row(
       modifier = Modifier.fillMaxWidth(),
@@ -68,7 +70,7 @@ fun SettingsScreen(
       verticalAlignment = Alignment.CenterVertically,
     ) {
       Column(Modifier.weight(1f)) {
-        Text("Account", style = MaterialTheme.typography.titleMedium)
+        Text(stringResource(R.string.settings_account), style = MaterialTheme.typography.titleMedium)
         Text(shortUid(uid), style = MaterialTheme.typography.labelLarge)
       }
     }
@@ -79,22 +81,22 @@ fun SettingsScreen(
       verticalAlignment = Alignment.CenterVertically,
     ) {
       Column(Modifier.weight(1f)) {
-        Text("Sound", style = MaterialTheme.typography.titleMedium)
+        Text(stringResource(R.string.settings_sound), style = MaterialTheme.typography.titleMedium)
         Text(
-          if (soundEnabled) "On" else "Off",
+          stringResource(if (soundEnabled) R.string.settings_sound_on else R.string.settings_sound_off),
           style = MaterialTheme.typography.bodyMedium,
         )
       }
       Switch(checked = soundEnabled, onCheckedChange = onSoundChange)
     }
 
-    Text("Version $versionName", style = MaterialTheme.typography.bodyMedium)
+    Text(stringResource(R.string.settings_version, versionName), style = MaterialTheme.typography.bodyMedium)
 
     Spacer(Modifier.height(8.dp))
     Button(
       onClick = onSignOut,
       modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-    ) { Text("Log out") }
+    ) { Text(stringResource(R.string.settings_logout)) }
   }
 }
 

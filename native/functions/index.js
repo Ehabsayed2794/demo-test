@@ -9,7 +9,10 @@
 // and every call 404s with functions/not-found. This file re-publishes each
 // callable as a plain enumerable property, which is the shape the CLI needs.
 //
-// Keep this in sync when a callable is added to Functions.kt. The guard below
+// Keep this in sync whenever any @JsName export is added to or removed from
+// any file under native/functions/src/jsMain/kotlin/ (Functions.kt and the
+// *Exports.kt files all count — every @JsName("...") value must appear here).
+// The guard below
 // makes drift fail LOUDLY at emulator start — a callable listed here but not
 // exported by the bundle, or one that lost its trigger metadata — instead of
 // silently deploying an empty module.
@@ -17,26 +20,43 @@
 const BUNDLE = "./build/compileSync/js/main/productionExecutable/kotlin/functions.js";
 const kotlin = require(BUNDLE);
 
-const callables = {
+const exported = {
   engineSmoke: kotlin.engineSmoke,
   settleMatch: kotlin.settleMatch,
   resolveDecisionTimeout: kotlin.resolveDecisionTimeout,
+  reclaimInactiveSeat: kotlin.reclaimInactiveSeat,
+  resolveDisconnectVote: kotlin.resolveDisconnectVote,
+  castDisconnectVote: kotlin.castDisconnectVote,
+  restoreDisconnectedSeat: kotlin.restoreDisconnectedSeat,
+  getMyRankedProfile: kotlin.getMyRankedProfile,
+  getRankedLeaderboard: kotlin.getRankedLeaderboard,
+  scheduledSeasonReset: kotlin.scheduledSeasonReset,
+  joinRankDownRoom: kotlin.joinRankDownRoom,
+  operatorSeasonResetDryRun: kotlin.operatorSeasonResetDryRun,
+  enqueueSearch: kotlin.enqueueSearch,
+  pollSearch: kotlin.pollSearch,
+  cancelSearch: kotlin.cancelSearch,
+  playUnranked: kotlin.playUnranked,
 };
 
-for (const [name, fn] of Object.entries(callables)) {
+for (const [name, fn] of Object.entries(exported)) {
   if (typeof fn !== "function") {
     throw new Error(
       `functions manifest: "${name}" is not exported by the Kotlin bundle — ` +
       `build it first (gradlew :functions:jsProductionExecutableCompileSync) ` +
-      `or add the callable to native/functions/src/jsMain/kotlin/Functions.kt.`,
+      `or add it to native/functions/src/jsMain/kotlin/Functions.kt.`,
     );
   }
-  if (!fn.__trigger) {
+  // Callables carry __trigger; scheduled functions carry __endpoint. Either
+  // marker means the CLI will register it; neither means the member is not a
+  // Firebase function at all.
+  if (!fn.__trigger && !fn.__endpoint) {
     throw new Error(
-      `functions manifest: "${name}" has no __trigger — it is not a Firebase ` +
-      `callable. Declare it with onCall(...) in Functions.kt.`,
+      `functions manifest: "${name}" has neither __trigger nor __endpoint — ` +
+      `it is not a Firebase function. Declare it with onCall(...) or ` +
+      `onSchedule(...).`,
     );
   }
 }
 
-module.exports = callables;
+module.exports = exported;

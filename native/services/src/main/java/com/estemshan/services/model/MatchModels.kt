@@ -1,7 +1,10 @@
 package com.estemshan.services.model
 
 import com.estemshan.engine.Card
+import com.estemshan.engine.DisconnectVotePhase
+import com.estemshan.engine.DisconnectVoteState
 import com.estemshan.engine.GameType
+import com.estemshan.engine.InactiveTakeover
 import com.estemshan.engine.MatchMode
 import com.estemshan.engine.RANKS
 import com.estemshan.engine.Rank
@@ -88,6 +91,15 @@ data class BiddingActionInput(
   val isPass: Boolean? = null,
   val tricks: Int? = null,
   val suit: String? = null,
+  /**
+   * The fast-round declaration cycle the caller validated this action
+   * against ([MatchDoc.biddingCycle]). A fast Super Call CONFIRM atomically
+   * starts the next cycle, so a delayed CONFIRM from the previous one must
+   * never be applied twice. Null is legal only while the round is still in
+   * cycle 0; once a Super Call has committed, a cycle-less write is refused
+   * as STALE_CYCLE. Never persisted into the log entry.
+   */
+  val expectedCycle: Int? = null,
 ) {
 
   /** Stamps the authoritative round and drops nothing the type omits. */
@@ -276,11 +288,106 @@ data class MatchDoc(
    */
   val timeoutRemovedUids: List<String> = emptyList(),
   /**
+   * S7 (A7.3 / Q32): uids permanently removed by the 7th inactivity takeover.
+   * This is the takeover mechanism's OWN provenance list — a third sibling,
+   * kept separate from [removedUids] (Vote Kick), [timeoutRemovedUids] (the
+   * 15-timeout counter) and [leftUids] exactly as those are separate from each
+   * other; no path writes another mechanism's field. Recognition is read-side
+   * only: [isRemoved] unions the list and [botControlledSeats] adds these
+   * seats, so the seat is permanently bot-driven, unplayable and unvotable,
+   * with no merged persisted state. Absent in older docs ⇒ nobody
+   * takeover-removed (no migration).
+   */
+  val takeoverRemovedUids: List<String> = emptyList(),
+  /**
+   * S7 (A7.3): the 7th takeover's own charge map — uid → Koz (ROOM 1,
+   * RANKED/UNRANKED 2, `seventhTakeoverCharge`'s table). A SIBLING of S5's
+   * `timeoutRemovedCharges`, never a widening of it: each removal mechanism
+   * records its own charge at its own instant, and the settlement path
+   * consumes the maps separately. Admin-written only (zero-rules path);
+   * malformed entries parse as absent, the fail-closed convention of every
+   * stored-value reader in this model. Absent in older docs ⇒ no charges (no
+   * migration). RECORDED but NOT consumed in S7 — the settlement consumer is a
+   * later story.
+   */
+  val takeoverRemovedCharges: Map<String, Int> = emptyMap(),
+  /**
+   * S72 (E6b, RD31): uids who have explicitly left the match via Explicit Leave Match.
+   * A left uid can never play, vote, or rejoin this match again — every match write
+   * path checks [isLeft], and the seat is taken by the configured bot so the match
+   * continues to completion. This list is additive only: once a uid is here it stays,
+   * which makes the departure idempotent and replay-safe. Absent in older docs ⇒
+   * nobody left (no migration).
+   */
+  val leftUids: List<String> = emptyList(),
+  /**
+   * S73 Stage 2 (RD19): seats currently BORROWED by the configured bot for
+   * decision-point inactivity, keyed by seat id. Like [timeoutRemovedUids]
+   * this is the takeover mechanism's own provenance and no other path writes
+   * it — and it is deliberately kept out of the [botSeats]/[botControlledSeats]
+   * union, because a borrowed seat is still the player's own seat: they stay
+   * seated, stay kickable, keep their vote, and DEC-RD19-04 returns the same
+   * seat to them. Parsed fail-closed by [InactiveTakeover.parseAll], so a
+   * present but untrustworthy entry reads as no takeover rather than stranding
+   * a human out of their seat. Absent in older docs ⇒ nobody borrowed (no
+   * migration).
+   */
+  val inactiveTakeovers: Map<String, InactiveTakeover> = emptyMap(),
+  /**
+   * S74 (DEC-DISC-01): the disconnect vote's public marker, keyed by seat id
+   * (`matches/{id}.disconnectVote`) — the seats the flow currently holds,
+   * every phase of it. Like [inactiveTakeovers] this is the mechanism's own
+   * provenance and no other path writes it, and like it the seats stay the
+   * players' own: a held seat is a BORROWING (reclaimable through the ballot
+   * and any paused wait), it is deliberately kept out of the [botSeats]/
+   * [botControlledSeats] union, and it stays kickable. Parsed fail-closed by
+   * [DisconnectVoteState.parseAll], so a present but untrustworthy entry reads
+   * as no flow rather than stranding a human out of their seat. Absent in
+   * older docs ⇒ nobody held (no migration).
+   */
+  val disconnectVote: Map<String, DisconnectVoteState> = emptyMap(),
+  /**
+   * S74: uids the disconnect flow replaced PERMANENTLY — the waiting ended
+   * with no reconnect. This is the flow's OWN provenance list, deliberately
+   * separate from [removedUids] (Vote Kick) and [timeoutRemovedUids] (the
+   * 15-timeout counter), exactly as those are separate from each other; the
+   * charge table (`DisconnectVote.permanentCharge`) is applied to it
+   * downstream, so the document records the termination and never the
+   * penalty. Recognition is read-side only and deliberately NOT folded into
+   * [isRemoved]/[botControlledSeats] in this slice: a replaced seat's RANKED
+   * path does not exist at all, and the ROOM/UNRANKED consumption sites land
+   * with the flow's UI. Absent in older docs ⇒ nobody replaced (no
+   * migration).
+   */
+  val disconnectReplacedUids: List<String> = emptyList(),
+  /**
    * S60 (D8): the 5-round same-target cooldown, verbatim
    * `failedVoteKickCooldown: { targetSeat, blockedUntilRound }`. Single
    * slot by spec. Absent ⇒ no live cooldown (no migration).
    */
   val failedVoteKickCooldown: VoteKickCooldownData? = null,
+  /**
+   * O-19 (Option B, 2026-10-24): the multiplier the CURRENT round is scored
+   * at. Written 1 at creation, replaced by the scored round's
+   * [com.estemshan.engine.RoundScoreResult.nextMultiplier] in the SAME
+   * advance transaction, and bumped by the General-Pass ladder. Absent in a
+   * doc written before this field ⇒ 1 (legacy default; no migration), the
+   * same reading firestore.rules' isValidStoredMultiplier applies.
+   */
+  val currentMultiplier: Int = 1,
+  /**
+   * T-09 (Fast Super Call live persistence): which declaration cycle the
+   * transient [bids] map currently holds. 0 is the round's opening cycle;
+   * every completed fast-round Super Call CONFIRM writes the next cycle
+   * atomically with that CONFIRM's log entry, wiping [bids] down to the
+   * Super Caller's own confirmed number. So `bids` NEVER carries a previous
+   * cycle's declarations and a re-declaration is an ordinary one-value-per
+   * -seat write again. Absent in a doc written before this field ⇒ 0 (no
+   * migration); a doc that holds a CONFIRM for the current round but reads
+   * 0 is the pre-change, non-resumable shape and is refused by name (see
+   * MatchAdapter.FAST_CYCLE_UNPERSISTED), never silently reinterpreted.
+   */
+  val biddingCycle: Int = 0,
 ) {
 
   /** The match is over, terminal: status never moves complete → anything. */
@@ -307,13 +414,21 @@ data class MatchDoc(
   fun isPlayer(uid: String): Boolean = uid in players
 
   /**
-   * S60 + S61 Stage 2: permanently removed by EITHER mechanism. The union
-   * is read-side only — [removedUids] (Vote Kick) and [timeoutRemovedUids]
-   * (the 15-timeout counter) stay separate persisted lists and are never
-   * written by the other's path. Both make the seat unplayable, so
-   * [isSeated] gates on this union rather than on either list alone.
+   * S60 + S61 Stage 2 + S7: permanently removed by ANY mechanism. The union
+   * is read-side only — [removedUids] (Vote Kick), [timeoutRemovedUids] (the
+   * 15-timeout counter) and [takeoverRemovedUids] (the 7th takeover) stay
+   * separate persisted lists and are never written by another's path. All
+   * three make the seat unplayable, so [isSeated] gates on this union rather
+   * than on any one list alone.
    */
-  fun isRemoved(uid: String): Boolean = uid in removedUids || uid in timeoutRemovedUids
+  fun isRemoved(uid: String): Boolean =
+    uid in removedUids || uid in timeoutRemovedUids || uid in takeoverRemovedUids
+
+  /**
+   * S72: explicitly left the match. The seat is taken by the configured bot; the
+   * leaver cannot rejoin or write match state. Read-side check only.
+   */
+  fun isLeft(uid: String): Boolean = uid in leftUids
 
   /**
    * S61 Stage 2: seats currently driven by a bot, for EITHER reason — a
@@ -324,9 +439,51 @@ data class MatchDoc(
    * Read-side union only: no mechanism writes the other's field. This is
    * what makes a timeout-removed seat bot-driven for the timeout resolver
    * and already-excluded from Vote Kick eligibility.
+   *
+   * S73 (RD19) deliberately does NOT extend this union. An inactivity-borrowed
+   * seat is not a removed or replaced one — adding [inactiveTakeoverSeats]
+   * here would silently make a still-present player unvotable and unkickable,
+   * which is the opposite of DEC-RD19-04. Ask that set separately.
    */
   fun botControlledSeats(): Set<String> =
-    botSeats.toSet() + seats.filterValues { it in timeoutRemovedUids }.keys
+    (botSeats.toSet() +
+      seats.filterValues { it in timeoutRemovedUids }.keys +
+      seats.filterValues { it in leftUids }.keys +
+      seats.filterValues { it in takeoverRemovedUids }.keys)
+
+  /**
+   * S73 (RD19): the seats currently borrowed by the configured bot because
+   * their owner ignored decision points. Seat ids, so the S39 chip and the
+   * resolver's pacing check can each read one set without any union — see
+   * [botControlledSeats] for why they are never merged.
+   */
+  fun inactiveTakeoverSeats(): Set<String> = inactiveTakeovers.keys
+
+  /**
+   * S74 (DEC-DISC-01): the seats the disconnect flow is driving RIGHT NOW —
+   * `HOLD`, `VOTE`, `WAIT` and `REPLACED` alike, because the seat is
+   * bot-played from the instant of detection. A `CANCELLED` entry (S7 /
+   * A8.2) is NOT held: its seat was removed by the 7th takeover, whose own
+   * removal list — not this marker — is what makes that seat bot-driven.
+   * Read-side only and never merged into [botControlledSeats], for
+   * [inactiveTakeoverSeats]'s exact reason: a held seat is still its owner's
+   * seat and must keep its Vote Kick slot.
+   */
+  fun disconnectHeldSeats(): Set<String> =
+    disconnectVote.filterValues { it.phase != DisconnectVotePhase.CANCELLED }.keys
+
+  /**
+   * S74: the held seats their owner can still take BACK — `HOLD`, `VOTE` or
+   * `WAIT`, i.e. the whole time the table waits. A `REPLACED` seat is not
+   * reclaimable: the waiting ended with no reconnect, and the seat is the
+   * configured bot's for the rest of the match. A `CANCELLED` seat (S7 /
+   * A8.2) is not either: the seat was removed outright, so there is nothing
+   * left to take back.
+   */
+  fun disconnectReclaimableSeats(): Set<String> =
+    disconnectVote
+      .filterValues { it.phase != DisconnectVotePhase.REPLACED && it.phase != DisconnectVotePhase.CANCELLED }
+      .keys
 
   /**
    * S60: seated AND not removed — the gate every match write path
@@ -409,7 +566,22 @@ data class MatchDoc(
         removedUids = (fields["removedUids"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
         timeoutRemovedUids = (fields["timeoutRemovedUids"] as? List<*>)
           ?.mapNotNull { it as? String } ?: emptyList(),
+        takeoverRemovedUids = (fields["takeoverRemovedUids"] as? List<*>)
+          ?.mapNotNull { it as? String } ?: emptyList(),
+        takeoverRemovedCharges = (fields["takeoverRemovedCharges"] as? Map<*, *>)?.entries
+          ?.mapNotNull { (k, v) ->
+            val key = k as? String ?: return@mapNotNull null
+            val value = (v as? Long)?.toInt() ?: return@mapNotNull null
+            key to value
+          }?.toMap() ?: emptyMap(),
+        leftUids = (fields["leftUids"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList(),
+        inactiveTakeovers = InactiveTakeover.parseAll(fields["inactiveTakeovers"]),
+        disconnectVote = DisconnectVoteState.parseAll(fields["disconnectVote"]),
+        disconnectReplacedUids = (fields["disconnectReplacedUids"] as? List<*>)
+          ?.mapNotNull { it as? String } ?: emptyList(),
         failedVoteKickCooldown = VoteKickCooldownData.fromFields(fields["failedVoteKickCooldown"]),
+        currentMultiplier = (fields["currentMultiplier"] as? Long)?.toInt() ?: 1,
+        biddingCycle = (fields["biddingCycle"] as? Long)?.toInt() ?: 0,
       )
     }
   }
@@ -425,6 +597,10 @@ const val RAPID_ROUND_MIN = 14
 const val RAPID_ROUND_MAX = 18
 
 const val MAX_BID_VALUE = 13
+
+/** A6.10: the lowest declaration that opens a fast-round Super Call. */
+const val FAST_SUPER_CALL_MIN_TRICKS = 8
+
 const val MIN_RANK_VALUE = 2
 const val MAX_RANK_VALUE = 14
 
@@ -459,15 +635,23 @@ data class RoundArchiveDoc(
    * existed — those matches fail closed at settlement (HISTORY_INCOMPLETE).
    */
   val estimates: Map<String, Int> = emptyMap(),
+  /**
+   * O-19: true ONLY for a General-Pass round — the cancelled round that
+   * carries zero card plays and its complete all-pass window. Emitted as
+   * `passRound: true`; ordinary archives omit the field entirely (the
+   * rules allow the marker to be absent, never false-on-an-ordinary-round).
+   */
+  val passRound: Boolean = false,
 ) {
 
-  fun toFields(): Map<String, Any?> = mapOf(
-    "round" to round,
-    "matchId" to matchId,
-    "cardLog" to cardLog.map { it.toFields() },
-    "biddingLog" to biddingLog.map { it.toFields() },
-    "estimates" to estimates.toMap(),
-  )
+  fun toFields(): Map<String, Any?> = buildMap {
+    put("round", round)
+    put("matchId", matchId)
+    put("cardLog", cardLog.map { it.toFields() })
+    put("biddingLog", biddingLog.map { it.toFields() })
+    put("estimates", estimates.toMap())
+    if (passRound) put("passRound", true)
+  }
 }
 
 /** matches/{id}/hands/{seatId} — current hand only, overwritten per round. */

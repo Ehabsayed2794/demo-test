@@ -1,5 +1,7 @@
 package com.estemshan.services
 
+import com.estemshan.engine.InactiveTakeover
+import com.estemshan.engine.eligibleVoteKickVoters
 import com.estemshan.services.model.MatchDoc
 import com.estemshan.services.model.VoteKickCooldownData
 import com.estemshan.services.model.VoteKickDoc
@@ -28,6 +30,17 @@ class VoteKickModelsTest {
     return base
   }
 
+  /** The shape the JVM Firestore client hands back for a marker entry: whole numbers as Long. */
+  private fun takeoverEntry(
+    takenOverAt: Any? = 10_000L,
+    round: Any? = 3L,
+    trick: Any? = 2L,
+  ): Map<String, Any?> = linkedMapOf(
+    InactiveTakeover.TAKEN_OVER_AT_FIELD to takenOverAt,
+    InactiveTakeover.ROUND_AT_TAKEOVER_FIELD to round,
+    InactiveTakeover.TRICK_AT_TAKEOVER_FIELD to trick,
+  )
+
   // ── MatchDoc seat-control defaults (backward compatible) ──────────
 
   @Test
@@ -38,6 +51,10 @@ class VoteKickModelsTest {
     assertNull(doc.failedVoteKickCooldown)
     assertFalse(doc.isRemoved("u4"))
     assertTrue(doc.isSeated("u4"))
+    // S73: a doc written before the takeover field exists parses as "nobody is
+    // borrowed" — no migration, and no field is invented for the old doc.
+    assertTrue(doc.inactiveTakeovers.isEmpty())
+    assertTrue(doc.inactiveTakeoverSeats().isEmpty())
   }
 
   @Test
@@ -61,6 +78,82 @@ class VoteKickModelsTest {
       "failedVoteKickCooldown" to mapOf("targetSeat" to "p4"),
     ))!!
     assertNull(doc.failedVoteKickCooldown)
+  }
+
+  // ── S73 (RD19): the takeover's own provenance, separate by construction ──
+
+  @Test
+  fun inactiveTakeoverRoundTripsAndItsOwnerStaysSeated() {
+    val doc = MatchDoc.fromFields(matchFields(
+      "inactiveTakeovers" to mapOf("p2" to takeoverEntry()),
+    ))!!
+    assertEquals(
+      mapOf("p2" to InactiveTakeover(takenOverAtMillis = 10_000L, roundAtTakeover = 3, trickAtTakeover = 2)),
+      doc.inactiveTakeovers,
+    )
+    assertEquals(setOf("p2"), doc.inactiveTakeoverSeats())
+    // DEC-RD19-04: borrowed, never lost. The owner stays seated and is not
+    // removed by either removal mechanism.
+    assertEquals("u2", doc.seatToUid("p2"))
+    assertTrue(doc.isSeated("u2"))
+    assertFalse(doc.isRemoved("u2"))
+  }
+
+  @Test
+  fun aBorrowedSeatStaysOutOfBotControlledSeatsAndKeepsItsVoteSlot() {
+    val doc = MatchDoc.fromFields(matchFields(
+      "inactiveTakeovers" to mapOf("p2" to takeoverEntry()),
+    ))!!
+    // RD20's separation, pinned at the read side: folding a borrowed seat into
+    // botControlledSeats() would strip its owner's Vote Kick slot and make them
+    // unkickable, which is the opposite of what DEC-RD19-04 closes.
+    assertTrue(doc.botControlledSeats().isEmpty())
+    assertEquals(
+      setOf("p1", "p2", "p4"),
+      eligibleVoteKickVoters(doc.seats.keys, "p3", doc.botControlledSeats()),
+    )
+  }
+
+  @Test
+  fun timeoutRemovalAndInactivityTakeoverKeepSeparateProvenance() {
+    val doc = MatchDoc.fromFields(matchFields(
+      "botSeats" to listOf("p4"),
+      "timeoutRemovedUids" to listOf("u3"),
+      "inactiveTakeovers" to mapOf("p2" to takeoverEntry()),
+    ))!!
+    assertEquals(setOf("p4", "p3"), doc.botControlledSeats())
+    assertEquals(setOf("p2"), doc.inactiveTakeoverSeats())
+    assertEquals(listOf("u3"), doc.timeoutRemovedUids)
+    assertEquals(emptyList<String>(), doc.removedUids)
+    assertTrue(doc.isRemoved("u3"))
+    assertFalse(doc.isRemoved("u2"))
+  }
+
+  @Test
+  fun aMalformedTakeoverEntryParsesAsNoTakeover() {
+    val doc = MatchDoc.fromFields(matchFields(
+      "inactiveTakeovers" to mapOf("p2" to takeoverEntry(takenOverAt = "soon")),
+    ))!!
+    assertTrue(doc.inactiveTakeovers.isEmpty())
+    assertTrue(doc.isSeated("u2"))
+    // A garbage entry for one seat must not discard a well-formed entry for
+    // another — one player's corrupt state is not everyone else's takeover.
+    val mixed = MatchDoc.fromFields(matchFields(
+      "inactiveTakeovers" to mapOf(
+        "p2" to takeoverEntry(),
+        "p3" to takeoverEntry(round = 0L),
+      ),
+    ))!!
+    assertEquals(setOf("p2"), mixed.inactiveTakeoverSeats())
+  }
+
+  @Test
+  fun aNonMapTakeoverFieldParsesAsNoTakeover() {
+    val doc = MatchDoc.fromFields(matchFields(
+      "inactiveTakeovers" to listOf("p2"),
+    ))!!
+    assertTrue(doc.inactiveTakeovers.isEmpty())
+    assertTrue(doc.inactiveTakeoverSeats().isEmpty())
   }
 
   // ── VoteKickDoc ───────────────────────────────────────────────────

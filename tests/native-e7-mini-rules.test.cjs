@@ -11,10 +11,13 @@
 //     MINI, just as 10 is denied for a doc with no gameType (absent really
 //     does mean FULL, not "any value");
 //   * MINI's Rapid Rounds window is 6–10, not 14–18;
-//   * GM3's load-bearing boundary: MINI allows exactly ONE extension
-//     (10 → 11 max) — the second is denied by the count cap, and the test
-//     is shaped so the denial can ONLY come from that cap (the appended
-//     round 7 is inside the 6–10 window, so the window rule passes);
+//   * D2 (A8.8 / Q48) replaced GM3's one-extension cap: there is NO
+//     count cap for either type — MINI's second extension is allowed
+//     (the appended round 7 is inside the 6–10 window), and a Sa'ayda
+//     in the ACTUAL final round (== maxRounds) extends past the base
+//     ceiling and can repeat (MINI 11 → 12 → 13, FULL 19 → 20);
+//   * still structural: a post-window round that is NOT the actual
+//     final round, or one AHEAD of the final round, is denied;
 //   * a rematch inherits the OLD match's type — a MINI match cannot
 //     rematch as FULL.
 //
@@ -191,7 +194,8 @@ async function main() {
       .commit());
 
   // ════════════════════════════════════════════════════════════════
-  // M3. extendMatchRounds — MINI's 6-10 window and GM3's one-extension cap
+  // M3. extendMatchRounds — MINI's 6-10 window and D2/A8.8's no-cap,
+  // final-round-repeat policy
   // Seeded directly at the post-deal/pre-extension state with the rules
   // disabled (the write under test is the only rules-evaluated one), the
   // same convention the Phase 3 negative suite uses for its S6 block.
@@ -216,31 +220,74 @@ async function main() {
       .update({ maxRounds: 11, extendedRounds: [5], version: 2 }));
 
   var e3 = await miniMatch({ currentRound: 6, maxRounds: 10, extendedRounds: [] });
-  await okFails("M3.3 NEGATIVE: a MINI extension recording a round above MINI's ceiling (11) is denied",
+  await okFails("M3.3 NEGATIVE: a MINI extension recording a round AHEAD of the final round (11 at maxRounds 10) is denied",
     A.firestore().collection("matches").doc(e3)
       .update({ maxRounds: 11, extendedRounds: [11], version: 2 }));
 
   // Seeded AFTER one extension is already recorded. Round 7 is INSIDE
-  // MINI's 6-10 window, so every other clause of isValidRoundExtension()
-  // passes — the only clause left to deny this is the GM3 count cap
-  // (oldRounds.size() < 1). This is the one test in the suite that pins
-  // "MINI allows exactly one extension, not two."
+  // MINI's 6-10 window and is not the final round, so the only clause
+  // this shape could ever have tripped is the old GM3 count cap — which
+  // D2 (A8.8 / Q48) removed: MINI has NO extension count cap any more,
+  // matching MatchService. This is the one test in the suite that pins
+  // "MINI's second extension is allowed, not denied."
   var e4 = await miniMatch({ currentRound: 7, maxRounds: 11, extendedRounds: [6], version: 2 });
-  await okFails("M3.4 NEGATIVE (GM3): MINI's SECOND extension is denied by the one-extension cap",
+  await okSucceeds("M3.4 POSITIVE (D2/A8.8): MINI's SECOND extension is allowed (no count cap)",
     A.firestore().collection("matches").doc(e4)
       .update({ maxRounds: 12, extendedRounds: [6, 7], version: 3 }));
 
-  // The same cap must NOT bite FULL, whose window already implies five.
-  // Seeded after four recorded extensions (14-17), still inside 14-18,
-  // with size 4 < 5: the fifth extension is allowed.
+  // FULL, in-window: seeded after four recorded extensions (14-17),
+  // still inside 14-18 — the fifth is allowed (D2/A8.8: no count cap
+  // for either type; this one never depended on the cap's removal).
   await testEnv.withSecurityRulesDisabled(async function (ctx) {
     await seed(ctx.firestore(), "matches/m-ext-full", baseMatch("FULL", {
       currentRound: 18, maxRounds: 18, extendedRounds: [14, 15, 16, 17], version: 5
     }));
   });
-  await okSucceeds("M3.5 POSITIVE: FULL's fifth extension is still allowed (the cap never binds FULL)",
+  await okSucceeds("M3.5 POSITIVE: FULL's fifth extension is allowed (in-window, no cap)",
     A.firestore().collection("matches").doc("m-ext-full")
       .update({ maxRounds: 19, extendedRounds: [14, 15, 16, 17, 18], version: 6 }));
+
+  // D2 (A8.8 / Q48) final-round repeats: a Sa'ayda in the ACTUAL final
+  // round (== maxRounds) extends past the type's base ceiling, and the
+  // NEW final round can itself repeat. MatchService admits exactly this
+  // shape (in-window OR the actual final round); the rules now do too.
+  var e6 = await miniMatch({ currentRound: 11, maxRounds: 11, extendedRounds: [6], version: 2 });
+  await okSucceeds("M3.6 POSITIVE: a MINI final-round repeat (11 at maxRounds 11) extends 11->12",
+    A.firestore().collection("matches").doc(e6)
+      .update({ maxRounds: 12, extendedRounds: [6, 11], version: 3 }));
+
+  var e7 = await miniMatch({ currentRound: 12, maxRounds: 12, extendedRounds: [6, 11], version: 3 });
+  await okSucceeds("M3.7 POSITIVE: the repeat chains — MINI round 12 at maxRounds 12 extends 12->13",
+    A.firestore().collection("matches").doc(e7)
+      .update({ maxRounds: 13, extendedRounds: [6, 11, 12], version: 4 }));
+
+  await testEnv.withSecurityRulesDisabled(async function (ctx) {
+    await seed(ctx.firestore(), "matches/m-ext-full-repeat", baseMatch("FULL", {
+      currentRound: 19, maxRounds: 19, extendedRounds: [14], version: 2
+    }));
+  });
+  await okSucceeds("M3.8 POSITIVE: a FULL final-round repeat (19 at maxRounds 19) extends 19->20",
+    A.firestore().collection("matches").doc("m-ext-full-repeat")
+      .update({ maxRounds: 20, extendedRounds: [14, 19], version: 3 }));
+
+  // Post-window but NOT the actual final round: maxRounds is already 20
+  // (five in-window extensions recorded), so round 19 qualifies under
+  // nothing — past FULL's 14-18 window AND below the final round.
+  // Both negatives reuse this one seed (the first write is denied, so
+  // the doc is unchanged for the second), the same convention the S6
+  // block of the Phase 3 negative suite uses.
+  await testEnv.withSecurityRulesDisabled(async function (ctx) {
+    await seed(ctx.firestore(), "matches/m-ext-full-postwin", baseMatch("FULL", {
+      currentRound: 19, maxRounds: 20, extendedRounds: [14, 15, 16, 17, 18], version: 6
+    }));
+  });
+  await okFails("M3.9 NEGATIVE: a post-window round BELOW the final round (19 at maxRounds 20) is denied",
+    A.firestore().collection("matches").doc("m-ext-full-postwin")
+      .update({ maxRounds: 21, extendedRounds: [14, 15, 16, 17, 18, 19], version: 7 }));
+
+  await okFails("M3.10 NEGATIVE: a round AHEAD of the final round (21 at maxRounds 20) is denied",
+    A.firestore().collection("matches").doc("m-ext-full-postwin")
+      .update({ maxRounds: 21, extendedRounds: [14, 15, 16, 17, 18, 21], version: 7 }));
 
   // ════════════════════════════════════════════════════════════════
   // M4. createRematchMatch — the type is INHERITED, never chosen

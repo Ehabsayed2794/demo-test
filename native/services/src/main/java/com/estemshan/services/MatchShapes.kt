@@ -1,6 +1,7 @@
 package com.estemshan.services
 
 import com.estemshan.engine.GameType
+import com.estemshan.engine.MAX_DASH_CALLS
 import com.estemshan.engine.MatchMode
 import com.estemshan.engine.ScoringMode
 import com.estemshan.engine.Suit
@@ -101,6 +102,9 @@ private fun buildMatchFields(
   // S66 (E7): the ceiling is type-derived (FULL 18, MINI 10); the type and
   // mode ride the doc so every reader (and S67's rules) sees them.
   put("maxRounds", gameType.baseRounds)
+  // O-19 (Option B): the current round's multiplier lives on the document
+  // from creation. Round 1 always scores at x1.
+  put("currentMultiplier", 1)
   put("gameType", gameType.name)
   put("scoringMode", scoringMode.name)
   // S43 (E6b): the authority key rides every match doc (rematches inherit
@@ -260,6 +264,183 @@ val VALID_EXTENSION_REASONS: List<String> = listOf("SUPER_CALL", "SAAYDA")
 
 /** Round-completion threshold: 13 tricks * 4 seats. */
 const val ROUND_CARD_TOTAL = 52
+
+// ── O-19 (Option B): the persisted round multiplier ────────────────────
+
+/** The stored multiplier bounds — byte-identical to firestore.rules'
+ *  isValidStoredMultiplier() and to the engine's escalation cap. */
+const val MIN_ROUND_MULTIPLIER = 1
+const val MAX_ROUND_MULTIPLIER = 8
+
+fun isValidRoundMultiplier(value: Int): Boolean =
+  value in MIN_ROUND_MULTIPLIER..MAX_ROUND_MULTIPLIER
+
+/**
+ * The owner-fixed General-Pass ladder (direction record §1.1): Classic
+ * carries no multiplier; Normal opens at ×2 and adds 2 per pass, capped at
+ * ×8. Mirrors firestore.rules' expectedMultiplierAfterGeneralPass().
+ */
+fun generalPassMultiplier(currentMultiplier: Int, scoringMode: ScoringMode): Int =
+  if (scoringMode == ScoringMode.CLASSIC) 1
+  else when {
+    currentMultiplier == 1 -> 2
+    currentMultiplier >= 6 -> 8
+    else -> currentMultiplier + 2
+  }
+
+/**
+ * Why a General-Pass window proof refused the round's log. Every refusal is
+ * NAMED — never a silent clamp — so the service, the ViewModel's stall
+ * report and the tests can say which contract broke.
+ */
+enum class GeneralPassWindowDefect {
+  /** F1 (owner ruling 2026-10-24): three or more DECLARED Dash Calls in the
+   *  closing round's log. The write boundary makes such a window
+   *  unpersistable, so a document claiming it is corrupt, not ambiguous. */
+  TOO_MANY_DASH_CALLS,
+
+  /** Every other malformed shape: wrong entry count, wrong action order,
+   *  a seat deciding/passing twice, a pass from a declared dasher, an
+   *  all-dashing table (that ends in SANS, not a General Pass), foreign
+   *  round tags, or cards committed alongside the window. */
+  NOT_A_CLOSED_ALL_PASS_WINDOW,
+}
+
+/**
+ * F1 (owner ruling 2026-10-24, Option A — DECIDED): a mixed Dash-Call +
+ * all-pass auction IS a valid General Pass. The provable window for an
+ * N-seat table is N Dash decisions (one per seat, distinct, all tagged
+ * [round]) of which exactly k carry declaredDashCall = true with
+ * 0 <= k <= min(MAX_DASH_CALLS, N-1), followed by exactly N-k auction
+ * passes from distinct seats — none of them a declared dasher. Total
+ * 2N - k entries (four seats: 8 / 7 / 6 at k = 0 / 1 / 2) and ZERO cards
+ * committed. k < N because an all-dashing table ends in SANS, never a
+ * General Pass. A window claiming k > MAX_DASH_CALLS declares the named
+ * [GeneralPassWindowDefect.TOO_MANY_DASH_CALLS] defect; every other
+ * broken shape reports NOT_A_CLOSED_ALL_PASS_WINDOW.
+ */
+fun generalPassWindowDefect(match: MatchDoc, round: Int): GeneralPassWindowDefect? {
+  // A pass round commits no cards — the same discriminator the rules use
+  // to select their pass branch. Without this a canonical-looking window
+  // riding alongside played cards could be mistaken for a pass.
+  if (match.roundCardCount(round) != 0) return GeneralPassWindowDefect.NOT_A_CLOSED_ALL_PASS_WINDOW
+  val seats = match.seats.keys
+  val n = seats.size
+  if (n < 1) return GeneralPassWindowDefect.NOT_A_CLOSED_ALL_PASS_WINDOW
+  val log = match.roundBids(round)
+  // The named defect FIRST, whatever else the window gets wrong: three or
+  // more declared Dashes is a contract violation the owner pinned, not an
+  // ambiguous shape to fold into the generic refusal.
+  val declaredDashers = log.filter {
+    it.actionType == BiddingLogEntry.ACTION_DASH_CALL && it.declaredDashCall == true
+  }
+  if (declaredDashers.size > MAX_DASH_CALLS) return GeneralPassWindowDefect.TOO_MANY_DASH_CALLS
+  val k = declaredDashers.size
+  if (k > minOf(MAX_DASH_CALLS, n - 1)) return GeneralPassWindowDefect.NOT_A_CLOSED_ALL_PASS_WINDOW
+  if (log.size != n * 2 - k) return GeneralPassWindowDefect.NOT_A_CLOSED_ALL_PASS_WINDOW
+  val dashBlock = log.subList(0, n)
+  val passBlock = log.subList(n, log.size)
+  val dashOk = dashBlock.all {
+    it.actionType == BiddingLogEntry.ACTION_DASH_CALL &&
+      it.declaredDashCall != null && it.seatId in seats && it.round == round
+  }
+  val passOk = passBlock.all {
+    it.actionType == BiddingLogEntry.ACTION_AUCTION_BID &&
+      it.isPass == true && it.seatId in seats && it.round == round
+  }
+  val dasherSeats = dashBlock.filter { it.declaredDashCall == true }.map { it.seatId }.toSet()
+  return if (dashOk && passOk &&
+    dashBlock.map { it.seatId }.toSet().size == n &&
+    passBlock.map { it.seatId }.toSet().size == n - k &&
+    passBlock.none { it.seatId in dasherSeats }
+  ) null else GeneralPassWindowDefect.NOT_A_CLOSED_ALL_PASS_WINDOW
+}
+
+/**
+ * S1's actual General-Pass window, proven structurally — the exact shape
+ * firestore.rules' isAllPassBiddingLog() accepts (see
+ * [generalPassWindowDefect] for the mixed Dash-Call form). Pure Boolean
+ * wrapper for callers that only need the verdict.
+ */
+fun isCanonicalGeneralPassWindow(match: MatchDoc, round: Int): Boolean =
+  generalPassWindowDefect(match, round) == null
+
+/**
+ * F1: the count of EFFECTIVE (declared) Dash Calls already persisted for
+ * [round] — the same number the engine's emitDashCall() derives from its
+ * own bids map, read from the authoritative log at the write boundary.
+ */
+fun effectiveDashCallCount(log: List<BiddingLogEntry>, round: Int): Int =
+  log.count {
+    it.round == round &&
+      it.actionType == BiddingLogEntry.ACTION_DASH_CALL &&
+      it.declaredDashCall == true
+  }
+
+/**
+ * F1 (owner ruling 2026-10-24, strict two-Dash maximum): the write-boundary
+ * normalisation. The engine's reducer converts an over-cap Dash ATTEMPT to
+ * a PASS (canSubmit never rejects it), so the persisted entry must record
+ * what the engine actually applied: a declaredDashCall = true attempt that
+ * arrives when [existingEffectiveDashes] effective Dashes are already on
+ * the log is persisted as a DECLINE, and that seat stays in the auction.
+ * Applied ONCE here (and at the test fake's own writer) — never in clients.
+ */
+fun normaliseDashCallEntry(
+  entry: BiddingLogEntry,
+  existingEffectiveDashes: Int,
+): BiddingLogEntry =
+  if (entry.actionType == BiddingLogEntry.ACTION_DASH_CALL &&
+    entry.declaredDashCall == true &&
+    existingEffectiveDashes >= MAX_DASH_CALLS
+  ) entry.copy(declaredDashCall = false)
+  else entry
+
+/**
+ * The pure decision behind [MatchService.advanceAfterGeneralPass] — every
+ * idempotency branch and both terminal shapes, testable without Firestore.
+ * The service transaction applies exactly one of these to the fresh
+ * document it read.
+ */
+sealed interface GeneralPassAdvance {
+  data class Advance(val nextRound: Int, val nextMultiplier: Int) : GeneralPassAdvance
+  data class Complete(val finalScores: Map<String, Int>, val winnerIds: List<String>) : GeneralPassAdvance
+  data object AlreadyComplete : GeneralPassAdvance
+  data class AlreadyAdvanced(val currentRound: Int) : GeneralPassAdvance
+  data object UnsupportedShape : GeneralPassAdvance
+  /** F1: the window claims more declared Dash Calls than MAX_DASH_CALLS —
+   *  refused with Reasons.TOO_MANY_DASH_CALLS, never clamped. */
+  data object TooManyDashCalls : GeneralPassAdvance
+  data object InvalidResult : GeneralPassAdvance
+}
+
+fun decideGeneralPassAdvance(
+  match: MatchDoc,
+  closedRound: Int,
+  finalScores: Map<String, Int>,
+  winnerIds: List<String>,
+): GeneralPassAdvance {
+  if (match.isComplete) return GeneralPassAdvance.AlreadyComplete
+  if (match.currentRound != closedRound) {
+    return GeneralPassAdvance.AlreadyAdvanced(match.currentRound)
+  }
+  when (generalPassWindowDefect(match, closedRound)) {
+    GeneralPassWindowDefect.TOO_MANY_DASH_CALLS -> return GeneralPassAdvance.TooManyDashCalls
+    GeneralPassWindowDefect.NOT_A_CLOSED_ALL_PASS_WINDOW -> return GeneralPassAdvance.UnsupportedShape
+    null -> Unit
+  }
+  if (closedRound + 1 > match.maxRounds) {
+    return if (winnerIdsMatchFinalScores(finalScores, winnerIds, match.seats)) {
+      GeneralPassAdvance.Complete(finalScores.toMap(), winnerIds.toList())
+    } else {
+      GeneralPassAdvance.InvalidResult
+    }
+  }
+  return GeneralPassAdvance.Advance(
+    nextRound = closedRound + 1,
+    nextMultiplier = generalPassMultiplier(match.currentMultiplier, match.scoringMode),
+  )
+}
 
 /** Reads a server-round-tripped numeric field, or null. */
 internal fun numericField(value: Any?): Int? = roundOf(value)

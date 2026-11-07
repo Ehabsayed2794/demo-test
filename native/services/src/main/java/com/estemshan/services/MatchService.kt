@@ -3,12 +3,16 @@ package com.estemshan.services
 import com.estemshan.engine.BiddingIntent
 import com.estemshan.engine.Card
 import com.estemshan.engine.Deck
+import com.estemshan.engine.ExtensionReason
 import com.estemshan.engine.GameType
 import com.estemshan.engine.Play
+import com.estemshan.engine.ScoringMode
 import com.estemshan.engine.Suit
 import com.estemshan.engine.TablePhase
 import com.estemshan.engine.canSubmit
 import com.estemshan.engine.compareForSort
+import com.estemshan.engine.LeaveMatch
+import com.estemshan.engine.KozCharge
 import com.estemshan.engine.previewPlay
 import com.estemshan.engine.trickWinner
 import com.estemshan.services.model.BiddingActionInput
@@ -18,6 +22,7 @@ import com.estemshan.services.model.DealResult
 import com.estemshan.services.model.EndMatchResult
 import com.estemshan.services.model.AdvanceResult
 import com.estemshan.services.model.ExtendResult
+import com.estemshan.services.model.FAST_SUPER_CALL_MIN_TRICKS
 import com.estemshan.services.model.GameState
 import com.estemshan.services.model.HandDoc
 import com.estemshan.services.model.MatchDoc
@@ -41,6 +46,7 @@ import com.estemshan.services.model.VoteCreateResult
 import com.estemshan.services.model.VoteDoc
 import com.estemshan.services.model.VoteSubmitResult
 import com.estemshan.services.model.VoteTimeoutResult
+import com.estemshan.services.model.LeaveResult
 import com.estemshan.services.model.Reasons.ALREADY_ADVANCED
 import com.estemshan.services.model.Reasons.ALREADY_BID
 import com.estemshan.services.model.Reasons.ALREADY_COMPLETE
@@ -48,12 +54,14 @@ import com.estemshan.services.model.Reasons.ALREADY_DEALT
 import com.estemshan.services.model.Reasons.ALREADY_EXTENDED
 import com.estemshan.services.model.Reasons.ALREADY_RESOLVED
 import com.estemshan.services.model.Reasons.ALREADY_VOTED
+import com.estemshan.services.model.Reasons.ALREADY_LEFT
 import com.estemshan.services.model.Reasons.BIDDING_CLOSED
 import com.estemshan.services.model.Reasons.DEADLINE_UNKNOWN
 import com.estemshan.services.model.Reasons.ENGINE_UNAVAILABLE
 import com.estemshan.services.model.Reasons.ILLEGAL_BIDDING_ACTION
 import com.estemshan.services.model.Reasons.ILLEGAL_CARD
 import com.estemshan.services.model.Reasons.INVALID_ARGUMENT
+import com.estemshan.services.model.Reasons.INVALID_BIDDING_ACTION_VALUE
 import com.estemshan.services.model.Reasons.INVALID_BID_VALUE
 import com.estemshan.services.model.Reasons.INVALID_CARD_VALUE
 import com.estemshan.services.model.Reasons.INVALID_RESULT
@@ -64,13 +72,17 @@ import com.estemshan.services.model.Reasons.NOT_YET_EXPIRED
 import com.estemshan.services.model.Reasons.NOT_YOUR_TURN
 import com.estemshan.services.model.Reasons.PERMISSION_DENIED
 import com.estemshan.services.model.Reasons.REMOVED_FROM_MATCH
+import com.estemshan.services.model.Reasons.LEFT_MATCH
 import com.estemshan.services.model.Reasons.ROUND_NOT_COMPLETE
+import com.estemshan.services.model.Reasons.STALE_CYCLE
 import com.estemshan.services.model.Reasons.STALE_GAME_STATE
 import com.estemshan.services.model.Reasons.TRICK_WINNER_UNAVAILABLE
 import com.estemshan.services.model.Reasons.UNAUTHENTICATED
 import com.estemshan.services.model.Reasons.UNKNOWN_NEXT_SEAT
 import com.estemshan.services.model.Reasons.UNKNOWN_OPENING_SEAT
 import com.estemshan.services.model.Reasons.UNKNOWN_SEAT
+import com.estemshan.services.model.Reasons.UNSUPPORTED_GENERAL_PASS_SHAPE
+import com.estemshan.services.model.Reasons.TOO_MANY_DASH_CALLS
 import com.estemshan.services.model.Reasons.VOTE_CLOSED
 import com.estemshan.services.model.Reasons.VOTE_EXPIRED
 import com.estemshan.services.model.Reasons.VOTE_LOCKED
@@ -124,8 +136,10 @@ class MatchService(
   /**
    * startMatch(roomId) — creates matches/{id} and flips rooms/{roomId} to
    * in_game in ONE transaction. Idempotent: a room that already has a
-   * matchId returns it without a second write. Requires all players ready;
-   * firestore.rules' isValidMatchIdChange() re-verifies that independently.
+   * matchId returns it without a second write. Requires a FULL table of
+   * ready players ([RoomDoc.canStart]); firestore.rules'
+   * isValidMatchIdChange() re-verifies the ready-players half of that
+   * independently.
    */
   override suspend fun startMatch(roomId: String): String {
     require(roomId.isNotEmpty()) { "startMatch: roomId is required." }
@@ -143,9 +157,9 @@ class MatchService(
           StartMatchResult(matchId = existing, created = false, players = room.players),
         )
       }
-      if (!room.allReady) {
+      if (!room.canStart) {
         return@runTx TxOutcome.Err(
-          ServiceException(INVALID_ARGUMENT, "Not all players are ready."),
+          ServiceException(INVALID_ARGUMENT, "A table needs four ready players to start."),
         )
       }
       tx.set(newMatchRef, buildInitialMatchFields(
@@ -175,6 +189,66 @@ class MatchService(
     return result.matchId
   }
 
+  // ── S72. leaveMatch: explicit leave, configured bot takes the seat ────
+
+  /**
+   * leaveMatch(matchId) — the acting seat's uid is recorded as departed exactly
+   * once; the seat is immediately taken by the match's configured bot tier +
+   * personality so the match continues to completion; the RD31 Koz charge is
+   * computed from [LeaveMatch.decideLeave] and returned. Idempotent: a second
+   * leave for the same uid is ALREADY_LEFT, no write. After leaving, the uid's
+   * client can no longer write match state (sealed by firestore.rules).
+   */
+  override suspend fun leaveMatch(matchId: String): LeaveResult {
+    require(matchId.isNotEmpty()) { "leaveMatch: matchId is required." }
+    val callingUid = auth.currentUid()
+      ?: throw ServiceException(UNAUTHENTICATED, "leaveMatch: no signed-in user.")
+    val matchRef = matches.document(matchId)
+    return runTx(db) { tx ->
+      val match = readMatch(tx, matchRef) ?: return@runTx noMatchTx("leaveMatch")
+      if (!match.isPlayer(callingUid)) {
+        return@runTx TxOutcome.Err(ServiceException(PERMISSION_DENIED,
+          "leaveMatch: you are not a player in this match."))
+      }
+      if (match.isRemoved(callingUid)) {
+        return@runTx TxOutcome.Err(ServiceException(REMOVED_FROM_MATCH,
+          "leaveMatch: you were removed from this match and cannot leave."))
+      }
+      if (match.isLeft(callingUid)) {
+        return@runTx TxOutcome.Ok(
+          LeaveResult(
+            matchId = matchId,
+            seatId = match.uidToSeat(callingUid) ?: "",
+            uid = callingUid,
+            kozCharge = KozCharge.None,
+            version = match.version,
+            reason = ALREADY_LEFT,
+          ),
+        )
+      }
+      val seatId = match.uidToSeat(callingUid)
+        ?: return@runTx TxOutcome.Err(ServiceException(UNKNOWN_SEAT,
+          "leaveMatch: you do not own a seat in this match."))
+      val kozCharge = LeaveMatch.decideLeave(match.mode, com.estemshan.engine.LeaveReason.EXPLICIT_LEAVE)
+      val nextLeftUids = match.leftUids + callingUid
+      val nextBotSeats = match.botSeats + seatId
+      val nextVersion = match.version + 1
+      tx.update(matchRef, mapOf(
+        "leftUids" to nextLeftUids,
+        "botSeats" to nextBotSeats,
+        "version" to nextVersion,
+        "updatedAt" to FieldValue.serverTimestamp(),
+      ))
+      TxOutcome.Ok(LeaveResult(
+        matchId = matchId,
+        seatId = seatId,
+        uid = callingUid,
+        kozCharge = kozCharge,
+        version = nextVersion,
+      ))
+    }
+  }
+
   /** Read-only fetch; null (never an error) when the match is gone. */
   override suspend fun loadMatch(matchId: String): MatchDoc? {
     require(matchId.isNotEmpty()) { "loadMatch: matchId is required." }
@@ -198,7 +272,7 @@ class MatchService(
     return if (hand.round == round) hand else null
   }
 
-  // ── 1. submitBid: Final Estimate — one value per seat, ever ─────────
+  // ── 1. submitBid: Final Estimate — one value per seat, per cycle ─────
 
   /**
    * submitBid(matchId, seatId, bid) — Final Estimate only. Dash/Auction/
@@ -207,8 +281,18 @@ class MatchService(
    * stays as-is. The engine is NOT consulted here — a final estimate's
    * legality is the bidding log's business, and bids/ is the one-value
    * channel the rules validator locks to a single seat's slot.
+   *
+   * T-09: "one value per seat" is scoped to the ACTIVE declaration cycle.
+   * A fast Super Call CONFIRM wipes bids/ (keeping only the caller's own
+   * number) and bumps biddingCycle in the same transaction, so a seat that
+   * declared before the call can — and must — declare again afterwards.
    */
-  override suspend fun submitBid(matchId: String, seatId: String, bid: Int): SubmitBidResult {
+  override suspend fun submitBid(
+    matchId: String,
+    seatId: String,
+    bid: Int,
+    expectedCycle: Int?,
+  ): SubmitBidResult {
     require(matchId.isNotEmpty()) { "submitBid: matchId is required." }
     require(seatId.isNotEmpty()) { "submitBid: seatId is required." }
     if (!isValidGenericBidValue(bid)) {
@@ -230,6 +314,24 @@ class MatchService(
       if (match.isRemoved(auth.currentUid() ?: "")) {
         return@runTx TxOutcome.Err(ServiceException(REMOVED_FROM_MATCH,
           "submitBid: you were removed from this match and cannot rejoin."))
+      }
+      // T-09: a fast Super Call CONFIRM starts the next declaration cycle by
+      // wiping bids/ and bumping biddingCycle in its own transaction. A bid
+      // validated against the previous cycle must never land in this one,
+      // where its seat's slot is legitimately empty again.
+      if (expectedCycle == null && match.biddingCycle > 0) {
+        // A legacy/late client that names no cycle cannot prove which
+        // declaration cycle it validated against. Once a Super Call has
+        // committed, the seat's slot is legitimately empty again, so
+        // accepting null would let the write land in a cycle it never saw.
+        return@runTx TxOutcome.Err(ServiceException(STALE_CYCLE,
+          "submitBid: the round is in declaration cycle ${match.biddingCycle}; a declaration " +
+            "must name the cycle it was validated against (expectedCycle is required after a Super Call)."))
+      }
+      if (expectedCycle != null && match.biddingCycle != expectedCycle) {
+        return@runTx TxOutcome.Err(ServiceException(STALE_CYCLE,
+          "submitBid: the declaration cycle moved (expected $expectedCycle, found " +
+            "${match.biddingCycle}) — not written; re-fetch and re-declare."))
       }
       if (match.biddingOpen != true) {
         return@runTx TxOutcome.Err(ServiceException(BIDDING_CLOSED,
@@ -253,6 +355,7 @@ class MatchService(
       TxOutcome.Ok(SubmitBidResult(
         matchId = matchId, seatId = seatId, bid = bid, version = nextVersion,
         biddingOpen = !allSubmitted, allSubmitted = allSubmitted,
+        biddingCycle = match.biddingCycle,
       ))
     }
   }
@@ -322,8 +425,117 @@ class MatchService(
           "submitBiddingAction: the match document changed since this action was validated (expected version $expectedVersion, found ${fresh.version}) — not written; re-fetch and retry."))
       }
       val freshSeatId = resolveSeat(fresh)
-      val newEntry = action.toLogEntry(freshSeatId, fresh.currentRound)
+      // F1 (owner ruling 2026-10-24): the ONE normalising write boundary.
+      // The engine's reducer converts an over-cap Dash ATTEMPT to a PASS
+      // (canSubmit never rejects it), so the persisted entry records what
+      // the engine applied: with MAX_DASH_CALLS effective Dashes already
+      // on this round's log, a further declared attempt persists as a
+      // DECLINE and the seat stays in the auction pool.
+      val newEntry = normaliseDashCallEntry(
+        action.toLogEntry(freshSeatId, fresh.currentRound),
+        effectiveDashCallCount(fresh.biddingLog, fresh.currentRound),
+      )
       val nextVersion = expectedVersion + 1
+      // T-09: a fast-round CONFIRM is the Super Call's trump selection, not
+      // an ordinary confirmation (fast rounds never run a Confirmation
+      // Phase). The engine answers it by wiping every seat except the caller
+      // and restarting the declarations CCW, so the document MUST commit the
+      // same wipe in the SAME transaction — an append-only log write would
+      // leave the doc's one-value-per-seat bids/ full and make every
+      // re-declaration permanently unbeatable as ALREADY_BID.
+      val fastConfirm = action.actionType == BiddingLogEntry.ACTION_CONFIRM_CALL &&
+        fresh.gameType.isFastRound(fresh.currentRound)
+
+      if (action.expectedCycle == null && fresh.biddingCycle > 0) {
+        // Same rule as submitBid: after a Super Call, a write that names no
+        // cycle cannot be tied to the cycle its engine verdict came from.
+        return@runTx TxOutcome.Err(ServiceException(STALE_CYCLE,
+          "submitBiddingAction: the round is in declaration cycle ${fresh.biddingCycle}; the " +
+            "action must name the cycle it was validated against (expectedCycle is required after a Super Call)."))
+      }
+      if (action.expectedCycle != null && action.expectedCycle != fresh.biddingCycle) {
+        // A lost response may make the caller retry the confirm that already
+        // committed: that exact cycle boundary + the cycle's own (last)
+        // confirmation entry is this request's own effect, so report it as
+        // applied instead of duplicating it. Later re-declarations in the
+        // active cycle do not change the caller's own locked slot.
+        val alreadyApplied = fastConfirm &&
+          fresh.biddingCycle == action.expectedCycle + 1 &&
+          fresh.bids[freshSeatId] == action.tricks &&
+          fresh.roundBids(fresh.currentRound)
+            .filter { it.actionType == BiddingLogEntry.ACTION_CONFIRM_CALL }
+            .lastOrNull()?.let { last ->
+              last.seatId == freshSeatId && last.tricks == action.tricks &&
+                last.suit == action.suit
+            } == true
+        if (alreadyApplied) {
+          return@runTx TxOutcome.Ok(SubmitBiddingActionResult(
+            matchId = matchId, seatId = freshSeatId, actionType = action.actionType,
+            version = fresh.version, logLength = fresh.biddingLog.size,
+            biddingCycle = fresh.biddingCycle,
+          ))
+        }
+        return@runTx TxOutcome.Err(ServiceException(STALE_CYCLE,
+          "submitBiddingAction: the declaration cycle moved (expected ${action.expectedCycle}, " +
+            "found ${fresh.biddingCycle}) — not written; re-fetch and retry."))
+      }
+
+      if (fastConfirm) {
+        val tricks = action.tricks ?: return@runTx TxOutcome.Err(ServiceException(
+          INVALID_BIDDING_ACTION_VALUE,
+          "submitBiddingAction: a Super Call CONFIRM needs a trick count."))
+        val confirms = fresh.roundBids(fresh.currentRound)
+          .filter { it.actionType == BiddingLogEntry.ACTION_CONFIRM_CALL }
+        if (confirms.size != fresh.biddingCycle) {
+          return@runTx TxOutcome.Err(ServiceException(ILLEGAL_BIDDING_ACTION,
+            "submitBiddingAction: round ${fresh.currentRound} holds ${confirms.size} " +
+              "confirmation(s) but its active cycle is ${fresh.biddingCycle} — the document " +
+              "is not a replayable Super Call history; refusing to extend it."))
+        }
+        val declaration = fresh.bids[freshSeatId]
+          ?: return@runTx TxOutcome.Err(ServiceException(ILLEGAL_BIDDING_ACTION,
+            "submitBiddingAction: seat '$freshSeatId' has no declaration in the active " +
+              "declaration cycle — only a seat that declared can confirm its Super Call."))
+        val allDeclared = fresh.seats.isNotEmpty() &&
+          fresh.seats.keys.all { fresh.bids[it] != null }
+        if (!allDeclared) {
+          return@runTx TxOutcome.Err(ServiceException(ILLEGAL_BIDDING_ACTION,
+            "submitBiddingAction: the active declaration cycle is not complete — " +
+              "a Super Call can only be confirmed after every seat declared."))
+        }
+        if (tricks < FAST_SUPER_CALL_MIN_TRICKS || tricks > MAX_BID_VALUE) {
+          return@runTx TxOutcome.Err(ServiceException(ILLEGAL_BIDDING_ACTION,
+            "submitBiddingAction: a Super Call confirms $FAST_SUPER_CALL_MIN_TRICKS.." +
+              "$MAX_BID_VALUE tricks (the absolute maximum holds in every round)."))
+        }
+        if (tricks < declaration) {
+          return@runTx TxOutcome.Err(ServiceException(ILLEGAL_BIDDING_ACTION,
+            "submitBiddingAction: the confirmed number $tricks is below seat " +
+              "'$freshSeatId' own declaration $declaration."))
+        }
+        val previousTricks = confirms.lastOrNull()?.tricks
+        if (previousTricks != null && tricks <= previousTricks) {
+          return@runTx TxOutcome.Err(ServiceException(ILLEGAL_BIDDING_ACTION,
+            "submitBiddingAction: a further Super Call must exceed the previous cycle's " +
+              "confirmed number $previousTricks (got $tricks)."))
+        }
+        val bids = mapOf(freshSeatId to tricks)
+        tx.update(matchRef, mapOf(
+          "biddingLog" to FieldValue.arrayUnion(newEntry.toFields()),
+          "bids" to bids,
+          "biddingOpen" to true,
+          "lastBidSeat" to null,
+          "biddingCycle" to fresh.biddingCycle + 1,
+          "version" to nextVersion,
+          "updatedAt" to FieldValue.serverTimestamp(),
+        ))
+        return@runTx TxOutcome.Ok(SubmitBiddingActionResult(
+          matchId = matchId, seatId = freshSeatId, actionType = action.actionType,
+          version = nextVersion, logLength = fresh.biddingLog.size + 1,
+          biddingCycle = fresh.biddingCycle + 1,
+        ))
+      }
+
       tx.update(matchRef, mapOf(
         "biddingLog" to FieldValue.arrayUnion(newEntry.toFields()),
         "version" to nextVersion,
@@ -332,6 +544,7 @@ class MatchService(
       TxOutcome.Ok(SubmitBiddingActionResult(
         matchId = matchId, seatId = freshSeatId, actionType = action.actionType,
         version = nextVersion, logLength = fresh.biddingLog.size + 1,
+        biddingCycle = fresh.biddingCycle,
       ))
     }
   }
@@ -513,15 +726,33 @@ class MatchService(
   // ── 4. advanceToNextRound: archive + window reset + dealer rotation ─
 
   /**
-   * advanceToNextRound(matchId, completedRound) — archives this round's
-   * log window to roundArchive/{round}, then resets the parent windows to
-   * [] and rotates the dealer, all atomically. Idempotent: a race loser
+   * advanceToNextRound(matchId, completedRound, nextMultiplier) — archives
+   * this round's log window to roundArchive/{round}, persists the
+   * multiplier the NEXT round is scored at, resets the parent windows to []
+   * and rotates the dealer, all atomically. Idempotent: a race loser
    * re-reads committed state and takes ALREADY_ADVANCED without writing.
    * A match already complete is a no-op, never a corruption.
+   *
+   * O-19 (Option B): [nextMultiplier] is the engine's own
+   * [com.estemshan.engine.RoundScoreResult.nextMultiplier] for the scored
+   * round. It is BOUNDED here and pinned to 1 under Classic — the same
+   * trust boundary firestore.rules' isValidAdvancedMultiplier() applies —
+   * because a scored round's Sa'ayda ladder cannot be re-derived without
+   * replaying its 52 cards. The General-Pass path is separate and proves
+   * its ladder from the closed all-pass auction.
    */
-  override suspend fun advanceToNextRound(matchId: String, completedRound: Int): AdvanceResult {
+  override suspend fun advanceToNextRound(
+    matchId: String,
+    completedRound: Int,
+    nextMultiplier: Int,
+  ): AdvanceResult {
     require(matchId.isNotEmpty()) { "advanceToNextRound: matchId is required." }
     requireCompletedRound("advanceToNextRound", completedRound)
+    if (!isValidRoundMultiplier(nextMultiplier)) {
+      throw ServiceException(INVALID_ARGUMENT,
+        "advanceToNextRound: nextMultiplier must be an integer between " +
+          "$MIN_ROUND_MULTIPLIER and $MAX_ROUND_MULTIPLIER.")
+    }
     val callingUid = auth.currentUid()
       ?: throw ServiceException(UNAUTHENTICATED, "advanceToNextRound: no signed-in user.")
     val matchRef = matches.document(matchId)
@@ -540,6 +771,10 @@ class MatchService(
       }
       if (match.currentRound != completedRound) {
         return@runTx TxOutcome.Ok(AdvanceResult.alreadyAdvanced(matchId, match.currentRound))
+      }
+      if (match.scoringMode == ScoringMode.CLASSIC && nextMultiplier != 1) {
+        return@runTx TxOutcome.Err(ServiceException(INVALID_ARGUMENT,
+          "advanceToNextRound: a Classic match never carries a multiplier above 1."))
       }
       val roundCardCount = match.roundCardCount(completedRound)
       if (roundCardCount != ROUND_CARD_TOTAL) {
@@ -564,11 +799,13 @@ class MatchService(
       val nextVersion = match.version + 1
       tx.update(matchRef, mapOf(
         "currentRound" to completedRound + 1,
+        "currentMultiplier" to nextMultiplier,
         "dealer" to nextDealerUid(match.seats, match.dealer),
         "version" to nextVersion,
         "biddingOpen" to true,
         "bids" to match.seats.keys.associateWith { null },
         "lastBidSeat" to null,
+        "biddingCycle" to 0,
         "turn" to null,
         "cardPhase" to null,
         "cardLog" to emptyList<CardLogEntry>(),
@@ -579,7 +816,131 @@ class MatchService(
         advanced = true, reason = null, matchId = matchId,
         previousRound = completedRound, currentRound = completedRound + 1,
         archivedRound = completedRound, version = nextVersion,
+        currentMultiplier = nextMultiplier,
       ))
+    }
+  }
+
+  /**
+   * advanceAfterGeneralPass(matchId, closedRound, finalScores, winnerIds) —
+   * the A8.7/Q51 transition for a round whose complete auction was all
+   * passes. It is a SEPARATE transaction from [advanceToNextRound] on
+   * purpose: the ordinary path's 52-card gate is never relaxed, and this
+   * path's proof is the closed window itself (N declining Dash decisions +
+   * N auction passes, one per seat), never a caller-supplied multiplier.
+   *
+   * The next multiplier is the owner-fixed ladder derived from the
+   * document: Classic 1; Normal 1→2, then +2 capped at 8. A window that is
+   * not exactly that canonical shape is refused with
+   * UNSUPPORTED_GENERAL_PASS_SHAPE (a declared Dash call leaves fewer than
+   * N passes, so the ladder cannot be proven from the log).
+   *
+   * When [closedRound] is the planned final round, the pass CONSUMES it:
+   * the round scores nothing for anyone, so [finalScores]/[winnerIds] are
+   * the running totals the caller has accumulated, and the match completes
+   * through the same terminal shape [endMatch] writes — never leaving
+   * `currentRound = maxRounds + 1` without a result.
+   */
+  override suspend fun advanceAfterGeneralPass(
+    matchId: String,
+    closedRound: Int,
+    finalScores: Map<String, Int>,
+    winnerIds: List<String>,
+  ): AdvanceResult {
+    require(matchId.isNotEmpty()) { "advanceAfterGeneralPass: matchId is required." }
+    requireCompletedRound("advanceAfterGeneralPass", closedRound)
+    val callingUid = auth.currentUid()
+      ?: throw ServiceException(UNAUTHENTICATED, "advanceAfterGeneralPass: no signed-in user.")
+    val matchRef = matches.document(matchId)
+    return runTx(db) { tx ->
+      val match = readMatch(tx, matchRef) ?: return@runTx noMatchTx("advanceAfterGeneralPass")
+      if (!match.isPlayer(callingUid)) {
+        return@runTx TxOutcome.Err(ServiceException(PERMISSION_DENIED,
+          "advanceAfterGeneralPass: you are not a player in this match."))
+      }
+      if (match.isRemoved(callingUid)) {
+        return@runTx TxOutcome.Err(ServiceException(REMOVED_FROM_MATCH,
+          "advanceAfterGeneralPass: you were removed from this match and cannot rejoin."))
+      }
+      val decision = decideGeneralPassAdvance(match, closedRound, finalScores, winnerIds)
+      if (decision is GeneralPassAdvance.AlreadyComplete) {
+        return@runTx TxOutcome.Ok(AdvanceResult.alreadyComplete(matchId, match.currentRound))
+      }
+      if (decision is GeneralPassAdvance.AlreadyAdvanced) {
+        return@runTx TxOutcome.Ok(AdvanceResult.alreadyAdvanced(matchId, match.currentRound))
+      }
+      if (decision is GeneralPassAdvance.UnsupportedShape) {
+        return@runTx TxOutcome.Err(ServiceException(UNSUPPORTED_GENERAL_PASS_SHAPE,
+          "advanceAfterGeneralPass: round $closedRound's window is not a complete all-pass " +
+            "auction — refusing to advance on a guess."))
+      }
+      if (decision is GeneralPassAdvance.TooManyDashCalls) {
+        return@runTx TxOutcome.Err(ServiceException(TOO_MANY_DASH_CALLS,
+          "advanceAfterGeneralPass: round $closedRound's log claims more than " +
+            "MAX_DASH_CALLS declared Dash Calls — refusing to advance on a clamped guess."))
+      }
+      if (decision is GeneralPassAdvance.InvalidResult) {
+        return@runTx TxOutcome.Err(ServiceException(INVALID_RESULT,
+          "advanceAfterGeneralPass: winnerIds does not match the highest score(s) in finalScores."))
+      }
+      tx.set(
+        matchRef.collection("roundArchive").document(closedRound.toString()),
+        RoundArchiveDoc(
+          round = closedRound,
+          matchId = matchId,
+          cardLog = emptyList(),
+          biddingLog = match.roundBids(closedRound),
+          estimates = match.bids.mapNotNull { (seat, bid) ->
+            bid?.let { seat to it }
+          }.toMap(),
+          passRound = true,
+        ).toFields(),
+      )
+      val nextVersion = match.version + 1
+      when (decision) {
+        is GeneralPassAdvance.Complete -> {
+          tx.update(matchRef, mapOf(
+            "status" to MatchDoc.STATUS_COMPLETE,
+            "winnerIds" to decision.winnerIds,
+            "finalScores" to decision.finalScores,
+            "completedRound" to closedRound,
+            "version" to nextVersion,
+            "cardLog" to emptyList<CardLogEntry>(),
+            "biddingLog" to emptyList<BiddingLogEntry>(),
+            "updatedAt" to FieldValue.serverTimestamp(),
+          ))
+          TxOutcome.Ok(AdvanceResult(
+            advanced = true, reason = null, matchId = matchId,
+            previousRound = closedRound, currentRound = closedRound,
+            archivedRound = closedRound, version = nextVersion,
+            completed = true, currentMultiplier = match.currentMultiplier,
+          ))
+        }
+        is GeneralPassAdvance.Advance -> {
+          tx.update(matchRef, mapOf(
+            "currentRound" to decision.nextRound,
+            "currentMultiplier" to decision.nextMultiplier,
+            "dealer" to nextDealerUid(match.seats, match.dealer),
+            "version" to nextVersion,
+            "biddingOpen" to true,
+            "bids" to match.seats.keys.associateWith { null },
+            "lastBidSeat" to null,
+            "biddingCycle" to 0,
+            "turn" to null,
+            "cardPhase" to null,
+            "cardLog" to emptyList<CardLogEntry>(),
+            "biddingLog" to emptyList<BiddingLogEntry>(),
+            "updatedAt" to FieldValue.serverTimestamp(),
+          ))
+          TxOutcome.Ok(AdvanceResult(
+            advanced = true, reason = null, matchId = matchId,
+            previousRound = closedRound, currentRound = decision.nextRound,
+            archivedRound = closedRound, version = nextVersion,
+            currentMultiplier = decision.nextMultiplier,
+          ))
+        }
+        else -> error("unreachable: every non-writing decision returned above")
+      }
     }
   }
 
@@ -617,12 +978,25 @@ class MatchService(
     val matchRef = matches.document(matchId)
     return runTx(db) { tx ->
       val match = readMatch(tx, matchRef) ?: return@runTx noMatchTx("extendMatchRounds")
-      // S66 (E7): type-aware window. For FULL this is exactly the pre-tx
-      // check above (same bounds, same message) — byte-identical.
-      if (!isRapidRound(completedRound, match.gameType)) {
-        return@runTx TxOutcome.Err(ServiceException(INVALID_ARGUMENT,
-          "extendMatchRounds: completedRound must be an integer between " +
-            "${match.gameType.firstFastRound} and ${match.gameType.baseRounds}."))
+      // S66 (E7): type-aware window. A Super Call stays in-window only;
+      // a Sa'ayda also extends from the ACTUAL final round (round == maxRounds)
+      // so final-round repeats can walk past baseRounds (Q2c, A8.8).
+      val inWindow = isRapidRound(completedRound, match.gameType)
+      val isFinalRound = completedRound == match.maxRounds
+      if (reason == ExtensionReason.SAAYDA.name) {
+        if (!inWindow && !isFinalRound) {
+          return@runTx TxOutcome.Err(ServiceException(INVALID_ARGUMENT,
+            "extendMatchRounds: completedRound must be an integer between " +
+              "${match.gameType.firstFastRound} and ${match.gameType.baseRounds}, " +
+              "or the actual final round (maxRounds)."))
+        }
+      } else {
+        // SUPER_CALL: window-only, never past baseRounds.
+        if (!inWindow) {
+          return@runTx TxOutcome.Err(ServiceException(INVALID_ARGUMENT,
+            "extendMatchRounds: completedRound must be an integer between " +
+              "${match.gameType.firstFastRound} and ${match.gameType.baseRounds}."))
+        }
       }
       if (!match.isPlayer(callingUid)) {
         return@runTx TxOutcome.Err(ServiceException(PERMISSION_DENIED,
@@ -638,13 +1012,10 @@ class MatchService(
       if (completedRound in match.extendedRounds) {
         return@runTx TxOutcome.Ok(ExtendResult.alreadyExtended(matchId, match.maxRounds))
       }
-      // S66 (GM3): the extension COUNT cap — MINI allows exactly ONE
-      // extension (10 → 11 max); FULL's 14–18 window already implies five,
-      // so FULL is unchanged. Reuses the EXISTING ALREADY_EXTENDED surface,
-      // never a new reason code.
-      if (match.extendedRounds.size >= match.gameType.maxExtensions) {
-        return@runTx TxOutcome.Ok(ExtendResult.alreadyExtended(matchId, match.maxRounds))
-      }
+      // Q2c: the extension COUNT cap (MINI 1, FULL 5) is REMOVED — no
+      // maxExtensions enforcement. The per-round idempotency guard above
+      // (completedRound in match.extendedRounds) still prevents double
+      // extension of the same round.
       val nextVersion = match.version + 1
       tx.update(matchRef, mapOf(
         "maxRounds" to match.maxRounds + 1,
@@ -702,7 +1073,12 @@ class MatchService(
         return@runTx TxOutcome.Ok(EndMatchResult.alreadyAdvanced(matchId, match.currentRound))
       }
       val roundCardCount = match.roundCardCount(completedRound)
-      if (roundCardCount != ROUND_CARD_TOTAL) {
+      // O-19: a General-Pass final round has zero card plays but a complete,
+      // provable all-pass auction — it completes through this same terminal
+      // path and archives with its own marker. Anything else still needs
+      // the full 52-card window; the marker never relaxes that gate.
+      val passRound = roundCardCount == 0 && isCanonicalGeneralPassWindow(match, completedRound)
+      if (!passRound && roundCardCount != ROUND_CARD_TOTAL) {
         return@runTx TxOutcome.Err(ServiceException(ROUND_NOT_COMPLETE,
           "endMatch: round $completedRound has only $roundCardCount/$ROUND_CARD_TOTAL recorded card plays — not completing."))
       }
@@ -727,6 +1103,7 @@ class MatchService(
           estimates = match.bids.mapNotNull { (seat, bid) ->
             bid?.let { seat to it }
           }.toMap(),
+          passRound = passRound,
         ).toFields(),
       )
       val nextVersion = match.version + 1

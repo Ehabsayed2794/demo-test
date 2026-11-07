@@ -41,7 +41,7 @@ class RankedResolutionTest {
     ),
     Fixture(
       "Higher-tier promotion", 980, 30, 1010, 30,
-      "Gold I · معلم", "Platinum III · وزير", 1, false,
+      "Gold I · معلم", "Platinum III · بلاتين", 1, false,
     ),
     Fixture(
       "One-division demotion", 710, -30, 680, -30,

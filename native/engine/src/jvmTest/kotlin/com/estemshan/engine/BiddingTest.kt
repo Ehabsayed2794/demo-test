@@ -71,6 +71,21 @@ class BiddingTest {
     return emit(s, intent)
   }
 
+  /** Drives a fast round whose estimates never trigger a Super Call (<8). */
+  private fun completeFastEstimates(s: BiddingState, values: Map<String, Int>): BiddingState {
+    var cur = s
+    repeat(s.seats.size) {
+      assertEquals(BiddingPhase.ESTIMATES, cur.subPhase)
+      val seat = cur.waitingFor ?: throw AssertionError("waitingFor null mid-ESTIMATES")
+      when (val r = estimate(cur, seat, values.getValue(seat))) {
+        is EmitResult.Applied -> cur = r.state
+        is EmitResult.Completed -> cur = r.state
+        else -> throw AssertionError("unexpected result")
+      }
+    }
+    return cur
+  }
+
   // ── The auction opens on the dealer, even when the dealer isn't seats[0] ──
   @Test
   fun auctionOpensOnTheDealerNotOnSeatsZero() {
@@ -103,7 +118,7 @@ class BiddingTest {
 
   // ── C1: live exact match grants With immediately; a pass never strips it ──
   @Test
-  fun withLiveExactMatchAndPassKeepsIt() {
+  fun t08withLiveExactMatchAndPassKeepsIt() {
     var s = normal("p1")
     assertEquals(BiddingPhase.DASH, s.subPhase)
     assertEquals("p1", s.waitingFor)
@@ -134,7 +149,7 @@ class BiddingTest {
 
   // ── C2: Alignment at conclusion grants same-suit bidders; C3: Jump-In ──
   @Test
-  fun withAlignmentAndEstimationJumpIn() {
+  fun t08withAlignmentAndEstimationJumpIn() {
     var s = normal("p1")
     s = declineAllDash(s)
     s = auction(s, "p1", 4, Suit.SPADES)
@@ -217,9 +232,9 @@ class BiddingTest {
     assertEquals(Suit.SPADES, outcome.trump)
   }
 
-  // ── A2: fast-round tie breaks to the earliest bidder in dealer order ──
+  // ── A8.1: fast-round exact duplicate — first declarer Caller, later With ──
   @Test
-  fun fastTieBreaksToEarliestBidder() {
+  fun t11fastExactDuplicateTieGoesToFirstDeclarer() {
     var s = fast(16, "p3")
     val vals = mapOf("p3" to 7, "p4" to 5, "p1" to 7, "p2" to 7)
     for (seat in listOf("p3", "p4", "p1", "p2")) {
@@ -231,8 +246,238 @@ class BiddingTest {
       }
     }
     assertEquals(BiddingPhase.DONE, s.subPhase)
+    // All three 7s were declared under the round's fixed trump (HEARTS), so
+    // they are exact number-and-suit duplicates. The first declarer (p3, in
+    // dealer order) is Caller; p1 and p2 are With. p4's 5 is not With.
     assertEquals("p3", s.callerId)
     assertEquals(listOf("p1", "p2"), s.withPlayers)
+    assertEquals(Suit.HEARTS, s.bids.getValue("p3").suit)
+    assertEquals(Suit.HEARTS, s.bids.getValue("p1").suit)
+    assertEquals(Suit.HEARTS, s.bids.getValue("p2").suit)
+  }
+
+  // ── A8.1 symmetry: the first declarer follows the rotated bidding order ──
+  @Test
+  fun t11fastExactDuplicateIsSymmetricUnderReseating() {
+    // Same two seats and the same numbers; only the dealer (and therefore the
+    // declaration order) changes. The first declarer is Caller each time.
+    val values = mapOf("p1" to 5, "p2" to 2, "p3" to 5, "p4" to 0)
+
+    val dealerP1 = completeFastEstimates(fast(15, "p1"), values)
+    assertEquals(listOf("p1", "p2", "p3", "p4"), biddingOrder(fast(15, "p1")))
+    assertEquals("p1", dealerP1.callerId)
+    assertEquals(listOf("p3"), dealerP1.withPlayers)
+
+    val dealerP3 = completeFastEstimates(fast(15, "p3"), values)
+    assertEquals(listOf("p3", "p4", "p1", "p2"), biddingOrder(fast(15, "p3")))
+    assertEquals("p3", dealerP3.callerId)
+    assertEquals(listOf("p1"), dealerP3.withPlayers)
+  }
+
+  // ── A6.10/A8.1: final With is recomputed from number + FINAL trump ──
+  @Test
+  fun t10fastSuperCallRecomputesWithFromFinalNumberAndTrump() {
+    var s = fast(15, "p1") // fixed SPADES
+    // p3 and p4 both declare 8 under the fixed trump: p3 is the first
+    // declarer, so p3 is the provisional Caller and p4 the provisional With.
+    for ((seat, v) in listOf("p1" to 4, "p2" to 5, "p3" to 8, "p4" to 8)) {
+      assertEquals(seat, s.waitingFor)
+      when (val r = estimate(s, seat, v)) {
+        is EmitResult.Applied -> s = r.state
+        is EmitResult.Completed -> throw AssertionError("should route to CONFIRM")
+        else -> throw AssertionError("unexpected result")
+      }
+    }
+    assertEquals(BiddingPhase.CONFIRM, s.subPhase)
+    assertEquals("p3", s.callerId)
+    assertEquals(listOf("p4"), s.withPlayers)
+
+    // The Super Call replaces SPADES with HEARTS. Every seat except the
+    // caller is wiped (T-09), so p4's 8♠ no longer survives.
+    s = confirm(s, "p3", 8, Suit.HEARTS)
+    assertEquals(BiddingPhase.ESTIMATES, s.subPhase)
+    assertEquals("p4", s.waitingFor)
+    assertEquals(Bid(BidType.TRICKS, 8, Suit.HEARTS), s.bids.getValue("p3"))
+    assertNull(s.bids["p4"])
+    assertTrue("the provisional 8♠ duplicate is wiped with its seat", s.withPlayers.isEmpty())
+
+    // p4 and p1 declare 8 again under the final trump: exact duplicates of
+    // the Super Caller's number+suit, therefore With. p2 stays low.
+    s = applied(estimate(s, "p4", 8))
+    s = applied(estimate(s, "p1", 8))
+    var outcome: BiddingOutcome? = null
+    when (val r = estimate(s, "p2", 2)) {
+      is EmitResult.Completed -> {
+        s = r.state
+        outcome = r.outcome
+      }
+      else -> throw AssertionError("p2 should complete the round")
+    }
+    assertEquals(BiddingPhase.DONE, s.subPhase)
+    assertEquals("p3", s.callerId)
+    // p1 and p4 declared 8 under the final ♥ trump, so both are With.
+    assertEquals(listOf("p1", "p4"), s.withPlayers)
+    val o = outcome ?: throw AssertionError("never completed")
+    assertEquals("p3", o.callerId)
+    assertEquals(listOf("p1", "p4"), o.withPlayers)
+    assertEquals(Suit.HEARTS, o.trump)
+    assertEquals(mapOf("p1" to 8, "p2" to 2, "p3" to 8, "p4" to 8), o.estimates)
+  }
+
+  // ── A6.10/T-09: the confirmation never completes the round ──
+  @Test
+  fun t10fastSuperCallConfirmRecomputesWithWhenNoSeatsAreWiped() {
+    var s = fast(15, "p1") // dealer p1, so the Super Caller is first in order
+    for ((seat, v) in listOf("p1" to 8, "p2" to 8, "p3" to 4, "p4" to 5)) {
+      assertEquals(seat, s.waitingFor)
+      when (val r = estimate(s, seat, v)) {
+        is EmitResult.Applied -> s = r.state
+        is EmitResult.Completed -> throw AssertionError("should route to CONFIRM")
+        else -> throw AssertionError("unexpected result")
+      }
+    }
+    // Both 8s are 8♠ exact duplicates, so p1 is Caller and p2 is With
+    // provisionally. p1 then confirms the same number under HEARTS.
+    assertEquals("p1", s.callerId)
+    assertEquals(listOf("p2"), s.withPlayers)
+
+    // T-09: the confirmation wipes EVERY seat except the caller, so the
+    // round cannot complete here — p2 declares again under the final trump.
+    s = confirm(s, "p1", 8, Suit.HEARTS)
+    assertEquals(BiddingPhase.ESTIMATES, s.subPhase)
+    assertEquals("p2", s.waitingFor)
+    assertEquals(setOf("p1"), s.bids.keys)
+    assertTrue("the provisional set is discarded with the wiped seats", s.withPlayers.isEmpty())
+
+    s = applied(estimate(s, "p2", 8))
+    s = applied(estimate(s, "p3", 4))
+    val result = estimate(s, "p4", 5)
+    val completed = result as? EmitResult.Completed
+      ?: throw AssertionError("the round must complete after the re-declarations, got $result")
+    s = completed.state
+    assertEquals(BiddingPhase.DONE, s.subPhase)
+    assertEquals("p1", s.callerId)
+    // p2 declared 8 again under the final HEARTS trump: an exact duplicate
+    // of the Caller's 8♥, therefore With (A8.1).
+    assertEquals(listOf("p2"), s.withPlayers)
+    assertEquals(listOf("p2"), completed.outcome.withPlayers)
+    assertEquals(Suit.HEARTS, completed.outcome.trump)
+    assertEquals(mapOf("p1" to 8, "p2" to 8, "p3" to 4, "p4" to 5), completed.outcome.estimates)
+  }
+
+  // ── A6.10: higher number wins the Super Call, lower number is not With ──
+  @Test
+  fun t11fastSuperCallHigherNumberWinsWhateverTheSuit() {
+    var s = fast(15, "p1")
+    for ((seat, v) in listOf("p1" to 8, "p2" to 9, "p3" to 4, "p4" to 5)) {
+      assertEquals(seat, s.waitingFor)
+      when (val r = estimate(s, seat, v)) {
+        is EmitResult.Applied -> s = r.state
+        is EmitResult.Completed -> throw AssertionError("should route to CONFIRM")
+        else -> throw AssertionError("unexpected result")
+      }
+    }
+    assertEquals(BiddingPhase.CONFIRM, s.subPhase)
+    assertEquals("p2", s.callerId)
+    // With needs the exact winning number: p1's 8 is not With at 9.
+    assertTrue(s.withPlayers.isEmpty())
+  }
+
+  // ── A7.2/A8.1 helper: number > suit > declaration order ──
+  @Test
+  fun t11fastCallHigherNumberBeatsStrongerSuit() {
+    val call = resolveFastCall(
+      listOf(
+        FastDeclaration("p1", 8, Suit.HEARTS),
+        FastDeclaration("p2", 9, Suit.CLUBS),
+      ),
+    )
+    assertEquals("p2", call.callerId)
+    assertTrue(call.withPlayers.isEmpty())
+  }
+
+  @Test
+  fun t11fastCallEqualNumberUsesSuitHierarchyNotSeatOrder() {
+    // A7.2's worked example: 8♠ beats 8♥ even though the ♥ seat declared
+    // first. The losing equal-number seat is NOT With (different suit).
+    val call = resolveFastCall(
+      listOf(
+        FastDeclaration("p1", 8, Suit.HEARTS),
+        FastDeclaration("p2", 8, Suit.SPADES),
+      ),
+    )
+    assertEquals("p2", call.callerId)
+    assertTrue(call.withPlayers.isEmpty())
+  }
+
+  @Test
+  fun t11fastCallSuitHierarchyIsSansSpadesHeartsDiamondsClubs() {
+    val hierarchy = listOf(Suit.CLUBS, Suit.DIAMONDS, Suit.HEARTS, Suit.SPADES, Suit.SANS)
+    for (i in 1 until hierarchy.size) {
+      val call = resolveFastCall(
+        listOf(
+          FastDeclaration("lower", 7, hierarchy[i - 1]),
+          FastDeclaration("higher", 7, hierarchy[i]),
+        ),
+      )
+      assertEquals(
+        "${hierarchy[i]} must beat ${hierarchy[i - 1]}",
+        "higher",
+        call.callerId,
+      )
+      assertTrue(call.withPlayers.isEmpty())
+    }
+  }
+
+  @Test
+  fun t11fastCallDeclarationOrderBreaksOnlyExactDuplicates() {
+    // p1 and p2 are exact 9♣ duplicates, but p3's 9♠ is stronger: the suit
+    // hierarchy decides and declaration order never promotes p1.
+    val call = resolveFastCall(
+      listOf(
+        FastDeclaration("p1", 9, Suit.CLUBS),
+        FastDeclaration("p2", 9, Suit.CLUBS),
+        FastDeclaration("p3", 9, Suit.SPADES),
+      ),
+    )
+    assertEquals("p3", call.callerId)
+    assertTrue(call.withPlayers.isEmpty())
+  }
+
+  @Test
+  fun t11fastCallThreeWayOnOneNumberUsesSuitThenExactDuplicates() {
+    // T-11's three-way row (A7.2 + A8.1): A 8♠, B 8♠, C 8♥. The two ♠ beat
+    // ♥; between the two ♠ declarations the first declarer is Caller and the
+    // other is With. The ♥ seat is neither.
+    val call = resolveFastCall(
+      listOf(
+        FastDeclaration("C", 8, Suit.HEARTS),
+        FastDeclaration("B", 8, Suit.SPADES),
+        FastDeclaration("A", 8, Suit.SPADES),
+      ),
+    )
+    assertEquals("B", call.callerId)
+    assertEquals(listOf("A"), call.withPlayers)
+  }
+
+  @Test
+  fun t11fastCallExactDuplicatesFollowDeclarationOrder() {
+    val call = resolveFastCall(
+      listOf(
+        FastDeclaration("p2", 8, Suit.SPADES),
+        FastDeclaration("p4", 8, Suit.SPADES),
+        FastDeclaration("p1", 8, Suit.SPADES),
+      ),
+    )
+    assertEquals("p2", call.callerId)
+    assertEquals(listOf("p4", "p1"), call.withPlayers)
+  }
+
+  @Test
+  fun fastCallWithNoDeclarationsHasNoCaller() {
+    val call = resolveFastCall(emptyList())
+    assertNull(call.callerId)
+    assertTrue(call.withPlayers.isEmpty())
   }
 
   // ── A3: all-zero fast round — no Caller, no With ──
@@ -274,24 +519,31 @@ class BiddingTest {
     assertEquals("p3", s.callerId)
     assertEquals(8, s.auctionTop)
 
-    // S2: replacement trump wipes only pre-super seats.
+    // S2 (T-09): the replacement trump wipes EVERY seat except the Super
+    // Caller's own record — the old partial reset kept p4's 3♠.
     s = confirm(s, "p3", 8, Suit.HEARTS)
     assertEquals(BiddingPhase.ESTIMATES, s.subPhase)
-    assertEquals("p1", s.waitingFor)
+    assertEquals("p4", s.waitingFor)
     assertNull(s.bids["p1"])
     assertNull(s.bids["p2"])
-    assertEquals(Bid(BidType.TRICKS, 8), s.bids["p3"])
-    assertEquals(Bid(BidType.TRICKS, 3), s.bids["p4"])
+    assertNull(s.bids["p4"])
+    assertEquals(Bid(BidType.TRICKS, 8, Suit.HEARTS), s.bids["p3"])
     assertEquals(Suit.HEARTS, s.declaredTrump)
 
-    // S3: re-estimation completes with the Super Caller locked.
+    // S3: every other seat declares again, counter-clockwise from the
+    // caller, and the round completes with the Super Caller locked.
+    when (val r = estimate(s, "p4", 3)) {
+      is EmitResult.Applied -> s = r.state
+      else -> throw AssertionError("p4 re-estimate should apply")
+    }
+    assertEquals("p1", s.waitingFor)
     when (val r = estimate(s, "p1", 4)) {
       is EmitResult.Applied -> s = r.state
       else -> throw AssertionError("p1 re-estimate should apply")
     }
     assertEquals("p2", s.waitingFor)
     var outcome: BiddingOutcome? = null
-    when (val r = estimate(s, "p2", 2)) {
+    when (val r = estimate(s, "p2", 5)) {
       is EmitResult.Completed -> {
         s = r.state
         outcome = r.outcome
@@ -305,7 +557,7 @@ class BiddingTest {
     val o = outcome ?: throw AssertionError("never completed")
     assertEquals("p3", o.callerId)
     assertEquals(Suit.HEARTS, o.trump)
-    assertEquals(mapOf("p1" to 4, "p2" to 2, "p3" to 8, "p4" to 3), o.estimates)
+    assertEquals(mapOf("p1" to 4, "p2" to 5, "p3" to 8, "p4" to 3), o.estimates)
   }
 
   // ── Dash-Call seat skips estimation; outcome carries dashCallers ──
@@ -354,9 +606,9 @@ class BiddingTest {
     assertEquals("p2", o.leaderId)
   }
 
-  // ── General pass: all four pass → redeal at doubled (×8-capped) multiplier ──
+  // ── General pass: all four pass → the next round's multiplier ──
   @Test
-  fun generalPassDoublesMultiplier() {
+  fun t01generalPassDoublesMultiplier() {
     var s = normal("p1")
     s = declineAllDash(s)
     s = auction(s, "p1", isPass = true)
@@ -369,7 +621,7 @@ class BiddingTest {
       else -> throw AssertionError("expected GeneralPass, got $r")
     }
 
-    var capped = initNormalRound(1, "p1", seats, 5)
+    var capped = initNormalRound(1, "p1", seats, 8)
     capped = declineAllDash(capped)
     capped = auction(capped, "p1", isPass = true)
     capped = auction(capped, "p2", isPass = true)
@@ -380,9 +632,78 @@ class BiddingTest {
     }
   }
 
+  /** Drives a normal all-pass auction at [multiplier] and returns the emission. */
+  private fun generalPass(
+    multiplier: Int,
+    scoringMode: ScoringMode = ScoringMode.NORMAL,
+  ): EmitResult.GeneralPass {
+    var s = initNormalRound(1, "p1", seats, multiplier, scoringMode = scoringMode)
+    s = declineAllDash(s)
+    s = auction(s, "p1", isPass = true)
+    s = auction(s, "p2", isPass = true)
+    s = auction(s, "p3", isPass = true)
+    val last = BiddingIntent.AuctionBid("p4", true)
+    assertTrue(canSubmit(s, last).legal)
+    return when (val r = emit(s, last)) {
+      is EmitResult.GeneralPass -> r
+      else -> throw AssertionError("expected GeneralPass, got $r")
+    }
+  }
+
+  @Test
+  fun t01generalPassNormalMultiplierWalksTheLadderAdditively() {
+    assertEquals(2, generalPass(1).doubledMultiplier)
+    assertEquals("2 -> 4", 4, generalPass(2).doubledMultiplier)
+    assertEquals("4 -> 6 (the old x2 produced 8)", 6, generalPass(4).doubledMultiplier)
+    assertEquals("6 -> 8", 8, generalPass(6).doubledMultiplier)
+    assertEquals("8 is the cap", 8, generalPass(8).doubledMultiplier)
+  }
+
+  @Test
+  fun t02generalPassClassicAppliesNoMultiplier() {
+    for (multiplier in listOf(1, 2, 4, 8)) {
+      assertEquals(
+        "Classic round at multiplier $multiplier",
+        1,
+        generalPass(multiplier, ScoringMode.CLASSIC).doubledMultiplier,
+      )
+    }
+  }
+
+  @Test
+  fun t01generalPassStateOtherwiseDescribesTheCancelledRound() {
+    val result = generalPass(4)
+    val state = result.state
+    assertEquals(6, result.doubledMultiplier)
+    assertEquals("the emitted state is still the cancelled round", 1, state.round)
+    assertEquals("roundMultiplier is not advanced here", 4, state.roundMultiplier)
+    assertEquals(ScoringMode.NORMAL, state.scoringMode)
+    assertTrue(state.activeBidders.isEmpty())
+    assertEquals(0, state.auctionTop)
+    assertNull(state.auctionSuit)
+    assertNull(state.auctionBidder)
+    assertNull(state.waitingFor)
+    assertTrue(state.withPlayers.isEmpty())
+    assertEquals(BidAction("p4", "PASS"), state.actionHistory.last())
+  }
+
+  @Test
+  fun scoringModeDefaultsToNormalAndIsStampedIntoTheState() {
+    assertEquals(ScoringMode.NORMAL, normal("p1").scoringMode)
+    assertEquals(ScoringMode.NORMAL, fast(15, "p1").scoringMode)
+    assertEquals(
+      ScoringMode.CLASSIC,
+      initNormalRound(1, "p1", seats, scoringMode = ScoringMode.CLASSIC).scoringMode,
+    )
+    assertEquals(
+      ScoringMode.CLASSIC,
+      initFastRound(15, "p1", seats, scoringMode = ScoringMode.CLASSIC).scoringMode,
+    )
+  }
+
   // ── Rejections: cap, With floor, forbidden 13, confirm guards ──
   @Test
-  fun estimateRejections() {
+  fun t24estimateRejections() {
     // Cap: caller locked 6, estimator tries 7.
     var s = normal("p1")
     s = declineAllDash(s)
@@ -415,7 +736,7 @@ class BiddingTest {
   }
 
   @Test
-  fun confirmRejections() {
+  fun t24confirmRejections() {
     var s = normal("p1")
     s = declineAllDash(s)
     s = auction(s, "p1", 5, Suit.HEARTS)
@@ -437,7 +758,7 @@ class BiddingTest {
 
   // ── Predicates + fixed-trump cycle + risk fallback ──
   @Test
-  fun predicatesAndHelpers() {
+  fun t24predicatesAndHelpers() {
     assertTrue(auctionBidBeatsTop(5, Suit.SPADES, 5, Suit.HEARTS))
     assertTrue(!auctionBidBeatsTop(5, Suit.CLUBS, 5, Suit.HEARTS))
     assertTrue(auctionBidBeatsTop(6, Suit.CLUBS, 5, Suit.SPADES))

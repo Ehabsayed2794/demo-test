@@ -30,7 +30,7 @@ class RpEngineTest {
   // ── RD4: sign discipline — the outcome sets the sign, nothing else ────
 
   @Test
-  fun aMatchKingNeverLosesRp() {
+  fun t13aMatchKingNeverLosesRp() {
     // A King sitting 15 ordinals above a weak table: the tier scaling
     // overshoots (the raw sum is negative), but the outcome owns the sign.
     assertEquals(0, computeBaseDelta(input(MatchOutcome.KING, 18, 3), config),
@@ -40,7 +40,7 @@ class RpEngineTest {
   }
 
   @Test
-  fun kozNeverGainsRp() {
+  fun t13kozNeverGainsRp() {
     // Koz at a strong table, 18 ordinals below it — the strength bonus
     // overshoots positively, but last place never awards RP.
     assertEquals(0, computeBaseDelta(input(MatchOutcome.KOZ, 0, 18), config),
@@ -49,7 +49,7 @@ class RpEngineTest {
   }
 
   @Test
-  fun secondGainsAndThirdLoses() {
+  fun t13secondGainsAndThirdLoses() {
     assertTrue(
       computeBaseDelta(input(MatchOutcome.SECOND, 3, 3), config) > 0,
       "2nd is a positive award",
@@ -89,7 +89,7 @@ class RpEngineTest {
   }
 
   @Test
-  fun baseIsExactlyTheConfiguredArithmetic() {
+  fun t13baseIsExactlyTheConfiguredArithmetic() {
     // No hidden terms: base + strength(opponents) + tier(player − opponents),
     // with the sign from outcome. This case stays positive so it also proves
     // the clamp is not silently re-shaping ordinary awards.

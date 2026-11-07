@@ -6,6 +6,14 @@
 - **Decides:** the one thing the plan deliberately left open — the plan calls the
   Functions layer "Kotlin/TS-adjacent" (§7 backend-developer row, line 738).
 
+> **Pointer (2026-10-23) — this status is NOT flipped.** The decision below still stands
+> for *how* the Functions layer is written. What changed elsewhere: **O-06** (owner,
+> 2026-10-22, `OPEN_QUESTIONS.md`) requires a **Stage 0 runtime decision on measured
+> evidence** before anything is deployed, and records that **Cloudflare Workers + Durable
+> Objects + D1 is *not approved***. Blaze cannot be enabled under the $0-marginal
+> constraint. This ADR neither approves nor blocks either runtime; Play Billing
+> verification (plan V2 §5.9, sprint S8) is **BLOCKED** until O-06 resolves.
+
 ## Context
 
 S42 stands up the `functions/` module that every downstream Ranked story builds

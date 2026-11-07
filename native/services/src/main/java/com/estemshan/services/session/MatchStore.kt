@@ -7,6 +7,7 @@ import com.estemshan.services.model.DealResult
 import com.estemshan.services.model.EndMatchResult
 import com.estemshan.services.model.ExtendResult
 import com.estemshan.services.model.HandDoc
+import com.estemshan.services.model.LeaveResult
 import com.estemshan.services.model.MatchDoc
 import com.estemshan.services.model.SubmitBidResult
 import com.estemshan.services.model.SubmitBiddingActionResult
@@ -46,7 +47,19 @@ interface MatchStore {
    */
   suspend fun loadHand(matchId: String, seatId: String, round: Int): HandDoc?
 
-  suspend fun submitBid(matchId: String, seatId: String, bid: Int): SubmitBidResult
+  /**
+   * A Final Estimate (one value per seat, ever — in the ACTIVE declaration
+   * cycle). [expectedCycle] is the fast-round cycle the caller validated
+   * against; a mismatch is refused as STALE_CYCLE instead of landing in a
+   * cycle the value was never meant for. Null is legal only while the round
+   * is still in cycle 0; after a Super Call it is refused as STALE_CYCLE.
+   */
+  suspend fun submitBid(
+    matchId: String,
+    seatId: String,
+    bid: Int,
+    expectedCycle: Int? = null,
+  ): SubmitBidResult
 
   suspend fun submitBiddingAction(matchId: String, action: BiddingActionInput): SubmitBiddingActionResult
 
@@ -54,7 +67,31 @@ interface MatchStore {
 
   suspend fun dealRound(matchId: String, roundNumber: Int): DealResult
 
-  suspend fun advanceToNextRound(matchId: String, completedRound: Int): AdvanceResult
+  /**
+   * The scored-round advance. O-19: [nextMultiplier] is the engine's
+   * `RoundScoreResult.nextMultiplier` for the closed round; the service
+   * persists it as the document's `currentMultiplier` in the same
+   * transaction, bounded 1..8 and pinned to 1 under Classic.
+   */
+  suspend fun advanceToNextRound(
+    matchId: String,
+    completedRound: Int,
+    nextMultiplier: Int,
+  ): AdvanceResult
+
+  /**
+   * O-19's General-Pass transition: the closed round has zero card plays
+   * and a complete all-pass auction. The service derives the next-round
+   * multiplier from the document (Classic 1; Normal 1→2, +2 cap 8) and —
+   * when [closedRound] is the planned final round — completes the match
+   * with the caller's running [finalScores]/[winnerIds].
+   */
+  suspend fun advanceAfterGeneralPass(
+    matchId: String,
+    closedRound: Int,
+    finalScores: Map<String, Int>,
+    winnerIds: List<String>,
+  ): AdvanceResult
 
   suspend fun extendMatchRounds(matchId: String, completedRound: Int, reason: String): ExtendResult
 
@@ -64,4 +101,12 @@ interface MatchStore {
     finalScores: Map<String, Int>,
     winnerIds: List<String>,
   ): EndMatchResult
+
+  /**
+   * S72 — explicit leave: the acting seat's uid is recorded as departed, the seat
+   * is taken by the configured bot, and the RD31 Koz charge is computed. Idempotent:
+   * a second leave for the same seat is a no-op with ALREADY_LEFT. The leaver's
+   * client can no longer write match state (sealed by firestore.rules).
+   */
+  suspend fun leaveMatch(matchId: String): LeaveResult
 }

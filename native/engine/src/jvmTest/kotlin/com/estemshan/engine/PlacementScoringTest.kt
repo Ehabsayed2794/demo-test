@@ -12,9 +12,12 @@ import kotlin.math.sqrt
  * incomplete input the scorer must refuse.
  *
  * Where the spec closes a number (weights, ceiling, floor, start rule),
- * the test pins it exactly. Where S54 owns engineering judgment (the
- * 0..1 signal normalization), the tests pin directionality, boundaries,
- * and monotonicity — not magic composites.
+ * the test pins it exactly. Where S54 owns engineering judgment, the
+ * tests pin it literally too: the match composite against a hand-derived
+ * exact value covering all six signals, the series→RP curve at five
+ * literal points plus its OPEN-3 tie behavior, and every signal's
+ * contribution via isolated differs-tests — so a dropped signal or a
+ * reshaped curve fails loudly instead of passing silently.
  */
 class PlacementScoringTest {
 
@@ -89,6 +92,31 @@ class PlacementScoringTest {
     assertEquals(2.0 / 3.0, placementRankComponent(2), 1e-9)
     assertEquals(1.0 / 3.0, placementRankComponent(3), 1e-9)
     assertEquals(0.0, placementRankComponent(4), 1e-9)
+  }
+
+  @Test
+  fun t13aSharedBottomScoresTheKozComponentsNotAUniqueThird() {
+    // Q2d / Q2f: both seats tied at the lowest total are rank 4 and Koz, so
+    // the placement signals read 0.0 — never a unique Third's 1/3.
+    val totals = mapOf("p1" to 100, "p2" to 99, "p3" to 10, "p4" to 10)
+    val sharedKoz = recordPlacementMatch(0, totals, "p3", emptyList())
+    val king = recordPlacementMatch(0, totals, "p1", emptyList())
+
+    assertEquals("the shared bottom is the last placement", 4, sharedKoz.placement)
+    assertEquals("the shared bottom is Koz", MatchOutcome.KOZ, sharedKoz.outcome)
+    assertEquals("Koz outcome component", 0.0, placementOutcomeComponent(sharedKoz.outcome), 1e-9)
+    assertEquals("last-place rank component", 0.0, placementRankComponent(sharedKoz.placement), 1e-9)
+    assertEquals("King outcome component", 1.0, placementOutcomeComponent(king.outcome), 1e-9)
+    assertEquals("first-place rank component", 1.0, placementRankComponent(king.placement), 1e-9)
+
+    assertTrue(
+      "a shared Koz scores below a unique Third on the outcome signal",
+      placementOutcomeComponent(sharedKoz.outcome) < placementOutcomeComponent(MatchOutcome.THIRD),
+    )
+    assertTrue(
+      "a shared Koz scores below a unique Third on the rank signal",
+      placementRankComponent(sharedKoz.placement) < placementRankComponent(3),
+    )
   }
 
   @Test
@@ -193,8 +221,8 @@ class PlacementScoringTest {
   fun theSeriesToRpMappingIsLinearOntoTheCeiling() {
     // S54 judgment, not RD10 text: the 0..1 composite maps linearly onto
     // RP 0..Platinum-I-floor. Asserted literally at five points, so any
-    // reshaping (e.g. quadratic, which would read 350 here) fails loudly
-    // instead of silently moving every player 1–2 tiers.
+    // reshaping (e.g. quadratic, which would read 350 at 0.5 instead of
+    // 700) fails loudly instead of silently moving every player 1–2 tiers.
     assertEquals(0, placementRpForSeriesScore(0.0))
     assertEquals(350, placementRpForSeriesScore(0.25))
     assertEquals(700, placementRpForSeriesScore(0.5))

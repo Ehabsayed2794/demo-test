@@ -163,7 +163,7 @@ data class PlacementRoundSignal(
  */
 data class PlacementMatchRecord(
   val matchIndex: Int,
-  /** Competition rank among the four seats, ties sharing the better rank. */
+  /** Competition rank among the four seats; a bottom tie shares the last placement (Q2d). */
   val placement: Int,
   /** The same result as a [MatchOutcome]: KING / 2nd / 3rd / KOZ. */
   val outcome: MatchOutcome,
@@ -203,15 +203,24 @@ data class PlacementMatchRecord(
 }
 
 /**
- * RD17 — competition rank: 1 plus the number of seats strictly ahead, so
- * ties share the better rank (tie 1st → all are Match King, tie 2nd → all
- * 2nd, tie 3rd → all 3rd). Because a tie for last leaves the seat with
- * company at the bottom, [placementOutcome] then produces no KOZ for it — a
- * Koz is never fabricated (RD17's "tie for last → no unique Koz").
+ * Q2d / A6.7 — placement rank. Competition rank (1 plus the number of seats
+ * strictly ahead) for every seat except the bottom: every player tied at the
+ * lowest total shares the LAST placement ([totals.size]), because "players
+ * tied at the bottom share the last placement for RP". The sole exception is
+ * an all-seat tie, which stays rank 1 and makes all four King.
+ *
+ * The shared-bottom seat must carry the numeric last rank, not merely a KOZ
+ * outcome. [placementRankComponent] scores rank 3 as 1/3 and rank 4 as 0.0,
+ * while [placementOutcomeComponent] scores KOZ as 0.0; leaving a shared
+ * bottom at its competition rank would pay it as a unique Third (or Second)
+ * and undercharge the loss. Q2e still requires a UNIQUE Koz for Vote Kick, so
+ * a shared bottom is not a kick target.
  */
 fun placementRank(totals: Map<String, Int>, seat: String): Int {
   val total = totals.getValue(seat)
-  return 1 + totals.count { it.value > total }
+  val floor = totals.values.minOrNull() ?: total
+  val allSeatsTie = totals.values.all { it == total }
+  return if (total == floor && !allSeatsTie) totals.size else 1 + totals.count { it.value > total }
 }
 
 /** The [placementRank] as the RD23 outcome vocabulary. */

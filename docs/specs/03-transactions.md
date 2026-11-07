@@ -33,6 +33,8 @@ Rejects: room missing / not all-ready (re-checked here, not just RoomService).
 - Opening-turn publication (round 1 / fresh rounds): `{turn, cardPhase:"PLAY", version, updatedAt}` (`:985-991`) — required before the first card because rules reject a card write whose OLD turn is null.
 - Rejections: `ALREADY_BID`, `BIDDING_CLOSED`, `NOT_YOUR_TURN`, `STALE_GAME_STATE` (version moved under the read), legality via engine `canSubmit`/`previewPlay` pre-write.
 
+> **T-09 amendment (2026-10-26 — pointer; the JS body above is unchanged).** In a **fast round** (14–18 FULL, 6–10 MINI) a Super Call CONFIRM is the one `submitBiddingAction` write that is **not** append-only. The same transaction appends the confirmation to `biddingLog`, **replaces** `bids` with `{callerSeat: confirmedTricks}` (every other seat's declaration is wiped), sets `biddingOpen: true` and `lastBidSeat: null`, bumps `biddingCycle` by exactly one, and bumps `version` — `MatchService.submitBiddingAction`'s fast branch, shape-gated by `firestore.rules`' fast-confirm accept-list. A higher re-declaration re-opens CONFIRM and repeats the wipe. `biddingCycle` is `0` at deal/round advance and `+1` per confirm, so `bids` holds the **active** cycle only; `submitBid` carries the caller's `expectedCycle` and refuses a mismatch as `STALE_CYCLE`. Ordinary (normal-round) CONFIRMs stay append-only. Restore: `MatchAdapter.restoreFastBiddingCycle` rebuilds the active cycle from `biddingCycle` + the last CONFIRM + `bids` by replaying through the real engine, and fails closed by name (`FAST_CYCLE_UNPERSISTED`, `CYCLE_LOG_MISMATCH`, `CYCLE_BIDS_MISMATCH`) instead of reinterpreting a pre-T-09 document. A document without the field reads as cycle 0 (no migration). Archived rounds: `Settlement.replayFastSuperCallChain` requires the last caller's slot to equal its confirmed number; a lower value is the pre-T-09 archive shape and is refused, never reinterpreted (a pre-T-09 archive whose slot equals the confirmed number is indistinguishable and settles under the T-09 rules — documented limitation). `TimeoutResolution` writes the same reset and refuses a cycle/log disagreement as `HISTORY_CORRUPT`.
+
 ## 3. `advanceToNextRound(matchId, round)` — `:1568-1682`
 
 Guards (no write): `MATCH_NOT_FOUND`, non-player, `MATCH_ALREADY_COMPLETE`
@@ -46,6 +48,8 @@ Racing losers are denied at commit (create-exists + stale base) and MUST
 re-read into `ALREADY_ADVANCED` — on runtimes without tx retry, treat a
 rules denial + authoritative round+1 + valid archive as convergence
 (same class as the closed emulator-only races).
+
+> **T-09 pointer (2026-10-26):** this advance also writes `biddingCycle: 0` — the next round opens in declaration cycle 0 — and `firestore.rules`' `isValidRoundAdvance` rejects any advance that carries the field at a non-zero value. See the T-09 amendment in §2.
 
 ## 4. `endMatch` — `:~1770-1910`
 

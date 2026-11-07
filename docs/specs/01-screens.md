@@ -51,5 +51,7 @@ Profile, Settings — plus Disconnected/Loading as states, not destinations.
 > screens: they are states of S36 and S08, amended additively per
 > `docs/UI_UX_ROADMAP.md` §4b.4b. The authoritative mode model is now
 > `ROOM | RANKED | UNRANKED` (RD28 as amended); **Unranked is a mode value, not
-> a Room plus a marker**, and it gates voice off, Vote Kick off, disconnect/pause
-> on, and settlement plus all nine career statistics off.
+> a Room plus a marker**, and it gates voice off, disconnect/pause
+> on, and settlement plus all nine career statistics off. (**2026-10-17 owner
+> clarification: Vote Kick is present in Unranked — `ROOM` is the only mode without
+> it; the "Vote Kick off" in this note's original wording is superseded.**)

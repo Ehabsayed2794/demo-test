@@ -187,11 +187,14 @@ private fun PresetCard(preset: BotTablePreset, selected: Boolean, onClick: () ->
       verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
       Text(
-        preset.name,
+        if (preset.nameRes != 0) stringResource(preset.nameRes) else preset.name,
         style = MaterialTheme.typography.titleMedium,
         color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
       )
-      Text(preset.blurb, style = MaterialTheme.typography.bodyMedium)
+      Text(
+        if (preset.blurbRes != 0) stringResource(preset.blurbRes) else preset.blurb,
+        style = MaterialTheme.typography.bodyMedium,
+      )
     }
   }
 }

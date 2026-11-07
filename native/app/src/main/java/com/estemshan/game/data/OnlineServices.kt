@@ -3,17 +3,26 @@ package com.estemshan.game.data
 import com.estemshan.engine.GameSession
 import com.estemshan.services.CoroutineMatchScheduler
 import com.estemshan.services.CallableDecisionTimeout
+import com.estemshan.services.CallableMatchmaking
+import com.estemshan.services.CallableRankDownJoin
+import com.estemshan.services.CallableSeatReclaim
+import com.estemshan.services.CallableSettlement
 import com.estemshan.services.DecisionTimeoutPort
+import com.estemshan.services.FirebaseMatchmakingTransport
 import com.estemshan.services.Heartbeat
 import com.estemshan.services.MatchAdapter
 import com.estemshan.services.MatchListenerFactory
 import com.estemshan.services.MatchScheduler
 import com.estemshan.services.MatchService
+import com.estemshan.services.MatchmakingPort
 import com.estemshan.services.PlayerHeartbeat
 import com.estemshan.services.PlayerPort
+import com.estemshan.services.RankDownJoinPort
 import com.estemshan.services.PlayerService
 import com.estemshan.services.RoomPort
 import com.estemshan.services.RoomService
+import com.estemshan.services.SeatReclaimPort
+import com.estemshan.services.SettlementPort
 import com.estemshan.services.session.AuthPort
 import com.estemshan.services.session.GameSessionBridge
 import com.estemshan.services.session.GameSessionPort
@@ -99,6 +108,55 @@ object OnlineServices {
   }
 
   /**
+   * S73 (RD19) — the seat-reclaim seam, the `reclaimInactiveSeat` callable.
+   * It is the only door from this process back into a borrowed seat: the
+   * takeover marker is admin-written and named by no client validator, so the
+   * frozen rules deny a direct write, and the poll below can only ask the
+   * server. Lazy for the same reason as [timeouts]: it reads
+   * [FirebaseModule.functions].
+   */
+  val reclaims: SeatReclaimPort by lazy {
+    CallableSeatReclaim(FirebaseModule.functions)
+  }
+
+  /**
+   * S70 (RD29/RD30) — the Rank-down join gate, the `joinRankDownRoom` callable.
+   * A Rank-down join cannot be a client transaction because the check compares
+   * the caller's rank against the host's, and RD29 forbids a client from reading
+   * another player's rank. Lazy for the same reason as [timeouts].
+   */
+  val rankDownJoins: RankDownJoinPort by lazy {
+    CallableRankDownJoin(FirebaseModule.functions)
+  }
+
+  /**
+   * The settlement seam — the `settleMatch` callable (RD12/RD13), the once-
+   * only authority a completed RANKED match's RP movement comes from. Lazy
+   * for the same reason as [timeouts]: it reads [FirebaseModule.functions],
+   * a computed getter over the Firebase singleton MainActivity initializes.
+   */
+  val settlements: SettlementPort by lazy {
+    CallableSettlement(FirebaseModule.functions)
+  }
+
+  /**
+   * S56/S71 — the solo-queue seam, the `enqueueSearch` / `pollSearch` /
+   * `cancelSearch` callables. The eligible tier pool is derived server-side
+   * (RD9), so this port sends a GameType and a mode and nothing else — no
+   * tier, no division, no RP value and no identity ever reaches the wire.
+   * The mode is the player's own choice of what to play: it separates the
+   * Ranked and Unranked pools and buys no privilege, because an Unranked
+   * search awards no RP — the tier, the division and the RP stay
+   * Ranked-only — while its results count towards the career counters like
+   * any other mode's (Q46/N-1, 2026-10-22). Lazy for the same
+   * reason as [timeouts]: it reads [FirebaseModule.functions], a computed
+   * getter over the Firebase singleton MainActivity initializes.
+   */
+  val matchmaking: MatchmakingPort by lazy {
+    CallableMatchmaking(FirebaseMatchmakingTransport(FirebaseModule.functions))
+  }
+
+  /**
    * The Room screen's match writer. Lazy for the same reason as [auth]:
    * [MatchService] reads [FirebaseModule.db], and [MatchAdapter]'s listener
    * factory closes over it too.
@@ -158,6 +216,7 @@ object OnlineServices {
       db = FirebaseModule.db,
       auth = auth,
       matchStarter = matches::startMatch,
+      rankDownJoiner = rankDownJoins,
     )
   }
 }

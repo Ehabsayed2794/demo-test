@@ -78,7 +78,7 @@ fun placementOutcomeComponent(outcome: MatchOutcome): Double = when (outcome) {
 /** The placement signal as a 0..1 component: 1st → 1.0, 4th → 0.0. */
 fun placementRankComponent(placement: Int): Double {
   require(placement in 1..4) {
-    "Placement rank $placement is outside the four-seat table (RD17 competition rank is 1..4)"
+    "Placement rank $placement is outside the four-seat table (ranks are 1..4)"
   }
   return (4 - placement) / 3.0
 }

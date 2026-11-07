@@ -149,6 +149,10 @@ object Fixtures {
     finalScores: Any? = mapOf("p1" to 25, "p2" to -11, "p3" to 12, "p4" to 14),
     winnerIds: Any? = listOf("p1"),
     version: Any? = 7,
+    // O-19: the persisted multiplier of the round current at completion. The
+    // sentinel default keeps every pre-O-19 fixture a LEGACY document (key
+    // absent), which must still settle from the replayed chain alone.
+    currentMultiplier: Any? = ABSENT,
   ): Map<String, Any?> {
     val out = LinkedHashMap<String, Any?>()
     out["roomId"] = "r1"
@@ -166,6 +170,7 @@ object Fixtures {
     if (maxRounds !== ABSENT) out["maxRounds"] = maxRounds
     if (finalScores !== ABSENT) out["finalScores"] = finalScores
     if (winnerIds !== ABSENT) out["winnerIds"] = winnerIds
+    if (currentMultiplier !== ABSENT) out["currentMultiplier"] = currentMultiplier
     return out
   }
 

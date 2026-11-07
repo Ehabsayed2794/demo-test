@@ -23,6 +23,30 @@ class StandingsUiTest {
   }
 
   @Test
+  fun sharedBottomShowsTwoKozMugs() {
+    assertEquals(
+      setOf("p3", "p4"),
+      kozSeats(mapOf("p1" to 100, "p2" to 99, "p3" to 10, "p4" to 10)),
+    )
+  }
+
+  @Test
+  fun topTieLeavesOnlyTheUniqueBottomKozMug() {
+    assertEquals(
+      setOf("p4"),
+      kozSeats(mapOf("p1" to 100, "p2" to 100, "p3" to 50, "p4" to 20)),
+    )
+  }
+
+  @Test
+  fun allSeatTieCrownsEveryoneAndShowsNoKozMug() {
+    val totals = mapOf("p1" to 10, "p2" to 10, "p3" to 10, "p4" to 10)
+    val s = buildStandings(totals)
+    assertTrue(s.rows.all { it.isWinner })
+    assertEquals(emptySet<String>(), kozSeats(totals))
+  }
+
+  @Test
   fun deltasAndSaaydaPassThrough() {
     val s = buildStandings(
       totals = mapOf("p1" to 48, "p2" to -22),
@@ -40,5 +64,16 @@ class StandingsUiTest {
     val s = buildStandings(emptyMap())
     assertTrue(s.rows.isEmpty())
     assertEquals("Final Standings", s.title)
+  }
+
+  private fun kozSeats(totals: Map<String, Int>): Set<String> {
+    val rows = buildStandings(totals).rows
+    val minTotal = rows.minOfOrNull { it.total }
+    val maxTotal = rows.maxOfOrNull { it.total }
+    val allSeatsTie = minTotal != null && maxTotal == minTotal
+    return rows
+      .filter { isKozRow(it.total, minTotal, allSeatsTie) }
+      .map { it.seat }
+      .toSet()
   }
 }

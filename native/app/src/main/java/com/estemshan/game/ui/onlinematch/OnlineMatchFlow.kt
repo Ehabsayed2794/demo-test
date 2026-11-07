@@ -98,6 +98,13 @@ fun OnlineMatchScreen(vm: OnlineMatchViewModel, onLeft: () -> Unit) {
   val state by vm.state.collectAsStateWithLifecycle()
   val reconnecting by vm.reconnecting.collectAsStateWithLifecycle()
   val opponentAway by vm.opponentAway.collectAsStateWithLifecycle()
+  // S73 (RD19): the seats the configured bot is borrowing, straight off the
+  // match document. The chip marks them for every seat; the banner below is
+  // for the one player whose own seat is among them.
+  val borrowedSeats by vm.borrowedSeats.collectAsStateWithLifecycle()
+  val ourSeat = (state as? MatchUiState.Bidding)?.userSeat
+    ?: (state as? MatchUiState.Table)?.userSeat
+  val ourSeatIsBorrowed = ourSeat != null && ourSeat in borrowedSeats
   // S27: card snap per play, tick per bid submit.
   val sfx = LocalSfx.current
 
@@ -122,6 +129,7 @@ fun OnlineMatchScreen(vm: OnlineMatchViewModel, onLeft: () -> Unit) {
           forbidden = s.forbidden,
           floor = s.floor,
           onIntent = { intent -> sfx.bidSubmitted(); vm.submitBidding(intent) },
+          borrowedSeats = borrowedSeats,
         )
       }
       is MatchUiState.Table -> EstemshanTheme {
@@ -133,6 +141,7 @@ fun OnlineMatchScreen(vm: OnlineMatchViewModel, onLeft: () -> Unit) {
           rejection = s.rejection,
           onPlay = { _, card -> sfx.cardPlaced(); vm.playCard(card) },
           onResolve = vm::resolve,
+          borrowedSeats = borrowedSeats,
         )
       }
       is MatchUiState.RoundStandings -> EstemshanTheme { OnlineRoundStandings(s) }
@@ -151,10 +160,18 @@ fun OnlineMatchScreen(vm: OnlineMatchViewModel, onLeft: () -> Unit) {
       )
       is MatchUiState.Failed -> OnlineMatchFailed(s, onLeft)
     }
-    // S19: a passive, non-blocking staleness hint. It marks the top of the
-    // table and covers nothing — the controls stay live, and the overlay
-    // below still draws over it when the listener is retrying.
-    if (opponentAway) {
+    // S19/S73: a passive, non-blocking hint. It marks the top of the table and
+    // covers nothing — the controls stay live, and the overlay below still
+    // draws over it when the listener is retrying. One slot, and a borrowed OWN
+    // seat outranks "opponent appears away": that message is about this player,
+    // and the away signal they need is the bot's, not a guess about a rival.
+    if (ourSeatIsBorrowed) {
+      SeatBorrowedHint(
+        Modifier
+          .align(Alignment.TopCenter)
+          .padding(top = 16.dp),
+      )
+    } else if (opponentAway) {
       OpponentAwayHint(
         Modifier
           .align(Alignment.TopCenter)
@@ -189,7 +206,12 @@ private fun OnlineRoundStandings(state: MatchUiState.RoundStandings) {
 @Composable
 private fun OnlineMatchComplete(state: MatchUiState.MatchComplete, onLeft: () -> Unit) {
   Column(Modifier.fillMaxSize()) {
-    Box(Modifier.weight(1f)) { FinalStandingsScreen(state.standings) }
+    Box(Modifier.weight(1f)) {
+      // The ranked reveal rides the state when the settlement callable
+      // answered with the caller's own movement (RD13); a null ranked keeps
+      // the plain standings rendering byte-identically to before.
+      FinalStandingsScreen(state.standings, ranked = state.ranked)
+    }
     Button(
       onClick = onLeft,
       modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -243,6 +265,34 @@ private fun OpponentAwayHint(modifier: Modifier = Modifier) {
   }
 }
 
+/**
+ * S73 (RD19)'s persistent banner — same non-blocking treatment as
+ * [OpponentAwayHint]: gold on dark, marks the top of the table, covers
+ * nothing, and says nothing stronger than what the document proves (the bot
+ * holds the seat NOW). It never claims the player was inactive for a stated
+ * duration and it is not an accusation — inactivity is not network loss, and
+ * no error colour is used anywhere in this flow. The seat comes back by
+ * itself, so the copy says when it returns rather than offering a button:
+ * there is no "I'm back" screen in this story.
+ */
+@Composable
+private fun SeatBorrowedHint(modifier: Modifier = Modifier) {
+  EstemshanTheme {
+    Surface(
+      modifier = modifier,
+      color = MaterialTheme.colorScheme.surface,
+      shape = MaterialTheme.shapes.small,
+    ) {
+      Text(
+        stringResource(R.string.online_seat_borrowed),
+        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+        color = MaterialTheme.colorScheme.primary,
+        style = MaterialTheme.typography.bodyMedium,
+      )
+    }
+  }
+}
+
 @Composable
 private fun OnlineMatchFailed(state: MatchUiState.Failed, onLeft: () -> Unit) {
   Column(
@@ -279,8 +329,8 @@ private fun OnlineMatchGapOverlayPreview() {
   // treatment, the same two strings the warm overlay over a live table uses.
   EstemshanTheme {
     OnlineMatchOverlay(
-      "Reconnecting…",
-      "You're still in the match.",
+      stringResource(R.string.online_reconnecting),
+      stringResource(R.string.online_reconnecting_body),
     )
   }
 }
@@ -288,7 +338,12 @@ private fun OnlineMatchGapOverlayPreview() {
 @Preview(showBackground = true, backgroundColor = 0xFF0D0A07)
 @Composable
 private fun OnlineMatchReconnectingPreview() {
-  EstemshanTheme { OnlineMatchOverlay("Reconnecting…", "You're still in the match.") }
+  EstemshanTheme {
+    OnlineMatchOverlay(
+      stringResource(R.string.online_reconnecting),
+      stringResource(R.string.online_reconnecting_body),
+    )
+  }
 }
 
 @Preview(showBackground = true, backgroundColor = 0xFF0D0A07)
@@ -412,10 +467,7 @@ private fun OnlineMatchRoundStandingsPreview() {
 @Composable
 private fun OnlineMatchCompletePreview() {
   val state = MatchUiState.MatchComplete(
-    buildStandings(
-      mapOf("p1" to 120, "p2" to 98, "p3" to 134, "p4" to 77),
-      title = "Final Standings",
-    ),
+    buildStandings(mapOf("p1" to 120, "p2" to 98, "p3" to 134, "p4" to 77)),
   )
   EstemshanTheme { OnlineMatchComplete(state) {} }
 }

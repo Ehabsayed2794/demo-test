@@ -311,37 +311,51 @@ class DoStorageTest {
     assertEquals(mapOf("p1" to 4.0, "p2" to 1.0), bids)
   }
 
+  /**
+   * The full RP golden through the DO adapter (agree/corrected, claim once,
+   * replay exactly-once, version 7→8) — blocked by design until Step 2
+   * (O-06 D6): the DO store does not own `players/{uid}` yet, and a Ranked
+   * settlement must not fold RP against a profile it cannot read (that
+   * would be a fabricated pre-image), so the transaction fails closed
+   * before any write. Pinned as the interim contract: refusal with
+   * `unimplemented`, nothing written. The goldens through the fakes live in
+   * SettlementTest/RpApplicationTest. When Step 2 lands, restore the full
+   * assertions and keep this fail-closed case as the missing-profile pin.
+   */
   @Test
-  fun aConvergedMatchSettlesCorrectsClaimsAndReplays() = runTest {
+  fun aConvergedMatchFailsClosedUntilProfilesLandInStep2() = runTest {
     val db = freshDb()
     seedConvergedRound1(db)
+    val before = rawMatch(db)
 
     val adapter = DoSettlementDb(sqlHandle(db))
-    val response = settleOnce(adapter, "u1", settleData())
+    val error = assertFailsWith<AuthorityError> { settleOnce(adapter, "u1", settleData()) }
 
-    assertTrue(response["ok"] == true)
-    assertEquals(true, response["corrected"])
-    assertEquals(mapOf("p1" to 25, "p2" to -11, "p3" to 12, "p4" to 14), response["finalScores"])
-    assertEquals(1, claimCount(db))
-    assertEquals(8, versionColumn(db), "the claim write bumps version exactly once")
-
-    val replay = settleOnce(adapter, "u2", settleData())
-    assertEquals(true, replay["replayed"])
-    assertEquals(1, claimCount(db), "a replay must not write a second claim")
-    assertEquals(8, versionColumn(db), "a replay must not touch the document")
+    assertEquals("unimplemented", error.code)
+    assertEquals(toJson(before), toJson(rawMatch(db)), "the document must be untouched")
+    assertEquals(0, claimCount(db), "no claim may be written when profiles are missing")
+    assertEquals(7, versionColumn(db), "no write lands before the fail-closed gate")
   }
 
+  /**
+   * ROOM matches settle statistics-only on main (S6/A8.4 — the "NOT_RANKED"
+   * no-op response is gone), and that path also reads the attributed human
+   * seats' profiles, so on the DO adapter it fails closed exactly like the
+   * Ranked path until Step 2 lands. Pins: refusal with `unimplemented`,
+   * document untouched, zero claims. When Step 2 lands, restore the
+   * stats-only assertions (counters +1 per attributed human seat, one claim,
+   * replay with empty movements).
+   */
   @Test
-  fun aRoomMatchIsANoOpThatWritesNothing() = runTest {
+  fun aRoomMatchFailsClosedUntilProfilesLandInStep2() = runTest {
     val db = freshDb()
     seedMatch(db, "m1", matchFields(mode = "ROOM"))
     val before = rawMatch(db)
 
     val adapter = DoSettlementDb(sqlHandle(db))
-    val response = settleOnce(adapter, "u1", settleData())
+    val error = assertFailsWith<AuthorityError> { settleOnce(adapter, "u1", settleData()) }
 
-    assertEquals(false, response["settled"])
-    assertEquals("NOT_RANKED", response["reason"])
+    assertEquals("unimplemented", error.code)
     assertEquals(toJson(before), toJson(rawMatch(db)), "the document must be untouched")
     assertEquals(0, claimCount(db))
   }

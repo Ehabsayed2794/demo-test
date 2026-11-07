@@ -4,15 +4,26 @@ import com.estemshan.engine.BiddingIntent
 import com.estemshan.engine.BiddingOutcome
 import com.estemshan.engine.BiddingPhase
 import com.estemshan.engine.BiddingState
+import com.estemshan.engine.BidType
 import com.estemshan.engine.Card
 import com.estemshan.engine.DEFAULT_SEATS
+import com.estemshan.engine.DisconnectVotePhase
+import com.estemshan.engine.DisconnectVoteState
 import com.estemshan.engine.EmitResult
 import com.estemshan.engine.GameType
+import com.estemshan.engine.InactiveTakeover
+import com.estemshan.engine.InactivityClock
+import com.estemshan.engine.KozCharge
+import com.estemshan.engine.LeaveMatch
+import com.estemshan.engine.LeaveReason
+import com.estemshan.engine.MAX_DASH_CALLS
+import com.estemshan.engine.MatchMode
 import com.estemshan.engine.Play
 import com.estemshan.engine.PlayCard
 import com.estemshan.engine.PlayEmit
 import com.estemshan.engine.RANKS
 import com.estemshan.engine.RoundCfg
+import com.estemshan.engine.ScoringMode
 import com.estemshan.engine.Suit
 import com.estemshan.engine.TablePhase
 import com.estemshan.engine.TableState
@@ -27,7 +38,9 @@ import com.estemshan.engine.initNormalRound
 import com.estemshan.engine.initTable
 import com.estemshan.engine.previewPlay
 import com.estemshan.engine.resolveTrick
+import com.estemshan.engine.seventhTakeoverCharge
 import com.estemshan.engine.trickWinner
+import kotlin.math.floor
 
 /**
  * S61 Stage 1 — the decision-timer authority.
@@ -72,6 +85,12 @@ import com.estemshan.engine.trickWinner
  * Stage 1 deliberately excludes the 15-timeout counter and the S39 inactivity
  * takeover (§0.5-C: only TIMEOUT increments the counter; INACTIVE never does;
  * the two share no state). Those are Stages 2 and 3.
+ *
+ * Pointer note (S73 Stage 2, C3): the counter landed in Stage 2 and the RD19
+ * takeover's read side + clock/marker write landed here — see
+ * [inactiveTakeoverSeats], [seatActionCursor] and [inactivityAfterExpiredWindow].
+ * "INACTIVE never increments the counter" still holds: it is enforced by
+ * [botHeldSeat] suppressing a borrowed seat's expiries.
  */
 object TimeoutResolution {
 
@@ -91,6 +110,11 @@ object TimeoutResolution {
     /** History needed to reconstruct the engine state is missing or contradicts
      *  the engine (failed-precondition). Fail closed; never invent state. */
     const val HISTORY_UNAVAILABLE = "HISTORY_UNAVAILABLE"
+
+    /** Present history contradicts the document's own persisted shape —
+     *  today an illegal `currentMultiplier` (O-19). Reported, never repaired
+     *  by substituting a default. */
+    const val HISTORY_CORRUPT = "HISTORY_CORRUPT"
   }
 
   /**
@@ -201,11 +225,213 @@ object TimeoutResolution {
 
   /**
    * The `timeoutRemovedUids` write for a removal: appends [uid] to the
-   * mechanism's own list, distinct. The ONLY field the timeout mechanism
-   * writes for a removal — never `botSeats`, never Vote Kick's `removedUids`.
+   * mechanism's own list, distinct. Never `botSeats`, never Vote Kick's
+   * `removedUids` — and since S5 it is accompanied in the SAME write by the
+   * removal's own charge map ([TIMEOUT_REMOVED_CHARGES_FIELD], below).
    */
   fun removalWrite(fields: Map<String, Any?>, uid: String): List<String> =
     (timeoutRemovedUids(fields) + uid).distinct()
+
+  /**
+   * S5 (A8.3 / Q37 + RD31 / Q14d(1), closing IB-22): the 15-timeout removal
+   * records its own Koz charge — **1 in ROOM, 2 in RANKED and UNRANKED** —
+   * decided by the already-merged engine table, never here:
+   * [LeaveMatch.decideLeave] with [LeaveReason.FIFTEEN_TIMEOUT] returns
+   * exactly T-15's row. The removal is NOT a departure (Q14b(1)/A6.12), so
+   * nothing re-charges it as a leave; this is the one charge the removal
+   * itself owes.
+   *
+   * The amount is persisted adjacent to `timeoutRemovedUids`, on the SAME
+   * match document, in [TIMEOUT_REMOVED_CHARGES_FIELD]: a uid → Koz map,
+   * admin-written only. Like `timeoutRemovedUids` itself it has no
+   * firestore.rules entry — clients are denied by the update dispatch's
+   * fall-through `false` while the whole-document `allow get` keeps it
+   * readable by every seat, which is the zero-rules path `timeoutRemovedUids`
+   * and `inactivity/` already proved (the Admin SDK bypasses rules). No
+   * rules change, no SHA touch.
+   */
+  const val TIMEOUT_REMOVED_CHARGES_FIELD = "timeoutRemovedCharges"
+
+  /**
+   * The removal charge in persisted form: the Koz amount, or null when the
+   * engine table records nothing. Never null for FIFTEEN_TIMEOUT today — the
+   * reason has no None cell — but the write stays conditional so the engine,
+   * not this file, remains the single authority on amounts.
+   */
+  fun removalChargeKoz(mode: MatchMode): Int? =
+    when (LeaveMatch.decideLeave(mode, LeaveReason.FIFTEEN_TIMEOUT)) {
+      KozCharge.Koz1 -> 1
+      KozCharge.Koz2 -> 2
+      KozCharge.None -> null
+    }
+
+  /**
+   * Parses the persisted charge map. Malformed entries are dropped, never
+   * guessed — this read feeds [removalChargeWrite]'s carry-forward, so a
+   * dropped entry means "not re-recorded", the same fail-closed posture every
+   * other stored-value parser here takes.
+   */
+  fun timeoutRemovedCharges(fields: Map<String, Any?>): Map<String, Int> =
+    (fields[TIMEOUT_REMOVED_CHARGES_FIELD] as? Map<*, *>)?.entries?.mapNotNull { (k, v) ->
+      val uid = k as? String ?: return@mapNotNull null
+      val koz = (v as? Number)?.toInt() ?: return@mapNotNull null
+      uid to koz
+    }?.toMap() ?: emptyMap()
+
+  /**
+   * The `timeoutRemovedCharges` write for a removal: every already-recorded
+   * seat's charge is carried verbatim and this seat's is SET by uid — so two
+   * removals accumulate in one map, and a same-uid rewrite is a value-
+   * identical no-op (the amount is a pure function of the mode, which is
+   * create-only), never an additive double charge.
+   */
+  fun removalChargeWrite(fields: Map<String, Any?>, uid: String, koz: Int): Map<String, Int> =
+    timeoutRemovedCharges(fields) + (uid to koz)
+
+  /**
+   * S5: the match's authority mode as this resolver reads it. Mirrors
+   * Settlement.parseMatchMode / RoomDoc.parseMatchMode (absent or
+   * unrecognised ⇒ ROOM, never throws); `mode` is create-only —
+   * `isValidNewMatch` seeds it and no update validator names it — so the
+   * value the removal reads at the 15th timeout is the value the match was
+   * created with.
+   */
+  fun storedMatchMode(fields: Map<String, Any?>): MatchMode =
+    (fields["mode"] as? String)?.let { runCatching { MatchMode.valueOf(it) }.getOrNull() }
+      ?: MatchMode.ROOM
+
+  // ── S7 (A7.3 / A8.2): the per-seat takeover counter and the 7th removal ──
+
+  /**
+   * S7 (A7.3 / Q32): the number of qualifying takeovers at which the seat is
+   * removed permanently — the "bot takeover counter (7th = match removal)" of
+   * the owner ruling. The count lives in the private `inactivity/{uid}`
+   * document as [INACTIVITY_TAKEOVER_COUNT_FIELD], managed HERE and not on
+   * [InactivityClock] — RD20's separation keeps the clock owning exactly its
+   * two fields, and the takeover mechanism owns its own count beside them.
+   */
+  const val TAKEOVER_REMOVAL_THRESHOLD = 7
+
+  /** The lower bound a stored takeover count must satisfy to be trusted. */
+  const val MIN_STORED_TAKEOVER_COUNT = 0
+
+  /**
+   * `inactivity/{uid}.inactiveTakeoverCount` — how many qualifying takeovers
+   * this seat has already earned. It counts TAKEOVER EVENTS (calls where
+   * [inactivityAfterExpiredWindow] returns a non-null takeover), never
+   * ordinary timeouts and never borrow-time expiries: the clock only reaches
+   * its threshold while a human holds the seat, so the counter advances only
+   * on genuine earned takeovers.
+   */
+  const val INACTIVITY_TAKEOVER_COUNT_FIELD = "inactiveTakeoverCount"
+
+  /** `matches/{id}.takeoverRemovedUids` — the takeover mechanism's own removal list. */
+  const val TAKEOVER_REMOVED_UIDS_FIELD = "takeoverRemovedUids"
+
+  /**
+   * `matches/{id}.takeoverRemovedCharges` — the 7th takeover's own charge map,
+   * a SIBLING of S5's `timeoutRemovedCharges` and never a widening of it: uid
+   * → Koz, admin-written on the zero-rules path (no rules entry; the update
+   * dispatch falls through to `false` for clients while `allow get` keeps the
+   * map readable to every seat). Set-by-uid, so a same-uid rewrite is
+   * value-identical, never additive.
+   */
+  const val TAKEOVER_REMOVED_CHARGES_FIELD = "takeoverRemovedCharges"
+
+  /** The takeover mechanism's own persisted removal list (never another mechanism's). */
+  fun takeoverRemovedUids(fields: Map<String, Any?>): Set<String> =
+    ((fields[TAKEOVER_REMOVED_UIDS_FIELD] as? List<*>)?.mapNotNull { it as? String }).orEmpty().toSet()
+
+  /** Parses the 7th-takeover charge map, fail-closed exactly like S5's. */
+  fun takeoverRemovedCharges(fields: Map<String, Any?>): Map<String, Int> =
+    (fields[TAKEOVER_REMOVED_CHARGES_FIELD] as? Map<*, *>)?.entries?.mapNotNull { (k, v) ->
+      val uid = k as? String ?: return@mapNotNull null
+      val koz = (v as? Number)?.toInt() ?: return@mapNotNull null
+      uid to koz
+    }?.toMap() ?: emptyMap()
+
+  /**
+   * The 7th takeover's charge amount from the engine table
+   * ([com.estemshan.engine.seventhTakeoverCharge] — A7.3: ROOM 1, RANKED and
+   * UNRANKED 2). Int form for the persisted map, mirroring
+   * [removalChargeKoz]'s convention: the engine, not this file, is the single
+   * authority on amounts.
+   */
+  fun takeoverRemovalChargeKoz(mode: MatchMode): Int? =
+    when (seventhTakeoverCharge(mode)) {
+      KozCharge.Koz1 -> 1
+      KozCharge.Koz2 -> 2
+      KozCharge.None -> null
+    }
+
+  /** The charge-map write: carried verbatim + this seat SET by uid (never additive). */
+  fun takeoverRemovalChargeWrite(fields: Map<String, Any?>, uid: String, koz: Int): Map<String, Int> =
+    takeoverRemovedCharges(fields) + (uid to koz)
+
+  /**
+   * The stored takeover count: absent ⇒ 0 (no takeovers recorded yet — a
+   * document written before S7), present-but-invalid (non-number, fractional,
+   * negative, above [TAKEOVER_REMOVAL_THRESHOLD]) ⇒ null, the FAIL-CLOSED
+   * outcome in [InactivityClock.fromStored]'s own convention: the caller
+   * writes nothing, takes nobody over, and no malformed state can remove a
+   * player. A stored 7 is VALID — it is the terminal value the removal
+   * itself writes, and the seat it belongs to is bot-held from then on, so it
+   * can never be advanced past 7 by this mechanism.
+   */
+  fun storedTakeoverCount(storedDoc: Map<String, Any?>?): Int? {
+    val raw = storedDoc?.get(INACTIVITY_TAKEOVER_COUNT_FIELD) ?: return 0
+    val number = raw as? Number ?: return null
+    val value = number.toDouble()
+    if (value.isNaN() || value.isInfinite()) return null
+    if (value != floor(value)) return null
+    val count = number.toInt()
+    if (count < MIN_STORED_TAKEOVER_COUNT || count > TAKEOVER_REMOVAL_THRESHOLD) return null
+    return count
+  }
+
+  /**
+   * S7 / A7.3 — whether [seatId]'s 7th takeover is due RIGHT NOW from the
+   * committed documents alone: the stored count sits exactly one below the
+   * threshold AND the stored clock has reached the RD19 threshold at
+   * [nowMillis]. This is the read-only evaluation the resolver runs BEFORE
+   * the S74 pause gate, so a live WAIT cannot defer the removal.
+   *
+   * Fail-closed in every direction that could remove a player: an already
+   * takeover-removed uid answers false (the removal owns the replay), a seat
+   * another mechanism drives answers false, and any untrustworthy stored
+   * value answers false. NOTE the structural honesty documented in the S7
+   * report: every write this code makes stores an accumulation BELOW the
+   * threshold (the expiry that crosses it fires the takeover in the same
+   * write), and the open-window anchor is nulled by every persisted window
+   * close — so on a runtime-produced document this predicate is true only at
+   * the instant the crossing expiry itself resolves, which the ordinary expiry
+   * path already owns. It exists because A7.3 demands the WAIT not defer the
+   * removal; making it reachable during a pause is E4.3's re-architecture,
+   * explicitly out of scope here.
+   */
+  fun seventhTakeoverOverdue(
+    fields: Map<String, Any?>,
+    seatId: String,
+    storedDoc: Map<String, Any?>?,
+    nowMillis: Long,
+  ): Boolean {
+    val uid = seatUid(fields, seatId) ?: return false
+    if (uid in takeoverRemovedUids(fields)) return false
+    if (seatId in botControlledSeats(fields) ||
+      seatId in inactiveTakeoverSeats(fields) ||
+      seatId in disconnectReplacedHeldSeats(fields)
+    ) {
+      return false
+    }
+    val count = storedTakeoverCount(storedDoc) ?: return false
+    if (count != TAKEOVER_REMOVAL_THRESHOLD - 1) return false
+    val clock = InactivityClock.fromStored(
+      accumulatedRaw = storedDoc?.get(InactivityClock.ACCUMULATED_FIELD),
+      windowStartRaw = storedDoc?.get(InactivityClock.OPEN_WINDOW_FIELD),
+      docExists = storedDoc != null,
+    ) ?: return false
+    return clock.takeoverEligibleAt(nowMillis)
+  }
 
   // ── constants mirrored from :services (not visible to :functions) ────
 
@@ -240,6 +466,14 @@ object TimeoutResolution {
   /** The lower bound a stored timeout count must satisfy to be trusted. */
   const val MIN_STORED_TIMEOUT_COUNT = 0
 
+  /**
+   * S73 (RD19): the lower bound a stored seat-action cursor must satisfy to be
+   * trusted. Deliberately 0 rather than 1 — the cursor is 0 for a real seat
+   * (round 1 before the seat has committed anything), and rejecting it would
+   * make the very first window unrecordable.
+   */
+  const val MIN_STORED_SEAT_CURSOR = 0L
+
   /** `timeoutCounts/{uid}`'s single field. */
   const val COUNT_FIELD = "count"
 
@@ -251,24 +485,424 @@ object TimeoutResolution {
   const val MIN_RETRY_AFTER_MILLIS = 250L
 
   /**
-   * S61 Stage 2: the seats a bot drives, for EITHER reason — Vote Kick's
-   * `botSeats`, or a seat whose uid the 15-timeout counter removed. Mirrors
-   * MatchDoc.botControlledSeats() read-side-only: the two mechanisms keep
-   * separate persisted lists and this never writes either.
+   * S61 Stage 2: the seats a bot drives, for ANY permanent reason — Vote
+   * Kick's `botSeats`, a seat whose uid the 15-timeout counter removed, or a
+   * seat whose uid the 7th takeover removed (S7/A7.3: the takeover removal is
+   * permanent exactly like RD20's). Mirrors MatchDoc.botControlledSeats()
+   * read-side-only: the mechanisms keep separate persisted lists and this
+   * never writes either.
    */
   fun botControlledSeats(fields: Map<String, Any?>): Set<String> {
     val botSeats = (fields["botSeats"] as? List<*>)?.mapNotNull { it as? String }.orEmpty()
     val timeoutRemoved = timeoutRemovedUids(fields)
+    val takeoverRemoved = takeoverRemovedUids(fields)
     val seats = strMap(fields["seats"]) ?: return botSeats.toSet()
     return botSeats.toSet() +
       seats.entries.mapNotNull { (seat, uid) ->
-        if (uid in timeoutRemoved) seat else null
+        if (uid in timeoutRemoved || uid in takeoverRemoved) seat else null
       }
   }
 
   /** The timeout mechanism's own persisted removal list (never Vote Kick's). */
   fun timeoutRemovedUids(fields: Map<String, Any?>): Set<String> =
     ((fields["timeoutRemovedUids"] as? List<*>)?.mapNotNull { it as? String }).orEmpty().toSet()
+
+  // ── S73 (RD19): the inactivity clock, its cursor, and the takeover ────
+
+  /**
+   * The seat-action cursor's round term. `advanceToNextRound` prunes both logs
+   * and clears `bids` in the same transaction that increments `currentRound`,
+   * so the round term is what keeps the cursor monotone across a round
+   * boundary even though the per-round terms restart at zero.
+   */
+  private const val CURSOR_ROUND_STRIDE = 1_000_000L
+
+  /** The cursor's per-card term — a seat plays at most one card per trick. */
+  private const val CURSOR_CARD_STRIDE = 1_000L
+
+  /** One logged bidding action contributes one unit; a committed estimate the
+   *  same. Both stay far below [CURSOR_CARD_STRIDE], so the terms cannot carry. */
+  private const val CURSOR_BIDDING_STRIDE = 1L
+  private const val CURSOR_COMMITTED_BID = 1L
+
+  /**
+   * S73 (RD19): the seats the takeover currently BORROWS. Read-side only, and
+   * deliberately NOT folded into [botControlledSeats] — the mirror of
+   * MatchDoc.botControlledSeats() stays Vote Kick + timeout removal, because a
+   * borrowed seat returns to the same player in the same seat (DEC-RD19-04) and
+   * must therefore keep its Vote Kick slot and stay kickable.
+   *
+   * A malformed entry parses as "not borrowed" ([InactiveTakeover.parseAll]
+   * drops it): corrupt takeover state must never strand a human out of their own
+   * seat, and it must never hand a bot one either. The seat's own clock then
+   * keeps accumulating and a genuine takeover overwrites the garbage.
+   */
+  fun inactiveTakeoverSeats(fields: Map<String, Any?>): Set<String> =
+    InactiveTakeover.takeoverSeats(fields[InactiveTakeover.TAKEOVER_FIELD])
+
+  /**
+   * S74 — the seats the disconnect vote is holding RIGHT NOW, every phase of
+   * it: `HOLD` (detected, queued for the ballot), `VOTE` (the 30 s ballot
+   * open), `WAIT` (the granted pause) and `REPLACED` (the waiting ended; the
+   * seat is the configured bot's for the rest of the match). From the instant
+   * of detection the seat is bot-played, so this is the read every pacing
+   * site consults — and, like [inactiveTakeoverSeats], it is READ-SIDE ONLY
+   * and deliberately NOT folded into [botControlledSeats]: the mirror of
+   * MatchDoc.botControlledSeats() stays Vote Kick + timeout removal, and a
+   * disconnect-held seat keeps its Vote Kick slot exactly as a borrowed one
+   * does.
+   *
+   * Malformed entries parse as "not held" ([DisconnectVoteState.parseAll]
+   * drops them, fail-closed); the resolver re-detects a genuinely dropped
+   * player on its next pass. Gated on the mode the same way every S74 write
+   * is: a RANKED document never asks the question, so even a tampered marker
+   * left on one can change no seat's pace there (the RD28 canary lives in
+   * [DisconnectVoteFlow.modeEligible], consulted once, here).
+   */
+  fun disconnectHeldSeats(fields: Map<String, Any?>): Set<String> =
+    if (!DisconnectVoteFlow.modeEligible(fields)) {
+      emptySet()
+    } else {
+      DisconnectVoteState.heldSeats(fields[DisconnectVoteState.VOTE_FIELD])
+    }
+
+  /**
+   * S74 — the pause a granted `WAIT` window is running, in millis remaining,
+   * or null when no pause is live. A winning WAIT stops the table for a
+   * bounded 90 seconds BEGINNING AFTER the verdict (A5.3 item 4): during that
+   * window no decision resolves and no deadline runs, because the pause is
+   * "the table waits for its player". The bound is the entry's own
+   * [DisconnectVoteState.DEADLINE_FIELD] — a server stamp the resolver wrote —
+   * and an expired pause returns null the moment it is overdue: the pause is
+   * bounded, never indefinite, even if no one has flipped the marker to
+   * `REPLACED` yet.
+   */
+  fun disconnectPauseRemaining(fields: Map<String, Any?>, nowMillis: Long): Long? {
+    if (!DisconnectVoteFlow.modeEligible(fields)) return null
+    val deadline = DisconnectVoteState.waitDeadlineMillis(
+      fields[DisconnectVoteState.VOTE_FIELD],
+    ) ?: return null
+    val remaining = deadline - nowMillis
+    if (remaining <= 0L) return null
+    return remaining.coerceAtLeast(DisconnectVoteFlow.MIN_RETRY_AFTER_MILLIS)
+  }
+
+  /**
+   * S7 / A7.3: the seat whose granted WAIT pause is live, or null when none
+   * is. The 7th-takeover evaluation the resolver runs before the pause gate
+   * asks about exactly this seat — the pause belongs to its ballot, so the
+   * removal that cancels the ballot is a fact about this seat and no other
+   * ("a 7th takeover of seat A must not cancel seat B's live WAIT").
+   */
+  fun disconnectWaitSeat(fields: Map<String, Any?>): String? {
+    if (!DisconnectVoteFlow.modeEligible(fields)) return null
+    return DisconnectVoteState.parseAll(fields[DisconnectVoteState.VOTE_FIELD])
+      .entries.sortedBy { it.key }
+      .firstOrNull { it.value.phase == DisconnectVotePhase.WAIT }
+      ?.key
+  }
+
+  /**
+   * S7: the disconnect-held seats whose waiting has already ENDED — the
+   * `REPLACED` entries. The inactivity clock keeps its pre-S7 freeze for
+   * these on purpose: the flow has already made the seat permanently the
+   * configured bot's (its own provenance list, its own charge), so letting it
+   * ALSO earn RD19 takeovers would stack a second permanent removal — and at
+   * the 7th, a second charge — on a seat another mechanism already replaced,
+   * against A8.2's no-double-charge. The borrowing phases (`HOLD`/`VOTE`/
+   * `WAIT`) are the ones whose clock accrual S7 lifted; see
+   * [inactivityAfterExpiredWindow].
+   */
+  fun disconnectReplacedHeldSeats(fields: Map<String, Any?>): Set<String> =
+    if (!DisconnectVoteFlow.modeEligible(fields)) {
+      emptySet()
+    } else {
+      DisconnectVoteState.parseAll(fields[DisconnectVoteState.VOTE_FIELD])
+        .filterValues { it.phase == DisconnectVotePhase.REPLACED }
+        .keys
+    }
+
+  /**
+   * Whether [seatId] is being driven by a bot right now, for any reason:
+   * permanently ([botControlledSeats]), borrowed ([inactiveTakeoverSeats]), or
+   * held by the S74 disconnect vote ([disconnectHeldSeats]). All of them
+   * shorten the window to [BOT_DECISION_SECONDS] and none may increment the
+   * timeout counter; only the permanence differs, and the disconnect flow is
+   * the one billed as reclaimable while the table waits.
+   */
+  private fun botHeldSeat(fields: Map<String, Any?>, seatId: String): Boolean =
+    seatId in botControlledSeats(fields) ||
+      seatId in inactiveTakeoverSeats(fields) ||
+      seatId in disconnectHeldSeats(fields)
+
+  /** The bot that plays one expired decision. [tier] is what the card path
+   *  takes ([PlayBrain.decide] has no personality parameter); the bidding path
+   *  takes both. */
+  data class BotProfile(
+    val tier: BotTier,
+    val personality: BotPersonality,
+  )
+
+  /**
+   * S73 (RD19, the fork-1 amendment): WHICH bot plays [seatId]'s expired
+   * decision.
+   *
+   * A **borrowed** seat plays the table's CONFIGURED difficulty. The takeover is
+   * the human's own seat played on their behalf, and the host picked that
+   * difficulty for every seat at this table — an EXPERT table whose absent player
+   * is suddenly played by a MEDIUM bot is a different game, and the seat's owner
+   * returns to the middle of it.
+   *
+   * Everything else keeps RD20's pin, byte-identical to Stage 1: a permanently
+   * bot-controlled seat (`botSeats`, and the 15-timeout removals S61 shipped) is
+   * played by the brain the room created it with, never through here, and a seat
+   * with no takeover marker — a human whose own timer expired — stays
+   * MEDIUM/[BotPersonality.DEFAULT]. So no non-S73 path changes value, and the
+   * only documents that can produce a different tier are exactly the ones
+   * carrying a marker the resolver itself wrote.
+   *
+   * The configured pair is read through the `RoomDoc` fallbacks
+   * ([parseBotTier]/[parseBotPersonality]): a match created before the trio's
+   * persistence, or a value no client could have written, resolves to
+   * MEDIUM/BALANCED rather than throwing or guessing.
+   *
+   * S74 adds the third reason the configured pair is used: a disconnect-held
+   * seat (DEC-DISC-01's configured-bot default — \"no agreement inside 30 s
+   * continues with the configured bot\", A5.2:434). Same seat-played-on-its-
+   * owner's-behalf logic as the borrowed half, same fallbacks.
+   */
+  fun botProfileFor(fields: Map<String, Any?>, seatId: String): BotProfile =
+    if (seatId in inactiveTakeoverSeats(fields) || seatId in disconnectHeldSeats(fields)) {
+      BotProfile(
+        tier = parseBotTier(fields["botTier"]),
+        personality = parseBotPersonality(fields["botPersonality"]),
+      )
+    } else {
+      BotProfile(tier = BotTier.MEDIUM, personality = BotPersonality.DEFAULT)
+    }
+
+  /** One log entry's (seat, round), or null when the entry cannot be attributed. */
+  private fun entrySeatAndRound(value: Any?): Pair<String, Int>? {
+    val map = strMap(value) ?: return null
+    val seat = map["seatId"] as? String ?: return null
+    val round = num(map["round"]) ?: return null
+    return seat to round
+  }
+
+  /**
+   * RD19's reset input: [seatId]'s own committed-action count in the current
+   * round, carried forward by the round term. This is what lets a server that
+   * is invoked ONLY on expiry (it never sees a window open, and never sees an
+   * answered one) detect "the player acted inside their own window": the report
+   * IS the move, already on the document, so no client ever writes toward RD19
+   * and no permission is widened.
+   *
+   * The committed estimate is part of the count because a fast round's ONLY
+   * bidding action is `submitBid`, which writes `bids/{seat}` and no log entry —
+   * leaving it out would make an on-time estimate invisible to the cursor and
+   * take over a player who was answering every window. It can decrease (round
+   * advance, a general pass consuming its round), and a change in either direction resets, so
+   * the failure mode of a decrease is a reset the rule would have granted anyway
+   * — never a false takeover. Biasing every judgement here toward resetting is
+   * the fail-closed direction: a wrong reset delays a takeover, a wrong
+   * non-reset takes a present player out of their seat.
+   *
+   * Null when the document cannot be read: an entry that is not a
+   * (seatId, round) pair could be this seat's unlooked-for action, so no cursor
+   * — and therefore no clock advance and no takeover — is derived from it.
+   */
+  fun seatActionCursor(fields: Map<String, Any?>, seatId: String): Long? {
+    val round = num(fields["currentRound"]) ?: return null
+    var cards = 0L
+    for (entry in (fields["cardLog"] as? List<*>).orEmpty()) {
+      val attributed = entrySeatAndRound(entry) ?: return null
+      if (attributed.first == seatId && attributed.second == round) cards++
+    }
+    var actions = 0L
+    for (entry in (fields["biddingLog"] as? List<*>).orEmpty()) {
+      val attributed = entrySeatAndRound(entry) ?: return null
+      if (attributed.first == seatId && attributed.second == round) actions++
+    }
+    val committed = if (strMap(fields["bids"])?.get(seatId) is Number) CURSOR_COMMITTED_BID else 0L
+    return round * CURSOR_ROUND_STRIDE + cards * CURSOR_CARD_STRIDE + actions + committed
+  }
+
+  /** Cards committed in [round], for the trick a takeover is stamped with. */
+  private fun roundCardCount(fields: Map<String, Any?>, round: Int): Int? {
+    var count = 0
+    for (entry in (fields["cardLog"] as? List<*>).orEmpty()) {
+      val attributed = entrySeatAndRound(entry) ?: return null
+      if (attributed.second == round) count++
+    }
+    return count
+  }
+
+  /**
+   * The cursor projected over [write] — the resolver's own decision is appended
+   * to the same logs the cursor counts, and it is always attributed to this
+   * seat, so persisting the un-projected count would make the bot's move look
+   * like the human's next expiry did act. Every false reset in one write.
+   */
+  private fun cursorAfterWrite(
+    fields: Map<String, Any?>,
+    seatId: String,
+    write: DecisionWrite,
+    cursorNow: Long,
+  ): Long = when {
+    "biddingLog" in write.updates -> cursorNow + CURSOR_BIDDING_STRIDE
+    "cardLog" in write.updates -> cursorNow + CURSOR_CARD_STRIDE
+    else -> {
+      val justCommitted = (strMap(fields["bids"])?.get(seatId) !is Number) &&
+        (strMap(write.updates["bids"])?.get(seatId) is Number)
+      if (justCommitted) cursorNow + CURSOR_COMMITTED_BID else cursorNow
+    }
+  }
+
+  /**
+   * The whole state of one seat's inactivity after an expired window: the three
+   * fields of the private `matches/{id}/inactivity/{uid}` document, plus the
+   * marker when the accumulation crossed RD19's threshold.
+   */
+  data class InactivityUpdate(
+    /** The COMPLETE private document — [InactivityClock.storedFieldNames] plus
+     *  [InactiveTakeover.CURSOR_FIELD], and [INACTIVITY_TAKEOVER_COUNT_FIELD]
+     *  whenever a stored document is being replaced (S7). Written as a
+     *  replacement, never a merge, because these are the only state this
+     *  mechanism owns. */
+    val docFields: Map<String, Any?>,
+    /** The takeover this window earned, or null. Its marker entry is merged
+     *  into the match document by the caller; the entry's own neighbours are
+     *  carried verbatim by [InactiveTakeover.withTakeover]. */
+    val takeover: InactiveTakeover?,
+  )
+
+  /**
+   * Advances RD19's clock for the seat whose window just expired.
+   *
+   * The sequencing is the whole of DEC-RD19-01 as Stage 1 closed it: an
+   * ordinary expiry does NOT reset the clock (the bot's move substitutes for the
+   * player, it is not evidence of them), a genuine interaction inside one of the
+   * player's own windows DOES, and the accumulation is checked against the 50 s
+   * threshold only after that. A closed window contributes at most its own
+   * length, so a trigger that fires late — or a player who wandered off after
+   * the deadline — cannot manufacture time.
+   *
+   * Returns null — write NOTHING, take nobody over — when the state cannot be
+   * trusted: the seat has no uid to key the document by, the seat is already
+   * permanently bot-driven or already borrowed (a borrowed seat's clock stopped
+   * accruing the moment it was taken over; reclaim owns restarting it), the
+   * logs will not yield a cursor, or the stored clock is present-but-invalid.
+   * [InactivityClock.fromStored] is what makes the last of those a fail-closed
+   * read rather than a fresh zero.
+   *
+   * S7 / A7.3: a disconnect-held seat's clock is deliberately NOT suppressed
+   * here while the hold is a BORROWING (`HOLD`/`VOTE`/`WAIT`) — the one
+   * semantic change of this story. The hold is a borrowing, and RD19's clock
+   * measures the human's absence, not the mechanism's own doing: a seat can
+   * therefore EARN its 7th takeover while a ballot about it is open, which is
+   * exactly what A7.3 demands ("fires immediately, even with a 30 s ballot
+   * open"). A REPLACED hold keeps the pre-S7 freeze ([disconnectReplacedHeldSeats]
+   * — that flow already made the seat permanently its own), the RD20 timeout
+   * counter keeps its own suppression for every held seat (the caller's
+   * `humanHeldSeat`), and a takeover-removed seat is suppressed here through
+   * [botControlledSeats].
+   *
+   * A takeover zeroes the clock on purpose, and it is load-bearing: an
+   * accumulation at or above the threshold is one `fromStored` rejects, so
+   * leaving 50 s on the document would kill the clock for that seat permanently
+   * and leave it neither re-takeover-able nor able to earn a second one.
+   *
+   * S7 also carries the per-seat takeover count ([INACTIVITY_TAKEOVER_COUNT_FIELD]):
+   * read from [storedDoc] with [storedTakeoverCount]'s fail-closed parse
+   * (invalid ⇒ null ⇒ this whole advance refuses), and written back as
+   * `stored + (1 if this window earned a takeover else 0)` whenever a stored
+   * document is being replaced — the replacement must never erase a count
+   * that is already on it. A first write (no stored document) keeps S73's
+   * exact three-field shape; there is no count to erase, and the field reads
+   * as 0 until the document next replaces.
+   */
+  fun inactivityAfterExpiredWindow(
+    fields: Map<String, Any?>,
+    pending: Pending,
+    seatUid: String?,
+    storedDoc: Map<String, Any?>?,
+    nowMillis: Long,
+    write: DecisionWrite,
+  ): InactivityUpdate? {
+    val seatId = pending.seatId
+    if (seatUid == null) return null
+    // S7/A7.3 lifted the BORROWING half of the disconnect hold here on purpose
+    // — see the KDoc. The permanent union, the borrowed set, and a REPLACED
+    // disconnect hold (already permanent by its own mechanism) still suppress.
+    if (seatId in botControlledSeats(fields) ||
+      seatId in inactiveTakeoverSeats(fields) ||
+      seatId in disconnectReplacedHeldSeats(fields)
+    ) {
+      return null
+    }
+    val round = num(fields["currentRound"]) ?: return null
+    val cursorNow = seatActionCursor(fields, seatId) ?: return null
+    val clock = InactivityClock.fromStored(
+      accumulatedRaw = storedDoc?.get(InactivityClock.ACCUMULATED_FIELD),
+      windowStartRaw = storedDoc?.get(InactivityClock.OPEN_WINDOW_FIELD),
+      docExists = storedDoc != null,
+    ) ?: return null
+    val storedTakeovers = storedTakeoverCount(storedDoc) ?: return null
+
+    // A cursor the mechanism never wrote is not state to advance from; a cursor
+    // that was never written at all is the seat's first window, so it only means
+    // "nothing to compare yet" and cannot reset.
+    val rawCursor = storedDoc?.get(InactiveTakeover.CURSOR_FIELD)
+    val storedCursor = if (rawCursor == null) null else {
+      val number = rawCursor as? Number ?: return null
+      val value = number.toLong()
+      if (value.toDouble() != number.toDouble() || value < MIN_STORED_SEAT_CURSOR) return null
+      value
+    }
+    val acted = storedCursor != null && storedCursor != cursorNow
+
+    val advanced = if (acted) {
+      InactivityClock()
+    } else {
+      val durationMillis = pending.durationSeconds.toLong() * MILLIS_PER_SECOND
+      // A stored open window is an anchor left by a resolution that died before
+      // its write; the only window that can be named now is this one, so it
+      // closes at this one's length rather than nesting a second anchor.
+      val opened = if (clock.openWindowStartMillis != null) clock
+      else clock.windowOpened(pending.anchorMillis)
+      opened.windowClosed(nowMillis, durationMillis)
+    }
+
+    val takeover = if (advanced.takeoverEligibleAt(nowMillis)) {
+      val cards = roundCardCount(fields, round) ?: return null
+      InactiveTakeover(
+        takenOverAtMillis = nowMillis,
+        roundAtTakeover = round,
+        // The trick as the document has it BEFORE this write, so a takeover
+        // struck mid-trick is bounded by that trick finishing (DEC-RD19-04) and
+        // not by the one the bot's own card may have just completed.
+        trickAtTakeover = InactiveTakeover.trickNo(cards),
+      )
+    } else {
+      null
+    }
+
+    val persisted = if (takeover != null) InactivityClock() else advanced
+    val nextTakeoverCount = (storedTakeovers + if (takeover != null) 1 else 0)
+      .coerceAtMost(TAKEOVER_REMOVAL_THRESHOLD)
+    return InactivityUpdate(
+      docFields = persisted.storedFields() +
+        (InactiveTakeover.CURSOR_FIELD to cursorAfterWrite(fields, seatId, write, cursorNow)) +
+        // Carried/replaced only: a first write (storedDoc == null) keeps S73's
+        // three-field document, and the count reads as 0 until it exists.
+        if (storedDoc != null) {
+          mapOf(INACTIVITY_TAKEOVER_COUNT_FIELD to nextTakeoverCount)
+        } else {
+          emptyMap()
+        },
+      takeover = takeover,
+    )
+  }
 
   /** 13 tricks × the seats at the table (maybeCompleteRound's own check). */
   private fun cardTotal(seats: Int): Int = 13 * seats
@@ -294,6 +928,13 @@ object TimeoutResolution {
     (value as? String)?.let { runCatching { GameType.valueOf(it) }.getOrNull() }
       ?: GameType.FULL
 
+  /** Mirrors Settlement.parseScoringMode: absent/unrecognised ⇒ NORMAL. S1
+   *  threads this through the replayed auction's own state — a CLASSIC
+   *  match's all-pass never escalates the engine's next-round multiplier. */
+  fun parseScoringMode(value: Any?): ScoringMode =
+    (value as? String)?.let { runCatching { ScoringMode.valueOf(it) }.getOrNull() }
+      ?: ScoringMode.NORMAL
+
   /** Mirrors RoomDoc.parseDecisionTimerSeconds: absent, non-numeric, or
    *  outside RD21's 5..20 s window ⇒ 15 s — a read can never surface a timer
    *  the host never picked. */
@@ -302,6 +943,19 @@ object TimeoutResolution {
     return if (seconds in MIN_DECISION_TIMER_SECONDS..MAX_DECISION_TIMER_SECONDS) seconds
     else DEFAULT_DECISION_TIMER_SECONDS
   }
+
+  /** Mirrors RoomDoc.parseBotTier: absent/unrecognised ⇒ MEDIUM. The rules
+   *  layer refuses an unknown name, so a read that cannot map one is a document
+   *  from before the trio's persistence, not a difficulty nobody chose. */
+  fun parseBotTier(value: Any?): BotTier =
+    (value as? String)?.let { runCatching { BotTier.valueOf(it) }.getOrNull() }
+      ?: BotTier.MEDIUM
+
+  /** Mirrors RoomDoc.parseBotPersonality: absent/unrecognised ⇒ BALANCED
+   *  (RD21's default) — the value the client would have shown in the lobby. */
+  fun parseBotPersonality(value: Any?): BotPersonality =
+    (value as? String)?.let { runCatching { BotPersonality.valueOf(it) }.getOrNull() }
+      ?: BotPersonality.BALANCED
 
   /** The doc's `updatedAt` as epoch millis (see JsBridging.timestampToMillis). */
   fun parseUpdatedAtMillis(fields: Map<String, Any?>): Long? =
@@ -387,6 +1041,72 @@ object TimeoutResolution {
     return raw.map { parseLoggedAction(it) ?: return null }
   }
 
+  /**
+   * F1 (owner ruling 2026-10-24): the number of DECLARED Dash Calls the
+   * document claims for [round]. Null when a biddingLog entry is too
+   * malformed even to count — the caller reports corrupt history by name
+   * rather than replaying a guess.
+   */
+  private fun declaredDashCalls(fields: Map<String, Any?>, round: Int): Int? {
+    val raw = fields["biddingLog"] as? List<*> ?: return 0
+    var count = 0
+    for (item in raw) {
+      val map = strMap(item) ?: return null
+      if (num(map["round"]) != round) continue
+      if (map["actionType"] as? String != "SubmitDashCallDecision") continue
+      if (map["declaredDashCall"] as? Boolean == true) count++
+    }
+    return count
+  }
+
+  /**
+   * T-09 (§5, fail-closed): a fast round's active declaration cycle is
+   * PERSISTED, never inferred. The atomic CONFIRM write appends the
+   * confirmation, replaces `bids` with the caller's confirmed number and
+   * bumps `biddingCycle`, all in one transaction — so for the round in play:
+   *
+   * - `biddingCycle` equals the number of confirmations on record;
+   * - the LAST caller's slot still holds the number it confirmed (the one
+   *   declaration the active cycle inherits from the confirmation).
+   *
+   * A document that fails either was written before that wipe existed. Its
+   * `bids` hold the PRE-confirm declarations the confirmation already
+   * cancelled, and replaying them as the active cycle's re-declarations
+   * would invent a round. The message names the contract so the refusal is
+   * distinguishable from a merely unreplayable history.
+   *
+   * Null when the round is trustworthy — or when an entry is too malformed
+   * to judge, which the replay's own parse then fails closed on.
+   */
+  private fun cycleHistoryCorruption(fields: Map<String, Any?>, round: Int): String? {
+    var confirms = 0
+    var lastSeat: String? = null
+    var lastTricks: Int? = null
+    for (item in (fields["biddingLog"] as? List<*>).orEmpty()) {
+      val map = strMap(item) ?: return null
+      if (num(map["round"]) != round) continue
+      if (map["actionType"] as? String != "SubmitConfirmCall") continue
+      confirms++
+      lastSeat = map["seatId"] as? String ?: return null
+      lastTricks = num(map["tricks"]) ?: return null
+    }
+    val cycle = num(fields["biddingCycle"]) ?: 0
+    if (cycle != confirms) {
+      return "resolveDecisionTimeout: round $round holds $confirms fast Super Call " +
+        "confirmation(s) but biddingCycle is $cycle — the document never persisted the " +
+        "re-declaration reset; refusing to replay superseded declarations."
+    }
+    val seat = lastSeat ?: return null
+    val confirmed = lastTricks ?: return null
+    val stored = num(strMap(fields["bids"])?.get(seat))
+    if (stored != confirmed) {
+      return "resolveDecisionTimeout: round $round's active cycle is $cycle but seat " +
+        "'$seat' confirmed $confirmed trick(s) and bids/$seat holds $stored — the reset's " +
+        "own declaration is missing; refusing to replay the cycle."
+    }
+    return null
+  }
+
   // ── detection: which decision is timed, and when does it expire ──────
 
   /**
@@ -398,6 +1118,10 @@ object TimeoutResolution {
    * engine to find `waitingFor` (the same replay Settlement performs), so the
    * acting seat comes from the rules rather than from a client claim. Reads no
    * hands — the caller only spends those reads once a deadline has passed.
+   *
+   * The replay is the authority on which phase is live. `biddingOpen` only says
+   * where to look first, so a flag left true after the auction — which is what
+   * every Dash-Caller round carries — cannot leave a dealt round unowned.
    */
   fun pendingDecision(fields: Map<String, Any?>): Pending? {
     if ((fields["status"] as? String) == "complete") return null
@@ -408,10 +1132,29 @@ object TimeoutResolution {
     val timerSeconds = parseDecisionTimerSeconds(fields["decisionTimerSeconds"])
     val anchor = parseUpdatedAtMillis(fields) ?: return null
 
-    if (fields["biddingOpen"] as? Boolean == true) {
-      val state = replayBidding(fields, order, currentRound) ?: return null
-      if (state.subPhase == BiddingPhase.DONE) return null
-      val waiting = state.waitingFor ?: return null
+    // A round with every card on the document is over — maybeCompleteRound's
+    // own structural check — so no bidding decision can be legal and a
+    // finished round waiting on advanceToNextRound is NOT a timed decision.
+    // Checked before the replay: a played-out round must never be sent back
+    // into an auction its (already archived) log cannot reconstruct.
+    val cardCount = (fields["cardLog"] as? List<*>)?.size ?: 0
+    if (cardCount >= cardTotal(order.size)) return null
+
+    // The replay is the authority on which phase is live; `biddingOpen` only
+    // says where to look first. It cannot say "nothing is pending" on its own:
+    // a fast Super Call's CONFIRM opens exactly when the last declaration
+    // lands, and that same submitBid CLOSES the flag (both writers derive it
+    // from "every seat has a bid") — so a flag-only gate would leave the
+    // trump selection untimed forever. Ask the bidding replay whenever the
+    // round is dealt; it reports its waiting seat while the auction is live,
+    // and a DONE auction falls through to the cards.
+    val bidding = replayBidding(fields, order, currentRound)
+    if (bidding == null) {
+      // Unreplayable history. With the flag open nothing may be guessed, and
+      // with it closed the card path below still owns the round.
+      if (fields["biddingOpen"] as? Boolean == true) return null
+    } else if (bidding.subPhase != BiddingPhase.DONE) {
+      val waiting = bidding.waitingFor ?: return null
       if (waiting !in order) return null
       return Pending(
         phase = DecisionPhase.BIDDING,
@@ -420,18 +1163,20 @@ object TimeoutResolution {
         anchorMillis = anchor,
       )
     }
+    // The flag is a write-shape artifact, not the auction's authority: both
+    // writers derive it from "every seat has a bid", and a Dash Caller never
+    // submits an estimate, so it outlives the auction on every round that has
+    // one — a derivation `firestore.rules:799` pins for client writes. A DONE
+    // replay means the round is playing cards, so fall through below rather
+    // than leaving the table with no timed decision at all: that silence stops
+    // RD20's card timeouts and RD19's takeover from ever firing.
 
-    // Card play. The round is done when every card is on the document —
-    // maybeCompleteRound's own structural check — so a finished round waiting
-    // on advanceToNextRound is NOT a timed decision.
-    val cardCount = (fields["cardLog"] as? List<*>)?.size ?: 0
-    if (cardCount >= cardTotal(order.size)) return null
-
-    // Once the opening card is published, the document's own `turn` is the
-    // authority (PLAY mid-trick, or RESOLVING where it already holds the
-    // trick winner who leads next). Before it, the engine-selected opening
-    // leader must publish — the doc's turn is still null (rounds 2+) or the
-    // round-1 dealer placeholder — so the leader comes from the auction.
+    // Card play. Once the opening card is published, the document's own
+    // `turn` is the authority (PLAY mid-trick, or RESOLVING where it already
+    // holds the trick winner who leads next). Before it, the engine-selected
+    // opening leader must publish — the doc's turn is still null (rounds 2+)
+    // or the round-1 dealer placeholder — so the leader comes from the
+    // auction.
     val seat = if (fields["cardPhase"] != null) {
       val turnUid = fields["turn"] as? String ?: return null
       seatOfUid(fields, turnUid) ?: return null
@@ -453,6 +1198,12 @@ object TimeoutResolution {
    * table through the full human timer on every later decision — while a
    * human seat keeps the RD21 phase duration. Server-authoritative either
    * way: only the derived duration moves, never the `updatedAt` anchor.
+   *
+   * S73 (RD19) extends the short window to a BORROWED seat, which is what the
+   * owner's fork settles: the fixed 2 s pace belongs to any bot at the table,
+   * whichever path put it there, and the configurable timer is for humans only.
+   * A seat with no marker therefore keeps this expression's Stage-2 value,
+   * byte for byte.
    */
   private fun durationFor(
     fields: Map<String, Any?>,
@@ -460,7 +1211,7 @@ object TimeoutResolution {
     timerSeconds: Int,
     phase: DecisionPhase,
   ): Int =
-    if (seatId in botControlledSeats(fields)) BOT_DECISION_SECONDS
+    if (botHeldSeat(fields, seatId)) BOT_DECISION_SECONDS
     else phase.durationSeconds(timerSeconds)
 
   /** True iff [nowMillis] is at or past the pending decision's derived deadline. */
@@ -482,9 +1233,9 @@ object TimeoutResolution {
   // ── reconstruction + decision ────────────────────────────────────────
 
   /**
-   * Rebuilds the acting seat's engine state from the document and asks the
-   * MEDIUM bot for the one decision the timer expired on. The bot's intent is
-   * re-validated by the brain itself before any write is built (BidBrain and
+   * Rebuilds the acting seat's engine state from the document and asks its
+   * [botProfileFor] bot for the one decision the timer expired on. The bot's
+   * intent is re-validated by the brain itself before any write is built (BidBrain and
    * PlayBrain both assert legality or throw), so an impossible reconstruction
    * fails closed instead of writing an illegal move.
    *
@@ -508,9 +1259,45 @@ object TimeoutResolution {
         Reason.HISTORY_UNAVAILABLE,
         "resolveDecisionTimeout: currentRound is missing.",
       )
+    // O-19: a corrupt persisted multiplier is reported, never replayed at 1.
+    if (storedRoundMultiplier(fields) == null) {
+      return Resolution.NoWrite(
+        Reason.HISTORY_CORRUPT,
+        "resolveDecisionTimeout: currentMultiplier is not an integer in " +
+          "$ROUND_MULTIPLIER_DEFAULT..$MAX_ROUND_MULTIPLIER (or a Classic match does not hold 1).",
+      )
+    }
 
     return when (pending.phase) {
       DecisionPhase.BIDDING -> {
+        // T-09 (§5): a fast round's active declaration cycle is PERSISTED, not
+        // inferred. A document whose cycle counter and confirmation log do not
+        // agree (a pre-T-09 writer, a lost update) cannot be replayed — its
+        // bids/ are the wiped seats' PRE-confirm declarations — so it is
+        // refused by name rather than reinterpreted as the active cycle.
+        if (parseGameType(fields["gameType"]).isFastRound(currentRound)) {
+          val corrupt = cycleHistoryCorruption(fields, currentRound)
+          if (corrupt != null) {
+            return Resolution.NoWrite(Reason.HISTORY_CORRUPT, corrupt)
+          }
+        }
+        // F1 (owner ruling 2026-10-24): a persisted window claiming more
+        // than MAX_DASH_CALLS declared Dash Calls is corrupt history — the
+        // normalising write boundaries can never persist it — and is
+        // refused BY NAME before any replay, never silently clamped.
+        val declared = declaredDashCalls(fields, currentRound)
+          ?: return Resolution.NoWrite(
+            Reason.HISTORY_CORRUPT,
+            "resolveDecisionTimeout: round $currentRound's biddingLog is malformed.",
+          )
+        if (declared > MAX_DASH_CALLS) {
+          return Resolution.NoWrite(
+            Reason.HISTORY_CORRUPT,
+            "resolveDecisionTimeout: round $currentRound's log claims $declared " +
+              "declared Dash Calls — the strict maximum is $MAX_DASH_CALLS; " +
+              "refusing to replay a window the write boundary would never persist.",
+          )
+        }
         val state = replayBidding(fields, order, currentRound)
           ?: return Resolution.NoWrite(
             Reason.HISTORY_UNAVAILABLE,
@@ -541,25 +1328,42 @@ object TimeoutResolution {
     }
   }
 
-  // ── bidding: replay the auction, then BidBrain at MEDIUM ─────────────
+  // ── bidding: replay the auction, then BidBrain ───────────────────────
 
   /**
-   * The match doc carries no round multiplier: MatchService never persists
-   * one, and the clients keep it in their own session. It is not load-bearing
-   * here — it only feeds scoring, which the resolver never does — and the
-   * general-pass redeal's doubled multiplier is produced by the engine itself,
-   * so the replay's turn order and every legality check are unaffected. The
-   * fresh-round default is therefore correct for the decision.
+   * O-19 (Option B): the match doc's `currentMultiplier` is the multiplier
+   * the current round is scored at — and the one its auction replay must be
+   * armed with. It never changes a decision's legality, but replaying a
+   * document that says ×4 at ×1 would be a silent reset, which Option B
+   * forbids: the value is read from the doc, and a present-but-illegal one
+   * fails the replay closed (reported by [resolveExpired]) instead of
+   * falling back to 1. Absent means a document written before the field,
+   * where 1 is the defined legacy reading.
    */
   private const val ROUND_MULTIPLIER_DEFAULT = 1
+
+  private const val MAX_ROUND_MULTIPLIER = 8
+
+  /**
+   * The document's stored multiplier: [ROUND_MULTIPLIER_DEFAULT] when the
+   * field is absent (legacy), the value when it is a legal int 1..8 (Classic
+   * exactly 1), and null — corrupt, fail closed — otherwise.
+   */
+  internal fun storedRoundMultiplier(fields: Map<String, Any?>): Int? {
+    val raw = fields["currentMultiplier"] ?: return ROUND_MULTIPLIER_DEFAULT
+    val value = num(raw) ?: return null
+    if (value < ROUND_MULTIPLIER_DEFAULT || value > MAX_ROUND_MULTIPLIER) return null
+    if (parseScoringMode(fields["scoringMode"]) == ScoringMode.CLASSIC && value != 1) return null
+    return value
+  }
 
   /**
    * Replays the round's biddingLog (and, once the auction closes, the doc's
    * transient `bids` as FinalEstimate intents) through the real engine and
    * returns the resulting state — or null when the history does not replay
-   * legally. Mirrors Settlement.scoreRound's replay, including the
-   * general-pass redeal, which restarts the same round at the engine's own
-   * doubled multiplier without a document write.
+   * legally. Mirrors Settlement.scoreRound's replay, and under S1 terminates
+   * on a general pass at the engine's own cancelled-round state without a
+   * document write or a same-round re-deal.
    */
   fun replayBidding(
     fields: Map<String, Any?>,
@@ -588,18 +1392,65 @@ object TimeoutResolution {
     round: Int,
   ): BiddingReplay {
     val gameType = parseGameType(fields["gameType"])
+    val scoringMode = parseScoringMode(fields["scoringMode"])
+    // O-19: the auction replays at the document's own multiplier; an illegal
+    // stored value is corrupt history, not a licence to default to 1.
+    val roundMultiplier = storedRoundMultiplier(fields) ?: return BiddingReplay(null, null)
     val dealerSeat = seatOfUid(fields, fields["dealer"] as? String ?: return BiddingReplay(null, null))
       ?.takeIf { it in order } ?: return BiddingReplay(null, null)
     val fast = gameType.isFastRound(round)
+    // T-09: a fast round's active cycle is persisted; a document that never
+    // recorded the wipe must not be replayed at all (see
+    // [cycleHistoryCorruption]) — detection and card resolution included.
+    if (fast && cycleHistoryCorruption(fields, round) != null) return BiddingReplay(null, null)
     var state: BiddingState = if (fast) {
-      initFastRound(round, dealerSeat, order, ROUND_MULTIPLIER_DEFAULT, gameType)
+      initFastRound(round, dealerSeat, order, roundMultiplier, gameType, scoringMode)
     } else {
-      initNormalRound(round, dealerSeat, order, ROUND_MULTIPLIER_DEFAULT, gameType)
+      initNormalRound(round, dealerSeat, order, roundMultiplier, gameType, scoringMode)
     }
 
+    val stored = strMap(fields["bids"])?.mapNotNull { (seat, value) ->
+      num(value)?.let { seat to it }
+    }?.toMap().orEmpty()
+
     val logged = loggedIntents(fields) ?: return BiddingReplay(null, null)
-    for (entry in logged) {
+    for (index in logged.indices) {
+      val entry = logged[index]
       if (entry.seat !in order) return BiddingReplay(null, null)
+      if (fast && entry is LoggedIntent.Confirm) {
+        // A fast Super Call is NOT the end of the fast round: the
+        // confirmation cancels the forced trump, the Super Caller takes a
+        // new one and EVERY other seat declares again counter-clockwise
+        // (T-09). A declaration above the confirmed number opens the NEXT
+        // cycle, so the log can hold several confirmations and none of
+        // them closes the round.
+        //
+        // T-09 live schema: each confirmation atomically wiped bids/ to the
+        // caller's own number and bumped biddingCycle, so the document's
+        // stored values are the ACTIVE cycle's declarations — the caller's
+        // confirmed number plus every re-declaration since. The walk below
+        // the loop therefore feeds exactly those re-declarations, in the
+        // engine's own turn order, and closes the round only once the last
+        // one is on record.
+        if (state.subPhase != BiddingPhase.ESTIMATES) return BiddingReplay(null, null)
+        val chain = ArrayList<FastSuperConfirm>()
+        var cursor = index
+        while (cursor < logged.size) {
+          val next = logged[cursor]
+          if (next !is LoggedIntent.Confirm) return BiddingReplay(null, null)
+          if (next.seat !in order) return BiddingReplay(null, null)
+          chain.add(FastSuperConfirm(next.seat, next.tricks, next.suit))
+          cursor++
+        }
+        val replayed = replayFastSuperCallChain(state, chain, stored)
+          ?: return BiddingReplay(null, null)
+        if (replayed.outcome != null) return BiddingReplay(replayed.state, replayed.outcome)
+        // The chain consumed the rest of the log — there are no logged
+        // entries left to emit; continue with the active cycle's stored
+        // declarations.
+        state = replayed.state
+        break
+      }
       val intent = when (entry) {
         is LoggedIntent.Dash -> BiddingIntent.DashCallDecision(entry.seat, entry.declared)
         is LoggedIntent.AuctionPass -> BiddingIntent.AuctionBid(entry.seat, isPass = true)
@@ -611,10 +1462,15 @@ object TimeoutResolution {
       when (val emitted = emit(state, intent)) {
         is EmitResult.Completed -> return BiddingReplay(emitted.state, emitted.outcome)
         is EmitResult.GeneralPass -> {
+          // S1 (A8.7 / Q51): the pass CANCELS this round — its own log ends
+          // here, nobody waits, and the auction for the NEXT round lives
+          // behind the persisted round transition. Re-initialising the same
+          // round would resurrect a round S1 consumed: the replay keeps the
+          // engine's cancelled-round state as terminal, so detection sees a
+          // decisionless round (negligible: nothing left to decide until the
+          // document advances) instead of an endless re-litigated auction.
           if (fast) return BiddingReplay(null, null)
-          state = initNormalRound(
-            round, dealerSeat, order, emitted.doubledMultiplier, gameType,
-          )
+          state = emitted.state
         }
         is EmitResult.Applied -> state = emitted.state
         is EmitResult.Rejected -> return BiddingReplay(null, null)
@@ -624,9 +1480,6 @@ object TimeoutResolution {
     // The log did not close the auction; continue from the doc's committed
     // estimates in the engine's own turn order until it closes or a seat is
     // waiting on one. This is seedStoredEstimates' own walk.
-    val stored = strMap(fields["bids"])?.mapNotNull { (seat, value) ->
-      num(value)?.let { seat to it }
-    }?.toMap().orEmpty()
     var guard = 0
     while (guard <= order.size) {
       guard++
@@ -643,7 +1496,8 @@ object TimeoutResolution {
     return BiddingReplay(state, null)
   }
 
-  /** Runs BidBrain at MEDIUM and builds the write the human path would make. */
+  /** Runs the seat's [botProfileFor] bot and builds the write the human path
+   *  would make. */
   private fun decideBidding(
     fields: Map<String, Any?>,
     order: List<String>,
@@ -651,12 +1505,13 @@ object TimeoutResolution {
     seatId: String,
     hand: List<Card>,
   ): Resolution {
+    val profile = botProfileFor(fields, seatId)
     val intent = try {
-      BidBrain.decide(state, hand, seatId, BotTier.MEDIUM, BotPersonality.DEFAULT)
+      BidBrain.decide(state, hand, seatId, profile.tier, profile.personality)
     } catch (e: Throwable) {
       return Resolution.NoWrite(
         Reason.HISTORY_UNAVAILABLE,
-        "resolveDecisionTimeout: the MEDIUM bot could not decide for seat " +
+        "resolveDecisionTimeout: the bot could not decide for seat " +
           "'$seatId' (${state.subPhase}) — the reconstructed state disagrees " +
           "with the document.",
       )
@@ -680,19 +1535,28 @@ object TimeoutResolution {
             "phase" to state.subPhase.name,
             "seatId" to seatId,
             "estimate" to intent.tricks,
-            "botTier" to BotTier.MEDIUM.name,
+            "botTier" to profile.tier.name,
           ),
         ))
       }
-      is BiddingIntent.DashCallDecision -> biddingWrite(
-        fields, loggedDashCall(seatId, state.round, intent.declaredDashCall),
-        mapOf(
-          "phase" to state.subPhase.name,
-          "seatId" to seatId,
-          "declaredDashCall" to intent.declaredDashCall,
-          "botTier" to BotTier.MEDIUM.name,
-        ),
-      )
+      is BiddingIntent.DashCallDecision -> {
+        // F1 (owner ruling 2026-10-24, strict two-Dash maximum): this write
+        // boundary mirrors the engine reducer — an over-cap declared attempt
+        // is applied as a PASS there, so it is PERSISTED as a decline and
+        // the seat stays in the auction pool. Same count the reducer itself
+        // derives (existing DASHCALL bids in the replayed state).
+        val existingEffective = state.bids.values.count { it.type == BidType.DASHCALL }
+        val declared = intent.declaredDashCall && existingEffective < MAX_DASH_CALLS
+        biddingWrite(
+          fields, loggedDashCall(seatId, state.round, declared),
+          mapOf(
+            "phase" to state.subPhase.name,
+            "seatId" to seatId,
+            "declaredDashCall" to declared,
+            "botTier" to profile.tier.name,
+          ),
+        )
+      }
       is BiddingIntent.AuctionBid -> biddingWrite(
         fields, loggedAuctionBid(seatId, state.round, intent),
         mapOf(
@@ -701,19 +1565,48 @@ object TimeoutResolution {
           "isPass" to intent.isPass,
           "tricks" to intent.tricks,
           "suit" to intent.suit?.name,
-          "botTier" to BotTier.MEDIUM.name,
+          "botTier" to profile.tier.name,
         ),
       )
-      is BiddingIntent.ConfirmCall -> biddingWrite(
-        fields, loggedConfirmCall(seatId, state.round, intent),
-        mapOf(
-          "phase" to state.subPhase.name,
-          "seatId" to seatId,
-          "tricks" to intent.tricks,
-          "suit" to intent.suit.name,
-          "botTier" to BotTier.MEDIUM.name,
-        ),
-      )
+      is BiddingIntent.ConfirmCall -> if (state.fastRound) {
+        // T-09: a fast-round CONFIRM is the Super Call's trump selection and
+        // commits the SAME atomic reset MatchService.submitBiddingAction
+        // performs — the log entry, the wipe to the caller's own number, the
+        // re-opened declarations and the cycle bump, in ONE update. An
+        // append-only log write (biddingWrite) would leave bids/ full, and
+        // every re-declaration would be refused as ALREADY_BID.
+        Resolution.Applied(DecisionWrite(
+          updates = mapOf(
+            "biddingLog" to AuthoritySentinels.arrayUnion(
+              toPlain(loggedConfirmCall(seatId, state.round, intent)),
+            ),
+            "bids" to mapOf(seatId to intent.tricks),
+            "biddingOpen" to true,
+            "lastBidSeat" to null,
+            "biddingCycle" to (num(fields["biddingCycle"]) ?: 0) + 1,
+            "version" to (num(fields["version"]) ?: 0) + 1,
+            "updatedAt" to AuthoritySentinels.serverTimestamp(),
+          ),
+          decided = mapOf(
+            "phase" to state.subPhase.name,
+            "seatId" to seatId,
+            "tricks" to intent.tricks,
+            "suit" to intent.suit.name,
+            "botTier" to profile.tier.name,
+          ),
+        ))
+      } else {
+        biddingWrite(
+          fields, loggedConfirmCall(seatId, state.round, intent),
+          mapOf(
+            "phase" to state.subPhase.name,
+            "seatId" to seatId,
+            "tricks" to intent.tricks,
+            "suit" to intent.suit.name,
+            "botTier" to profile.tier.name,
+          ),
+        )
+      }
     }
   }
 
@@ -781,6 +1674,8 @@ object TimeoutResolution {
     hands: Map<String, List<Card>>,
   ): TableState? {
     val outcome = replayBiddingOutcome(fields, order, round) ?: return null
+    // O-19: the table carries the document's multiplier, never a default.
+    val roundMultiplier = storedRoundMultiplier(fields) ?: return null
     val resolvedHands = LinkedHashMap<String, List<Card>>()
     for (seat in order) {
       resolvedHands[seat] = hands[seat] ?: return null
@@ -795,7 +1690,7 @@ object TimeoutResolution {
         dashCallers = outcome.dashCallers,
         leaderId = outcome.leaderId,
         riskId = outcome.riskPlayerId,
-        multiplier = ROUND_MULTIPLIER_DEFAULT,
+        multiplier = roundMultiplier,
         hands = resolvedHands,
       ),
       order,
@@ -818,18 +1713,19 @@ object TimeoutResolution {
     return table
   }
 
-  /** Runs PlayBrain at MEDIUM and builds submitCard's own write shape. */
+  /** Runs the seat's [botProfileFor] tier and builds submitCard's own write shape. */
   private fun decideCard(
     fields: Map<String, Any?>,
     table: TableState,
     seatId: String,
   ): Resolution {
+    val profile = botProfileFor(fields, seatId)
     val play = try {
-      PlayBrain.decide(table, seatId, BotTier.MEDIUM)
+      PlayBrain.decide(table, seatId, profile.tier)
     } catch (e: Throwable) {
       return Resolution.NoWrite(
         Reason.HISTORY_UNAVAILABLE,
-        "resolveDecisionTimeout: the MEDIUM bot could not play for seat " +
+        "resolveDecisionTimeout: the bot could not play for seat " +
           "'$seatId' — the reconstructed table disagrees with the document.",
       )
     }
@@ -837,7 +1733,7 @@ object TimeoutResolution {
     if (!preview.legal) {
       return Resolution.NoWrite(
         Reason.HISTORY_UNAVAILABLE,
-        "resolveDecisionTimeout: the MEDIUM bot's card was rejected for seat '$seatId'.",
+        "resolveDecisionTimeout: the bot's card was rejected for seat '$seatId'.",
       )
     }
 
@@ -879,7 +1775,7 @@ object TimeoutResolution {
         "seatId" to seatId,
         "card" to storedCardFields(play.card),
         "trickNo" to table.trickNo,
-        "botTier" to BotTier.MEDIUM.name,
+        "botTier" to profile.tier.name,
       ),
     ))
   }

@@ -10,6 +10,7 @@ import com.estemshan.engine.DEFAULT_SEATS
 import com.estemshan.engine.EmitResult
 import com.estemshan.engine.GameSession
 import com.estemshan.engine.HandAuthority
+import com.estemshan.engine.MatchMode
 import com.estemshan.engine.RoundCfg
 import com.estemshan.engine.RoundResult
 import com.estemshan.engine.RoundScoreInput
@@ -33,19 +34,28 @@ import com.estemshan.engine.restoreHand
 import com.estemshan.engine.withFloorFor
 import com.estemshan.game.data.OnlineServices
 import com.estemshan.game.ui.quickmatch.bidsFromOutcome
+import com.estemshan.game.ui.standings.RankedResultUiState
+import com.estemshan.game.ui.standings.RankedSeasonUiState
+import com.estemshan.game.ui.standings.buildRankedResult
 import com.estemshan.game.ui.standings.buildStandings
 import com.estemshan.services.MatchAdapter
 import com.estemshan.services.MatchSnapshot
 import com.estemshan.services.MatchSnapshotListener
 import com.estemshan.services.MatchSubscriptionHandle
+import com.estemshan.services.isCanonicalGeneralPassWindow
+import com.estemshan.services.generalPassWindowDefect
+import com.estemshan.services.GeneralPassWindowDefect
 import com.estemshan.services.Heartbeat
 import com.estemshan.services.DecisionTimeoutPort
 import com.estemshan.services.DecisionWindow
 import com.estemshan.services.PlayerPort
+import com.estemshan.services.SeatReclaimPort
+import com.estemshan.services.SettlementPort
 import com.estemshan.services.ROUND_CARD_TOTAL
 import com.estemshan.services.model.BiddingActionInput
 import com.estemshan.services.model.BiddingLogEntry
 import com.estemshan.services.model.MatchDoc
+import com.estemshan.services.model.Reasons
 import com.estemshan.services.session.MatchStore
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CoroutineDispatcher
@@ -87,15 +97,16 @@ import kotlinx.coroutines.sync.withLock
  * MatchAdapterReloadReplayTest CASE B pins (resetSyncState → clear → reseed
  * → re-init → replay from index 0).
  *
- * COLD-START LIMITATIONS, stated rather than papered over: the match
- * document carries the round, seats, dealer and maxRounds, but NOT the
- * Sa'ayda multiplier or the accumulated totals of rounds scored before this
- * client joined. A client that reconnects mid-escalation therefore resumes
- * the exact trick (the log replays fully) but scores the remaining rounds
- * from a ×1 multiplier and from the totals it witnesses from here on. The
- * authoritative totals at [MatchUiState.MatchComplete] always come from the
- * document's own finalScores, so a completed match is never mis-shown; only
- * the in-flight window can be partial. Restoring the multiplier and prior
+ * COLD-START LIMITATIONS, stated rather than papered over: since O-19 the
+ * match document carries the CURRENT round's multiplier (`currentMultiplier`)
+ * alongside the round, seats, dealer and maxRounds, so a client that
+ * reconnects mid-escalation resumes at the right multiplier. The document
+ * still does NOT carry the accumulated totals of rounds scored before this
+ * client joined: such a client resumes the exact trick (the log replays
+ * fully) but banks the remaining rounds from the totals it witnesses from
+ * here on. The authoritative totals at [MatchUiState.MatchComplete] always
+ * come from the document's own finalScores, so a completed match is never
+ * mis-shown; only the in-flight window can be partial. Restoring prior
  * totals needs a roundArchive read, which is not on [MatchStore] and so is
  * not part of this story.
  */
@@ -109,6 +120,8 @@ class OnlineMatchViewModel(
   private val clock: () -> Long = System::currentTimeMillis,
   private val heartbeat: Heartbeat = OnlineServices.heartbeat,
   private val timeouts: DecisionTimeoutPort = OnlineServices.timeouts,
+  private val reclaims: SeatReclaimPort = OnlineServices.reclaims,
+  private val settlements: SettlementPort = OnlineServices.settlements,
 ) : ViewModel() {
 
   private val _state = MutableStateFlow<MatchUiState>(MatchUiState.Connecting)
@@ -133,6 +146,19 @@ class OnlineMatchViewModel(
    */
   private val _opponentAway = MutableStateFlow(false)
   val opponentAway: StateFlow<Boolean> = _opponentAway.asStateFlow()
+
+  /**
+   * S73 (RD19): the seats the configured bot is currently BORROWING because
+   * their owner ignored decision points — the S39 chip's source, for every
+   * seat at the table. Published straight from
+   * [MatchDoc.inactiveTakeoverSeats], so it is a document read and nothing
+   * else: no local guess about who is away, and never merged with
+   * [MatchDoc.botControlledSeats] (a borrowed seat is still its owner's —
+   * seated, kickable, still holding its vote). Empty when no seat is borrowed
+   * or no match is live.
+   */
+  private val _borrowedSeats = MutableStateFlow<Set<String>>(emptySet())
+  val borrowedSeats: StateFlow<Set<String>> = _borrowedSeats.asStateFlow()
 
   /**
    * S19's staleness derivation — document progress + the local clock. Pure:
@@ -160,6 +186,16 @@ class OnlineMatchViewModel(
    */
   private var timeoutAlarm: Job? = null
 
+  /**
+   * S73 (RD19) — the ONE pending reclaim poll, and only ever armed for OUR
+   * own borrowed seat. Distinct from [timeoutAlarm]: that one resolves a
+   * stalled table for whoever holds the turn, this one asks the server whether
+   * the trick the bot is mid-way through has finished yet, so our seat can
+   * come back. Same cancel-then-re-arm rule, so at most one poll is live for
+   * the whole match.
+   */
+  private var reclaimPoll: Job? = null
+
   /** The running lastSeenAt cadence, dropped with the binding. */
   private var heartbeatJob: Job? = null
 
@@ -184,8 +220,44 @@ class OnlineMatchViewModel(
   /** The round [scoreAndAdvance] has already banked; guards a double score. */
   private var scoredRound: Int? = null
 
+  /**
+   * O-19: the round whose canonical all-pass window this client has already
+   * routed to [MatchStore.advanceAfterGeneralPass] — guards a re-delivery
+   * from re-writing. Like [scoredRound] it is set before the write; the
+   * document moving on is the real authority, and the service is idempotent.
+   */
+  private var passAdvancedRound: Int? = null
+
+  /**
+   * The round whose unprovable pass window this client has already named.
+   * Unlike [passAdvancedRound] it guards a message, not a write: re-delivery
+   * of the same document must not overwrite a newer rejection, and the
+   * message itself lives until the document moves on (see [rejectionVersion]).
+   */
+  private var passRejectionRound: Int? = null
+
   /** currentMatchId cleared once for a completed match. */
   private var clearedMatchId: Boolean = false
+
+  /**
+   * The ranked settlement's once-per-session trigger: set the moment the
+   * call is armed, so however many terminal re-deliveries stack up (the
+   * snapshot fan-out, a version bump, a corrected claim), this client asks
+   * the settler EXACTLY ONCE per binding. The once-only authority across
+   * clients is the server's claim record, not this flag.
+   */
+  private var settlementAttempted: Boolean = false
+
+  /** The pending settlement's retry loop, cancelled with the binding. */
+  private var settlementJob: Job? = null
+
+  /**
+   * The reveal the settler has already delivered for THIS match, kept
+   * beside the state so a re-delivery of the terminal document republishes
+   * it instead of clobbering it — the standings are a pure function of the
+   * document, the movement is not, and the two arrive on different paths.
+   */
+  private var rankedReveal: RankedResultUiState? = null
 
   /** Inline rejection text, and the document version it was raised against. */
   private var rejection: String? = null
@@ -230,7 +302,12 @@ class OnlineMatchViewModel(
     lastDoc = null
     lastOutcome = null
     scoredRound = null
+    passAdvancedRound = null
+    passRejectionRound = null
     clearedMatchId = false
+    settlementAttempted = false
+    settlementJob = null
+    rankedReveal = null
     rejection = null
     rejectionVersion = null
     handle = adapter.subscribeToMatch(matchId, listener, localSeatId = null)
@@ -261,6 +338,13 @@ class OnlineMatchViewModel(
     heartbeatJob = null
     clearOpponentAway()
     clearTimeoutAlarm()
+    clearReclaimSignal()
+    // A settlement mid-retry belongs to the binding that armed it: a rebind
+    // (even to the same match) starts a fresh session whose own first
+    // terminal delivery re-triggers — the server replays the recorded
+    // outcome, so nothing is lost and no reveal leaks across bindings.
+    settlementJob?.cancel()
+    settlementJob = null
     matchId = null
     boundSeat = null
   }
@@ -283,18 +367,24 @@ class OnlineMatchViewModel(
     val id = matchId ?: return
     val seat = boundSeat ?: return
     val version = lastDoc?.version
+    // T-09: the declaration cycle this intent was decided in. A fast Super
+    // Call CONFIRM atomically starts the next cycle, so an intent validated
+    // against the old one is refused (STALE_CYCLE) instead of landing in a
+    // cycle it was never meant for. null on the doc-less legacy path.
+    val cycle = lastDoc?.biddingCycle
     viewModelScope.launch(worker) {
       submitMutex.withLock {
         val failure = runCatching {
           when (intent) {
             is BiddingIntent.FinalEstimate ->
-              store.submitBid(id, seat, intent.tricks)
+              store.submitBid(id, seat, intent.tricks, expectedCycle = cycle)
             is BiddingIntent.DashCallDecision ->
               store.submitBiddingAction(
                 id,
                 BiddingActionInput(
                   actionType = BiddingLogEntry.ACTION_DASH_CALL,
                   declaredDashCall = intent.declaredDashCall,
+                  expectedCycle = cycle,
                 ),
               )
             is BiddingIntent.AuctionBid ->
@@ -305,6 +395,7 @@ class OnlineMatchViewModel(
                   isPass = intent.isPass,
                   tricks = intent.tricks,
                   suit = intent.suit?.name,
+                  expectedCycle = cycle,
                 ),
               )
             is BiddingIntent.ConfirmCall ->
@@ -314,6 +405,7 @@ class OnlineMatchViewModel(
                   actionType = BiddingLogEntry.ACTION_CONFIRM_CALL,
                   tricks = intent.tricks,
                   suit = intent.suit.name,
+                  expectedCycle = cycle,
                 ),
               )
           }
@@ -382,6 +474,7 @@ class OnlineMatchViewModel(
       }
       clearOpponentAway()
       clearTimeoutAlarm()
+      clearReclaimSignal()
       return
     }
 
@@ -392,6 +485,7 @@ class OnlineMatchViewModel(
       _reconnecting.value = false
       clearOpponentAway()
       clearTimeoutAlarm()
+      clearReclaimSignal()
       publishComplete(doc)
       return
     }
@@ -401,6 +495,7 @@ class OnlineMatchViewModel(
       _state.value = MatchUiState.Failed("Not signed in.")
       clearOpponentAway()
       clearTimeoutAlarm()
+      clearReclaimSignal()
       return
     }
     val seat = adapter.uidToSeat(doc, myUid)
@@ -409,6 +504,7 @@ class OnlineMatchViewModel(
       _reconnecting.value = false
       clearOpponentAway()
       clearTimeoutAlarm()
+      clearReclaimSignal()
       return
     }
     bindSeat(seat)
@@ -417,18 +513,24 @@ class OnlineMatchViewModel(
     // raised against: our retry succeeding, or the table simply moving on.
     if (rejectionVersion != null && doc.version > (rejectionVersion ?: Int.MAX_VALUE)) {
       setRejection(null, null)
+      // The per-round report guard exists only so a re-delivery cannot stomp
+      // a newer rejection. Once the rejection itself is gone the guard must
+      // go with it, or a round still stalled would fall back to silence.
+      passRejectionRound = null
     }
 
     lastDoc = doc
     alignToDoc(doc, seat)
     ensureDealAndHand(doc, seat)
     replayBidding(snapshot, doc)
+    maybeAdvanceGeneralPass(doc)
     ensureTable(doc, seat)
     replayCards(doc)
     maybeCompleteRound(doc)
     publish(doc, seat)
     refreshOpponentAway(doc, seat)
     refreshTimeoutAlarm(doc)
+    refreshReclaimPoll(doc, seat)
   }
 
   /**
@@ -477,16 +579,38 @@ class OnlineMatchViewModel(
       adapter.resetSyncState(matchId)
       while (session.getRound().number < doc.currentRound) session.nextRound()
       session.setDealer(dealerSeat)
-      if (current.maxRounds != doc.maxRounds) {
-        session.setRound(session.getRound().copy(maxRounds = doc.maxRounds))
+      // O-19: Session.nextRound() deliberately PRESERVES the multiplier
+      // (escalation is cross-round), so a client that missed one or more
+      // advances — including a General Pass — must overwrite it with the
+      // document's own current-round value. Without this a missed pass
+      // would leave this client one rung behind (or ahead, after its own
+      // local pass hint), and the next auction would be armed wrong.
+      if (current.maxRounds != doc.maxRounds || current.multiplier != doc.currentMultiplier) {
+        session.setRound(session.getRound().copy(
+          maxRounds = doc.maxRounds,
+          multiplier = doc.currentMultiplier,
+        ))
       }
       lastOutcome = null
       scoredRound = null
+      passAdvancedRound = null
+      passRejectionRound = null
       initAuction(doc, dealerSeat, seats)
       return
     }
 
-    if (current.maxRounds != doc.maxRounds) session.setRound(current.copy(maxRounds = doc.maxRounds))
+    // Same round: the document remains the multiplier's source of truth.
+    // The one exception is the echo of the very round this client just
+    // pass-advanced: a delivery still showing that round predates our
+    // successful write (which opened the NEXT round), so letting it roll
+    // the armed value back would arm the next auction one rung too low
+    // until the newer document lands. The live-pass hint in [replayBidding]
+    // is otherwise never allowed to outlive a delivery.
+    if (passAdvancedRound != doc.currentRound &&
+      (current.maxRounds != doc.maxRounds || current.multiplier != doc.currentMultiplier)
+    ) {
+      session.setRound(current.copy(maxRounds = doc.maxRounds, multiplier = doc.currentMultiplier))
+    }
     if (session.getDealer() != dealerSeat) session.setDealer(dealerSeat)
   }
 
@@ -513,11 +637,20 @@ class OnlineMatchViewModel(
       },
     )
     session.setRoom(SessionRoom(code = doc.roomId, host = false, seats = seats))
-    session.setRound(RoundState(number = doc.currentRound, maxRounds = doc.maxRounds))
+    // O-19: the document is the multiplier's authority on a cold start —
+    // a client that joins (or rejoins) mid-escalation arms the exact
+    // current-round value instead of the engine's default x1.
+    session.setRound(RoundState(
+      number = doc.currentRound,
+      maxRounds = doc.maxRounds,
+      multiplier = doc.currentMultiplier,
+    ))
     session.setDealer(dealerSeat)
     session.setMatchScores(seats.associateWith { 0 })
     lastOutcome = null
     scoredRound = null
+    passAdvancedRound = null
+    passRejectionRound = null
     initAuction(doc, dealerSeat, seats)
   }
 
@@ -540,8 +673,11 @@ class OnlineMatchViewModel(
     session.clearBiddingState()
     session.clearPlayState()
     session.initializeBiddingState(
-      if (isFastRound(round, doc.gameType)) initFastRound(round, dealerSeat, seats, multiplier)
-      else initNormalRound(round, dealerSeat, seats, multiplier),
+      if (isFastRound(round, doc.gameType)) {
+        initFastRound(round, dealerSeat, seats, multiplier, scoringMode = doc.scoringMode)
+      } else {
+        initNormalRound(round, dealerSeat, seats, multiplier, scoringMode = doc.scoringMode)
+      },
     )
   }
 
@@ -597,6 +733,28 @@ class OnlineMatchViewModel(
    */
   private fun replayBidding(snapshot: MatchSnapshot, doc: MatchDoc) {
     val id = matchId ?: return
+    // T-09: a fast round that has already committed a Super Call keeps its
+    // ACTIVE cycle in bids/ — the log cannot replay the fast declarations and
+    // the confirm cannot be emitted into a fresh engine. Rebuild that cycle
+    // through the engine BEFORE the incremental interpreters, so no stale
+    // pre-confirm value can be applied at the round's opening turn. A
+    // document this cannot be proven from is refused by name instead of
+    // played on a guess (the legacy mid-Super-Call shape).
+    val restored = adapter.restoreFastBiddingCycle(id, doc)
+    if (restored.desync) {
+      val reason = when (restored.reason) {
+        "FAST_CYCLE_UNPERSISTED" ->
+          "FAST_CYCLE_UNPERSISTED: this fast round's Super Call predates persisted " +
+            "re-declarations, so its bidding cannot be resumed on this client."
+        "CYCLE_LOG_MISMATCH", "CYCLE_BIDS_MISMATCH", "CYCLE_CHAIN_INVALID" ->
+          "FAST_CYCLE_LOG_MISMATCH: the document's fast-round declaration history is " +
+            "inconsistent, so this round cannot be replayed safely."
+        else -> "FAST_CYCLE_RESTORE_FAILED: the fast-round declaration cycle could not be " +
+          "restored (${restored.reason})."
+      }
+      setRejection(reason, doc.version)
+      return
+    }
     adapter.applyRemoteBid(id, doc)
     val reDrive = adapter.applyRemoteBiddingAction(id, doc)
     seedStoredEstimates(doc)
@@ -604,13 +762,103 @@ class OnlineMatchViewModel(
     // then reports a duplicate with no outcome attached. A seed that
     // already closed it contributes no outcome here either, so the funnel
     // is still hit exactly once per round.
-    val outcome = snapshot.biddingActionSync?.outcome
+    val outcome = restored.outcome
+      ?: snapshot.biddingActionSync?.outcome
       ?: reDrive.outcome
       ?: snapshot.bidSync?.outcome
     if (outcome != null) {
       lastOutcome = outcome
       session.completeBidding(outcome)
     }
+    // S1 (A8.7 / Q51), O-19: the replay crossed a general pass — the hint
+    // arms the LOCAL session round, which keeps the next auction right
+    // before the document echo arrives. It is an optimisation only: the
+    // round number stays document-pinned, and [maybeAdvanceGeneralPass]
+    // persists the advance; [alignToDoc] then takes the multiplier straight
+    // from the document, so a cold start no longer loses it.
+    val passedMultiplier = snapshot.bidSync?.generalPassMultiplier
+      ?: snapshot.biddingActionSync?.generalPassMultiplier
+      ?: reDrive.generalPassMultiplier
+    if (passedMultiplier != null) {
+      session.setRound(session.getRound().copy(multiplier = passedMultiplier))
+    }
+  }
+
+  /**
+   * O-19 (Option B, 2026-10-24): advance a General-Passed round on the
+   * document. The closed round is recognised only by its canonical
+   * all-pass window (no cards; N Dash decisions of which at most two are
+   * declared, then passes from every remaining seat — the mixed shape
+   * [replayBidding] just replayed), and [MatchStore.advanceAfterGeneralPass]
+   * re-proves that window inside its own transaction — this method never
+   * decides the multiplier itself. All clients may race the same write;
+   * the store's ALREADY_ADVANCED/ALREADY_COMPLETE outcomes are no-ops.
+   *
+   * The final-round pass completes the match through the same store path,
+   * carrying this session's running totals — the document stays the
+   * authority for the final result, exactly as the scored endMatch path.
+   */
+  private suspend fun maybeAdvanceGeneralPass(doc: MatchDoc) {
+    val id = matchId ?: return
+    val round = doc.currentRound
+    if (passAdvancedRound == round) return
+    if (!isCanonicalGeneralPassWindow(doc, round)) {
+      reportUnprovableGeneralPass(doc, round)
+      return
+    }
+    passAdvancedRound = round
+    val totals = session.getMatchScores()
+    runCatching { store.advanceAfterGeneralPass(id, round, totals, computeWinner(totals)) }
+      .onFailure {
+        // Clear the guard so the next delivery retries; a denied/transient
+        // write must not leave this client silent on the round forever.
+        passAdvancedRound = null
+        setRejection(it.message, doc.version)
+      }
+  }
+
+  /**
+   * O-19 (A8 F1) + the F1 owner ruling (2026-10-24): the refusal stays, but
+   * it is no longer silent.
+   *
+   * A round closed with no cards and no auction contract is a General Pass
+   * only if its window is the canonical all-pass shape — which since the
+   * ruling INCLUDES up to two declared Dash Calls (k = 0..min(2, N-1)
+   * effective dashes, then passes from every remaining seat). What this
+   * reports now is only what the widened proof still refuses: a window
+   * claiming MORE than two declared Dashes names Reasons.TOO_MANY_DASH_CALLS
+   * by itself; every other non-canonical shape keeps
+   * UNSUPPORTED_GENERAL_PASS_SHAPE. The table sees the stall instead of
+   * waiting.
+   *
+   * The shape is narrowed to windows the rules can never accept, so the
+   * message cannot misfire on an auction that is merely in flight: bidding
+   * closed (the pass/bid write sets `biddingOpen` false only once every seat
+   * has submitted), no cards for the round, at least one pass on record, and
+   * no seat holding a bid or a confirmed call this table could play out.
+   */
+  private fun reportUnprovableGeneralPass(doc: MatchDoc, round: Int) {
+    if (passRejectionRound == round) return
+    if (doc.biddingOpen) return
+    if (doc.roundCardCount(round) != 0) return
+    val log = doc.roundBids(round)
+    if (log.none { it.actionType == BiddingLogEntry.ACTION_AUCTION_BID && it.isPass == true }) return
+    if (log.any {
+        (it.actionType == BiddingLogEntry.ACTION_AUCTION_BID && it.isPass != true) ||
+          it.actionType == BiddingLogEntry.ACTION_CONFIRM_CALL
+      }
+    ) return
+    passRejectionRound = round
+    val defect = generalPassWindowDefect(doc, round)
+    val reason = if (defect == GeneralPassWindowDefect.TOO_MANY_DASH_CALLS) {
+      "${Reasons.TOO_MANY_DASH_CALLS}: round $round's log claims more than the strict " +
+        "two-Dash maximum, so the window cannot be a General Pass and the round was not advanced."
+    } else {
+      "${Reasons.UNSUPPORTED_GENERAL_PASS_SHAPE}: round $round closed with no cards and " +
+        "no contract on record, but its auction is not a provable all-pass window, so the " +
+        "next multiplier cannot be derived and the round was not advanced."
+    }
+    setRejection(reason, doc.version)
   }
 
   /**
@@ -758,10 +1006,20 @@ class OnlineMatchViewModel(
    * the result immediately; if a write fails, the next snapshot self-heals —
    * another seat's successful advance or endMatch moves the document, and
    * this VM follows it.
+   *
+   * The extension write is a PRECONDITION of the transition, not a sibling:
+   * endMatch/advance against a document whose ceiling never moved desyncs
+   * this client from the server. A failed extension stops the round here;
+   * another seat's successful write moves the document and this VM follows.
    */
   private suspend fun scoreAndAdvance(doc: MatchDoc, table: TableState) {
     val id = matchId ?: return
     val cfg = table.cfg
+    // D1: a Super Call is decided by the LOCKED NUMBER, the same amount rule
+    // normalRoleFor applies to the role. Without it the engine's legacy
+    // reading treats every caller as a Super Call and an ordinary successful
+    // in-window round adds a phantom round.
+    val callerBidAmount = cfg.callerId?.let { cfg.estimates[it] }
     val result = calculateRoundScore(
       RoundScoreInput(
         round = cfg.round,
@@ -783,8 +1041,9 @@ class OnlineMatchViewModel(
     // S69 (E7): the extension window is the match's own type (MINI 6–10,
     // FULL 14–18) — without this a MINI match could never extend online.
     val extension = computeRoundExtension(
-      cfg.round, cfg.callerId, cfg.trump, callerSucceeded, result.isSaayda,
+      cfg.round, doc.maxRounds, cfg.callerId, cfg.trump, callerSucceeded, result.isSaayda,
       gameType = doc.gameType,
+      callerBidAmount = callerBidAmount,
     )
 
     val totals = accumulateMatchScores(session.getMatchScores(), result.deltas)
@@ -793,7 +1052,11 @@ class OnlineMatchViewModel(
     session.setWinnerIds(computeWinner(totals))
     session.completeRound(table.tricksWon, result.nextMultiplier)
 
-    val maxRounds = if (extension.extend) doc.maxRounds + 1 else doc.maxRounds
+    // R1: the document is the ceiling's authority. Adding +1 to a round it
+    // ALREADY records makes this replica believe the match runs one round
+    // longer, so it advances instead of ending.
+    val alreadyExtended = cfg.round in doc.extendedRounds
+    val maxRounds = if (alreadyExtended || !extension.extend) doc.maxRounds else doc.maxRounds + 1
     val isLastRound = cfg.round + 1 > maxRounds
     val saaydaSeats = if (result.isSaayda) session.getRoom().seats.toSet() else emptySet()
 
@@ -803,15 +1066,30 @@ class OnlineMatchViewModel(
       isLastRound = isLastRound,
     )
 
-    if (extension.extend) {
-      runCatching { store.extendMatchRounds(id, cfg.round, extension.reason!!.name) }
+    if (extension.extend && !alreadyExtended) {
+      val written = runCatching {
+        store.extendMatchRounds(id, cfg.round, extension.reason!!.name)
+      }
         .onFailure { setRejection(it.message, doc.version) }
+        .getOrNull()
+      if (written == null) {
+        // R1: the round is stalled here and the document may never move again,
+        // so the rejection cannot wait for the next snapshot — and the
+        // standings have no rejection slot. The DONE table is what carries it.
+        boundSeat?.let {
+          _state.value = MatchUiState.Table(session.getPlayState() ?: table, it, rejection)
+        }
+        return
+      }
+      // The match completed under this write: the terminal document is the
+      // next authority, and a second endMatch would chase a closed match.
+      if (written.reason == Reasons.MATCH_ALREADY_COMPLETE) return
     }
     if (isLastRound) {
       runCatching { store.endMatch(id, cfg.round, totals, computeWinner(totals)) }
         .onFailure { setRejection(it.message, doc.version) }
     } else {
-      runCatching { store.advanceToNextRound(id, cfg.round) }
+      runCatching { store.advanceToNextRound(id, cfg.round, result.nextMultiplier) }
         .onFailure { setRejection(it.message, doc.version) }
     }
   }
@@ -843,15 +1121,111 @@ class OnlineMatchViewModel(
    * real final scores here even though its own in-flight window was partial.
    * Clearing the profile's currentMatchId once is what keeps a relaunch from
    * rejoining a finished match.
+   *
+   * The publish happens BEFORE any network word is spoken: the settlement
+   * (RD13's server-side RP movement) runs in its own coroutine off this
+   * method, so the standings and the currentMatchId clear never wait on it.
+   * A re-delivery of the SAME terminal document skips the write — the
+   * standings are a pure function of the document, so republishing them
+   * could only clobber a ranked reveal that landed in between.
    */
   private suspend fun publishComplete(doc: MatchDoc) {
     val scores = doc.finalScores
     if (scores.isNullOrEmpty()) return
-    _state.value = MatchUiState.MatchComplete(buildStandings(scores))
+    val standings = buildStandings(scores)
+    val current = _state.value
+    if (!(current is MatchUiState.MatchComplete && current.standings == standings)) {
+      _state.value = MatchUiState.MatchComplete(standings, rankedReveal)
+    }
     if (!clearedMatchId) {
       clearedMatchId = true
       val myUid = uid()
       if (myUid != null) runCatching { players.setCurrentMatchId(myUid, null) }
+    }
+    maybeSettle(doc)
+  }
+
+  /**
+   * The ranked settlement trigger — exactly once per match per session, and
+   * RANKED only (ROOM/UNRANKED never settle, RD28). The call is armed here
+   * and its outcome handled off the snapshot path, so the terminal publish
+   * above is never delayed by the network. A redelivery that arrives while
+   * the call is in flight finds [settlementAttempted] already set; a second
+   * CLIENT's call is the server's claim record to absorb, not ours.
+   */
+  private fun maybeSettle(doc: MatchDoc) {
+    if (settlementAttempted) return
+    when (doc.mode) {
+      MatchMode.RANKED -> {
+        val id = matchId ?: return
+        settlementAttempted = true
+        settlementJob = viewModelScope.launch(worker) { runSettlement(id, doc) }
+      }
+      // RD28: an UNRANKED match carries no standing, so it never settles —
+      // the plain standings are the whole story. A ROOM match is private by
+      // invitation and never settles either. The two are named separately
+      // so that neither is forgotten the day UNRANKED grows an outcome.
+      MatchMode.UNRANKED -> return
+      MatchMode.ROOM -> return
+    }
+  }
+
+  /**
+   * The settlement body: ask the settler once, and act on what it says.
+   * [SettlementPort.SettlementOutcome.NotRanked] and
+   * [SettlementPort.SettlementOutcome.Denied] are terminal — the plain
+   * standings already published are the whole story, and there is no new
+   * user-facing word for a settlement that never came. Only a Retryable
+   * outcome loops, with the alarm's own exponential backoff, so the bound
+   * below is the loop's whole lifetime.
+   */
+  private suspend fun runSettlement(matchId: String, doc: MatchDoc) {
+    var consecutiveFailures = 0
+    while (true) {
+      when (val outcome = settlements.settle(matchId)) {
+        is SettlementPort.SettlementOutcome.Settled -> {
+          publishRanked(doc, outcome)
+          return
+        }
+        is SettlementPort.SettlementOutcome.NotRanked -> return
+        SettlementPort.SettlementOutcome.Denied -> return
+        SettlementPort.SettlementOutcome.Retryable -> {
+          if (++consecutiveFailures > MAX_TRANSIENT_FAILURES) return
+          delay(transientBackoffMillis(consecutiveFailures))
+        }
+      }
+    }
+  }
+
+  /**
+   * Attach the reveal. The movement is the server's own (`you`) fed into
+   * the standings' existing [buildRankedResult]: the client's whole
+   * contribution is the two server numbers — the previous RP and the signed
+   * delta — and nothing else; what the helper derives from them (the display
+   * RP against its floor, the tier labels) is its own long-standing
+   * derivation, not part of this move, and the reveal trusts the pair as
+   * the contract's restatement of the server's `rp` (RD13). An outcome
+   * without `you` — forward-looking wire, no shipped build carries it yet;
+   * the field is the server half's to add — reveals nothing: the plain
+   * standings stand, silently, the same way a denied settlement does.
+   *
+   * The reveal is also parked in [rankedReveal] before it reaches the state,
+   * so the next terminal re-delivery republishes rather than clobbers it. A
+   * replay of the recorded movement arrives here too — `replayed` changes
+   * nothing about what the reveal shows.
+   */
+  private fun publishRanked(doc: MatchDoc, outcome: SettlementPort.SettlementOutcome.Settled) {
+    val movement = outcome.you ?: return
+    val reveal = buildRankedResult(
+      previousRP = movement.previousRp,
+      delta = movement.delta,
+      season = unlistedSeason,
+      userSeat = uid()?.let(doc::uidToSeat),
+    )
+    rankedReveal = reveal
+    val current = _state.value
+    if (current is MatchUiState.MatchComplete && current.ranked == null) {
+      _state.value = current.copy(ranked = reveal)
     }
   }
 
@@ -969,7 +1343,12 @@ class OnlineMatchViewModel(
     val windowMillis = DecisionWindow.durationSeconds(
       timerSeconds = doc.decisionTimerSeconds,
       bidding = decision.bidding,
-      botControlled = decision.seat in doc.botControlledSeats(),
+      // Mirrors the resolver's shortWindowSeats (C3): a borrowed seat is on the
+      // bot's fixed 2 s pace, not the human window. botControlledSeats()
+      // deliberately excludes borrowed seats (DEC-RD19-04 provenance), so the
+      // marker set must be read separately here.
+      botControlled = decision.seat in doc.botControlledSeats() ||
+        decision.seat in doc.inactiveTakeoverSeats(),
     ) * MILLIS_PER_SECOND
     timeoutAlarm = viewModelScope.launch(worker) { runTimeoutAlarm(id, windowMillis.toLong()) }
   }
@@ -1044,6 +1423,87 @@ class OnlineMatchViewModel(
     timeoutAlarm = null
   }
 
+  /**
+   * S73 (RD19) — publish the borrowed-seat set for the chip, and arm the
+   * reclaim poll when the seat the bot is borrowing is OURS. Cancel-then-re-arm
+   * on every delivery, exactly like [refreshTimeoutAlarm]: at most one poll is
+   * live, and any document change voids the wait armed against the older one.
+   *
+   * Only our own seat is polled. The callable derives the seat from the
+   * verified uid — there is no "reclaim p2" — so asking for anyone else could
+   * only ever be a NOT_OWNER.
+   *
+   * The arm is bounded rather than persistent, and that is safe because it is
+   * self-healing: every bot play for a borrowed seat is a document write, and
+   * every write comes back through here. A poll that exits on its attempt cap,
+   * or on a [SeatReclaimPort.Reclaim.Denied], is recreated by the next trick
+   * instead of stranding the player out of their seat.
+   *
+   * The first arm waits one bot window. The client cannot know when the bot's
+   * trick will finish, and the server floors its own answer at the same
+   * window, so the estimate is late-rather-than-early; every later arm is the
+   * server's authoritative `retryAfterMillis`.
+   */
+  private fun refreshReclaimPoll(doc: MatchDoc, ourSeat: String) {
+    reclaimPoll?.cancel()
+    reclaimPoll = null
+    val borrowed = doc.inactiveTakeoverSeats()
+    _borrowedSeats.value = borrowed
+    val id = matchId ?: return
+    if (ourSeat !in borrowed) return
+    val firstWaitMillis = DecisionWindow.BOT_DECISION_SECONDS * MILLIS_PER_SECOND.toLong()
+    reclaimPoll = viewModelScope.launch(worker) { runReclaimPoll(id, firstWaitMillis) }
+  }
+
+  /**
+   * The poll body: wait, ask once, act on what the server said. Bounded the
+   * same two independent ways as [runTimeoutAlarm] — [MAX_RECLAIM_ATTEMPTS] on
+   * total iterations, [MAX_TRANSIENT_FAILURES] on consecutive failures with
+   * [transientBackoffMillis] between them — so a flaky network can never turn
+   * it into a tight loop.
+   *
+   * [SeatReclaimPort.Reclaim.WaitingForTrick] is NOT a failure and costs
+   * nothing from the transient budget: it is the server's authoritative "the
+   * trick is not down yet, ask again in N", so the wait converges on it the
+   * way the timeout alarm converges on `NotYetExpired`.
+   *
+   * Every terminal outcome exits and lets the next snapshot decide — including
+   * [SeatReclaimPort.Reclaim.Returned], whose document write IS the signal that
+   * clears the chip, and [SeatReclaimPort.Reclaim.HumanHoldsSeat], which means
+   * there is nothing to reclaim. No "I'm back" screen anywhere: the player's
+   * return is the signal, and the seat comes back by itself.
+   */
+  private suspend fun runReclaimPoll(matchId: String, firstWaitMillis: Long) {
+    var waitMillis = firstWaitMillis
+    var attempt = 0
+    var consecutiveFailures = 0
+    while (true) {
+      delay(waitMillis)
+      if (++attempt > MAX_RECLAIM_ATTEMPTS) return
+      when (val outcome = reclaims.reclaim(matchId)) {
+        SeatReclaimPort.Reclaim.Returned -> return
+        SeatReclaimPort.Reclaim.HumanHoldsSeat -> return
+        SeatReclaimPort.Reclaim.Denied -> return
+        is SeatReclaimPort.Reclaim.WaitingForTrick -> {
+          consecutiveFailures = 0
+          waitMillis = outcome.retryAfterMillis
+        }
+        SeatReclaimPort.Reclaim.Retryable -> {
+          if (++consecutiveFailures > MAX_TRANSIENT_FAILURES) return
+          waitMillis = transientBackoffMillis(consecutiveFailures)
+        }
+      }
+    }
+  }
+
+  /** The chip and the poll mean nothing without a live match: drop the pending
+   *  poll and the published set together. */
+  private fun clearReclaimSignal() {
+    reclaimPoll?.cancel()
+    reclaimPoll = null
+    _borrowedSeats.value = emptySet()
+  }
+
   private fun setRejection(message: String?, version: Int?) {
     rejection = message
     rejectionVersion = if (message == null) null else version
@@ -1060,8 +1520,16 @@ class OnlineMatchViewModel(
      *  a network blip) while guaranteeing the loop cannot spin. */
     const val MAX_TIMEOUT_ATTEMPTS = 8
 
-    /** S61 — how many consecutive transient failures one alarm tolerates. The
-     *  backoff below makes those ~31 s of patient retrying, not a burst. */
+    /** S73 (RD19) — the same ceiling for one reclaim poll. A trick is at most
+     *  four plays and each play re-arms this poll from a fresh snapshot, so a
+     *  single lifetime rarely needs more than a couple of asks; the cap exists
+     *  to guarantee the loop cannot spin, not to bound the reclaim. */
+    const val MAX_RECLAIM_ATTEMPTS = 8
+
+    /** How many consecutive transient failures one caller tolerates — the S61
+     *  alarm's, the S73 reclaim poll's, and the ranked settlement's, shared
+     *  budget. The backoff below makes those ~31 s of patient retrying, not a
+     *  burst. */
     const val MAX_TRANSIENT_FAILURES = 6
 
     /** S61 — exponential backoff for a transient callable/network failure:
@@ -1074,3 +1542,12 @@ class OnlineMatchViewModel(
     (TRANSIENT_BACKOFF_BASE_MILLIS shl (failure - 1))
       .coerceAtMost(TRANSIENT_BACKOFF_CAP_MILLIS)
 }
+
+/**
+ * The season window the reveal's SEASON chip would show. The settlement
+ * response carries the caller's movement and nothing about a season, and
+ * there is no client-side source for one that is not invented — so the chip
+ * renders empty until the server half grows the field, rather than showing
+ * fabricated dates. The RP movement itself, the reveal's point, is complete.
+ */
+private val unlistedSeason = RankedSeasonUiState(id = "", start = "", end = "")

@@ -25,10 +25,9 @@ blob set (`grep -c '\p{Arabic}'` = **0** for the plan, `CANONICAL_RULES.md` and 
 transcripts under `~/.qoder/projects/C--Users-ehab-sayed-Desktop-demo-test/` (the only Arabic
 matches were this agent's own search strings).
 
-> **ACTION FOR THE OWNER:** paste your own wording into §1 and §2 below, replacing the
-> "as relayed" lines. Until then the ruling is recorded as relayed to the agent in English on
-> 2026-10-16, and the repo convention of "owner wording verbatim" (see plan `:75`, RD30) is
-> **not** satisfied by this file.
+> **STATUS (2026-10-17) — waived by the owner:** the Arabic wording is not required; the ruling
+> stands as relayed to the agent in English on 2026-10-16, and the repo convention of "owner
+> wording verbatim" (see plan `:75`, RD30) is **not applied to this record**.
 
 Repo convention for the precedent: `7dece9c:docs/NATIVE_V1_PLAN_AND_ESTIMATE.md:75` quotes RD30
 as *"owner wording verbatim"*. This file is not that.
@@ -174,7 +173,7 @@ now redraw them; that is a designer's step.
 
 ---
 
-## 6. Follow-up doc pass this record implies (deliberately NOT done here)
+## 6. Follow-up doc pass this record implies (addressed in `cd02a71` — pointers and Amendment A5)
 
 Each is a pointer note beside verbatim superseded text, per the convention:
 
@@ -185,10 +184,11 @@ Each is a pointer note beside verbatim superseded text, per the convention:
    "do not draw" gates, and open the S41/S42 design re-cut.
 4. RD31's own text at `CANONICAL_RULES.md:318-327` — narrow "all three match types" per C3.
 
-**Sequencing constraint:** `7dece9c` is **not on `main`** (this checkout is `6c67a62`, 108 behind),
-and the working-tree copies of the plan and roadmap here are an **older edition** than upstream.
-The doc pass must therefore be made on top of the synced `docs/roadmap-closure-decisions` tip —
-not on this stale tree — or it will re-introduce superseded text.
+**Sequencing constraint:** at drafting, `7dece9c` was **not on `main`** (the drafting checkout
+was `6c67a62`, 108 behind), and the working-tree copies of the plan and roadmap here were an
+**older edition** than upstream. The doc pass therefore had to be made on top of the synced
+`docs/roadmap-closure-decisions` tip — not on the stale tree — or it would have re-introduced
+superseded text.
 
 ---
 
@@ -198,8 +198,9 @@ not on this stale tree — or it will re-introduce superseded text.
   `git show 7dece9c:docs/rules/CANONICAL_RULES.md`, `git show 7dece9c:docs/UI_UX_ROADMAP.md`
   (read-only; line numbers are those blobs' own numbering, verified by grep this session).
 - `7dece9c` = "Docs(roadmap closure): record the 2026-10-14 owner decisions in all three
-  authoritative docs", on `origin/docs/roadmap-closure-decisions`, **not on `main`**.
+  authoritative docs", on `origin/docs/roadmap-closure-decisions` — **not on `main`** when this
+  record was drafted; it has since landed on `main`.
 - Ruling content: relayed to this agent in English on **2026-10-16**; Arabic verbatim **not
   captured** (§0).
-- This file is **untracked**. Nothing else in the repository was created, edited, moved or
-  deleted by this task, and no git state was changed.
+- This file was authored as an untracked draft and is now committed — `docs/decisions/2026-10-16-open4-open5-owner-closure.md` at `cd02a71`. Nothing else in the repository was
+  created, edited, moved or deleted by this task, and no git state was changed.

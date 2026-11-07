@@ -322,8 +322,10 @@ object BidBrain {
     val cap = state.auctionTop.coerceAtLeast(4)
     var estimate = eval.intendedBid.coerceIn(0, cap)
 
-    // A With seat cannot go below the last real number it bid itself.
-    val floor = withFloorFor(state.actionHistory, playerId)
+    // A With seat cannot go below its own bid IN THE CALLER'S WINNING SUIT
+    // (T-12). The suit-blind form reads a later bid in another suit that the
+    // engine does not floor on, which would over-raise this seat.
+    val floor = withFloorFor(state, playerId)
     if (floor != null && state.withPlayers.contains(playerId)) {
       estimate = estimate.coerceAtLeast(floor)
     }

@@ -77,7 +77,7 @@ h1{font:400 22px/1 var(--serif);letter-spacing:.05em;margin:4px 0 0}
 <script type="text/babel">
 const TWEAK_DEFAULTS=/*EDITMODE-BEGIN*/{"state":"Board","stress":false,"gold":"Brass","royal":"Muted"}/*EDITMODE-END*/;
 // RD26 lower bounds, verbatim. Order low→high.
-const LADDER=[["Bronze","مبتدئ","III",0],["Bronze","مبتدئ","II",75],["Bronze","مبتدئ","I",150],["Silver","لاعب","III",250],["Silver","لاعب","II",350],["Silver","لاعب","I",450],["Gold","معلم","III",575],["Gold","معلم","II",700],["Gold","معلم","I",825],["Platinum","وزير","III",1000],["Platinum","وزير","II",1200],["Platinum","وزير","I",1400],["Diamond","أمير","III",1600],["Diamond","أمير","II",1800],["Diamond","أمير","I",2000],["Royal","سلطان","III",2250],["Royal","سلطان","II",2500],["Royal","سلطان","I",2750],["King","ملك",null,3000]];
+const LADDER=[["Bronze","مبتدئ","III",0],["Bronze","مبتدئ","II",75],["Bronze","مبتدئ","I",150],["Silver","لاعب","III",250],["Silver","لاعب","II",350],["Silver","لاعب","I",450],["Gold","معلم","III",575],["Gold","معلم","II",700],["Gold","معلم","I",825],["Platinum","بلاتين","III",1000],["Platinum","بلاتين","II",1200],["Platinum","بلاتين","I",1400],["Diamond","أمير","III",1600],["Diamond","أمير","II",1800],["Diamond","أمير","I",2000],["Royal","سلطان","III",2250],["Royal","سلطان","II",2500],["Royal","سلطان","I",2750],["King","ملك",null,3000]];
 const rungOf=rp=>{let r=LADDER[0];for(const x of LADDER)if(rp>=x[3])r=x;return r};
 const star=(()=>{const p=[];for(let i=0;i<16;i++){const a=Math.PI*i/8-Math.PI/2,r=i%2?30:50;p.push((50+r*Math.cos(a)).toFixed(1)+"% "+(50+r*Math.sin(a)).toFixed(1)+"%")}return"polygon("+p.join(",")+")"})();
 const SEASON_TOKEN="{season.id}";
@@ -172,7 +172,7 @@ ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
 <tr><td>Season chip, Season column</td><td>SEASON {season.id} / {season.id}</td><td>Binding token, S54 convention; display form open (§9, #1)</td></tr>
 <tr><td>Order chip</td><td>ORDERED BY RP</td><td>Agent-written; states RD27. Read-only</td></tr>
 <tr><td>Column labels</td><td>Pos · Player · Tier · Rank · RP · Season</td><td>RD27 / §4b.8 (Position → Pos, Tier / Rank → Tier · Rank)</td></tr>
-<tr><td>Tier names, divisions, Arabic titles</td><td>Bronze … King; III/II/I; مبتدئ لاعب معلم وزير أمير سلطان ملك</td><td>Approved verbatim, RD1 / §4b.1</td></tr>
+<tr><td>Tier names, divisions, Arabic titles</td><td>Bronze … King; III/II/I; مبتدئ لاعب معلم بلاتين أمير سلطان ملك</td><td>Approved verbatim, RD1 / §4b.1</td></tr>
 <tr><td>King band</td><td>King · ملك · 3,000+ RP · one group, ordered by RP</td><td>3,000 = RD26; wording agent-written from RD27</td></tr>
 <tr><td>Own-row tag</td><td>YOU</td><td>Agent-written</td></tr>
 <tr><td>Pinned hint</td><td>Your row is below this view · tap to jump</td><td>Agent-written; now fulfilled by real behaviour</td></tr>

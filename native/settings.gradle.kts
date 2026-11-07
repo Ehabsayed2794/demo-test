@@ -57,3 +57,7 @@ include(":functions")
 // and the Cloudflare Worker bundle (native/worker, O-06). Kept firebase-free
 // on purpose — see native/authority-core/build.gradle.kts.
 include(":authority-core")
+// Stage 0 (E1): the workerd harness. A throwaway probe, not a product module —
+// it exists to answer one question from the native v1 plan's Stage 0: does the
+// engine play an identical match on the JVM and inside Cloudflare's runtime?
+include(":stage0")

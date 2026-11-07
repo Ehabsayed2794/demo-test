@@ -50,6 +50,14 @@ data class RoomDoc(
   val allReady: Boolean
     get() = players.isNotEmpty() && players.all { it in readyPlayers }
 
+  /**
+   * A table may start only when it is FULL and every seated player is ready.
+   * [allReady] deliberately keeps its "everyone present is ready" meaning — the
+   * room screen uses it as a hint, and a non-full room can be all-ready.
+   * Status is the caller's gate (`STATUS_WAITING`), not this predicate's.
+   */
+  val canStart: Boolean get() = isFull && allReady
+
   fun isMember(playerId: String): Boolean = playerId in players
 
   fun isReady(playerId: String): Boolean = playerId in readyPlayers

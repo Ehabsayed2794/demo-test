@@ -25,6 +25,11 @@ data class ScoredPlayer(
   val role: Role,
   val bid: Int,
   val won: Int,
+  /**
+   * Whether this seat also holds the Risk obligation. Only [Role.REG_DASH]
+   * reads it (A7.1); every other role carries its Risk in the role itself.
+   */
+  val isRisk: Boolean = false,
 )
 
 /**
@@ -54,6 +59,7 @@ fun calculateNormalScore(
   isSoleWinner: Boolean,
   isSoleLoser: Boolean,
   totalBids: Int,
+  isRisk: Boolean = false,
 ): Int {
   val success = won == bid
   var score = when (role) {
@@ -71,14 +77,20 @@ fun calculateNormalScore(
         if (under) -33 else -25
       }
     }
-    // Canonical §4 Normal Dash: ordinary 10+T.
-    Role.REG_DASH ->
-      if (success) 10 else -(10 + won)
+    // Canonical §4 Normal Dash: ordinary 10+T. A6.3 / Current Rules item 4:
+    // a Normal Dash seat that is ALSO the Risk player adds the Risk ladder to
+    // its own Dash value — one component, never the RISK role formula, so the
+    // miss is charged exactly once.
+    Role.REG_DASH -> {
+      val risk = if (isRisk) riskValue(totalBids) else 0
+      if (success) 10 + risk else -(10 + won) - risk
+    }
     else -> {
       val miss = abs(bid - won)
       // Owner D2 + spec 04 §1: the Risk player's component is the graduated
       // ladder (riskValue(totalBids)), not a flat 10. Dash Call never
-      // receives Risk; Normal Dash follows the 04 §4 table below as-is.
+      // receives Risk; a Normal Dash seat takes the same ladder, but as a
+      // component added to its own table value in the REG_DASH branch above.
       val riskBonus = if (isRisk(role)) riskValue(totalBids) else 0
       if (success) {
         // Single Caller/With bonus ("Caller OR With", never both).
@@ -104,6 +116,7 @@ fun calculateClassicScore(
   totalBids: Int,
   isSoleWinner: Boolean,
   isSoleLoser: Boolean,
+  isRisk: Boolean = false,
 ): Int {
   val success = won == bid
   val over = totalBids > 13
@@ -116,12 +129,19 @@ fun calculateClassicScore(
       } else {
         if (over) -10 else -20
       }
-    Role.REG_DASH ->
-      if (success) {
+    // A7.1 (closes O-01): the Classic Normal Dash table value PLUS the Risk
+    // ladder, each counted exactly once — never the RISK/WIZZ_RISK role
+    // formula, which would re-charge the same estimate and the same miss.
+    // The sole-loser doubling below therefore sees the summed −12, not −2.
+    Role.REG_DASH -> {
+      val risk = if (isRisk) riskValue(totalBids) else 0
+      val dash = if (success) {
         if (over) 13 else 23
       } else {
         if (over) -won else -10
       }
+      if (success) dash + risk else dash - risk
+    }
     Role.WIZZ_RISK ->
       if (success) bid + 13 + 20 else -(miss + 20)
     Role.CALLER, Role.WIZZ ->
@@ -152,9 +172,9 @@ fun scoreRound(
   fun soleLoser(p: ScoredPlayer) = fails == 1 && p.won != p.bid
   return players.associate { p ->
     p.seat to if (classic) {
-      calculateClassicScore(p.role, p.bid, p.won, totalBids, soleWinner(p), soleLoser(p))
+      calculateClassicScore(p.role, p.bid, p.won, totalBids, soleWinner(p), soleLoser(p), p.isRisk)
     } else {
-      calculateNormalScore(p.role, p.bid, p.won, soleWinner(p), soleLoser(p), totalBids)
+      calculateNormalScore(p.role, p.bid, p.won, soleWinner(p), soleLoser(p), totalBids, p.isRisk)
     }
   }
 }

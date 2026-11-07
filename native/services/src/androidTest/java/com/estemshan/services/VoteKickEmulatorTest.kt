@@ -12,6 +12,7 @@ import com.estemshan.services.model.VoteKickDoc
 import com.estemshan.services.session.AuthPort
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.tasks.await
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -39,6 +40,12 @@ class VoteKickEmulatorTest {
   @Before
   fun wipeEmulatorsBetweenTests() {
     EmulatorSuite.reset()
+  }
+
+  @After
+  fun releaseOurFirebaseClients() {
+    val context = InstrumentationRegistry.getInstrumentation().targetContext
+    EmulatorSuite.releaseFirestoreClients(context, "-s60_")
   }
 
   private suspend fun seating(): Map<String, EmulatorSuite.ClientFirebase> {
@@ -160,6 +167,28 @@ class VoteKickEmulatorTest {
     val targetUid = committed.seats.getValue(koz)
     assertTrue("target uid is banned", committed.removedUids.contains(targetUid))
     assertEquals(VoteKickDoc.STATUS_PASSED, loadVote(seating, matchId)?.status)
+
+    // S73 (C8): HELD is not BORROWED. A kicked seat is the state an
+    // inactivity takeover is most easily confused with — a bot plays it, its
+    // owner is not at the table — and the two must stay disjoint in BOTH
+    // directions, because a kick that also looked borrowed would hand a
+    // permanently-removed player a reclaim they can never use, and a borrow that
+    // looked held would make a still-present player unvotable. `botControlledSeats`
+    // is the union Vote Kick's own eligibility gates read; a borrowed seat must
+    // never appear in it, and this is the cheapest place to prove the union's
+    // boundary holds at the one seat that genuinely IS bot-driven. No runtime
+    // cost: a callable this suite never invokes cannot have written a marker, so
+    // the assertion is a guard on the parse and the union, not a scenario.
+    assertTrue("a kicked seat is in the permanent bot union", koz in committed.botControlledSeats())
+    assertTrue(
+      "and in no takeover marker (takeovers=${committed.inactiveTakeovers})",
+      committed.inactiveTakeoverSeats().isEmpty(),
+    )
+    assertTrue(
+      "and the three provenances stay separate: this uid is in removedUids only " +
+        "(timeoutRemoved=${committed.timeoutRemovedUids}, takeovers=${committed.inactiveTakeovers})",
+      targetUid !in committed.timeoutRemovedUids,
+    )
 
     // The removed seat cannot act again through any write path.
     expectReason(Reasons.REMOVED_FROM_MATCH) {

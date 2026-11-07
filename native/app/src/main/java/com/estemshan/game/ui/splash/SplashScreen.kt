@@ -12,8 +12,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import com.estemshan.game.R
 import com.estemshan.game.ui.theme.EstemshanTheme
 
 /** Brand moment + loader. Stateless: routing lives in the nav graph. */
@@ -24,9 +26,9 @@ fun SplashScreen() {
     verticalArrangement = Arrangement.Center,
     horizontalAlignment = Alignment.CenterHorizontally,
   ) {
-    Text("Estemshan", style = MaterialTheme.typography.displayLarge)
+    Text(stringResource(R.string.app_name), style = MaterialTheme.typography.displayLarge)
     Spacer(Modifier.height(4.dp))
-    Text("Estimation card game", style = MaterialTheme.typography.bodyMedium)
+    Text(stringResource(R.string.splash_tagline), style = MaterialTheme.typography.bodyMedium)
     Spacer(Modifier.height(24.dp))
     CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
   }

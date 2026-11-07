@@ -537,6 +537,11 @@ jobs:
   # move and this job fails. That is the whole point of sharing the engine
   # instead of re-implementing settlement in TypeScript (ADR 0002).
   #
+  # It also holds the only real-Firestore proof of the Admin-SDK authority layer
+  # (S62's ledger tier), which is why this job boots Firestore as well: with the
+  # emulator absent, that tier skips itself and the job goes green having never
+  # executed the write path it is supposed to guard.
+  #
   # Stays separate from `build` because it needs Node + the Functions emulator
   # and would otherwise gate every Android compile on an emulator boot.
   functions:
@@ -577,11 +582,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Compile + unit-test the Functions module
-        # jsNodeTest is the Kotlin/JS node test task. It runs the CallableAuth
-        # and IdempotencyGuard unit suites — the pure-logic half of S42, no
-        # emulator needed.
-        run: native/gradlew -p native :functions:jsProductionExecutableCompileSync :functions:jsNodeTest --stacktrace
+      - name: Compile the Functions module
+        # jsProductionExecutableCompileSync builds the bundle index.js requires,
+        # so it stays ahead of the emulator step — same reason the instrumented
+        # job compiles before it starts firebase-tools. jsNodeTest moved the
+        # other way, to after the emulators are up: it is the only way the
+        # Firestore-backed tier of that task can execute at all.
+        run: native/gradlew -p native :functions:jsProductionExecutableCompileSync --stacktrace
 
       - name: Install the Functions runtime dependencies
         # The compiled bundle requires('firebase-functions/v2/https') at
@@ -591,20 +598,24 @@ jobs:
         # refuses to resolve anything else.
         run: npm --prefix native/functions ci
 
-      - name: Start the Functions + Auth emulators
+      - name: Start the Functions + Auth + Firestore emulators
         # Auth is required: CallableAuth rejects a request with no signed-in
         # user, so the "authenticated" half of the smoke test needs a real
-        # anonymous session against the Auth emulator. Ports are firebase.json's
-        # (functions 5001, auth 9099).
+        # anonymous session against the Auth emulator. Firestore is required for
+        # the same reason it is in the instrumented job: jsNodeTest carries
+        # SettlementLedgerEmulatorTest, the only test anywhere that runs the
+        # settlement/ledger Admin-SDK write path against a real Firestore, and it
+        # skips itself unless FIRESTORE_EMULATOR_HOST points at one. Ports are
+        # firebase.json's (functions 5001, auth 9099, firestore 8080).
         run: |
           set -euo pipefail
-          npx firebase emulators:start --project demo-test-ci --only functions,auth \
+          npx firebase emulators:start --project demo-test-ci --only functions,auth,firestore \
             > "$RUNNER_TEMP/emulators.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/emulators.pid"
           # Readiness probe — a bounded wait on a real condition (the ports
           # accepting connections), not a fixed sleep, mirroring the
           # instrumented job's own probe.
-          for port in 5001 9099; do
+          for port in 5001 9099 8080; do
             for i in $(seq 1 240); do
               code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$port/" || true)
               if [ "$code" != "000" ]; then
@@ -617,6 +628,74 @@ jobs:
               fi
             done
           done
+
+      - name: Run the Functions unit + Firestore-emulator suite
+        # jsNodeTest is the Kotlin/JS node test task: the CallableAuth and
+        # IdempotencyGuard pure-logic suites (unchanged — this is still the only
+        # invocation in the job, so they run exactly once as before) plus S62's
+        # SettlementLedgerEmulatorTest, which is the tier this job used to skip.
+        #
+        # WHY --rerun AND WHY IT RUNS HERE: an emulator-gated class that skips
+        # itself still reports GREEN, so a green jsNodeTest proves nothing on its
+        # own. Two ways it can lie without running a single test: a second
+        # invocation of the same task in one job is reported UP-TO-DATE (the env
+        # vars are not task inputs, so Gradle cannot see the difference), and the
+        # shared build cache can replay stored results FROM-CACHE. Either produces
+        # no execution at all. --rerun closes both — Gradle then logs "Caching
+        # disabled for the task" and "Task.upToDateWhen is false", so a real node
+        # process starts on every run. Running the task only here, after the
+        # emulators are up, is what makes the emulator-enabled run also the only
+        # run.
+        #
+        # WHY THE REPORT FILES CARRY THE GUARD: at the default log level a
+        # Kotlin/JS test's console.log never reaches this step's output — measured,
+        # the skip marker prints ZERO times to the console while the same run writes
+        # it four times into the JUnit <system-out>. The report file is the carrier
+        # that needs no log flag, so the results dir is deleted first (a leftover
+        # XML from some other run can never answer for this one) and then read
+        # twice: the gated class's own XML must EXIST — a renamed or deleted class
+        # would leave nothing to grep and turn this step green on an absent tier —
+        # and no XML may carry a skip marker, with a scan that cannot run counted
+        # as a marker rather than as a clean result.
+        env:
+          FIRESTORE_EMULATOR_HOST: 127.0.0.1:8080
+          GCLOUD_PROJECT: demo-test-ci
+        run: |
+          set -euo pipefail
+          RESULTS="native/functions/build/test-results/jsNodeTest"
+          LEDGER="$RESULTS/TEST-com.estemshan.functions.SettlementLedgerEmulatorTest.xml"
+          rm -rf "$RESULTS"
+          native/gradlew -p native :functions:jsNodeTest --rerun --stacktrace
+          # Positive control, checked FIRST: an absent report is indistinguishable
+          # from a tier that never existed, and "no marker found" must not be
+          # allowed to mean "nothing ran".
+          if [ ! -f "$LEDGER" ]; then
+            echo "::error::$LEDGER was not written — the Firestore-backed ledger tier never ran, so this step cannot claim it passed."
+            exit 1
+          fi
+          # Any `*_EMULATOR_SKIPPED` marker means an emulator-gated class decided
+          # the emulator was unreachable and returned early. Green must mean
+          # executed, so that is a failure, not a warning. The pattern matches the
+          # shared SUFFIX, not a story number: on this branch only the ledger class
+          # prints one (S62_EMULATOR_SKIPPED), and any later gated class that
+          # follows that convention is caught for free.
+          #
+          # FAIL CLOSED, NOT FAIL OPEN: grep exits 0 when it finds a marker, 1 when
+          # it finds none, and 2 when the scan itself cannot run. A bare
+          # `if hits=$(grep …)` reads 2 the same as 1, so a results dir this step
+          # cannot read would look exactly like a clean run. 2 is therefore a
+          # failure of its own.
+          hits_rc=0
+          hits=$(grep -rl --include='TEST-*.xml' '_EMULATOR_SKIPPED' "$RESULTS") || hits_rc=$?
+          if [ "$hits_rc" -gt 1 ]; then
+            echo "::error::the skip-marker scan failed (grep exit $hits_rc) over $RESULTS — an unreadable report dir is not evidence of a clean run."
+            exit 1
+          fi
+          if [ "$hits_rc" -eq 0 ]; then
+            echo "$hits"
+            echo "::error::an emulator-gated jsNodeTest class SKIPPED itself — the Firestore emulator was unreachable, so its tier never ran. Offending reports above."
+            exit 1
+          fi
 
       - name: Run the Functions smoke test
         # Exits non-zero on any wrong count or an unexpected denial — no silent
@@ -632,7 +711,12 @@ jobs:
 
       - name: Upload emulator logs
         # The only place a trigger-parse failure or an uncaught TypeError in
-        # the Kotlin/JS bundle is recorded with its stack.
+        # the Kotlin/JS bundle is recorded with its stack. firestore-debug.log
+        # joined the list when this job began booting Firestore: it is the only
+        # record of a rules-evaluation failure with its exact CEL expression, so
+        # a job that runs rules-backed writes would otherwise diagnose them from
+        # the client's bare "permission-denied" — same reason the instrumented
+        # job uploads it.
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -640,5 +724,6 @@ jobs:
           path: |
             ${{ runner.temp }}/emulators.log
             firebase-debug.log
+            firestore-debug.log
             ui-debug.log
           if-no-files-found: warn

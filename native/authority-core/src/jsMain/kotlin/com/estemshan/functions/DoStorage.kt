@@ -217,6 +217,24 @@ class DoSettlementDb(private val sql: dynamic) : SettlementDb {
   override suspend fun <T> transact(block: suspend (SettlementDb.SettlementTx) -> T): T =
     block(DoSettlementTx(sql))
 
+  // O-06 D7 (Step 3): the ranked audit ledger / corrections window ride D1's
+  // ranked_events + match_outbox, which this slice does not wire yet. Fail
+  // closed rather than fabricate an audit trail; the core's best-effort hooks
+  // catch this and log, so it never changes a settlement outcome.
+  override suspend fun appendLedger(record: Map<String, Any?>) {
+    throw AuthorityError(
+      "unimplemented",
+      "the ranked audit ledger is not wired into the Durable Object store yet (O-06 D7, Step 3).",
+    )
+  }
+
+  override suspend fun readCorrectionWindow(): List<Map<String, Any?>> {
+    throw AuthorityError(
+      "unimplemented",
+      "the corrections window is not wired into the Durable Object store yet (O-06 D7, Step 3).",
+    )
+  }
+
   private class DoSettlementTx(private val sql: dynamic) : SettlementDb.SettlementTx {
 
     override suspend fun readClaim(matchId: String): Map<String, Any?>? =
@@ -225,6 +243,24 @@ class DoSettlementDb(private val sql: dynamic) : SettlementDb {
         // let a second settlement double-apply.
         parseRowJson(row["data"], "claim")
       }
+
+    // O-06 D6 (Step 2): player profiles are account state the DO will own in a
+    // `profiles` table snapshotted at match start. Until that lands, a Ranked
+    // settlement on the DO path fails closed here — inside the transaction,
+    // before any write — rather than fold RP against a fabricated pre-image.
+    override suspend fun readProfile(uid: String): Map<String, Any?>? {
+      throw AuthorityError(
+        "unimplemented",
+        "player profiles are not wired into the Durable Object store yet (O-06 D6, Step 2).",
+      )
+    }
+
+    override fun writeProfile(uid: String, fields: Map<String, Any?>) {
+      throw AuthorityError(
+        "unimplemented",
+        "player profiles are not wired into the Durable Object store yet (O-06 D6, Step 2).",
+      )
+    }
 
     override fun writeCorrection(
       matchId: String,

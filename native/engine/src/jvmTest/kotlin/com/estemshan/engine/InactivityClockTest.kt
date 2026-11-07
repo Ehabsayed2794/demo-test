@@ -28,13 +28,13 @@ class InactivityClockTest {
   // ── the closed threshold, and why it must accumulate ───────────────────
 
   @Test
-  fun theTakeoverThresholdIsTheClosedFiftySeconds() {
+  fun t16theTakeoverThresholdIsTheClosedFiftySeconds() {
     assertEquals("RD19: takeover fires at 50 s of accumulated inactivity",
       50_000L, InactivityClock.TAKEOVER_THRESHOLD_MILLIS)
   }
 
   @Test
-  fun oneMaximumLengthWindowAloneCanNeverReachTheThreshold() {
+  fun t16oneMaximumLengthWindowAloneCanNeverReachTheThreshold() {
     // R33's arithmetic, pinned: RD21's longest window is 20 s + the 5 s offset.
     val ignored = InactivityClock()
       .windowOpened(startMillis = 1_000L)
@@ -45,7 +45,7 @@ class InactivityClockTest {
   }
 
   @Test
-  fun twoConsecutiveIgnoredMaxWindowsReachItExactly() {
+  fun t16twoConsecutiveIgnoredMaxWindowsReachItExactly() {
     val first = InactivityClock().windowOpened(0L).windowClosed(longestWindow, longestWindow)
     val second = first.windowOpened(longestWindow).windowClosed(2 * longestWindow, longestWindow)
     assertEquals(2 * longestWindow, second.accumulatedMillis)
@@ -54,7 +54,7 @@ class InactivityClockTest {
   }
 
   @Test
-  fun threeIgnoredTwentySecondWindowsOvershootWhereTwoFallShort() {
+  fun t16threeIgnoredTwentySecondWindowsOvershootWhereTwoFallShort() {
     var clock = InactivityClock()
     for (index in 0..1) {
       val start = index * cardWindow
@@ -69,7 +69,7 @@ class InactivityClockTest {
   }
 
   @Test
-  fun severalPartiallyIgnoredWindowsAccumulateTheSameWay() {
+  fun t16severalPartiallyIgnoredWindowsAccumulateTheSameWay() {
     val clock = InactivityClock()
       .windowOpened(0L).windowClosed(8_000L, cardWindow)
       .windowOpened(20_000L).windowClosed(23_000L, cardWindow)
@@ -85,7 +85,7 @@ class InactivityClockTest {
   // ── the MEDIUM resolution is not evidence of anything ──────────────────
 
   @Test
-  fun aMediumTimeoutResolutionResetsNothing() {
+  fun t16aMediumTimeoutResolutionResetsNothing() {
     // DEC-RD19-01: the MEDIUM decision substitutes for the player's input, so
     // the window that ended in a timeout counts in full and resets nothing —
     // even though the same event increments S61's separate timeout counter.
@@ -97,7 +97,7 @@ class InactivityClockTest {
   }
 
   @Test
-  fun aClosedWindowContributesAtMostItsOwnLength() {
+  fun t16aClosedWindowContributesAtMostItsOwnLength() {
     val clock = InactivityClock()
       .windowOpened(0L).windowClosed(nowMillis = 40_000L, durationMillis = longestWindow)
     assertEquals("late delivery adds nothing beyond the window's own length",
@@ -105,7 +105,7 @@ class InactivityClockTest {
   }
 
   @Test
-  fun anOpenWindowPastItsDeadlineStillCounts() {
+  fun t16anOpenWindowPastItsDeadlineStillCounts() {
     val clock = InactivityClock().windowOpened(0L)
     assertEquals(40_000L, clock.inactiveMillis(40_000L))
     assertTrue("a window whose resolution is retrying is still ignored time",
@@ -113,7 +113,7 @@ class InactivityClockTest {
   }
 
   @Test
-  fun timeWhenItIsNotTheirTurnCountsNothing() {
+  fun t16timeWhenItIsNotTheirTurnCountsNothing() {
     val clock = InactivityClock().windowOpened(0L).windowClosed(longestWindow, longestWindow)
     assertEquals(longestWindow, clock.inactiveMillis(400_000L))
     assertFalse(clock.takeoverEligibleAt(400_000L))
@@ -122,7 +122,7 @@ class InactivityClockTest {
   // ── the reset rule ─────────────────────────────────────────────────────
 
   @Test
-  fun aGenuineInteractionInsideTheOwnWindowResetsTheAccumulation() {
+  fun t16aGenuineInteractionInsideTheOwnWindowResetsTheAccumulation() {
     val ignored = InactivityClock()
       .windowOpened(0L).windowClosed(longestWindow, longestWindow)
       .windowOpened(longestWindow).windowClosed(2 * longestWindow, longestWindow)
@@ -132,7 +132,7 @@ class InactivityClockTest {
   }
 
   @Test
-  fun anInteractionReanchorsTheWindowSoEarlierTimeIsNotHeldAgainstThem() {
+  fun t16anInteractionReanchorsTheWindowSoEarlierTimeIsNotHeldAgainstThem() {
     val clock = InactivityClock().windowOpened(0L).interactionDuringOwnWindow(10_000L)
     assertEquals("the 10 s before the interaction is discarded, not accumulated",
       0L, clock.accumulatedMillis)
@@ -140,7 +140,7 @@ class InactivityClockTest {
   }
 
   @Test
-  fun anInteractionOutsideAnOpenWindowIsNotAReset() {
+  fun t16anInteractionOutsideAnOpenWindowIsNotAReset() {
     // DEC-RD19-01 scopes the reset to "within one of the player's own decision
     // windows", so a tap reported while another seat is acting proves nothing
     // about the accumulation — the call is refused rather than silently credited.
@@ -153,7 +153,7 @@ class InactivityClockTest {
   }
 
   @Test
-  fun anInteractionCannotPredateTheWindowItClaimsToBeInside() {
+  fun t16anInteractionCannotPredateTheWindowItClaimsToBeInside() {
     assertThrows(IllegalArgumentException::class.java) {
       InactivityClock().windowOpened(50_000L).interactionDuringOwnWindow(40_000L)
     }
@@ -162,21 +162,21 @@ class InactivityClockTest {
   // ── state discipline ──────────────────────────────────────────────────
 
   @Test
-  fun windowsNeverNest() {
+  fun t16windowsNeverNest() {
     val open = InactivityClock().windowOpened(0L)
     val failure = assertThrows(IllegalStateException::class.java) { open.windowOpened(5_000L) }
     assertTrue(failure.message!!.contains("already open"))
   }
 
   @Test
-  fun closingWithoutAnOpenWindowIsAnErrorNotSilentZero() {
+  fun t16closingWithoutAnOpenWindowIsAnErrorNotSilentZero() {
     assertThrows(IllegalStateException::class.java) {
       InactivityClock(accumulatedMillis = 10_000L).windowClosed(20_000L, cardWindow)
     }
   }
 
   @Test
-  fun thePersistedStateIsExactlyTwoFieldsAndCarriesNoTimeoutCounter() {
+  fun t16thePersistedStateIsExactlyTwoFieldsAndCarriesNoTimeoutCounter() {
     // RD20 separation, made structural: the takeover mechanism owns two fields
     // and nothing that a 15-timeout removal or a Vote Kick could read as theirs.
     val names = InactivityClock.storedFieldNames()
@@ -192,13 +192,13 @@ class InactivityClockTest {
   // ── fail-closed stored validation ─────────────────────────────────────
 
   @Test
-  fun aMissingDocIsTheLegitimateFreshStart() {
+  fun t16aMissingDocIsTheLegitimateFreshStart() {
     val fresh = InactivityClock.fromStored(accumulatedRaw = null, windowStartRaw = null, docExists = false)
     assertEquals(InactivityClock(), fresh)
   }
 
   @Test
-  fun aPresentButUntrustedValueYieldsNullSoNoTakeoverCanFire() {
+  fun t16aPresentButUntrustedValueYieldsNullSoNoTakeoverCanFire() {
     assertNull(InactivityClock.fromStored(-1L, null))
     assertNull(InactivityClock.fromStored(50_000L, null))
     assertNull(InactivityClock.fromStored(999_999L, null))
@@ -209,7 +209,7 @@ class InactivityClockTest {
   }
 
   @Test
-  fun anyWholeNumberShapeTheTransportMayHandOverIsTrusted() {
+  fun t16anyWholeNumberShapeTheTransportMayHandOverIsTrusted() {
     assertEquals(20_000L, InactivityClock.fromStored(20_000, null)!!.accumulatedMillis)
     assertEquals(20_000L, InactivityClock.fromStored(20_000L, null)!!.accumulatedMillis)
     assertEquals(20_000L, InactivityClock.fromStored(20_000.0, null)!!.accumulatedMillis)
@@ -217,7 +217,7 @@ class InactivityClockTest {
   }
 
   @Test
-  fun aValidStoredWindowAnchorSurvivesTheRoundTrip() {
+  fun t16aValidStoredWindowAnchorSurvivesTheRoundTrip() {
     val stored = InactivityClock(30_000L, 44_000L)
     assertEquals(stored, InactivityClock.fromStored(30_000L, 44_000L))
     assertEquals(36_000L, stored.inactiveMillis(50_000L))
@@ -226,14 +226,14 @@ class InactivityClockTest {
   // ── takeover / reclaim (DEC-RD19-04) ──────────────────────────────────
 
   @Test
-  fun takeoverIsRefusedBelowTheThreshold() {
+  fun t16takeoverIsRefusedBelowTheThreshold() {
     val seat = SeatControl.Human(InactivityClock(accumulatedMillis = 49_999L))
     val failure = assertThrows(IllegalStateException::class.java) { seat.takeOver(50_000L) }
     assertTrue(failure.message!!.contains("below the"))
   }
 
   @Test
-  fun takeoverBorrowsTheSeatAndStopsTheHumanClock() {
+  fun t16takeoverBorrowsTheSeatAndStopsTheHumanClock() {
     val seat = SeatControl.Human(InactivityClock(accumulatedMillis = 50_000L))
     val borrowed = seat.takeOver(60_000L)
     assertEquals(60_000L, borrowed.takenOverAtMillis)
@@ -241,7 +241,7 @@ class InactivityClockTest {
   }
 
   @Test
-  fun takeoverIsIdempotentSoRedeliveryCannotReStampIt() {
+  fun t16takeoverIsIdempotentSoRedeliveryCannotReStampIt() {
     val seat = SeatControl.Human(InactivityClock(accumulatedMillis = 50_000L))
     val first = seat.takeOver(60_000L)
     assertEquals("a later delivery leaves the original takeover time standing",
@@ -249,14 +249,14 @@ class InactivityClockTest {
   }
 
   @Test
-  fun reclaimIsRefusedWhileTheBotStillOwesTheCurrentTrick() {
+  fun t16reclaimIsRefusedWhileTheBotStillOwesTheCurrentTrick() {
     val borrowed = SeatControl.Borrowed(takenOverAtMillis = 60_000L)
     val failure = assertThrows(IllegalStateException::class.java) { borrowed.reclaim() }
     assertTrue(failure.message!!.contains("current trick"))
   }
 
   @Test
-  fun reclaimReturnsTheSeatToTheHumanWithAZeroedClock() {
+  fun t16reclaimReturnsTheSeatToTheHumanWithAZeroedClock() {
     val reclaimed = SeatControl.Borrowed(takenOverAtMillis = 60_000L)
       .markTrickFinished()
       .reclaim()
@@ -265,7 +265,7 @@ class InactivityClockTest {
   }
 
   @Test
-  fun reclaimIsANoOpOnASeatTheHumanAlreadyHolds() {
+  fun t16reclaimIsANoOpOnASeatTheHumanAlreadyHolds() {
     val seat = SeatControl.Human(InactivityClock(accumulatedMillis = 10_000L))
     assertEquals(
       "a caller that re-arms on every delivery must not reset a live seat's clock",
@@ -274,7 +274,7 @@ class InactivityClockTest {
   }
 
   @Test
-  fun aReclaimedSeatAccumulatesAgainFromZero() {
+  fun t16aReclaimedSeatAccumulatesAgainFromZero() {
     val borrowed = SeatControl.Human(InactivityClock(accumulatedMillis = 50_000L))
       .takeOver(50_000L)
     val returned = borrowed.markTrickFinished().reclaim() as SeatControl.Human
@@ -285,7 +285,7 @@ class InactivityClockTest {
   }
 
   @Test
-  fun markTrickFinishedIsAHostedSeatNoOp() {
+  fun t16markTrickFinishedIsAHostedSeatNoOp() {
     val seat = SeatControl.Human(InactivityClock(accumulatedMillis = 5_000L))
     assertEquals(seat, seat.markTrickFinished())
   }

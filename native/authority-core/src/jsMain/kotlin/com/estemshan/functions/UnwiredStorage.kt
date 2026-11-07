@@ -32,6 +32,12 @@ object UnwiredSettlementDb : SettlementDb {
 
   override suspend fun <T> transact(block: suspend (SettlementDb.SettlementTx) -> T): T =
     throw storageUnavailable()
+
+  override suspend fun appendLedger(record: Map<String, Any?>): Unit =
+    throw storageUnavailable()
+
+  override suspend fun readCorrectionWindow(): List<Map<String, Any?>> =
+    throw storageUnavailable()
 }
 
 object UnwiredTimeoutDb : TimeoutDb {

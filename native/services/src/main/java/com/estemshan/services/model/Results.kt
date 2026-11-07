@@ -43,6 +43,11 @@ object Reasons {
   const val ALREADY_BID = "ALREADY_BID"
   const val INVALID_BIDDING_ACTION_VALUE = "INVALID_BIDDING_ACTION_VALUE"
   const val ILLEGAL_BIDDING_ACTION = "ILLEGAL_BIDDING_ACTION"
+  /** T-09: the caller's validated fast-round declaration cycle is no longer
+   *  the document's active one — a Super Call CONFIRM has started the next
+   *  cycle (or the round moved on). Refused rather than applied to a cycle
+   *  the action was never validated against. */
+  const val STALE_CYCLE = "STALE_CYCLE"
 
   // Cards
   const val INVALID_CARD_VALUE = "INVALID_CARD_VALUE"
@@ -62,6 +67,15 @@ object Reasons {
   // Round / match lifecycle (thrown)
   const val ROUND_NOT_COMPLETE = "ROUND_NOT_COMPLETE"
   const val INVALID_RESULT = "INVALID_RESULT"
+  /** O-19: a General-Pass advance was asked for a window that is not the
+   *  provable N-declines + N-passes shape (e.g. a seat declared a Dash
+   *  call). Refused rather than advanced on a guess. */
+  const val UNSUPPORTED_GENERAL_PASS_SHAPE = "UNSUPPORTED_GENERAL_PASS_SHAPE"
+  /** F1 (owner ruling 2026-10-24): the closing round's log claims MORE than
+   *  the strict two-Dash maximum (MAX_DASH_CALLS). The service's write
+   *  boundary makes such a window unpersistable, so a document carrying it
+   *  is refused BY NAME — never silently clamped to two. */
+  const val TOO_MANY_DASH_CALLS = "TOO_MANY_DASH_CALLS"
 
   // Idempotent no-op reasons (RETURNED, never thrown)
   const val ALREADY_ADVANCED = "ALREADY_ADVANCED"
@@ -85,6 +99,10 @@ object Reasons {
 
   // S60 manual Vote Kick (RD18) — gate denials, thrown. Each maps one
   // engine VoteKickUnavailability for S40's in-place explanations.
+  // VOTE_NOT_RANKED is the constant's historical name: since the
+  // 2026-10-17 owner clarification the vote is refused in ROOM only
+  // (RANKED + UNRANKED both serve it), and the string stays stable for
+  // clients.
   const val VOTE_NOT_RANKED = "VOTE_NOT_RANKED"
   const val VOTE_ROUNDS_SHORT = "VOTE_ROUNDS_SHORT"
   const val VOTE_NO_UNIQUE_KOZ = "VOTE_NO_UNIQUE_KOZ"
@@ -98,6 +116,25 @@ object Reasons {
   // S60: a permanently-removed uid attempting any match write. Distinct
   // from PERMISSION_DENIED so S40 (and clients) can name the removal.
   const val REMOVED_FROM_MATCH = "REMOVED_FROM_MATCH"
+
+  // S72: a left uid attempting any match write. Distinct from
+  // REMOVED_FROM_MATCH so S40 can name the departure.
+  const val LEFT_MATCH = "LEFT_MATCH"
+  // S72: idempotent no-op when the seat has already been left.
+  const val ALREADY_LEFT = "ALREADY_LEFT"
+
+  // S70 (RD29/RD30) — the Rank-down join gate's vocabulary, kept deliberately
+  // apart from the thrown codes above. RANK_INCOMPATIBLE and
+  // PROFILE_UNAVAILABLE are the server's two ELIGIBILITY denials: they arrive
+  // as a returned `joined: false` payload, never an HttpsError, because a
+  // rank-too-far friend is an ordinary answer to an ordinary question and not
+  // a failed call. RANK_DOWN_UNAVAILABLE is the CLIENT's own catch-all — the
+  // reason a denial is rewritten to when the payload carries a reason this
+  // build has never seen (version skew), so an unknown token from a newer
+  // server can never reach a screen as if the client understood it.
+  const val RANK_INCOMPATIBLE = "RANK_INCOMPATIBLE"
+  const val PROFILE_UNAVAILABLE = "PROFILE_UNAVAILABLE"
+  const val RANK_DOWN_UNAVAILABLE = "RANK_DOWN_UNAVAILABLE"
 }
 
 /** startMatch(roomId): the room↔match atomic write. */
@@ -128,6 +165,8 @@ data class SubmitBidResult(
   val version: Int,
   val biddingOpen: Boolean,
   val allSubmitted: Boolean,
+  /** The declaration cycle this bid landed in (fast rounds; 0 otherwise). */
+  val biddingCycle: Int = 0,
 )
 
 data class SubmitBiddingActionResult(
@@ -136,6 +175,9 @@ data class SubmitBiddingActionResult(
   val actionType: String,
   val version: Int,
   val logLength: Int,
+  /** The active declaration cycle AFTER this write — a fast Super Call
+   *  CONFIRM writes the next one; every other action keeps the old value. */
+  val biddingCycle: Int = 0,
 )
 
 data class SubmitCardResult(
@@ -147,8 +189,11 @@ data class SubmitCardResult(
   val cardPhase: String?,
 )
 
-/** advanceToNextRound — [advanced] false means an idempotent no-op with
- *  [reason] (ALREADY_ADVANCED / MATCH_ALREADY_COMPLETE). */
+/** advanceToNextRound / advanceAfterGeneralPass — [advanced] false means an
+ *  idempotent no-op with [reason] (ALREADY_ADVANCED / MATCH_ALREADY_COMPLETE).
+ *  O-19: [completed] marks a General-Pass round that consumed the planned
+ *  final round and ended the match; [currentMultiplier] is the value the
+ *  document now carries for [currentRound] (null on idempotent no-ops). */
 data class AdvanceResult(
   val advanced: Boolean,
   val reason: String?,
@@ -157,6 +202,8 @@ data class AdvanceResult(
   val currentRound: Int,
   val archivedRound: Int? = null,
   val version: Int? = null,
+  val completed: Boolean = false,
+  val currentMultiplier: Int? = null,
 ) {
   companion object {
     fun alreadyAdvanced(matchId: String, currentRound: Int) =
@@ -256,4 +303,16 @@ data class RematchCreateResult(
   val newMatchId: String?,
   val reason: String? = null,
   val status: String? = null,
+)
+
+/** S72 — explicit leave outcome: the departed seat, its Koz charge, and the
+ *  next match version after the leave write. */
+data class LeaveResult(
+  val matchId: String,
+  val seatId: String,
+  val uid: String,
+  val kozCharge: com.estemshan.engine.KozCharge,
+  val version: Int,
+  /** ALREADY_LEFT on the idempotent replay no-op; null on a successful first leave. */
+  val reason: String? = null,
 )

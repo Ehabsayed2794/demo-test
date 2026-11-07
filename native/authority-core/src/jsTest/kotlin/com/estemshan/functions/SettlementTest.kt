@@ -46,22 +46,42 @@ class SettlementTest {
 
   // ── gate ──────────────────────────────────────────────────────────
 
+  /**
+   * Name retained from S6 acceptance criterion 13 (the pre-S6 rule); the
+   * body asserts the stats-only replacement, not the old no-op.
+   *
+   * S6 (A7.5/A8.4, Q38/Q46 — superseding RD28): ROOM and UNRANKED now
+   * settle STATS-ONLY, so the gate hands the seam a StatsOnly decision
+   * carrying the mode, not the pre-S6 NoOp. The old assertion
+   * (`assertIs<SettleDecision.NoOp>`) pinned RD28's "never settle", the
+   * stale rule this task replaces.
+   */
   @Test
   fun roomAndUnrankedAreExplicitNoOps() {
     val base = converged(emptyList())
     val room = Settlement.decide("u1", base.copy(mode = MatchMode.ROOM))
-    assertIs<SettleDecision.NoOp>(room)
+    assertIs<SettleDecision.StatsOnly>(room)
     assertEquals(MatchMode.ROOM, room.mode)
     val unranked = Settlement.decide("u1", base.copy(mode = MatchMode.UNRANKED))
-    assertIs<SettleDecision.NoOp>(unranked)
+    assertIs<SettleDecision.StatsOnly>(unranked)
+    assertEquals(MatchMode.UNRANKED, unranked.mode)
   }
 
+  /**
+   * Name retained from S6 acceptance criterion 14 (the pre-S6 rule); the
+   * body asserts stats-only for an absent mode.
+   *
+   * S43 + S6: an absent (legacy) mode parses as ROOM and therefore takes the
+   * stats-only path.
+   */
   @Test
   fun absentModeParsesAsRoomAndNoOps() {
     val match = Settlement.parseMatch("m1", matchFields(mode = ABSENT))
       ?: throw AssertionError("parse failed")
     assertEquals(MatchMode.ROOM, match.mode)
-    assertIs<SettleDecision.NoOp>(Settlement.decide("u1", match))
+    val decision = Settlement.decide("u1", match)
+    assertIs<SettleDecision.StatsOnly>(decision)
+    assertEquals(MatchMode.ROOM, decision.mode)
   }
 
   @Test
@@ -141,6 +161,438 @@ class SettlementTest {
   }
 
   @Test
+  fun fastRoundExactDuplicateDeclarerIsWithOnReplay() {
+    // A8.1/A7.2: FULL round 14 is fixed SANS. p1 and p3 both declare 4 under
+    // that trump — an exact duplicate, which is legal. p1 declares first, so
+    // p1 is Caller and p3 is With; declaration order (not seat strength)
+    // decides only the exact duplicate. p2 3, p4 3. Won 4/3/2/4 (total 13):
+    // caller p1 24, p2 13, With p3 misses by 2 → −(2+10) = −12, Risk p4
+    // misses by 1 with a zero ladder → −1. If p3 had been treated as an
+    // ordinary seat the replay would score −2, so the With set is load-
+    // bearing on the settlement result.
+    val winners = listOf(
+      "p1", "p1", "p1", "p1",
+      "p2", "p2", "p2",
+      "p3", "p3",
+      "p4", "p4", "p4", "p4",
+    )
+    val round = archived(
+      14, winners, "SANS", emptyList(),
+      mapOf("p1" to 4, "p2" to 3, "p3" to 4, "p4" to 3),
+    )
+    val scored = Settlement.scoreRound(shellMatch(), round, "p1", 1, 8)
+    assertTrue(scored != null, "fast duplicate round did not score")
+    assertEquals(mapOf("p1" to 24, "p2" to 13, "p3" to -12, "p4" to -1), scored.deltas)
+  }
+
+  @Test
+  fun fastSuperCallReplaysAfterPreSuperSeatRedeclares() {
+    // p2's 8 triggers the Super Call and confirms SANS at 8. p1 (before p2)
+    // is wiped and re-declares 8 under the final trump, so the authoritative
+    // With set is [p1]. The archive only keeps the FINAL estimates — p1's
+    // original number is gone — so this exercises the rebuild from the
+    // logged CONFIRM rather than a straight estimate replay.
+    // Bids 8/8/3/2 total 21 → Risk ladder 30, Risk player p1 (the last
+    // re-declaration). Won 4/3/3/3: p1 WIZZ_RISK misses 4 → −44; p2
+    // SUPER_CALL misses 5 → −32; p3 sole winner 13+10 = 23; p4 misses 1
+    // → −1. If p1 were not With, its With bonus would vanish (−34).
+    val winners = listOf(
+      "p1", "p1", "p1", "p1",
+      "p2", "p2", "p2",
+      "p3", "p3", "p3",
+      "p4", "p4", "p4",
+    )
+    val round = archived(
+      14, winners, "SANS",
+      listOf(confirm("p2", 8, "SANS", 14)),
+      mapOf("p1" to 8, "p2" to 8, "p3" to 3, "p4" to 2),
+      leaderId = "p2",
+    )
+    val scored = Settlement.scoreRound(shellMatch(), round, "p1", 1, 8)
+    assertTrue(scored != null, "fast Super Call replay must settle")
+    assertEquals(mapOf("p1" to -44, "p2" to -32, "p3" to 23, "p4" to -1), scored.deltas)
+  }
+
+  @Test
+  fun fastSuperCallWithNoPreSuperSeatsReopensTheReDeclaration() {
+    // The Super Caller is first in bidding order, but the confirmation still
+    // does NOT end the round (T-09): it re-opens the re-declaration, so p2,
+    // p3 and p4 declare again under the confirmed trump. p2's matching 8
+    // SANS is With (p1 Caller). Bids 8/8/3/2 total 21 → Risk ladder 30,
+    // Risk player p4 (the last re-declaration). Won 4/3/3/3: p1 SUPER_CALL
+    // misses 4 → −32; p2 WIZZ misses 5 → −15; p3 sole winner 23; p4 RISK
+    // misses 1 → −31.
+    val winners = listOf(
+      "p1", "p1", "p1", "p1",
+      "p2", "p2", "p2",
+      "p3", "p3", "p3",
+      "p4", "p4", "p4",
+    )
+    val round = archived(
+      14, winners, "SANS",
+      listOf(confirm("p1", 8, "SANS", 14)),
+      mapOf("p1" to 8, "p2" to 8, "p3" to 3, "p4" to 2),
+    )
+    val scored = Settlement.scoreRound(shellMatch(), round, "p1", 1, 8)
+    assertTrue(scored != null, "fast Super Call with no wipe must settle")
+    assertEquals(mapOf("p1" to -32, "p2" to -15, "p3" to 23, "p4" to -31), scored.deltas)
+  }
+
+  @Test
+  fun aRaisedFastSuperCallSettlesOnTheConfirmedNumberItStored() {
+    // The engine allows the Super Caller to confirm ABOVE their winning
+    // number (only lowering is illegal), and the T-09 atomic reset stores
+    // the CONFIRMED number in the caller's own slot. p2 declared 8, then
+    // confirmed 9 SANS, so the archive holds 9 for p2; p1 (before p2) is
+    // wiped and re-declares 8. Bids 8/9/3/2 total 22 → Risk ladder 30,
+    // Risk player p1 (last re-declaration). Won 4/3/3/3: p1 RISK misses 4
+    // → −34; p2 SUPER_CALL 9 misses 6 → −41 (raising the call from 8 would
+    // have scored −32, so the confirmed number is load-bearing); p3 sole
+    // winner 23; p4 misses 1 → −1.
+    val winners = listOf(
+      "p1", "p1", "p1", "p1",
+      "p2", "p2", "p2",
+      "p3", "p3", "p3",
+      "p4", "p4", "p4",
+    )
+    val round = archived(
+      14, winners, "SANS",
+      listOf(confirm("p2", 9, "SANS", 14)),
+      mapOf("p1" to 8, "p2" to 9, "p3" to 3, "p4" to 2),
+      leaderId = "p2",
+    )
+    val scored = Settlement.scoreRound(shellMatch(), round, "p1", 1, 8)
+    assertTrue(scored != null, "a raising fast Super Call must settle")
+    assertEquals(mapOf("p1" to -34, "p2" to -41, "p3" to 23, "p4" to -1), scored.deltas)
+  }
+
+  @Test
+  fun aLegacyRaisingConfirmArchiveFailsClosed() {
+    // §5: the T-09 reset stores the CONFIRMED number in the caller's slot,
+    // so a last caller archived BELOW its confirmed number cannot be a
+    // T-09 record. It is the pre-T-09 shape: the auction ended at the
+    // confirmation, p2's stored 8 is the cancelled winning declaration,
+    // and the surviving values are pre-confirm declarations — replaying
+    // them as re-declarations would invent a With set the table never had.
+    // Refuse rather than reinterpret the historical record.
+    val winners = listOf(
+      "p1", "p1", "p1", "p1",
+      "p2", "p2", "p2",
+      "p3", "p3", "p3",
+      "p4", "p4", "p4",
+    )
+    val round = archived(
+      14, winners, "SANS",
+      listOf(confirm("p2", 9, "SANS", 14)),
+      mapOf("p1" to 8, "p2" to 8, "p3" to 3, "p4" to 2),
+      leaderId = "p2",
+    )
+    assertNull(
+      Settlement.scoreRound(shellMatch(), round, "p1", 1, 8),
+      "a pre-T-09 calling slot below the confirmed number must fail closed",
+    )
+  }
+
+  @Test
+  fun fastSuperCallConfirmBelowTheCallerEstimateFailsClosed() {
+    // Impossible archive: p2's estimate is 9 (the winning declaration), but
+    // the logged CONFIRM says 8. The live engine rejects "can't lower your
+    // winning call", so settlement must refuse rather than replay a lower
+    // number the caller never confirmed.
+    val winners = listOf(
+      "p1", "p1", "p1", "p1",
+      "p2", "p2", "p2",
+      "p3", "p3", "p3",
+      "p4", "p4", "p4",
+    )
+    val round = archived(
+      14, winners, "SANS",
+      listOf(confirm("p2", 8, "SANS", 14)),
+      mapOf("p1" to 8, "p2" to 9, "p3" to 3, "p4" to 2),
+      leaderId = "p2",
+    )
+    assertNull(
+      Settlement.scoreRound(shellMatch(), round, "p1", 1, 8),
+      "a lowering fast Super Call CONFIRM must fail closed",
+    )
+  }
+
+  @Test
+  fun fastSuperCallWithSubEightCallerEstimateFailsClosed() {
+    // Impossible archive: p2 is named as the CONFIRM's caller but their
+    // archived estimate is 7, below the >=8 Super Call trigger. A seat that
+    // never declared 8+ cannot have triggered the call, so fail closed.
+    val winners = listOf(
+      "p1", "p1", "p1", "p1",
+      "p2", "p2", "p2",
+      "p3", "p3", "p3",
+      "p4", "p4", "p4",
+    )
+    val round = archived(
+      14, winners, "SANS",
+      listOf(confirm("p2", 8, "SANS", 14)),
+      mapOf("p1" to 8, "p2" to 7, "p3" to 3, "p4" to 2),
+      leaderId = "p2",
+    )
+    assertNull(
+      Settlement.scoreRound(shellMatch(), round, "p1", 1, 8),
+      "a sub-8 fast Super Call CONFIRM caller must fail closed",
+    )
+  }
+
+  @Test
+  fun fastSuperCallConfirmWithHigherLaterDeclarationFailsClosed() {
+    // Impossible/forged archive: p3's re-declaration is 13, which is HIGHER
+    // than p2's confirmed 8 and therefore opens a NEW Super Call cycle. The
+    // archive logs no second CONFIRM, so the new cycle can never complete:
+    // the replay waits for p3 again and fails closed on the unconsumed
+    // re-declaration. A CONFIRM chain that stops before the round ends is
+    // never settled on the caller's number.
+    val winners = listOf(
+      "p1", "p1", "p1", "p1",
+      "p2", "p2", "p2",
+      "p3", "p3", "p3",
+      "p4", "p4", "p4",
+    )
+    val round = archived(
+      14, winners, "SANS",
+      listOf(confirm("p2", 8, "SANS", 14)),
+      mapOf("p1" to 8, "p2" to 8, "p3" to 13, "p4" to 2),
+      leaderId = "p2",
+    )
+    assertNull(
+      Settlement.scoreRound(shellMatch(), round, "p1", 1, 8),
+      "a CONFIRM naming a caller who did not win the auction must fail closed",
+    )
+  }
+
+  @Test
+  fun fastSuperCallTrumpChangeMakesEveryRedeclaredSeatWith() {
+    // Round 14's fixed trump is SANS. p2's 8 triggers the call and confirms
+    // SPADES; the confirmation wipes EVERY other seat's declaration, so p1
+    // (before p2) and p3 (after p2) both re-declare under the new trump.
+    // Their 8s are therefore declared under SPADES and both are With at the
+    // final number and trump; no declaration made under the old SANS
+    // survives. Bids 8/8/8/3 total 27 → Risk ladder 30; risk is p1 (the last
+    // re-declaration). Won 4/3/3/3: p1 WIZZ_RISK misses 4 → −44; p2
+    // SUPER_CALL misses 5 → −32; p3 WIZZ misses 5 → −15 (its With bonus
+    // applies because it re-declared under the final trump); p4 sole winner
+    // 23.
+    val winners = listOf(
+      "p1", "p1", "p1", "p1",
+      "p2", "p2", "p2",
+      "p3", "p3", "p3",
+      "p4", "p4", "p4",
+    )
+    val round = archived(
+      14, winners, "SPADES",
+      listOf(confirm("p2", 8, "SPADES", 14)),
+      mapOf("p1" to 8, "p2" to 8, "p3" to 8, "p4" to 3),
+      leaderId = "p2",
+    )
+    val scored = Settlement.scoreRound(shellMatch(), round, "p1", 1, 8)
+    assertTrue(scored != null, "a changed-trump fast Super Call must settle")
+    assertEquals(mapOf("p1" to -44, "p2" to -32, "p3" to -15, "p4" to 23), scored.deltas)
+  }
+
+  // ── T-09: the repeated fast Super Call cycle (archived replays) ──────
+
+  @Test
+  fun twoFastSuperCallCyclesSettleOnTheFinalCallerAndNumber() {
+    // Cycle 1: p2 declares 8 and confirms 8 SANS. The confirmation wipes
+    // every other seat and re-opens the re-declaration; p3 then declares 9,
+    // which is HIGHER than the confirmed 8 and therefore opens the next
+    // cycle; p3 confirms 9 SPADES. Only the LAST cycle settles the round:
+    // the caller is p3 at 9 under SPADES.
+    // Bids 9/8/9/4 total 30 → Risk ladder 30, risk is p2 (the last
+    // re-declaration). Won 9/2/1/1: p3 SUPER_CALL hits 9 → 81 and is the
+    // sole winner (+10) = 91; p2 RISK misses 6 → −(6+30) = −36; p1 WIZZ
+    // (9 under the final trump) misses 8 → −(8+10) = −18; p4 NORMAL misses
+    // 3 → −3.
+    val winners = listOf(
+      "p3", "p3", "p3", "p3", "p3", "p3", "p3", "p3", "p3",
+      "p2", "p2",
+      "p1",
+      "p4",
+    )
+    val round = archived(
+      14, winners, "SPADES",
+      listOf(confirm("p2", 8, "SANS", 14), confirm("p3", 9, "SPADES", 14)),
+      mapOf("p1" to 9, "p2" to 8, "p3" to 9, "p4" to 4),
+      leaderId = "p3",
+    )
+    val scored = Settlement.scoreRound(shellMatch(), round, "p1", 1, 8)
+    assertTrue(scored != null, "a two-cycle fast Super Call must settle")
+    assertEquals(mapOf("p1" to -18, "p2" to -36, "p3" to 91, "p4" to -3), scored.deltas)
+  }
+
+  @Test
+  fun aFastSuperCallWipesEverySeatAndKeepsOnlyTheCallersDeclaration() {
+    // The Super Caller is p3 — neither first nor last in the bidding order.
+    // p3 declares 8 and confirms 8 SPADES; the confirmation wipes EVERY
+    // other seat's declaration, so p1 and p2 (before the caller) and p4
+    // (after it) declare again under SPADES, counter-clockwise from p4.
+    // The caller keeps its own 8. p1 declares 5 and is therefore not With;
+    // p2 and p4 declare 8 under the final trump and ARE With.
+    // Bids 5/8/8/8 total 29 → Risk ladder 30, risk is p2 (the last
+    // re-declaration). Won 8/3/1/1: p3 SUPER_CALL hits 8 → 64 and is the
+    // sole winner (+10) = 74; p2 WIZZ_RISK misses 5 → −(5+10+30) = −45;
+    // p1 NORMAL misses 4 → −4; p4 WIZZ misses 7 → −(7+10) = −17.
+    val winners = listOf(
+      "p3", "p3", "p3", "p3", "p3", "p3", "p3", "p3",
+      "p2", "p2", "p2",
+      "p1",
+      "p4",
+    )
+    val round = archived(
+      14, winners, "SPADES",
+      listOf(confirm("p3", 8, "SPADES", 14)),
+      mapOf("p1" to 5, "p2" to 8, "p3" to 8, "p4" to 8),
+      leaderId = "p3",
+    )
+    val scored = Settlement.scoreRound(shellMatch(), round, "p1", 1, 8)
+    assertTrue(scored != null, "a mid-order fast Super Call must settle")
+    assertEquals(mapOf("p1" to -4, "p2" to -45, "p3" to 74, "p4" to -17), scored.deltas)
+  }
+
+  @Test
+  fun aFirstSeatFastSuperCallDoesNotEndTheRound() {
+    // p1 is the FIRST seat and the Super Caller: its confirmation wipes the
+    // other three seats and re-opens the re-declaration, so the round does
+    // NOT end there. p2 then declares 9 — higher than the confirmed 8 — and
+    // opens the next cycle; p2 confirms 9 SPADES. Only the second cycle
+    // settles the round: the caller is p2 at 9 under SPADES.
+    // Bids 4/9/5/6 total 24 → Risk ladder 30, risk is p1 (the last
+    // re-declaration). Won 9/3/1/0: p2 SUPER_CALL hits 9 → 81 and is the
+    // sole winner (+10) = 91; p1 RISK misses 1 → −(1+30) = −31; p3 NORMAL
+    // misses 4 → −4; p4 NORMAL misses 6 → −6.
+    val winners = listOf(
+      "p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2",
+      "p1", "p1", "p1",
+      "p3",
+    )
+    val round = archived(
+      14, winners, "SPADES",
+      listOf(confirm("p1", 8, "SANS", 14), confirm("p2", 9, "SPADES", 14)),
+      mapOf("p1" to 4, "p2" to 9, "p3" to 5, "p4" to 6),
+      leaderId = "p2",
+    )
+    val scored = Settlement.scoreRound(shellMatch(), round, "p1", 1, 8)
+    assertTrue(scored != null, "a first-seat fast Super Call must settle")
+    assertEquals(mapOf("p1" to -31, "p2" to 91, "p3" to -4, "p4" to -6), scored.deltas)
+  }
+
+  @Test
+  fun aHigherSuperCallDiscardsThePreviousCallersDeclaration() {
+    // Cycle 1: p2 declares 8 and confirms 8 SANS; p1 (before p2) declares
+    // 9, which is higher and opens the next cycle; p1 confirms 9 SPADES.
+    // p2 is NOT retained: the second confirmation wipes every seat but p1,
+    // so the PREVIOUS caller declares again under the new trump — here 4.
+    // Bids 9/4/5/6 total 24 → Risk ladder 30, risk is p4 (the last
+    // re-declaration). Won 9/3/1/0: p1 SUPER_CALL hits 9 → 81 and is the
+    // sole winner (+10) = 91; p2 NORMAL misses 1 → −1; p3 NORMAL misses 4
+    // → −4; p4 RISK misses 6 → −(6+30) = −36.
+    val winners = listOf(
+      "p1", "p1", "p1", "p1", "p1", "p1", "p1", "p1", "p1",
+      "p2", "p2", "p2",
+      "p3",
+    )
+    val round = archived(
+      14, winners, "SPADES",
+      listOf(confirm("p2", 8, "SANS", 14), confirm("p1", 9, "SPADES", 14)),
+      mapOf("p1" to 9, "p2" to 4, "p3" to 5, "p4" to 6),
+      leaderId = "p1",
+    )
+    val scored = Settlement.scoreRound(shellMatch(), round, "p1", 1, 8)
+    assertTrue(scored != null, "a raised fast Super Call must settle")
+    assertEquals(mapOf("p1" to 91, "p2" to -1, "p3" to -4, "p4" to -36), scored.deltas)
+  }
+
+  @Test
+  fun theFinalWithSetComesFromTheFinalNumberAndTheFinalTrump() {
+    // Cycle 1: p2 declares 8 and confirms 8 SANS. Cycle 2: p3 declares 9 and
+    // confirms 9 SPADES. The FINAL cycle decides the With set: p2 and p4
+    // re-declare 9 under SPADES and are With; p1 re-declares 8 — the number
+    // of the PREVIOUS cycle's call — and is NOT With, because the final
+    // number is 9; the caller p3 is never With.
+    // Bids 8/9/9/9 total 35 → Risk ladder 30, risk is p2 (the last
+    // re-declaration). Won 9/3/1/0: p3 SUPER_CALL hits 9 → 81 and is the
+    // sole winner (+10) = 91; p1 NORMAL misses 5 → −5; p2 WIZZ_RISK misses 8
+    // → −(8+10+30) = −48; p4 WIZZ misses 9 → −(9+10) = −19.
+    val winners = listOf(
+      "p3", "p3", "p3", "p3", "p3", "p3", "p3", "p3", "p3",
+      "p1", "p1", "p1",
+      "p2",
+    )
+    val round = archived(
+      14, winners, "SPADES",
+      listOf(confirm("p2", 8, "SANS", 14), confirm("p3", 9, "SPADES", 14)),
+      mapOf("p1" to 8, "p2" to 9, "p3" to 9, "p4" to 9),
+      leaderId = "p3",
+    )
+    val scored = Settlement.scoreRound(shellMatch(), round, "p1", 1, 8)
+    assertTrue(scored != null, "a two-cycle fast Super Call must settle")
+    assertEquals(mapOf("p1" to -5, "p2" to -48, "p3" to 91, "p4" to -19), scored.deltas)
+  }
+
+  @Test
+  fun aFastSuperCallMayConfirmThirteenButNotFourteen() {
+    // The absolute 13-trick maximum holds in EVERY round: the fast
+    // exemption drops only the Caller-relative Call Cap. p2's 13 is a legal
+    // Super Call and settles the round.
+    // Bids 2/13/3/2 total 20 → Risk ladder 30, risk is p1 (the last
+    // re-declaration). p2 takes all 13 tricks: SUPER_CALL hits 13 → 169 and
+    // is the sole winner (+10) = 179; p1 RISK misses 2 → −(2+30) = −32;
+    // p3 NORMAL misses 3 → −3; p4 NORMAL misses 2 → −2.
+    val winners = listOf("p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2")
+    val round = archived(
+      14, winners, "SPADES",
+      listOf(confirm("p2", 13, "SPADES", 14)),
+      mapOf("p1" to 2, "p2" to 13, "p3" to 3, "p4" to 2),
+      leaderId = "p2",
+    )
+    val scored = Settlement.scoreRound(shellMatch(), round, "p1", 1, 8)
+    assertTrue(scored != null, "a 13-trick fast Super Call must settle")
+    assertEquals(mapOf("p1" to -32, "p2" to 179, "p3" to -3, "p4" to -2), scored.deltas)
+  }
+
+  @Test
+  fun aFastSuperCallConfirmingFourteenIsRefusedEverywhere() {
+    // 14 is above the absolute maximum in EVERY round — the fast exemption
+    // drops only the Caller-relative Call Cap. The archive parser refuses a
+    // CONFIRM above 13 outright, so such a round can never be replayed;
+    // and even a hand-built archive fails closed in the replay, because the
+    // engine rejects the confirmation itself.
+    val winners = listOf("p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2", "p2")
+    val fields = archiveFields(
+      14,
+      playsFor(winners, "SPADES", 14, "p2"),
+      listOf(confirm("p2", 14, "SPADES", 14)),
+      mapOf("p1" to 2, "p2" to 13, "p3" to 3, "p4" to 2),
+    )
+    assertNull(
+      Settlement.parseArchive("14", fields),
+      "an archived CONFIRM above the absolute 13-trick maximum must be refused",
+    )
+
+    val plays = fields["cardLog"] as List<*>
+    val forged = Settlement.ArchivedRound(
+      14,
+      plays.map { Settlement.parseCard(it)!! },
+      listOf(
+        Settlement.SettledAction(
+          "p2", Settlement.ActionKind.CONFIRM, null, null, 14, Suit.SPADES,
+        ),
+      ),
+      mapOf("p1" to 2, "p2" to 13, "p3" to 3, "p4" to 2),
+    )
+    assertNull(
+      Settlement.scoreRound(shellMatch(), forged, "p1", 1, 8),
+      "a fast Super Call above the absolute 13-trick maximum must fail closed",
+    )
+  }
+
+  @Test
   fun saaydaChainDoublesThroughNextMultiplier() {
     // Round 1: everybody misses (Saayda) → zeros, multiplier → 2.
     // Round 2 (×2, total 16): p2 CALLER 24×2=48; p3/p4 WIZZ (triple
@@ -195,6 +647,325 @@ class SettlementTest {
     assertIs<SettleDecision.Agreed>(decision)
     assertEquals(mapOf("p1" to -12, "p2" to 13, "p3" to 13, "p4" to -3), decision.recomputed.finalScores)
     assertEquals(listOf("p2", "p3"), decision.recomputed.winnerIds)
+  }
+
+  // ── general pass (S1: a8.7 / q51) ─────────────────────────────────
+
+  @Test
+  fun generalPassArchiveIsUnscoredAndArmsTheNextMultiplier() {
+    // All four seats decline the Dash Call and pass the auction: the round
+    // is cancelled, its archive holds no cards and no estimates, and it
+    // banks nothing while arming the engine's doubled multiplier for the
+    // round after it.
+    val actions = listOf(
+      dash("p1", false, 1), dash("p2", false, 1), dash("p3", false, 1), dash("p4", false, 1),
+      auctionPass("p1", 1), auctionPass("p2", 1), auctionPass("p3", 1), auctionPass("p4", 1),
+    )
+    val parsed = Settlement.parseArchive("1", archiveFields(1, emptyList(), actions, emptyMap<String, Int>()))
+      ?: throw AssertionError("the pass archive did not parse")
+    val scored = Settlement.scoreRound(shellMatch(), parsed, "p1", 1, 8)
+      ?: error("a pass archive must settle as an unscored round")
+
+    assertEquals(mapOf("p1" to 0, "p2" to 0, "p3" to 0, "p4" to 0), scored.deltas)
+    assertEquals(2, scored.nextMultiplier)
+  }
+
+  @Test
+  fun classicGeneralPassArchivesUnscoredAtMultiplier1() {
+    val actions = listOf(
+      dash("p1", false, 1), dash("p2", false, 1), dash("p3", false, 1), dash("p4", false, 1),
+      auctionPass("p1", 1), auctionPass("p2", 1), auctionPass("p3", 1), auctionPass("p4", 1),
+    )
+    val parsed = Settlement.parseArchive("1", archiveFields(1, emptyList(), actions, emptyMap<String, Int>()))
+      ?: throw AssertionError("the pass archive did not parse")
+    val scored = Settlement.scoreRound(shellMatch().copy(classic = true), parsed, "p1", 1, 8)
+      ?: error("a pass archive must settle as an unscored round")
+
+    assertEquals(mapOf("p1" to 0, "p2" to 0, "p3" to 0, "p4" to 0), scored.deltas)
+    assertEquals(1, scored.nextMultiplier)
+  }
+
+  @Test
+  fun aPassedRoundThenAPlayedRoundChainsTheMultiplier() {
+    // A two-round NORMAL match. Round 1: everybody passes — the archive is
+    // empty, settles to zero deltas, and recompute's chain carries the
+    // doubled multiplier into round 2. Round 2: the round-1 golden auction
+    // (caller p1 5♠, p2 sole miss) — at ×2 instead of ×1, so every delta
+    // doubles: 50/−22/24/28.
+    val r1Actions = listOf(
+      dash("p4", false, 1), dash("p1", false, 1), dash("p2", false, 1), dash("p3", false, 1),
+      auctionPass("p4", 1), auctionPass("p1", 1), auctionPass("p2", 1), auctionPass("p3", 1),
+    )
+    val r1 = Settlement.parseArchive("1", archiveFields(1, emptyList(), r1Actions, emptyMap<String, Int>()))
+      ?: throw AssertionError("the pass archive did not parse")
+
+    val parts = round1Parts()
+    val r2Actions = listOf(
+      dash("p1", false, 2), dash("p2", false, 2), dash("p3", false, 2), dash("p4", false, 2),
+      auctionBid("p1", 5, "SPADES", 2),
+      auctionPass("p2", 2), auctionPass("p3", 2), auctionPass("p4", 2),
+      confirm("p1", 5, "SPADES", 2),
+    )
+    val r2 = Settlement.parseArchive(
+      "2",
+      archiveFields(2, playsFor(parts.winners, "SPADES", 2, "p1"), r2Actions, parts.estimates),
+    ) ?: throw AssertionError("the round-2 archive did not parse")
+    // Self-validating fixture: the round-2 cards must replay to the golden wins.
+    assertEquals(
+      parts.winners.groupingBy { it }.eachCount(),
+      Settlement.replayTricks(shellMatch(), r2, Suit.SPADES)!!.filterValues { it > 0 },
+    )
+
+    // dealerSeatFinal u1 (p1) walks back one step for round 1: the pass
+    // archive's dash order must start at p4, the round's real dealer.
+    val fields = matchFields(
+      completedRound = 2,
+      maxRounds = 2,
+      finalScores = mapOf("p1" to 50, "p2" to -22, "p3" to 24, "p4" to 28),
+      winnerIds = listOf("p1"),
+    )
+    val decision = Settlement.recompute(converged(listOf(r1, r2), fields))
+    assertTrue(decision is SettleDecision.Agreed, "expected Agreed but was $decision")
+    assertEquals(mapOf("p1" to 50, "p2" to -22, "p3" to 24, "p4" to 28), decision.recomputed.finalScores)
+    assertEquals(listOf("p1"), decision.recomputed.winnerIds)
+  }
+
+  // ── O-19: the persisted round multiplier ──────────────────────────
+
+  /**
+   * A completed match's `currentMultiplier` is the multiplier the FINAL round
+   * was scored at — the same value the archive chain enters that round at,
+   * because no completion path writes the next round's value. So the document
+   * is a cross-check on the replay, never a replacement for it: the archives
+   * decide the ladder, and a document that disagrees is corrupt.
+   */
+  @Test
+  fun aLegacyDocumentWithoutTheMultiplierStillSettlesFromTheChain() {
+    val legacy = Settlement.parseMatch("m1", matchFields())
+      ?: throw AssertionError("a pre-O-19 document must still parse")
+    assertNull(legacy.currentMultiplier)
+
+    val decision = Settlement.recompute(converged(listOf(round1Golden()), matchFields()))
+    assertTrue(decision is SettleDecision.Agreed, "expected Agreed but was $decision")
+    assertEquals(mapOf("p1" to 25, "p2" to -11, "p3" to 12, "p4" to 14), decision.recomputed.finalScores)
+  }
+
+  @Test
+  fun aDocumentedMultiplierThatAgreesWithTheReplaySettles() {
+    val decision = Settlement.recompute(
+      converged(listOf(round1Golden()), matchFields(currentMultiplier = 1)),
+    )
+    assertTrue(decision is SettleDecision.Agreed, "expected Agreed but was $decision")
+    assertEquals(1, Settlement.parseMatch("m1", matchFields(currentMultiplier = 1))!!.currentMultiplier)
+  }
+
+  @Test
+  fun aDocumentedMultiplierThatContradictsTheReplayIsReportedNotReset() {
+    // The archives say the final round ran at ×1; the document claims ×2.
+    // Neither side is silently re-read as 1 — the mismatch is reported and
+    // nothing settles.
+    val decision = Settlement.recompute(
+      converged(listOf(round1Golden()), matchFields(currentMultiplier = 2)),
+    )
+    assertIs<SettleDecision.Failed>(decision)
+    assertEquals(Settlement.Reason.HISTORY_CORRUPT, decision.reason)
+    assertTrue(
+      decision.message.contains("currentMultiplier"),
+      "the mismatch must name the field it contradicts: ${decision.message}",
+    )
+  }
+
+  @Test
+  fun aPassedThenPlayedChainSettlesAtTheDocumentedFinalRoundMultiplier() {
+    val r1Actions = listOf(
+      dash("p4", false, 1), dash("p1", false, 1), dash("p2", false, 1), dash("p3", false, 1),
+      auctionPass("p4", 1), auctionPass("p1", 1), auctionPass("p2", 1), auctionPass("p3", 1),
+    )
+    val r1 = Settlement.parseArchive("1", archiveFields(1, emptyList(), r1Actions, emptyMap<String, Int>()))
+      ?: throw AssertionError("the pass archive did not parse")
+    val parts = round1Parts()
+    val r2Actions = listOf(
+      dash("p1", false, 2), dash("p2", false, 2), dash("p3", false, 2), dash("p4", false, 2),
+      auctionBid("p1", 5, "SPADES", 2),
+      auctionPass("p2", 2), auctionPass("p3", 2), auctionPass("p4", 2),
+      confirm("p1", 5, "SPADES", 2),
+    )
+    val r2 = Settlement.parseArchive(
+      "2", archiveFields(2, playsFor(parts.winners, "SPADES", 2, "p1"), r2Actions, parts.estimates),
+    ) ?: throw AssertionError("the round-2 archive did not parse")
+
+    val fields = matchFields(
+      completedRound = 2,
+      maxRounds = 2,
+      finalScores = mapOf("p1" to 50, "p2" to -22, "p3" to 24, "p4" to 28),
+      winnerIds = listOf("p1"),
+      currentMultiplier = 2,
+    )
+    val decision = Settlement.recompute(converged(listOf(r1, r2), fields))
+    assertTrue(decision is SettleDecision.Agreed, "expected Agreed but was $decision")
+    assertEquals(mapOf("p1" to 50, "p2" to -22, "p3" to 24, "p4" to 28), decision.recomputed.finalScores)
+
+    // The same match with the document stuck at ×1: the pass laddered it, the
+    // document did not follow. Reported — not replayed from ×1.
+    val stale = Settlement.recompute(
+      converged(listOf(r1, r2), fields.toMutableMap().apply { this["currentMultiplier"] = 1 }),
+    )
+    assertIs<SettleDecision.Failed>(stale)
+    assertEquals(Settlement.Reason.HISTORY_CORRUPT, stale.reason)
+  }
+
+  @Test
+  fun twoPassedRoundsLadderIntoTheDocumentedValueOfThePlayedFinalRound() {
+    // Round 1 passes at ×1, round 2 at ×2, round 3 plays at ×4 — the doc holds
+    // 4. Three archive rounds, one dealer walk-back per round: marker p1 at
+    // round 3 makes p3 the round-1 dealer and p4 the round-2 dealer, so both
+    // pass windows must open on their own dealer.
+    val r1Actions = listOf(
+      dash("p3", false, 1), dash("p4", false, 1), dash("p1", false, 1), dash("p2", false, 1),
+      auctionPass("p3", 1), auctionPass("p4", 1), auctionPass("p1", 1), auctionPass("p2", 1),
+    )
+    val r1 = Settlement.parseArchive("1", archiveFields(1, emptyList(), r1Actions, emptyMap<String, Int>()))
+      ?: throw AssertionError("the round-1 pass archive did not parse")
+    val r2Actions = listOf(
+      dash("p4", false, 2), dash("p1", false, 2), dash("p2", false, 2), dash("p3", false, 2),
+      auctionPass("p4", 2), auctionPass("p1", 2), auctionPass("p2", 2), auctionPass("p3", 2),
+    )
+    val r2 = Settlement.parseArchive("2", archiveFields(2, emptyList(), r2Actions, emptyMap<String, Int>()))
+      ?: throw AssertionError("the round-2 pass archive did not parse")
+    val parts = round1Parts()
+    val r3Actions = listOf(
+      dash("p1", false, 3), dash("p2", false, 3), dash("p3", false, 3), dash("p4", false, 3),
+      auctionBid("p1", 5, "SPADES", 3),
+      auctionPass("p2", 3), auctionPass("p3", 3), auctionPass("p4", 3),
+      confirm("p1", 5, "SPADES", 3),
+    )
+    val r3 = archived(3, parts.winners, "SPADES", r3Actions, parts.estimates)
+
+    val decision = Settlement.recompute(
+      converged(
+        listOf(r1, r2, r3),
+        matchFields(
+          completedRound = 3,
+          maxRounds = 3,
+          finalScores = mapOf("p1" to 100, "p2" to -44, "p3" to 48, "p4" to 56),
+          winnerIds = listOf("p1"),
+          currentMultiplier = 4,
+        ),
+      ),
+    )
+    assertTrue(decision is SettleDecision.Agreed, "expected Agreed but was $decision")
+
+    // A document that missed one ladder step is the same failure either way
+    // round: ×2 claims the match scored round 3 at ×2, the archives say ×4.
+    val stale = Settlement.recompute(
+      converged(
+        listOf(r1, r2, r3),
+        matchFields(
+          completedRound = 3,
+          maxRounds = 3,
+          finalScores = mapOf("p1" to 100, "p2" to -44, "p3" to 48, "p4" to 56),
+          winnerIds = listOf("p1"),
+          currentMultiplier = 2,
+        ),
+      ),
+    )
+    assertIs<SettleDecision.Failed>(stale)
+    assertEquals(Settlement.Reason.HISTORY_CORRUPT, stale.reason)
+  }
+
+  /**
+   * O-19 gate 7 — a Sa'ayda after a General Pass ladders from the passed
+   * round's armed value, and the document carries the value the Sa'ayda then
+   * armed. Round 1 all-passes at ×1 → ×2; round 2 is a Sa'ayda entered at ×2,
+   * so it zeroes the round but escalates ×2 → ×4 (Sa'ayda's own ladder adds 2
+   * to the value it was entered at, and ×1→×2 is the first step); round 3 is
+   * the golden round played at ×4 — 100/−44/48/56, four times the ×1 golden.
+   * Had the Sa'ayda restarted from a defaulted ×1, round 3 would settle at
+   * ×2 and the claimed totals could not be Agreed.
+   */
+  @Test
+  fun aSaaydaAfterAGeneralPassLaddersFromThePersistedValue() {
+    val r1Actions = listOf(
+      dash("p3", false, 1), dash("p4", false, 1), dash("p1", false, 1), dash("p2", false, 1),
+      auctionPass("p3", 1), auctionPass("p4", 1), auctionPass("p1", 1), auctionPass("p2", 1),
+    )
+    val r1 = Settlement.parseArchive("1", archiveFields(1, emptyList(), r1Actions, emptyMap<String, Int>()))
+      ?: throw AssertionError("the round-1 pass archive did not parse")
+
+    // Round 2, dealer p4: caller p4 4♠, every seat misses → Sa'ayda. Walk-back
+    // from the marker (p1 at round 3) makes p4 the round-2 dealer, so its dash
+    // window and its first trick both open on p4.
+    val r2Winners = listOf("p4", "p4", "p1", "p2", "p2", "p2", "p2", "p3", "p3", "p3", "p3", "p3", "p3")
+    val r2Actions = listOf(
+      dash("p4", false, 2), dash("p1", false, 2), dash("p2", false, 2), dash("p3", false, 2),
+      auctionBid("p4", 4, "SPADES", 2),
+      auctionPass("p1", 2), auctionPass("p2", 2), auctionPass("p3", 2),
+      confirm("p4", 4, "SPADES", 2),
+    )
+    val r2 = archived(
+      2, r2Winners, "SPADES", r2Actions, mapOf("p1" to 2, "p2" to 2, "p3" to 3), leaderId = "p4",
+    )
+
+    // Round 3, dealer p1: the round-1 golden auction, replayed at ×4.
+    val parts = round1Parts()
+    val r3Actions = listOf(
+      dash("p1", false, 3), dash("p2", false, 3), dash("p3", false, 3), dash("p4", false, 3),
+      auctionBid("p1", 5, "SPADES", 3),
+      auctionPass("p2", 3), auctionPass("p3", 3), auctionPass("p4", 3),
+      confirm("p1", 5, "SPADES", 3),
+    )
+    val r3 = archived(3, parts.winners, "SPADES", r3Actions, parts.estimates)
+
+    val fields = matchFields(
+      completedRound = 3,
+      maxRounds = 3,
+      finalScores = mapOf("p1" to 100, "p2" to -44, "p3" to 48, "p4" to 56),
+      winnerIds = listOf("p1"),
+      currentMultiplier = 4,
+    )
+    val decision = Settlement.recompute(converged(listOf(r1, r2, r3), fields))
+    assertTrue(decision is SettleDecision.Agreed, "expected Agreed but was $decision")
+    assertEquals(mapOf("p1" to 100, "p2" to -44, "p3" to 48, "p4" to 56), decision.recomputed.finalScores)
+
+    // A document that kept only the pass's ×2 — the Sa'ayda's step missing —
+    // contradicts its own archives. Reported, never replayed from either side.
+    val stale = Settlement.recompute(
+      converged(
+        listOf(r1, r2, r3),
+        matchFields(
+          completedRound = 3,
+          maxRounds = 3,
+          finalScores = mapOf("p1" to 100, "p2" to -44, "p3" to 48, "p4" to 56),
+          winnerIds = listOf("p1"),
+          currentMultiplier = 2,
+        ),
+      ),
+    )
+    assertIs<SettleDecision.Failed>(stale)
+    assertEquals(Settlement.Reason.HISTORY_CORRUPT, stale.reason)
+  }
+
+  @Test
+  fun anIllegalDocumentedMultiplierRefusesTheMatchDocument() {
+    // Out of the stored range, below it, or not a number: the document shape
+    // is invalid, so parseMatch refuses it (the seam maps that to
+    // HISTORY_CORRUPT) rather than reading a defaulted ×1.
+    assertNull(Settlement.parseMatch("m1", matchFields(currentMultiplier = 9)))
+    assertNull(Settlement.parseMatch("m1", matchFields(currentMultiplier = 0)))
+    assertNull(Settlement.parseMatch("m1", matchFields(currentMultiplier = "2")))
+    assertEquals(8, Settlement.parseMatch("m1", matchFields(currentMultiplier = 8))!!.currentMultiplier)
+  }
+
+  @Test
+  fun aClassicDocumentMayOnlyHoldTheMultiplierAtOne() {
+    assertNull(
+      Settlement.parseMatch("m1", matchFields(scoringMode = "CLASSIC", currentMultiplier = 2)),
+    )
+    assertEquals(
+      1,
+      Settlement.parseMatch("m1", matchFields(scoringMode = "CLASSIC", currentMultiplier = 1))!!
+        .currentMultiplier,
+    )
   }
 
   // ── fail-closed ───────────────────────────────────────────────────
@@ -309,15 +1080,6 @@ class SettlementTest {
   }
 
   @Test
-  fun noOpResponseShape() {
-    val response = noOpResponse("ROOM")
-    assertEquals(true, response["ok"])
-    assertEquals(false, response["settled"])
-    assertEquals("NOT_RANKED", response["reason"])
-    assertEquals("ROOM", response["mode"])
-  }
-
-  @Test
   fun plainBridgingRoundTrips() {
     val nested: Map<String, Any?> = mapOf("a" to 1, "b" to listOf(1, 2), "c" to mapOf("d" to "x"))
     val plain = toPlain(nested)
@@ -348,11 +1110,26 @@ class SettlementTest {
     var match: Map<String, Any?>?,
     var archives: Map<String, Map<String, Any?>> = emptyMap(),
     var claim: Map<String, Any?>? = null,
+    /** Seated profiles by uid. A uid absent here still reads as an existing,
+     *  unplaced profile — the way a real `players/{uid}` doc with no `rp`. */
+    var profiles: Map<String, Map<String, Any?>> = emptyMap(),
+    /** Uids whose profile DOCUMENT is absent (the fail-closed case). */
+    var missingProfiles: Set<String> = emptySet(),
   ) : SettlementDb {
     var archiveReads = 0
     var txRuns = 0
     var corrections = 0
     var claims = 0
+    var profileReads = 0
+    var appendAttempts = 0
+    var appendThrows = false
+    val appends = mutableListOf<Map<String, Any?>>()
+    var recentReads = 0
+    var recentCorrections: List<Map<String, Any?>>? = null
+    /** Every profile write, in call order: (uid, merged fields). */
+    val profileWrites = mutableListOf<Pair<String, Map<String, Any?>>>()
+    /** Port calls in order, so the reads-before-writes rule is observable. */
+    val events = mutableListOf<String>()
 
     override suspend fun readMatch(matchId: String): Map<String, Any?>? = match
 
@@ -364,7 +1141,25 @@ class SettlementTest {
     override suspend fun <T> transact(block: suspend (SettlementDb.SettlementTx) -> T): T {
       txRuns++
       return block(object : SettlementDb.SettlementTx {
-        override suspend fun readClaim(matchId: String): Map<String, Any?>? = claim
+        override suspend fun readClaim(matchId: String): Map<String, Any?>? {
+          events.add("read-claim")
+          return claim
+        }
+
+        override suspend fun readProfile(uid: String): Map<String, Any?>? {
+          profileReads++
+          events.add("read-profile:$uid")
+          // The Admin SDK throws on a read issued after a write in one
+          // transaction, so the fake refuses it too: a fake that allowed the
+          // order would hide the only bug class this port shape exists to stop.
+          if (events.any { it.startsWith("write-") }) {
+            throw IllegalStateException(
+              "Firestore transactions require all reads to be executed before all writes",
+            )
+          }
+          if (uid in missingProfiles) return null
+          return profiles[uid] ?: emptyMap()
+        }
 
         override fun writeCorrection(
           matchId: String,
@@ -372,16 +1167,41 @@ class SettlementTest {
           winners: List<String>,
           version: Int,
         ) {
+          events.add("write-correction")
           corrections++
         }
 
+        override fun writeProfile(uid: String, fields: Map<String, Any?>) {
+          events.add("write-profile:$uid")
+          profileWrites.add(uid to fields)
+        }
+
         override fun writeClaim(matchId: String, record: Map<String, Any?>) {
+          events.add("write-claim")
           claims++
-          @Suppress("UNCHECKED_CAST")
-          val outcome = record["outcome"] as Map<String, Any?>
-          claim = mapOf("outcome" to outcome, "settledBy" to (record["settledBy"] as String))
+          // The whole record is kept, movements included: a replay has to be
+          // able to slice the caller's own movement back out of it, exactly as
+          // the claim document allows in Firestore.
+          claim = record
         }
       })
+    }
+
+    override suspend fun appendLedger(record: Map<String, Any?>) {
+      appendAttempts++
+      if (appendThrows) throw IllegalStateException("ledger append failed (test)")
+      appends.add(record)
+    }
+
+    override suspend fun readCorrectionWindow(): List<Map<String, Any?>> {
+      recentReads++
+      // Unset answers the way AdminSettlementDb does: newest-first over the
+      // CORRECTED rows only (what appendTargets would have materialized), so
+      // the window provably contains the record the correction just wrote and
+      // is not diluted by the agreed settles around it.
+      return recentCorrections ?: appends.filter {
+        it["outcomeKind"] == SettlementLedger.OUTCOME_CORRECTED
+      }.reversed()
     }
   }
 
@@ -429,6 +1249,66 @@ class SettlementTest {
   }
 
   @Test
+  fun crossTierRankedSettlementAwardsNoRp() = runTest {
+    val golden = round1Golden()
+    val parts = round1Parts()
+    val db = FakeDb(
+      match = matchFields(),
+      archives = mapOf("1" to rawRound(golden, parts.plays, parts.actions)),
+      profiles = mapOf(
+        "u1" to mapOf("rp" to 30), // Bronze III
+        "u2" to mapOf("rp" to 600), // Gold III
+        "u3" to mapOf("rp" to 640), // Gold III
+        "u4" to mapOf("rp" to 700), // Gold II
+      ),
+    )
+    val response = settleOnce(db, "u1", settleData("m1"))
+    assertTrue(response["settled"] == true, "expected a settlement but was $response")
+    assertEquals(1, db.claims)
+
+    val movements = db.claim!!["movements"] as Map<*, *>
+    val deltas = movements.values.map { (it as Map<*, *>)["delta"] as Int }
+    assertTrue(
+      deltas.all { it == 0 },
+      "a Bronze-to-Gold table is two tiers apart and must award no RP, was $movements",
+    )
+
+    val writes = db.profileWrites.toMap()
+    assertEquals(30, writes.getValue("u1")["rp"], "Bronze RP must not move")
+    assertEquals(600, writes.getValue("u2")["rp"], "Gold RP must not move")
+    assertEquals(640, writes.getValue("u3")["rp"], "Gold RP must not move")
+    assertEquals(700, writes.getValue("u4")["rp"], "Gold RP must not move")
+    assertEquals("Bronze", writes.getValue("u1")["tier"])
+    assertEquals("Gold", writes.getValue("u2")["tier"])
+    // The match still settles and folds statistics; only progression is held.
+    assertEquals(1, writes.getValue("u1")["rankedGamesPlayed"])
+  }
+
+  @Test
+  fun oneTierGapStillAwardsRp() = runTest {
+    val golden = round1Golden()
+    val parts = round1Parts()
+    val db = FakeDb(
+      match = matchFields(),
+      archives = mapOf("1" to rawRound(golden, parts.plays, parts.actions)),
+      profiles = mapOf(
+        "u1" to mapOf("rp" to 30), // Bronze III
+        "u2" to mapOf("rp" to 300), // Silver III
+        "u3" to mapOf("rp" to 350), // Silver II
+        "u4" to mapOf("rp" to 400), // Silver II
+      ),
+    )
+    val response = settleOnce(db, "u1", settleData("m1"))
+    assertTrue(response["settled"] == true, "expected a settlement but was $response")
+    val movements = db.claim!!["movements"] as Map<*, *>
+    val deltas = movements.values.map { (it as Map<*, *>)["delta"] as Int }
+    assertTrue(
+      deltas.any { it != 0 },
+      "one tier apart is RD29-eligible and must still award RP, was $movements",
+    )
+  }
+
+  @Test
   fun aSettlerOutsideTheMatchIsDenied() = runTest {
     // Authentication itself happens at the adapter (callable-auth / the
     // Worker's bearer gate) before this orchestration runs; what remains
@@ -455,13 +1335,254 @@ class SettlementTest {
     assertEquals(0, db.txRuns)
   }
 
+  /**
+   * S6: a ROOM settle reads no archives (the recompute is the RANKED
+   * authority path) but DOES open one transaction and settle: four
+   * counter-only profile writes, one claim, `settled: true`, no `you`. The
+   * pre-S6 test of this name asserted the RD28 no-op — zero transactions,
+   * `settled: false` — the stale rule this task replaces.
+   */
   @Test
-  fun nonRankedSkipsReadsAndWrites() = runTest {
+  fun nonRankedSkipsArchivesAndSettlesStatsOnly() = runTest {
     val db = FakeDb(match = matchFields(mode = "ROOM"))
     val response = settleOnce(db, "u1", settleData("m1"))
-    assertEquals(false, response["settled"])
-    assertEquals(0, db.archiveReads)
-    assertEquals(0, db.txRuns)
+    assertEquals(true, response["settled"])
+    assertNull(response["you"], "a stats-only settle reports no RP movement")
+    assertEquals(0, db.archiveReads, "the recompute never runs outside RANKED")
+    assertEquals(1, db.txRuns)
+    assertEquals(1, db.claims)
+    assertEquals(4, db.profileWrites.size)
+    db.profileWrites.forEach { (_, fields) ->
+      assertEquals(
+        setOf(
+          "rankedGamesPlayed", "rankedKingCount", "rankedSecondCount",
+          "rankedThirdCount", "rankedKozCount",
+        ),
+        fields.keys,
+        "a stats-only write owns exactly the five counter fields",
+      )
+    }
+    assertEquals(1, db.profileWrites.single { it.first == "u1" }.second["rankedKingCount"])
+    assertEquals(1, db.profileWrites.single { it.first == "u1" }.second["rankedGamesPlayed"])
+  }
+
+  // -- S62 ledger (fake ports) --------------------------------------
+
+  @Test
+  fun correctedSettleAppendsLedgerOnceAndReplayAppendsNever() = runTest {
+    val golden = round1Golden()
+    val parts = round1Parts()
+    val db = FakeDb(
+      match = matchFields(finalScores = mapOf("p1" to 25, "p2" to -1, "p3" to 12, "p4" to 14)),
+      archives = mapOf("1" to rawRound(golden, parts.plays, parts.actions)),
+    )
+    val response = settleOnce(db, "u1", settleData("m1"))
+    assertTrue(response["settled"] == true, "expected a settlement but was $response")
+    assertEquals(1, db.appendAttempts)
+    assertEquals(1, db.appends.size)
+    val record = db.appends[0]
+    assertEquals("CORRECTED", record["outcomeKind"])
+    assertEquals("m1", record["matchId"])
+    assertEquals("u1", record["settledBy"])
+    assertEquals("RANKED", record["mode"])
+    assertEquals("FULL", record["gameType"])
+    assertEquals(listOf("u1", "u2", "u3", "u4"), record["players"])
+    // The corrected hook ran the bounded detector once.
+    assertEquals(1, db.recentReads)
+
+    // Retry of the settled match: the replay path is inert for the ledger.
+    val replay = settleOnce(db, "u2", settleData("m1"))
+    assertTrue(replay["replayed"] == true, "expected a replay but was $replay")
+    assertEquals(1, db.appendAttempts)
+    assertEquals(1, db.appends.size)
+    assertEquals(1, db.recentReads)
+    assertEquals(1, db.claims)
+    assertEquals(1, db.corrections)
+  }
+
+  @Test
+  fun agreedSettleAppendsAppliedRecordWithoutDetector() = runTest {
+    val golden = round1Golden()
+    val parts = round1Parts()
+    val db = FakeDb(
+      match = matchFields(),
+      archives = mapOf("1" to rawRound(golden, parts.plays, parts.actions)),
+    )
+    val response = settleOnce(db, "u1", settleData("m1"))
+    assertTrue(response["corrected"] == false, "expected an agreed settle but was $response")
+    assertEquals(1, db.appends.size)
+    assertEquals("APPLIED", db.appends[0]["outcomeKind"])
+    assertEquals(false, db.appends[0]["corrected"])
+    assertEquals(0, db.recentReads)
+  }
+
+  @Test
+  fun appendFailureDoesNotFailSettlement() = runTest {
+    val golden = round1Golden()
+    val parts = round1Parts()
+    val db = FakeDb(
+      match = matchFields(finalScores = mapOf("p1" to 25, "p2" to -1, "p3" to 12, "p4" to 14)),
+      archives = mapOf("1" to rawRound(golden, parts.plays, parts.actions)),
+    )
+    db.appendThrows = true
+    val response = settleOnce(db, "u1", settleData("m1"))
+    assertTrue(
+      response["ok"] == true && response["settled"] == true,
+      "the settlement must survive an append failure but was $response",
+    )
+    assertEquals(1, db.appendAttempts)
+    assertEquals(0, db.appends.size)
+    assertEquals(1, db.claims)
+    assertEquals(1, db.corrections)
+    // The corrected hook is append-independent: the detector still ran.
+    assertEquals(1, db.recentReads)
+  }
+
+  @Test
+  fun recomputeFailureAppendsFailedRecordThenThrows() = runTest {
+    val golden = round1Golden()
+    val parts = round1Parts()
+    val db = FakeDb(
+      match = matchFields(
+        completedRound = 2,
+        finalScores = mapOf("p1" to 0, "p2" to 0, "p3" to 0, "p4" to 0),
+      ),
+      archives = mapOf("1" to rawRound(golden, parts.plays, parts.actions)),
+    )
+    try {
+      settleOnce(db, "u1", settleData("m1"))
+      throw AssertionError("expected AuthorityError")
+    } catch (e: AuthorityError) {
+      assertEquals("failed-precondition", e.code)
+    }
+    assertEquals(1, db.appends.size)
+    assertEquals("FAILED", db.appends[0]["outcomeKind"])
+    assertEquals("HISTORY_INCOMPLETE", db.appends[0]["failureReason"])
+    assertEquals("u1", db.appends[0]["settledBy"])
+    assertEquals(0, db.claims)
+    assertEquals(0, db.recentReads)
+  }
+
+  @Test
+  fun malformedArchiveAppendsFailedRecord() = runTest {
+    val db = FakeDb(
+      match = matchFields(),
+      archives = mapOf(
+        "1" to mapOf(
+          "round" to 1,
+          "cardLog" to listOf(mapOf("seatId" to "p1", "round" to 1)),
+          "biddingLog" to emptyList<String>(),
+        ),
+      ),
+    )
+    try {
+      settleOnce(db, "u1", settleData("m1"))
+      throw AssertionError("expected AuthorityError")
+    } catch (e: AuthorityError) {
+      assertEquals("failed-precondition", e.code)
+      assertTrue(
+        e.message.contains("roundArchive/1 is malformed"),
+        "unexpected message: ${e.message}",
+      )
+    }
+    assertEquals(1, db.appends.size)
+    assertEquals("FAILED", db.appends[0]["outcomeKind"])
+    assertEquals("HISTORY_CORRUPT", db.appends[0]["failureReason"])
+  }
+
+  /**
+   * S6 keeps the S62 amplification rule: a stats-only (ROOM/UNRANKED)
+   * settle writes NO ledger document even though it now settles — it moves
+   * no RP, so there is no RP settlement to audit — and a denied attempt
+   * still appends nothing. The pre-S6 ROOM half of this test asserted the
+   * no-op response; the append expectation is the part RD28's repeal kept.
+   */
+  @Test
+  fun statsOnlyAndDeniedAttemptsAppendNothing() = runTest {
+    val roomDb = FakeDb(match = matchFields(mode = "ROOM"))
+    val response = settleOnce(roomDb, "u1", settleData("m1"))
+    assertEquals(true, response["settled"], "a ROOM match settles stats-only")
+    assertEquals(0, roomDb.appendAttempts, "a stats-only settle never appends to the ledger")
+
+    val deniedDb = FakeDb(match = matchFields())
+    try {
+      settleOnce(deniedDb, "stranger", settleData("m1"))
+      throw AssertionError("expected AuthorityError")
+    } catch (e: AuthorityError) {
+      assertEquals("permission-denied", e.code)
+    }
+    assertEquals(0, deniedDb.appendAttempts)
+  }
+
+  @Test
+  fun repeatDetectorRunsAfterACorrection() = runTest {
+    val golden = round1Golden()
+    val parts = round1Parts()
+    val db = FakeDb(
+      match = matchFields(finalScores = mapOf("p1" to 25, "p2" to -1, "p3" to 12, "p4" to 14)),
+      archives = mapOf("1" to rawRound(golden, parts.plays, parts.actions)),
+    )
+    db.recentCorrections = listOf(
+      mapOf(
+        "matchId" to "m0",
+        "players" to listOf("u1", "u2", "u3", "u4"),
+        "settledBy" to "u1",
+        "outcomeKind" to "CORRECTED",
+      ),
+      mapOf(
+        "matchId" to "m1",
+        "players" to listOf("u1", "u2", "u3", "u4"),
+        "settledBy" to "u1",
+        "outcomeKind" to "CORRECTED",
+      ),
+    )
+    val response = settleOnce(db, "u1", settleData("m1"))
+    assertTrue(response["corrected"] == true, "expected a corrected settle but was $response")
+    // The bounded corrections window was read and fed to the pure detector
+    // (SettlementLedgerTest pins what the detector derives from it).
+    assertEquals(1, db.recentReads)
+  }
+
+  @Test
+  fun aDetectedRepeatCannotChangeTheSettlement() = runTest {
+    val golden = round1Golden()
+    val parts = round1Parts()
+    val fields = matchFields(finalScores = mapOf("p1" to 25, "p2" to -1, "p3" to 12, "p4" to 14))
+    val archives = mapOf("1" to rawRound(golden, parts.plays, parts.actions))
+
+    // A: the table has never been corrected - the detector finds no repeat.
+    val quiet = FakeDb(match = fields, archives = archives)
+    val quietResponse = settleOnce(quiet, "u1", settleData("m1"))
+
+    // B: identical settlement, but the window now says this same table was
+    // corrected once before, so S62_REPEAT fires.
+    val loud = FakeDb(match = fields, archives = archives)
+    val roster = listOf("u1", "u2", "u3", "u4")
+    loud.recentCorrections = listOf(
+      mapOf(
+        "matchId" to "m0", "players" to roster, "settledBy" to "u1",
+        "outcomeKind" to "CORRECTED",
+      ),
+      mapOf(
+        "matchId" to "m1", "players" to roster, "settledBy" to "u1",
+        "outcomeKind" to "CORRECTED",
+      ),
+    )
+    val loudResponse = settleOnce(loud, "u1", settleData("m1"))
+
+    // A4.3, pinned: the diagnostic signal may not reach the client response,
+    // the correction write, the claim, or even the audit row itself.
+    assertEquals(quietResponse, loudResponse)
+    // The audit row itself is identical too (appendedAt excluded: each call
+    // mints a fresh sentinel object, so it can never compare equal).
+    assertEquals(
+      quiet.appends.single().filterKeys { it != "appendedAt" },
+      loud.appends.single().filterKeys { it != "appendedAt" },
+    )
+    assertEquals(quiet.claims, loud.claims)
+    assertEquals(quiet.corrections, loud.corrections)
+    assertEquals(1, loud.recentReads)
+    assertEquals(1, quiet.recentReads)
   }
 }
 

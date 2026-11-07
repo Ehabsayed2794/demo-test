@@ -353,32 +353,29 @@ service cloud.firestore {
     // side — this is what makes the atomic-transaction requirement
     // rules-enforced, not just a JS-layer convention.
     // ── S67 (E7, Game Type & Calculation Mode) ───────────────────────
-    // The four helpers below are the rules-layer mirror of the :engine
-    // GameType enum (FULL baseRounds 18 / firstFastRound 14 /
-    // maxExtensions 5; MINI 10 / 6 / 1). Every one is written so a doc
-    // written BEFORE S67 — with NO gameType field — behaves exactly as
-    // FULL: the amendment's absent-means-FULL back-compat, which is why
-    // no existing room or match needs a migration and a Full match stays
-    // byte-identical to today. `.get(k, null)` (not bare `data.gameType`)
-    // so an absent key is a clean null rather than a key-error.
+    // The three helpers below are the rules-layer mirror of the :engine
+    // GameType enum (FULL baseRounds 18 / firstFastRound 14; MINI
+    // 10 / 6). Every one is written so a doc written BEFORE S67 — with
+    // NO gameType field — behaves exactly as FULL: the amendment's
+    // absent-means-FULL back-compat, which is why no existing room or
+    // match needs a migration and a Full match stays byte-identical to
+    // today. `.get(k, null)` (not bare `data.gameType`) so an absent key
+    // is a clean null rather than a key-error. D2 (A8.8 / Q48,
+    // 2026-10-25) removed the per-type extension COUNT cap helper that
+    // used to live here — no extension count cap exists for either type
+    // any more, matching MatchService, which enforces none.
     //
     // baseRoundsOf: the ceiling a FRESH match of this type starts at.
     function baseRoundsOf(data) {
       return data.get('gameType', null) == 'MINI' ? 10 : 18;
     }
 
-    // firstFastRoundOf: the lower bound of the Rapid Rounds window, the
-    // only rounds ever eligible to extend maxRounds (FULL 14, MINI 6).
+    // firstFastRoundOf: the lower bound of the Rapid Rounds window —
+    // the lowest round ever eligible to extend maxRounds (FULL 14,
+    // MINI 6). Rounds past the type's window qualify only as the
+    // ACTUAL final round (D2, A8.8 / Q48 — see isValidRoundExtension).
     function firstFastRoundOf(data) {
       return data.get('gameType', null) == 'MINI' ? 6 : 14;
-    }
-
-    // maxExtensionsOf: how many extensions a match may ever record. FULL
-    // is 5 — exactly what its 14–18 window's five distinct rounds already
-    // imply, so this cap is unreachable for Full and changes nothing.
-    // MINI is exactly ONE (10 → 11 max), the GM3 boundary.
-    function maxExtensionsOf(data) {
-      return data.get('gameType', null) == 'MINI' ? 1 : 5;
     }
 
     // effectiveGameType: the type a doc counts as, absent ⇒ FULL. Used
@@ -423,6 +420,18 @@ service cloud.firestore {
     function effectiveMode(data) {
       let m = data.get('mode', null);
       return m in ['ROOM', 'RANKED', 'UNRANKED'] ? m : 'ROOM';
+    }
+
+    // S71 (RD28): Vote Kick is present in RANKED and UNRANKED and absent
+    // in ROOM — a Room is filled by invitation, so no vote may be opened
+    // there. An absent mode (a pre-S43 doc) reads as ROOM, so a legacy
+    // match keeps its ROOM denial. The three Vote Kick gates — the
+    // cooldown write, the removal write and the open shape — all ask this
+    // one question, so they ask it the same way, and they ask it with the
+    // same comparison the RANKED-only gate used.
+    function isVoteKickMode(data) {
+      let m = data.get('mode', 'ROOM');
+      return m == 'RANKED' || m == 'UNRANKED';
     }
 
     // RD21: the room/match bot configuration — skill tier, style, and the
@@ -604,7 +613,7 @@ service cloud.firestore {
       return hasRematchField
               && data.keys().hasOnly(['roomId', 'players', 'status', 'createdAt', 'currentRound', 'dealer', 'turn', 'gameState',
                                     'seats', 'version', 'biddingOpen', 'bids', 'lastBidSeat', 'cardLog', 'lastCardSeat', 'cardPhase',
-                                    'biddingLog', 'maxRounds', 'extendedRounds', 'rematchOfMatchId', 'gameType', 'scoringMode', 'mode', 'botTier', 'botPersonality', 'decisionTimerSeconds'])
+                                    'biddingLog', 'maxRounds', 'extendedRounds', 'rematchOfMatchId', 'gameType', 'scoringMode', 'currentMultiplier', 'mode', 'botTier', 'botPersonality', 'decisionTimerSeconds'])
              && request.auth.uid in data.players
              && data.status == 'starting'
              && data.currentRound == 1
@@ -633,6 +642,9 @@ service cloud.firestore {
               && effectiveGameType(oldMatch) == effectiveGameType(data)
               && isValidGameType(data)
               && isValidScoringMode(data)
+              // O-19: a rematch seeds the persisted multiplier like any fresh
+              // match (Classic must be exactly 1).
+              && isValidCreatedMultiplier(data)
               // S43: a rematch inherits the OLD match's authority mode —
               // never a client-supplied value. effectiveMode on both
               // sides so a pre-S43 old match (no field ⇒ ROOM) still
@@ -1063,6 +1075,21 @@ service cloud.firestore {
       let oldLog = oldData.biddingLog;
       let newLog = newData.biddingLog;
       let appended = newLog[newLog.size() - 1];
+      // T-09 (fast Super Call): a fast-round CONFIRM is not an ordinary
+      // confirmation — the service commits the engine's own wipe in the
+      // SAME write (MatchService.submitBiddingAction), so this validator
+      // must accept exactly that one extra shape. A normal-round CONFIRM
+      // (and every Dash/Auction entry) keeps the append-only log shape.
+      let fastConfirm = appended.actionType == 'SubmitConfirmCall'
+        && oldData.get('currentRound', 0) >= firstFastRoundOf(oldData);
+      // The ACTIVE declaration cycle's values (post-wipe, one per seat).
+      // Same precomputed per-fixed-seat facts pattern as
+      // isValidBidSubmission()'s pXHasBid above.
+      let activeBids = oldData.get('bids', {});
+      let p1Declared = oldData.seats.get('p1', null) == null || activeBids.get('p1', null) != null;
+      let p2Declared = oldData.seats.get('p2', null) == null || activeBids.get('p2', null) != null;
+      let p3Declared = oldData.seats.get('p3', null) == null || activeBids.get('p3', null) != null;
+      let p4Declared = oldData.seats.get('p4', null) == null || activeBids.get('p4', null) != null;
       return
              // "Authenticated."
              request.auth != null
@@ -1076,9 +1103,15 @@ service cloud.firestore {
              // document shape reaching this rule. Round Lifecycle
              // sprint: added 'currentRound', read below.
              && 'seats' in oldData && 'biddingLog' in oldData && 'version' in oldData && 'currentRound' in oldData
-             // "Reject every other write." — only these THREE fields
-             // may ever change via this rule.
-             && newData.diff(oldData).affectedKeys().hasOnly(['biddingLog', 'version', 'updatedAt'])
+             // "Reject every other write." — the append-only shape may
+             // change only these THREE fields; the fast Super Call reset
+             // adds exactly the four fields the engine's wipe touches
+             // (bids, biddingOpen, lastBidSeat, biddingCycle) and nothing
+             // else. Every other field stays structurally immutable.
+             && (fastConfirm
+                  ? newData.diff(oldData).affectedKeys().hasOnly(
+                      ['biddingLog', 'bids', 'biddingOpen', 'lastBidSeat', 'biddingCycle', 'version', 'updatedAt'])
+                  : newData.diff(oldData).affectedKeys().hasOnly(['biddingLog', 'version', 'updatedAt']))
              // "Version increments correctly." — identical guarantee to
              // isValidBidSubmission()'s/isValidCardSubmission()'s own,
              // on the SAME shared `version` counter.
@@ -1098,7 +1131,38 @@ service cloud.firestore {
              && oldData.seats[appended.seatId] == request.auth.uid
              // The newly-appended entry is well-formed, INCLUDING being
              // tagged with the current authoritative round.
-             && isValidBiddingActionEntry(appended, oldData.currentRound);
+             && isValidBiddingActionEntry(appended, oldData.currentRound)
+             // T-09: the fast Super Call reset itself — the exact inverse
+             // of the wipe the engine's CONFIRM reducer commits. The map
+             // may hold ONLY the confirming caller, at the confirmed
+             // number (so every seat's slot for the NEXT cycle starts
+             // empty); the declarations re-open; lastBidSeat is cleared;
+             // and biddingCycle advances by exactly one.
+             //
+             // HONEST, DOCUMENTED LIMITATION (this file's standing
+             // pattern): the rules cannot count the round's prior
+             // confirmations or re-derive the engine's 8+ declaration /
+             // suit-precedence / strictly-increasing-number resolution.
+             // MatchService re-proves both inside its own transaction
+             // (confirms.size == biddingCycle, the caller's own
+             // declaration, 8..13, > the previous cycle), and every
+             // client's engine rejects an illegal replay — so this is a
+             // generic SHAPE gate, never gameplay validation.
+             && (!fastConfirm
+                  || (appended.tricks is int
+                      && appended.tricks >= 8
+                      && appended.tricks <= 13
+                      && appended.seatId in activeBids
+                      && activeBids[appended.seatId] is int
+                      && appended.tricks >= activeBids[appended.seatId]
+                      && p1Declared && p2Declared && p3Declared && p4Declared
+                      && newData.bids.keys().hasOnly([appended.seatId])
+                      && newData.bids[appended.seatId] == appended.tricks
+                      && newData.biddingOpen == true
+                      && 'lastBidSeat' in newData && newData.lastBidSeat == null
+                      && 'biddingCycle' in newData
+                      && newData.biddingCycle
+                           == (('biddingCycle' in oldData) ? oldData.biddingCycle : 0) + 1));
     }
 
     // Round Lifecycle sprint — the fourth, and only other, legitimate
@@ -1148,9 +1212,252 @@ service cloud.firestore {
               : null;
     }
 
+    // ── O-19 (Option B, 2026-10-24): persisted multiplier ─────────────
+    // `currentMultiplier` is the multiplier the CURRENT round is scored at:
+    // written once at creation (1), carried by an ordinary scored advance,
+    // and carried across a General Pass by the pass branch below. The
+    // existing `RoundState.multiplier` remains the engine's scoring mirror.
+    //
+    // TRUST BOUNDARY (owner-authorized, direction record §1.6): a scored
+    // round's nextMultiplier cannot be re-derived here without replaying 52
+    // cards, so the ordinary branch bounds the value to 1..8 and pins Classic
+    // to 1 — it cannot prove a normal round's Sa'ayda ladder. The pass branch
+    // below CAN prove its ladder exactly, because a general-pass window is a
+    // complete, closed auction (see isAllPassBiddingLog()).
+    function isValidStoredMultiplier(data) {
+      let value = data.get('currentMultiplier', 1);
+      return value is int && value >= 1 && value <= 8;
+    }
+
+    function isClassicMatch(data) {
+      return data.get('scoringMode', null) == 'CLASSIC';
+    }
+
+    // Creation: a new match seeds the field. Absent is tolerated only for a
+    // NORMAL match (a legacy client); a Classic match must store exactly 1.
+    function isValidCreatedMultiplier(data) {
+      let classic = isClassicMatch(data);
+      return 'currentMultiplier' in data
+        ? isValidStoredMultiplier(data) && (classic ? data.currentMultiplier == 1 : true)
+        : (classic ? false : true);
+    }
+
+    // Ordinary scored advance: the value may ride the same update. Absent is
+    // tolerated for a legacy client (the document then reads as 1), and any
+    // present value is bounded; Classic may never move above 1.
+    function isValidAdvancedMultiplier(oldData, newData) {
+      let classic = isClassicMatch(oldData);
+      return 'currentMultiplier' in newData
+        ? newData.currentMultiplier is int
+          && newData.currentMultiplier >= 1
+          && newData.currentMultiplier <= 8
+          && (classic ? newData.currentMultiplier == 1 : true)
+        : true;
+    }
+
+    // A declining Dash-Call decision, tagged with the round being closed.
+    function isDecliningDashEntry(entry, round, seats) {
+      return entry.get('actionType', null) == 'SubmitDashCallDecision'
+             && entry.get('declaredDashCall', true) == false
+             && entry.get('seatId', null) in seats
+             && entry.get('round', null) == round;
+    }
+
+    // A Dash-Call DECISION — declared or declined, both structurally valid
+    // here; the strict two-DECLARED cap is counted separately by the mixed
+    // window below. A missing decision field reads as a decline (the
+    // decline branch keeps its own strict presence check); the window's
+    // size equation and distinctness still bound the shape.
+    function isDashDecisionEntry(entry, round, seats) {
+      return entry.get('actionType', null) == 'SubmitDashCallDecision'
+             && entry.get('seatId', null) in seats
+             && entry.get('round', null) == round;
+    }
+
+    // An auction PASS, tagged with the round being closed.
+    function isAuctionPassEntry(entry, round, seats) {
+      return entry.get('actionType', null) == 'SubmitAuctionBid'
+             && entry.get('isPass', false) == true
+             && entry.get('seatId', null) in seats
+             && entry.get('round', null) == round;
+    }
+
+    // The k = 0 window — the pre-F1 isAllPassBiddingLog verbatim: every seat
+    // DECLINES the Dash call, then every seat passes (2N entries). Kept as
+    // its own function so the k > 0 proof below cannot perturb the cost or
+    // the semantics of the shape every existing suite already pins.
+    function isAllDeclineWindow(log, round, seats, n) {
+      return log.size() == n * 2
+        && (n >= 1 ? isDecliningDashEntry(log[0], round, seats) : true)
+        && (n >= 2 ? isDecliningDashEntry(log[1], round, seats) : true)
+        && (n >= 3 ? isDecliningDashEntry(log[2], round, seats) : true)
+        && (n >= 4 ? isDecliningDashEntry(log[3], round, seats) : true)
+        && (n >= 1 ? isAuctionPassEntry(log[n], round, seats) : true)
+        && (n >= 2 ? isAuctionPassEntry(log[n + 1], round, seats) : true)
+        && (n >= 3 ? isAuctionPassEntry(log[n + 2], round, seats) : true)
+        && (n >= 4 ? isAuctionPassEntry(log[n + 3], round, seats) : true)
+        // Distinctness inside the Dash block.
+        && (n >= 2 ? log[0].get('seatId', null) != log[1].get('seatId', null) : true)
+        && (n >= 3 ? log[0].get('seatId', null) != log[2].get('seatId', null) : true)
+        && (n >= 4 ? log[0].get('seatId', null) != log[3].get('seatId', null) : true)
+        && (n >= 3 ? log[1].get('seatId', null) != log[2].get('seatId', null) : true)
+        && (n >= 4 ? log[1].get('seatId', null) != log[3].get('seatId', null) : true)
+        && (n >= 4 ? log[2].get('seatId', null) != log[3].get('seatId', null) : true)
+        // Distinctness inside the auction-PASS block (offset by n).
+        && (n >= 2 ? log[n].get('seatId', null) != log[n + 1].get('seatId', null) : true)
+        && (n >= 3 ? log[n].get('seatId', null) != log[n + 2].get('seatId', null) : true)
+        && (n >= 4 ? log[n].get('seatId', null) != log[n + 3].get('seatId', null) : true)
+        && (n >= 3 ? log[n + 1].get('seatId', null) != log[n + 2].get('seatId', null) : true)
+        && (n >= 4 ? log[n + 1].get('seatId', null) != log[n + 3].get('seatId', null) : true)
+        && (n >= 4 ? log[n + 2].get('seatId', null) != log[n + 3].get('seatId', null) : true);
+    }
+
+    // The F1 MIXED window (owner ruling 2026-10-24, Option A — DECIDED):
+    // of the N Dash decisions exactly k are DECLARED with 1 <= k <=
+    // min(2, N-1) — the strict two-Dash maximum; a window claiming THREE
+    // declared Dashes fails the k cap below and is refused, never clamped —
+    // and the auction that follows holds exactly N-k PASSES from distinct
+    // seats, none of them a declared dasher. Total 2N-k entries (a four-seat
+    // table: 7 / 6 at k = 1 / 2). An all-dashing table (k = N) ends in
+    // SANS, never a General Pass, and stays refused. Reached ONLY when
+    // log.size() != n * 2 (the dispatcher's ternary short-circuits), so k
+    // is necessarily >= 1 here — a DECLARED entry is what shrank the log.
+    //
+    // The dashers' positions (at most two) are located by ternary walks —
+    // CEL's ?: short-circuits, so a k == 1 window never pays for the second
+    // walk — and every pass seat is then compared against the (at most two)
+    // dasher seats. All indexes are behind the dispatcher's size bounds and
+    // the n-guards on the walks.
+    function isMixedPassWindow(log, round, seats, n) {
+      // First and second DECLARED positions (ternary walks; -1 when absent,
+      // n > i guards every index), then k derived from them — one walk
+      // structure instead of a separate counting sum. The declaredDashAt
+      // reads are inlined (helper-call overhead is real against the engine's
+      // per-request expression budget). The dispatcher sent us here only
+      // because log.size() != n * 2, so a k of 0 is malformed (it
+      // contradicts the size equation below) and fails closed.
+      let d0 = (n > 0
+              ? (log[0].get('declaredDashCall', false) == true ? 0
+              : (n > 1
+              ? (log[1].get('declaredDashCall', false) == true ? 1
+              : (n > 2
+              ? (log[2].get('declaredDashCall', false) == true ? 2
+              : (n > 3 ? (log[3].get('declaredDashCall', false) == true ? 3 : -1) : -1))
+              : -1))
+              : -1))
+              : -1);
+      let d1 = (d0 == 0
+              ? (n > 1
+              ? (log[1].get('declaredDashCall', false) == true ? 1
+              : (n > 2
+              ? (log[2].get('declaredDashCall', false) == true ? 2
+              : (n > 3 ? (log[3].get('declaredDashCall', false) == true ? 3 : -1) : -1))
+              : -1))
+              : -1)
+              : (d0 == 1
+              ? (n > 2
+              ? (log[2].get('declaredDashCall', false) == true ? 2
+              : (n > 3 ? (log[3].get('declaredDashCall', false) == true ? 3 : -1) : -1))
+              : -1)
+              : (d0 == 2
+              ? (n > 3 ? (log[3].get('declaredDashCall', false) == true ? 3 : -1) : -1)
+              : -1)));
+      let k = (d0 >= 0 ? 1 : 0) + (d1 >= 0 ? 1 : 0);
+      // Seat ids are bound once and reused — the distinctness and
+      // disjointness terms below stay inside the rules engine's expression
+      // budget (a single-expression complexity cap and a per-request
+      // 1000-expression cap both apply; this file's Sprint 4.2.3 notes the
+      // CEL ?:-short-circuits / &&-does-not facts this layout relies on).
+      // Ten lets max per function (engine limit) — seat ids that repeat
+      // most are the bound ones; s2/s3 stay inline below.
+      let s0 = log[0].get('seatId', null);
+      let s1 = (n >= 2 ? log[1].get('seatId', null) : null);
+      let q0 = (log.size() > n ? log[n].get('seatId', null) : null);
+      let q1 = (log.size() > n + 1 ? log[n + 1].get('seatId', null) : null);
+      let q2 = (log.size() > n + 2 ? log[n + 2].get('seatId', null) : null);
+      let sd0 = (d0 >= 0 ? log[d0].get('seatId', null) : null);
+      let sd1 = (k == 2 ? log[d1].get('seatId', null) : null);
+      return k <= (n <= 2 ? n - 1 : 2)
+        && log.size() == n * 2 - k
+        // The Dash block: n decisions, one per seat position.
+        && isDashDecisionEntry(log[0], round, seats)
+        && (n >= 2 ? isDashDecisionEntry(log[1], round, seats) : true)
+        && (n >= 3 ? isDashDecisionEntry(log[2], round, seats) : true)
+        && (n >= 4 ? isDashDecisionEntry(log[3], round, seats) : true)
+        // Distinctness inside the Dash block (a bijection onto the seats).
+        && (n >= 2 ? s0 != s1 : true)
+        && (n >= 3 ? s0 != log[2].get('seatId', null) : true)
+        && (n >= 4 ? s0 != log[3].get('seatId', null) : true)
+        && (n >= 3 ? s1 != log[2].get('seatId', null) : true)
+        && (n >= 4 ? s1 != log[3].get('seatId', null) : true)
+        && (n >= 4 ? log[2].get('seatId', null) != log[3].get('seatId', null) : true)
+        // The pass block: exactly n - k entries at positions n..n+L-1,
+        // each an auction pass tagged with the closing round.
+        && (n - k >= 1 ? isAuctionPassEntry(log[n], round, seats) : true)
+        && (n - k >= 2 ? isAuctionPassEntry(log[n + 1], round, seats) : true)
+        && (n - k >= 3 ? isAuctionPassEntry(log[n + 2], round, seats) : true)
+        // Distinctness inside the pass block (L <= 3 because k >= 1).
+        && (n - k >= 2 ? q0 != q1 : true)
+        && (n - k >= 3 ? q0 != q2 : true)
+        && (n - k >= 3 ? q1 != q2 : true)
+        // No DECLARED dasher among the passers: every pass seat differs
+        // from the first dasher seat, and from the second when k == 2.
+        // (d1 is only dereferenced on that cold-guarded k == 2 branch.)
+        && (n - k >= 1 ? q0 != sd0 : true)
+        && (n - k >= 2 ? q1 != sd0 : true)
+        && (n - k >= 3 ? q2 != sd0 : true)
+        && (k == 1 ? true
+             : ((n - k >= 1 ? q0 != sd1 : true)
+                && (n - k >= 2 ? q1 != sd1 : true)
+                && (n - k >= 3 ? q2 != sd1 : true)));
+    }
+
+    // S1's actual General-Pass window, proven structurally — the exact
+    // shape MatchAdapterReloadReplayTest and the online pass fixture write,
+    // generalized by the F1 owner ruling (2026-10-24, Option A): a mixed
+    // Dash-Call + all-pass auction IS a valid General Pass. N Dash
+    // decisions first, then the auction passes; of the N decisions at most
+    // min(2, N-1) are DECLARED, and the passes number exactly N-k. The two
+    // shapes are proved by separate functions behind a size ternary —
+    // CEL's ?: short-circuits (Sprint A hotfix note), so the common k = 0
+    // window pays only its own proof, and neither branch's cost stacks
+    // against the other inside the engine's expression budget.
+    function isAllPassBiddingLog(log, round, seats) {
+      let n = seats.keys().size();
+      // No size pre-guards here: every index access in either branch sits
+      // behind its own ternary or its branch's size equation, and an
+      // out-of-equation arrival fails closed (a CEL evaluation error
+      // denies), which is the fail-closed behaviour this file relies on.
+      return n >= 1
+        && (log.size() == n * 2
+             ? isAllDeclineWindow(log, round, seats, n)
+             : isMixedPassWindow(log, round, seats, n));
+    }
+
+    // The owner-fixed pass ladder: Classic stays 1; Normal 1 -> 2, then
+    // min(old + 2, 8).
+    function expectedMultiplierAfterGeneralPass(oldData) {
+      let old = oldData.get('currentMultiplier', 1);
+      return isClassicMatch(oldData)
+        ? 1
+        : (old == 1 ? 2 : (old >= 6 ? 8 : old + 2));
+    }
+
     function isValidRoundAdvance() {
       let oldData = resource.data;
       let newData = request.resource.data;
+      // O-19 branch selection: "an auction happened but zero cards were
+      // played" is EXACTLY the General-Pass shape (and an incomplete
+      // ordinary round, which must not advance anyway). Selecting the
+      // strict branch on that shape — rather than on isAllPassBiddingLog()
+      // itself — is what makes a malformed pass window DENY instead of
+      // falling through to the permissive ordinary branch. A round with
+      // 52 plays takes the ordinary branch; a legacy both-empty advance
+      // (already covered by the existing dealer-rotation and hand-sync
+      // suites) also stays on the ordinary branch.
+      let isPassCandidate =
+        oldData.get('cardLog', []).size() == 0
+        && oldData.get('biddingLog', []).size() > 0;
       return
              request.auth != null
              && request.auth.uid in oldData.players
@@ -1178,11 +1485,34 @@ service cloud.firestore {
               // (both already []) still passes, while any non-empty log
               // content on an advance is denied.
               && newData.diff(oldData).affectedKeys().hasOnly(
-                   ['currentRound', 'dealer', 'version', 'biddingOpen', 'bids', 'lastBidSeat', 'cardPhase', 'turn', 'cardLog', 'biddingLog', 'updatedAt'])
+                   ['currentRound', 'dealer', 'version', 'biddingOpen', 'bids', 'lastBidSeat', 'biddingCycle', 'cardPhase', 'turn', 'cardLog', 'biddingLog', 'currentMultiplier', 'updatedAt'])
               && newData.version == oldData.version + 1
               && newData.currentRound == oldData.currentRound + 1
               && newData.cardLog == []
               && newData.biddingLog == []
+              // T-09: the next round opens in declaration cycle 0. A doc
+              // that carries the field (a fast round that committed a
+              // Super Call) MUST reset it here — omitting it would keep the
+              // old round's count and make every client's cycle restore
+              // fail closed against a history that no longer exists. A
+              // pre-T-09 doc (no field) stays legal without a rewrite.
+              && (!('biddingCycle' in newData) || newData.biddingCycle == 0)
+              // O-19: an ordinary advance carries the engine's nextMultiplier
+              // and only BOUNDS it (see the trust boundary above). A pass
+              // round has zero card plays and its complete Dash+auction
+              // window proves the ladder, so the value must be exactly the
+              // computed one, never merely bounded. The ordinary branch
+              // deliberately does not add a 52-card check here: the rules
+              // never enforced one, and two existing emulator suites
+              // (dealer rotation, hand-sync dispatch) advance with empty
+              // windows; the archive rule and MatchService keep their own
+              // 52-card gates.
+              && (isPassCandidate
+                   ? isAllPassBiddingLog(
+                       oldData.get('biddingLog', []), oldData.currentRound, oldData.seats)
+                     && isValidStoredMultiplier(oldData)
+                     && newData.get('currentMultiplier', null) == expectedMultiplierAfterGeneralPass(oldData)
+                   : isValidAdvancedMultiplier(oldData, newData))
               // Dealer rotates to the exact next active seat in the
              // immutable positional seat map, including wraparound and
              // supported under-four-player shapes.
@@ -1241,15 +1571,20 @@ service cloud.firestore {
     // CANNOT verify a qualifying Super Call or Sa'ayda genuinely
     // occurred in `completedRound` (that would mean reimplementing
     // BiddingEngine/ScoringEngine's rules here in CEL, which no prior
-    // sprint's rule has ever done) — it only rejects a STRUCTURALLY
-    // malformed extension: wrong version math, `maxRounds` moving by
-    // anything other than exactly +1, `completedRound` outside the
-    // fixed Rapid Rounds window (14-18), the SAME round number being
-    // used to extend twice, or any field this write should never
-    // touch. See `MatchService.extendMatchRounds()`'s own "HONEST
-    // LIMITATION" note and this sprint's Final Report — the
-    // service/transaction layer, not this rule, is what's actually
-    // trusted for "was this extension legitimate."
+    // sprint's rule has ever done; it also cannot see `reason`, so
+    // MatchService remains the authority for Sa'ayda-vs-Super-Call
+    // legitimacy) — it only rejects a STRUCTURALLY malformed
+    // extension: wrong version math, `maxRounds` moving by anything
+    // other than exactly +1, `completedRound` outside the type's
+    // Rapid Rounds window and not the actual final round (D2,
+    // A8.8 / Q48: the type-derived window stays, the extension count
+    // cap is gone, and a final-round Sa'ayda may repeat past
+    // baseRounds), the SAME round number being used to extend twice,
+    // or any field this write should never touch. See
+    // `MatchService.extendMatchRounds()`'s own "HONEST LIMITATION"
+    // note and this sprint's Final Report — the service/transaction
+    // layer, not this rule, is what's actually trusted for "was this
+    // extension legitimate."
     function isValidRoundExtension() {
       let oldData = resource.data;
       let newData = request.resource.data;
@@ -1293,15 +1628,20 @@ service cloud.firestore {
              // before, byte-for-byte — no security invariant changed.
              && (oldRounds.size() == 0 ? true : newRounds[0:oldRounds.size()] == oldRounds)
              && appendedRound is int
-             // S67: the Rapid Rounds window is type-derived (FULL 14–18,
-             // MINI 6–10); a pre-S67 match has no gameType ⇒ FULL ⇒ the
-             // exact same 14–18 bounds.
-             && appendedRound >= firstFastRoundOf(oldData) && appendedRound <= baseRoundsOf(oldData)
-             // S67 (GM3): the extension COUNT cap — MINI allows exactly
-             // ONE extension (10 → 11 max). FULL's cap is 5, which its
-             // 14–18 window already implies (five distinct qualifying
-             // rounds at most), so Full is unchanged.
-             && oldRounds.size() < maxExtensionsOf(oldData)
+             // D2 (A8.8 / Q48): the qualifying window is type-derived
+             // (FULL 14–18, MINI 6–10; a pre-S67 match has no gameType
+             // ⇒ FULL ⇒ the exact same 14–18 bounds) and there is NO
+             // extension count cap — the S67/GM3 cap (MINI 1 / FULL 5)
+             // was removed to match MatchService, which enforces none.
+             // A completed round qualifies when it is inside the type's
+             // window OR is the ACTUAL final round (== maxRounds), so a
+             // final-round Sa'ayda can repeat past baseRounds. The rules
+             // cannot see `reason`; this stays a structural rule and
+             // MatchService remains the authority for
+             // Sa'ayda-vs-Super-Call legitimacy.
+             && appendedRound >= firstFastRoundOf(oldData)
+             && appendedRound <= oldData.maxRounds
+             && (appendedRound <= baseRoundsOf(oldData) || appendedRound == oldData.maxRounds)
              && !(appendedRound in oldRounds);
     }
 
@@ -1395,12 +1735,13 @@ service cloud.firestore {
       // tally math itself stays services-side (the eligible denominator
       // moves with botSeats, which CEL cannot count) — these validators
       // check mode, shape, membership, and monotonicity only.
+      // S71: the mode gate admits UNRANKED as well as RANKED (RD28).
       function isValidVoteKickCooldownWrite() {
         let oldData = resource.data;
         let newData = request.resource.data;
         return request.auth != null
                && request.auth.uid in oldData.players
-               && oldData.get('mode', 'ROOM') == 'RANKED'
+               && isVoteKickMode(oldData)
                && newData.diff(oldData).affectedKeys().hasOnly(
                     ['failedVoteKickCooldown', 'version', 'updatedAt'])
                && newData.version == oldData.version + 1
@@ -1415,7 +1756,7 @@ service cloud.firestore {
         let newData = request.resource.data;
         return request.auth != null
                && request.auth.uid in oldData.players
-               && oldData.get('mode', 'ROOM') == 'RANKED'
+               && isVoteKickMode(oldData)
                && newData.diff(oldData).affectedKeys().hasOnly(
                     ['botSeats', 'removedUids', 'version', 'updatedAt'])
                && newData.version == oldData.version + 1
@@ -1426,6 +1767,39 @@ service cloud.firestore {
                // Removal only grows: nothing is ever un-removed.
                && oldData.get('botSeats', []).hasOnly(newData.botSeats)
                && oldData.get('removedUids', []).hasOnly(newData.removedUids);
+      }
+
+      // S72 (Explicit Leave Match): the seat's uid is added to leftUids exactly
+      // once, and the seat is added to botSeats so the configured bot drives it.
+      // The seat's own uid is the only valid leaver; the write touches only
+      // leftUids, botSeats, version and updatedAt.
+      function isValidLeaveWrite() {
+        let oldData = resource.data;
+        let newData = request.resource.data;
+        let leavingSeat =
+          (oldData.seats.get('p1', null) == request.auth.uid) ? 'p1' :
+          (oldData.seats.get('p2', null) == request.auth.uid) ? 'p2' :
+          (oldData.seats.get('p3', null) == request.auth.uid) ? 'p3' :
+          (oldData.seats.get('p4', null) == request.auth.uid) ? 'p4' : null;
+        return request.auth != null
+               && request.auth.uid in oldData.players
+               && leavingSeat != null
+               && !(request.auth.uid in oldData.get('leftUids', []))
+               && !(leavingSeat in oldData.get('botSeats', []))
+               && newData.diff(oldData).affectedKeys().hasOnly(
+                    ['leftUids', 'botSeats', 'version', 'updatedAt'])
+               && newData.version == oldData.version + 1
+               && newData.leftUids is list
+               && newData.leftUids.hasOnly(oldData.players)
+               && newData.botSeats is list
+               && newData.botSeats.hasOnly(oldData.seats.keys())
+               // Leave only grows: nothing is ever un-left, never un-botted.
+               && oldData.get('leftUids', []).hasOnly(newData.leftUids)
+               && oldData.get('botSeats', []).hasOnly(newData.botSeats)
+               && newData.leftUids.size() == oldData.get('leftUids', []).size() + 1
+               && newData.botSeats.size() == oldData.get('botSeats', []).size() + 1
+               && request.auth.uid in newData.leftUids
+               && leavingSeat in newData.botSeats;
       }
 
     match /matches/{matchId} {
@@ -1539,7 +1913,7 @@ service cloud.firestore {
         let room = get(/databases/$(database)/documents/rooms/$(data.roomId)).data;
         return data.keys().hasOnly(['roomId', 'players', 'status', 'createdAt', 'currentRound', 'dealer', 'turn', 'gameState',
                                      'seats', 'version', 'biddingOpen', 'bids', 'lastBidSeat', 'cardLog', 'lastCardSeat', 'cardPhase',
-                                     'biddingLog', 'maxRounds', 'extendedRounds', 'gameType', 'scoringMode', 'mode', 'botTier', 'botPersonality', 'decisionTimerSeconds'])
+                                     'biddingLog', 'maxRounds', 'extendedRounds', 'gameType', 'scoringMode', 'currentMultiplier', 'mode', 'botTier', 'botPersonality', 'decisionTimerSeconds'])
                && data.roomId is string
                && data.players is list
                && data.players.size() > 0
@@ -1556,6 +1930,8 @@ service cloud.firestore {
                 && data.extendedRounds == []
                 && isValidGameType(data)
                 && isValidScoringMode(data)
+                // O-19: every fresh match seeds the persisted multiplier.
+                && isValidCreatedMultiplier(data)
                 // S43: the authority key rides every match create (absent
                 // ⇒ ROOM, back-compat for pre-S43 docs).
                 && isValidMode(data)
@@ -1766,10 +2142,18 @@ service cloud.firestore {
            // removal write each own their exact field set — never mixed
            // with gameplay writes, never each other.
            ('failedVoteKickCooldown' in affected) ? isValidVoteKickCooldownWrite() :
+           // S72: a leave write touches leftUids AND botSeats (the configured bot
+           // takes the seat in the same write). The leftUids branch MUST precede
+           // the botSeats/removedUids branch, otherwise a leave write routes to
+           // isValidVoteKickRemovalWrite(), whose hasOnly() rejects leftUids and
+           // every first-time explicit leave is denied.
+           ('leftUids' in affected) ? isValidLeaveWrite() :
            ('botSeats' in affected || 'removedUids' in affected) ? isValidVoteKickRemovalWrite() :
            false;
       }
-      allow update: if request.auth != null && isValidMatchUpdateDispatch();
+      allow update: if request.auth != null
+             && !(request.auth.uid in resource.data.get('leftUids', []))
+             && isValidMatchUpdateDispatch();
       allow delete: if false;
 
       // ── matches/{matchId}/roundArchive/{archiveId} ────────────────
@@ -1784,9 +2168,29 @@ service cloud.firestore {
       // (e.g. "1".."21"), written ATOMICALLY in the SAME transaction
       // that advances past (or completes on) that round:
       //   { round: int, matchId: string,
-      //     cardLog: [exactly the round's 52 {seatId,card,round} plays],
+      //     cardLog: [exactly the round's plays, 13 per REAL seat --
+      //     52 on the four-seat full table -- each {seatId,card,round}],
       //     biddingLog: [that round's {seatId,actionType,...,round} actions],
-      //     estimates: {seat: int 0..13 Final Estimates snapshot} }
+      //     estimates: {seat: int 0..13 Final Estimates snapshot},
+      //     passRound: true (ONLY on a General Pass round) }
+      //
+      // O-19 (Option B): a General Pass round has ZERO card plays and its
+      // complete window is N declining Dash decisions followed by N auction
+      // passes (see isAllPassBiddingLog() above), so it archives on its own
+      // narrow branch below — `passRound: true`, empty cardLog, that exact
+      // window tagged with the closed round. An ordinary archive still
+      // requires every card play of the round and must not carry the marker;
+      // relaxes anything besides the marker field itself.
+      // Seat-count asymmetry fix (plan V2 section 5.10): "every card play"
+      // is 13 * this match's REAL seat count, derived from the same source
+      // the pass branch proves its window against (parent.seats --
+      // immutable after creation: it appears in no update allowlist, and
+      // an S71 bot table's seats outnumber its `players`). That
+      // is the exact 13 * seats factor Settlement.replayTricks and
+      // TimeoutResolution.cardTotal already settle on. 13 * 4 == 52 for a
+      // four-seat table, so the four-seat behaviour is identical to the
+      // prior hardcoded constant; 1..3 seat matches become legitimately
+      // archivable.
       // `estimates` is ALLOWED, never required: archives written before
       // S50's archive fix (and any old client still writing the 4-key
       // shape) stay valid; matches without per-round estimates simply
@@ -1825,21 +2229,26 @@ service cloud.firestore {
         function isValidRoundArchiveCreate() {
           let parent = parentMatch();
           let data = request.resource.data;
+          let isPassArchive = data.get('passRound', false) == true;
           return request.auth != null
                  && request.auth.uid in parent.players
                  && ('status' in parent ? parent.status != 'complete' : true)
-                  && data.keys().hasOnly(['round', 'matchId', 'cardLog', 'biddingLog', 'estimates'])
+                  && data.keys().hasOnly(['round', 'matchId', 'cardLog', 'biddingLog', 'estimates', 'passRound'])
+                  && (!('passRound' in data) || data.passRound is bool)
                   && data.round is int
                   && data.round >= 1
                   && data.matchId == matchId
                   && data.cardLog is list
-                  && data.cardLog.size() == 52
                   && data.biddingLog is list
                   // S50 archive fix: `estimates` is allowed but never
                   // required — pre-fix archives and old clients writing the
                   // 4-key shape stay valid. Present values must be a map.
                   && (data.get('estimates', null) == null || data.estimates is map)
-                  && data.round == parent.currentRound;
+                  && data.round == parent.currentRound
+                  && (isPassArchive
+                       ? data.cardLog.size() == 0
+                         && isAllPassBiddingLog(data.biddingLog, data.round, parent.seats)
+                       : data.cardLog.size() == 13 * parent.seats.keys().size());
         }
 
         allow get: if request.auth != null && request.auth.uid in parentMatch().players;
@@ -2033,6 +2442,8 @@ service cloud.firestore {
       // the target is frozen at open and never re-derived, the target's
       // slot is structurally absent from `votes` (never null-valued),
       // bot-held seats hold no slot (D7), terminal statuses are final.
+      // S71: Ranked-only is now Ranked-or-Unranked (RD28) — a Room match
+      // still refuses the vote.
       // Majority math stays services-side (the eligible denominator moves
       // with botSeats, which CEL cannot count) — these validators check
       // mode, round gate, shape, membership, immutability, and terminal
@@ -2050,7 +2461,7 @@ service cloud.firestore {
         function isValidVoteKickOpenShape(data) {
           let parent = parentMatch();
           return voteId == 'current'
-                 && parent.get('mode', 'ROOM') == 'RANKED'
+                 && isVoteKickMode(parent)
                  && parent.currentRound >= 8
                  && data.matchId == matchId
                  && data.status == 'OPEN'

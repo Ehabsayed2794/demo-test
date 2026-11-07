@@ -1,12 +1,15 @@
 package com.estemshan.engine
 
 /**
- * S60 — manual Vote Kick (RD18, RANKED-only): the pure state machine.
+ * S60 — manual Vote Kick (RD18; `RANKED` + `UNRANKED` since the 2026-10-17
+ * owner clarification — `ROOM` is the only mode without it): the pure state
+ * machine.
  *
  * A mid-match vote that permanently removes a griefer. Seven gates, an
  * immutable once-vote, majority over eligible HUMANS, a frozen target, a
- * 5-round same-target cooldown on failure, and terminal removal recorded
- * as a Koz outcome (D10).
+ * 5-round same-target cooldown on failure, and terminal removal recorded as
+ * the Vote Kick departure (D10; charge 2 Koz per Q14d(1), 2026-10-22 —
+ * supersedes A5.1's "1 Koz, final").
  *
  * Layering: everything here is pure Kotlin over caller-supplied inputs —
  * no Firestore, no clock, no GameSession. The standings this reasons
@@ -42,13 +45,16 @@ enum class VoteKickChoice { YES, NO }
  * in-place (RD18/S40: never merely absent).
  */
 enum class VoteKickUnavailability {
-  /** mode != RANKED (Rooms + Unranked never vote — entry absent, RD18). */
+  /**
+   * mode == ROOM — the entry is absent (RD18 as amended 2026-10-17:
+   * UNRANKED votes exactly as RANKED; ROOM is the only exclusion).
+   */
   WRONG_MODE,
 
   /** Fewer than 7 fully complete rounds (vote opens Round 8+). */
   ROUNDS_SHORT,
 
-  /** No single unique Koz — last place tied (RD17) or no scores. */
+  /** No single unique Koz — the Koz is shared (Q2d/Q2e) or there are no scores. */
   NO_UNIQUE_KOZ,
 
   /** Named target is not the unique Koz. */
@@ -96,8 +102,9 @@ data class VoteKickRemoval(val targetSeat: String, val targetUid: String)
 fun voteKickThreshold(eligibleCount: Int): Int = eligibleCount / 2 + 1
 
 /**
- * The unique current Koz (last place), or null when last place is tied
- * (RD17 — never fabricate a Koz) or there are no scores.
+ * The unique current Koz (last place), or null when the Koz is shared
+ * (Q2d makes every tied-bottom seat Koz; Q2e forbids kicking a shared
+ * Koz) or there are no scores.
  */
 fun uniqueKozSeat(standings: Map<String, Int>): String? {
   if (standings.isEmpty()) return null
@@ -145,7 +152,7 @@ fun voteKickAvailability(
   cooldown: VoteKickCooldown?,
   currentRound: Int,
 ): VoteKickAvailability {
-  if (mode != MatchMode.RANKED) return VoteKickAvailability.Unavailable(VoteKickUnavailability.WRONG_MODE)
+  if (mode == MatchMode.ROOM) return VoteKickAvailability.Unavailable(VoteKickUnavailability.WRONG_MODE)
   if (completedRounds < 7) return VoteKickAvailability.Unavailable(VoteKickUnavailability.ROUNDS_SHORT)
   val koz = uniqueKozSeat(standings)
     ?: return VoteKickAvailability.Unavailable(VoteKickUnavailability.NO_UNIQUE_KOZ)
@@ -237,8 +244,15 @@ fun resolveVoteKick(
 /**
  * The removal a PASSED vote resolves to, for services to execute: the
  * seat goes bot-held, the uid is banned from rejoin, and the removal is
- * recorded as a Koz outcome (D10 — feed [MatchOutcome.KOZ] to
- * [accumulateRankedStat] wherever the 9 statistics settle).
+ * recorded as the Vote Kick departure (D10) — **2 Koz** (Q14d(1), 2026-10-22;
+ * supersedes A5.1's "1 Koz, final" and the repealed 2026-10-16 C1 closure).
+ * Wherever the 9 statistics settle, the record rides
+ * [LeaveMatch.decideLeave]([MatchMode], [LeaveReason.VOTE_KICK]) —
+ * [KozCharge.Koz2] — consumed through [accumulateDepartureCharge], which
+ * records in both votable modes. Feeding [MatchOutcome.KOZ] through
+ * [accumulateRankedStat] computes the same +2 Koz / +1 Games Played in
+ * `RANKED`; in `UNRANKED` the charge fold is the only route, because that
+ * natural-outcome fold stays RANKED-only (A3.5).
  */
 fun removalForVoteKick(
   vote: VoteKickVote,

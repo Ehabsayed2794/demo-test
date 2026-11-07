@@ -4,20 +4,25 @@ import com.estemshan.engine.Bid
 import com.estemshan.engine.BidType
 import com.estemshan.engine.BiddingIntent
 import com.estemshan.engine.BiddingOutcome
+import com.estemshan.engine.BiddingPhase
+import com.estemshan.engine.BiddingState
 import com.estemshan.engine.Card
 import com.estemshan.engine.DEFAULT_SEATS
 import com.estemshan.engine.GameType
 import com.estemshan.engine.MatchMode
+import com.estemshan.engine.MAX_TRICKS
 import com.estemshan.engine.Play
 import com.estemshan.engine.RANKS
 import com.estemshan.engine.RoundScoreInput
 import com.estemshan.engine.ScoringMode
 import com.estemshan.engine.Suit
 import com.estemshan.engine.accumulateMatchScores
+import com.estemshan.engine.biddingOrder
 import com.estemshan.engine.calculateRoundScore
 import com.estemshan.engine.computeWinner
 import com.estemshan.engine.emit
 import com.estemshan.engine.EmitResult
+import com.estemshan.engine.fixedTrumpFor
 import com.estemshan.engine.initFastRound
 import com.estemshan.engine.initNormalRound
 import com.estemshan.engine.isFastRound
@@ -63,6 +68,142 @@ import com.estemshan.engine.trickWinner
  * round. Archives predating that field fail closed as HISTORY_INCOMPLETE
  * rather than settling on fabricated numbers.
  */
+
+/** Minimum number that opens a fast-round Super Call (A6.10/A7.2). */
+private const val FAST_SUPER_CALL_MIN = 8
+
+/**
+ * S7's 7th-inactivity-takeover removal list, read as a RAW field name: the
+ * `:services` match model does not carry it yet (another task owns that
+ * file), so settlement parses it straight off the document. Absent on every
+ * document until S7 lands — parsed as empty, never fatal.
+ */
+private const val TAKEOVER_REMOVED_UIDS_FIELD = "takeoverRemovedUids"
+
+/**
+ * One fast Super Call CONFIRM from the log: the Super Caller, the number
+ * they confirmed and the trump they took.
+ */
+internal data class FastSuperConfirm(val seat: String, val tricks: Int, val suit: Suit)
+
+/**
+ * The replayed state of a fast Super Call chain.
+ *
+ * [state] is the state after the LAST confirmation — the re-declaration
+ * phase, where every seat except the last Super Caller declares again.
+ * [outcome] is non-null only when the chain closed the round on its own;
+ * the engine's fast confirmation never does, it always re-opens the
+ * re-declaration.
+ */
+internal data class FastSuperChain(
+  val state: BiddingState,
+  val outcome: BiddingOutcome?,
+  val confirmTricks: Int,
+)
+
+/**
+ * Replays a chain of fast-round Super Call confirmations (T-09).
+ *
+ * A fast Super Call is NOT the end of the fast round: the confirmation
+ * cancels the forced trump, the Super Caller takes a new one, and EVERY
+ * seat except that caller declares again counter-clockwise under it. A
+ * declaration above the confirmed number opens the NEXT cycle, so a round
+ * can hold several confirmations and only the last one closes the auction.
+ *
+ * The archive keeps ONE value per seat, so an earlier cycle's declarations
+ * are gone: only the last cycle's caller still holds its own declaration
+ * (it never declares again after its own confirmation). The replay proves
+ * what the archive can prove and trusts the logged confirmation for the
+ * rest:
+ *
+ * - every confirmation is a real Super Call: 8..13 tricks. The absolute
+ *   13-trick maximum holds in fast rounds too — the fast exemption drops
+ *   only the Caller-relative Call Cap;
+ * - the numbers strictly increase: a new cycle is opened only by a
+ *   declaration ABOVE the previous cycle's confirmed number;
+ * - the last caller's slot holds EXACTLY the confirmed number. That is the
+ *   T-09 atomic reset's own shape: the write replaces `bids` with
+ *   `{caller: tricks}` and the caller never declares again, so its slot is
+ *   the confirmed number even when the caller raised it at confirmation.
+ *
+ * §5 (never reinterpret a historical record): a last-caller slot below the
+ * confirmed number cannot come from a T-09 document — it is the pre-T-09
+ * archive shape, whose auction ENDED at the confirmation and whose surviving
+ * numbers are the declarations the confirmation already cancelled. Such an
+ * archive is refused rather than replayed as re-declarations, which would
+ * invent a With set the table never had.
+ *
+ * Documented limitation: a pre-T-09 archive whose last-caller slot happens
+ * to EQUAL its confirmed number (no raise at confirmation — the common case)
+ * is byte-identical to a T-09 archive, because no field records which engine
+ * produced it. It settles under the T-09 rules; only the archive format
+ * could ever disambiguate it, and rewriting historical archives is out of
+ * scope by rule.
+ *
+ * Anything else fails closed. Each cycle is replayed through the REAL
+ * engine, so the full wipe, the With recomputation and the re-declaration
+ * order are the engine's own.
+ */
+internal fun replayFastSuperCallChain(
+  state: BiddingState,
+  confirms: List<FastSuperConfirm>,
+  stored: Map<String, Int>,
+): FastSuperChain? {
+  if (!state.fastRound || confirms.isEmpty()) return null
+  val order = biddingOrder(state)
+  var current = state
+  var previousTricks: Int? = null
+  var outcome: BiddingOutcome? = null
+  var confirmTricks = 0
+
+  for ((index, confirm) in confirms.withIndex()) {
+    val isLast = index == confirms.lastIndex
+    val seat = confirm.seat
+    if (seat !in order) return null
+    val tricks = confirm.tricks
+    if (tricks < FAST_SUPER_CALL_MIN || tricks > MAX_TRICKS) return null
+    if (previousTricks != null && tricks <= previousTricks) return null
+
+    // The last cycle's caller slot is the confirmed number itself (see the
+    // §5 note above): anything else — lower is the pre-T-09 archive shape,
+    // higher contradicts the confirmation — is not a T-09 record. An earlier
+    // cycle's declaration is gone (the archive keeps one value per seat), so
+    // only the confirmed numbers can be checked there.
+    val declaration = if (isLast) stored[seat] else null
+    if (isLast && declaration != tricks) return null
+
+    // The confirmation phase opens for this caller. The trump in force is
+    // the one the previous cycle confirmed (the round's fixed trump in the
+    // first cycle) and the number the caller must confirm is its own
+    // declaration — known for the last cycle only.
+    val inForce = current.declaredTrump ?: fixedTrumpFor(state.round, state.gameType)
+    val preConfirm = current.copy(
+      subPhase = BiddingPhase.CONFIRM,
+      waitingFor = seat,
+      noSuitConstraint = true,
+      fastSuperResolved = false,
+      callerId = null,
+      withPlayers = emptyList(),
+      auctionTop = declaration ?: previousTricks ?: (FAST_SUPER_CALL_MIN - 1),
+      bids = mapOf(seat to Bid(BidType.TRICKS, declaration ?: tricks, inForce)),
+      lastBidderId = null,
+    )
+    when (val emitted = emit(preConfirm, BiddingIntent.ConfirmCall(seat, tricks, confirm.suit))) {
+      is EmitResult.Applied -> current = emitted.state
+      is EmitResult.Completed -> {
+        current = emitted.state
+        outcome = emitted.outcome
+      }
+      is EmitResult.GeneralPass -> return null
+      is EmitResult.Rejected -> return null
+    }
+    previousTricks = tricks
+    confirmTricks = tricks
+    if (outcome != null) break
+  }
+  return FastSuperChain(current, outcome, confirmTricks)
+}
+
 object Settlement {
 
   /** Canonical failure reasons. The seam maps these to AuthorityError codes. */
@@ -112,7 +253,26 @@ object Settlement {
   /**
    * The converged match document, parsed. [order] is canonical seat order;
    * [dealerSeatFinal] is the seat holding the dealer marker at completion
-   * (the round-N dealer — the walk-back anchor).
+   * (the round-N dealer — the walk-back anchor). [currentMultiplier] is the
+   * O-19 persisted multiplier of the FINAL round (the current round at
+   * completion); null means the document predates the field, and the
+   * replayed chain is then the only authority — the compatible legacy
+   * fallback, never a silent reset.
+   *
+   * Departure provenance (S6, A7.5) — parsed from the same converged fields
+   * the gate already reads, so provenance adds no read and opens no race:
+   * [leftUids] (S72 explicit Leave Match), [timeoutRemovedUids] (S61's
+   * 15-timeout counter), [removedUids] (S60 Vote Kick) and
+   * [takeoverRemovedUids] (the 7th-inactivity takeover, written by S7 and
+   * read as a raw field name until the services model carries it). All four
+   * are absent ⇒ empty; each is parsed defensively (a non-list reads as
+   * empty, a non-string element is skipped — the DisconnectVoteFlow
+   * `stringSet` convention). [departedUids] is the union the stats-only
+   * settlement's forced-KOZ override consumes.
+   * `disconnectReplacedUids` is deliberately NOT parsed here: a permanently
+   * replaced disconnect keeps its own charge table (A7.4: ROOM none, UNRANKED
+   * 2 Koz) whose consumer does not exist yet, so it neither forces KOZ nor
+   * adds a charge in S6.
    */
   data class ConvergedMatch(
     val matchId: String,
@@ -128,7 +288,25 @@ object Settlement {
     val claimedScores: Map<String, Int>?,
     val claimedWinners: List<String>?,
     val archives: List<ArchivedRound>,
-  )
+    val currentMultiplier: Int? = null,
+    val leftUids: List<String> = emptyList(),
+    val timeoutRemovedUids: List<String> = emptyList(),
+    val removedUids: List<String> = emptyList(),
+    val takeoverRemovedUids: List<String> = emptyList(),
+  ) {
+    /**
+     * Every uid the converged document records as departed through any of
+     * the four terminal mechanisms — the set the A7.5 override folds to KOZ
+     * whatever the seat's bot finished as. `disconnectReplacedUids` is
+     * excluded by design (see the class KDoc). The forced KOZ is the ONLY
+     * Koz the stats-only settlement records; the separate departure-charge
+     * accumulator is deliberately not called on that path, so a later
+     * consumer must not add a second Koz for the same event.
+     */
+    val departedUids: Set<String>
+      get() = (leftUids.asSequence() + timeoutRemovedUids.asSequence() +
+        removedUids.asSequence() + takeoverRemovedUids.asSequence()).toSet()
+  }
 
   // ── outcomes ──────────────────────────────────────────────────────
 
@@ -143,8 +321,14 @@ object Settlement {
   )
 
   sealed class SettleDecision {
-    /** Not a Ranked match — no-op by design (ROOM/UNRANKED never settle). */
-    data class NoOp(val mode: MatchMode) : SettleDecision()
+    /**
+     * ROOM/UNRANKED (S6, A7.5/A8.4, Q38/Q46 — superseding RD28's "never
+     * settle"): the match settles STATS-ONLY — the five stored career
+     * counters per attributed human seat, never RP, never a season, never a
+     * correction. The seam routes this to the stats-only transaction in
+     * SettlementDb (no recompute, no archive read).
+     */
+    data class StatsOnly(val mode: MatchMode) : SettleDecision()
 
     /** Ranked + member — proceed to the archive stage. */
     data object Proceed : SettleDecision()
@@ -189,6 +373,16 @@ object Settlement {
   fun parseMatchMode(value: Any?): MatchMode =
     (value as? String)?.let { runCatching { MatchMode.valueOf(it) }.getOrNull() }
       ?: MatchMode.ROOM
+
+  /**
+   * A departure-provenance uid list: absent or a non-list reads as empty,
+   * and a non-string element is skipped (the `stringSet` convention
+   * DisconnectVoteFlow already uses for `removedUids`/`timeoutRemovedUids`).
+   * Provenance is advisory input to the stats-only override, never a gate —
+   * a malformed list must not make a converged match unsettleable.
+   */
+  fun parseUidList(value: Any?): List<String> =
+    (value as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
 
   fun parseCard(fields: Any?): SettledPlay? {
     val map = strMap(fields) ?: return null
@@ -268,6 +462,20 @@ object Settlement {
     }
     val claimedWinners = (fields["winnerIds"] as? List<*>)
       ?.map { it as? String ?: return null }
+    val classic = parseScoringMode(fields["scoringMode"]) == ScoringMode.CLASSIC
+    // O-19: absent = a document written before the field (legacy fallback:
+    // the replayed chain decides). Present must be a legal stored value —
+    // an out-of-range integer or a Classic match above 1 is a corrupt
+    // document, never silently re-read as 1.
+    val currentMultiplier = when (val raw = fields["currentMultiplier"]) {
+      null -> null
+      else -> {
+        val value = num(raw) ?: return null
+        if (value < 1 || value > 8) return null
+        if (classic && value != 1) return null
+        value
+      }
+    }
     return ConvergedMatch(
       matchId = matchId,
       mode = parseMatchMode(fields["mode"]),
@@ -276,13 +484,46 @@ object Settlement {
       players = players,
       dealerSeatFinal = dealerSeatFinal,
       gameType = parseGameType(fields["gameType"]),
-      classic = parseScoringMode(fields["scoringMode"]) == ScoringMode.CLASSIC,
+      classic = classic,
       completedRound = completedRound,
       maxRounds = maxRounds,
       claimedScores = claimedScores,
       claimedWinners = claimedWinners,
       archives = emptyList(),
+      currentMultiplier = currentMultiplier,
+      leftUids = parseUidList(fields["leftUids"]),
+      timeoutRemovedUids = parseUidList(fields["timeoutRemovedUids"]),
+      removedUids = parseUidList(fields["removedUids"]),
+      takeoverRemovedUids = parseUidList(fields[TAKEOVER_REMOVED_UIDS_FIELD]),
     )
+  }
+
+  /**
+   * seat → uid for the converged document, from its `seats` map — the same
+   * authority [parseMatch] resolves the dealer marker with. Null when the map
+   * is absent or holds an occupant that is not a uid string.
+   *
+   * RP needs this link and nothing else does: [RecomputedMatch.finalScores] is
+   * seat-keyed (the engine seats are p1..p4) while progression is written to
+   * `players/{uid}`. `players` is JOIN order, not seat order, so index-
+   * correlating the two lists would hand one seat's award to another player.
+   *
+   * Key order is [DEFAULT_SEATS], not the document's own: a plain JS object's
+   * key order would otherwise decide which seat a settlement walks. A seat the
+   * document does not name is absent from the result — [parseMatch] builds
+   * `order` from those same `seats` keys, so such a seat is already out of the
+   * settlement before this fold runs, never a hole it silently skips. A seat
+   * the document DOES name with a non-uid occupant refuses the whole map: one
+   * untrustable entry makes every seat's link untrustable.
+   */
+  fun parseSeats(fields: Map<String, Any?>): Map<String, String>? {
+    val raw = strMap(fields["seats"]) ?: return null
+    val out = LinkedHashMap<String, String>(raw.size)
+    for (seat in DEFAULT_SEATS) {
+      val value = raw[seat] ?: continue
+      out[seat] = value as? String ?: return null
+    }
+    return out
   }
 
   fun parseArchive(docId: String, fields: Map<String, Any?>): ArchivedRound? {
@@ -305,9 +546,12 @@ object Settlement {
   // ── gate ──────────────────────────────────────────────────────────
 
   /**
-   * Membership + mode gate over the converged document. ROOM/UNRANKED
-   * (including absent-or-legacy mode, which parses as ROOM per S43) are
-   * an explicit no-op — settlement never runs outside RANKED (RD28).
+   * Membership + mode gate over the converged document. ROOM and UNRANKED
+   * (including an absent-or-legacy mode, which parses as ROOM per S43)
+   * settle STATS-ONLY (S6, A7.5/A8.4 / Q38/Q46, superseding RD28's
+   * "never settle"): the five stored career counters per attributed human
+   * seat — Games Played and one outcome row, with a departed human forced
+   * to KOZ — and never RP. RANKED proceeds to the archive recompute.
    */
   fun decide(uid: String, match: ConvergedMatch): SettleDecision {
     if (uid !in match.players) {
@@ -316,10 +560,16 @@ object Settlement {
         "settleMatch: you are not a player in this match.",
       )
     }
-    if (match.mode != MatchMode.RANKED) {
-      return SettleDecision.NoOp(match.mode)
+    return when (match.mode) {
+      MatchMode.RANKED -> SettleDecision.Proceed
+      // RD28 asks every mode switch site for an explicit UNRANKED branch:
+      // an UNRANKED completion records the career counters and never RP —
+      // the same stats-only answer a ROOM match gets, named apart so that
+      // neither mode is forgotten the day UNRANKED gains an outcome of its
+      // own.
+      MatchMode.UNRANKED -> SettleDecision.StatsOnly(match.mode)
+      MatchMode.ROOM -> SettleDecision.StatsOnly(match.mode)
     }
-    return SettleDecision.Proceed
   }
 
   // ── recompute ─────────────────────────────────────────────────────
@@ -371,6 +621,7 @@ object Settlement {
     }
 
     var multiplier = 1
+    var finalRoundMultiplier: Int? = null
     val escalationCap = if (match.classic) 2 else 8
     var totals: Map<String, Int> = match.order.associateWith { 0 }
     for (round in 1..match.completedRound) {
@@ -380,6 +631,7 @@ object Settlement {
           Reason.HISTORY_INCOMPLETE,
           "settleMatch: round $round dealer is not resolvable from the match seats.",
         )
+      finalRoundMultiplier = multiplier
       val scored = scoreRound(match, archived, dealer, multiplier, escalationCap)
         ?: return if (archived.estimates == null) {
           SettleDecision.Failed(
@@ -395,6 +647,19 @@ object Settlement {
         }
       totals = accumulateMatchScores(totals, scored.deltas)
       multiplier = scored.nextMultiplier
+    }
+
+    // O-19: the persisted value is the multiplier of the round current at
+    // completion — the same value the replayed chain entered its final
+    // round at. A disagreement means the document and the archives tell
+    // different stories: report it, never settle on a silent ×1.
+    val documented = match.currentMultiplier
+    if (documented != null && finalRoundMultiplier != null && documented != finalRoundMultiplier) {
+      return SettleDecision.Failed(
+        Reason.HISTORY_CORRUPT,
+        "settleMatch: currentMultiplier $documented does not match the replayed " +
+          "ladder value $finalRoundMultiplier for round ${match.completedRound}.",
+      )
     }
 
     val winners = computeWinner(totals)
@@ -433,11 +698,19 @@ object Settlement {
   }
 
   /**
-   * Replays one round's converged auction (logged intents) plus its
-   * archived estimates (fed as FinalEstimate intents in engine turn
-   * order) through the real bidding engine, then scores the replayed
-   * cardLog through the real scoring engine. Any engine rejection, any
-   * unconsumed archive value, or any malformed trick fails closed (null).
+   * Replays one round's converged history (logged intents, then its archived
+   * estimates fed as FinalEstimate intents in engine turn order) through the
+   * real bidding engine and, when the round actually produced play, through
+   * the real scoring engine. Any engine rejection, any unconsumed archive
+   * value, or any malformed trick fails closed (null).
+   *
+   * S1 (A8.7 / Q51): a round whose auction ALL passed is a pure pass archive
+   * — no cards, no estimates, and its only log ends in the pass. The island
+   * round is NOT scored (deltas all zero) and returns the doubled multiplier
+   * the engine derived for the round following it, so recompute's chain
+   * scores that round at ×2 → ×4 → … under Normal and ×1 under Classic. The
+   * same-round re-redeal this function performed before S1 is gone: entries
+   * beyond the pass in this round's own log belong to no S1 round and fail.
    */
   fun scoreRound(
     match: ConvergedMatch,
@@ -448,18 +721,60 @@ object Settlement {
   ): ScoredRound? {
     val order = match.order
     val fast = isFastRound(archived.round, match.gameType)
+    // The engine derives a pass's next-multiplier from the mode (CLASSIC
+    // never escalates) — thread the match's own mode, never the default.
+    val scoringMode = if (match.classic) ScoringMode.CLASSIC else ScoringMode.NORMAL
     var state = if (fast) {
-      initFastRound(archived.round, dealerSeat, order, multiplier, match.gameType)
+      initFastRound(archived.round, dealerSeat, order, multiplier, match.gameType, scoringMode)
     } else {
-      initNormalRound(archived.round, dealerSeat, order, multiplier, match.gameType)
+      initNormalRound(archived.round, dealerSeat, order, multiplier, match.gameType, scoringMode)
     }
 
     var outcome: BiddingOutcome? = null
     var confirmTricks: Int? = null
+    val fed = mutableSetOf<String>()
     var index = 0
     while (index < archived.actions.size) {
       val entry = archived.actions[index]
       if (entry.seat !in order) return null
+      if (fast && entry.kind == ActionKind.CONFIRM) {
+        // A fast Super Call is confirmed AFTER the estimates that triggered
+        // it, but only the FINAL estimates survive in the archive. Every
+        // higher Super Call logs its own confirmation, so the rest of the
+        // log is the chain of cycles: each one wipes every seat except the
+        // new Super Caller, who then takes a new trump and every other
+        // seat declares again.
+        if (state.subPhase != BiddingPhase.ESTIMATES) return null
+        val estimates = archived.estimates ?: return null
+        val chain = archived.actions.subList(index, archived.actions.size)
+        if (chain.any { it.kind != ActionKind.CONFIRM }) return null
+        val confirms = chain.map {
+          FastSuperConfirm(
+            it.seat,
+            it.tricks ?: return null,
+            it.suit ?: return null,
+          )
+        }
+        // The final Super Call was opened by a declaration ABOVE the
+        // previous cycle's confirmed number. The archive keeps one value
+        // per seat and the last caller never declares again after its own
+        // confirmation, so its archived value IS that declaration.
+        if (confirms.size > 1) {
+          val declaration = estimates[confirms.last().seat] ?: return null
+          if (declaration <= confirms[confirms.size - 2].tricks) return null
+        }
+        val replayed = replayFastSuperCallChain(state, confirms, estimates) ?: return null
+        confirmTricks = replayed.confirmTricks
+        outcome = replayed.outcome
+        state = replayed.state
+        // Only the LAST Super Caller's own declaration is materialised by
+        // the chain: every other seat declared again under the final trump
+        // and is fed by the estimate loop below. Marking a seat as fed
+        // because of its position relative to the caller would leave the
+        // round without a declaration it never made.
+        fed.add(confirms.last().seat)
+        break
+      }
       val intent = when (entry.kind) {
         ActionKind.DASH -> BiddingIntent.DashCallDecision(
           entry.seat, entry.declaredDashCall ?: return null,
@@ -487,12 +802,17 @@ object Settlement {
           break
         }
         is EmitResult.GeneralPass -> {
-          // Redeal: the same round restarts carrying the doubled
-          // multiplier the engine computed. General passes only leave
-          // the auction phase, which fast rounds never enter.
+          // S1 (A8.7 / Q51): the pass CANCELS this round — its archive may
+          // carry no cards, no estimates, and nothing after the pass. The
+          // round itself is unscored; the next round starts at the doubled
+          // multiplier the engine derived (Classic: 1). General passes only
+          // leave the auction phase, which fast rounds never enter.
           if (fast) return null
-          state = initNormalRound(archived.round, dealerSeat, order, emitted.doubledMultiplier, match.gameType)
-          index++
+          if (archived.plays.isNotEmpty()) return null
+          if (index != archived.actions.size - 1) return null
+          if (archived.estimates == null) return null
+          if (archived.estimates.isNotEmpty()) return null
+          return ScoredRound(order.associateWith { 0 }, emitted.doubledMultiplier)
         }
         is EmitResult.Applied -> {
           state = emitted.state
@@ -509,13 +829,12 @@ object Settlement {
     var completed = outcome
     if (completed == null) {
       if (estimates == null) return null
-      val fed = mutableSetOf<String>()
       var guard = 0
       while (guard < order.size + 1) {
         val waiting = state.waitingFor ?: break
         if (waiting !in order) return null
         val estimate = estimates[waiting] ?: return null
-        fed.add(waiting)
+        if (!fed.add(waiting)) return null
         when (val emitted = emit(state, BiddingIntent.FinalEstimate(waiting, estimate))) {
           is EmitResult.Completed -> {
             completed = emitted.outcome
@@ -527,15 +846,12 @@ object Settlement {
         }
         guard++
       }
-      val done = completed ?: return null
-      if (fed.size != estimates.size) return null
-      completed = done
-    } else if (estimates != null && estimates.isNotEmpty()) {
-      // Bidding completed inside the log (all-dash / fast-super-confirm):
-      // no seat could legally estimate afterwards, so any archived value
-      // contradicts the converged flow.
-      return null
+      completed = completed ?: return null
     }
+    // Every archived estimate must be consumed exactly once. This covers
+    // normal rounds, fast rounds resolved entirely from estimates, and fast
+    // Super Calls whose caller-side estimates were materialized before CONFIRM.
+    if (estimates != null && fed != estimates.keys) return null
 
     val final = completed ?: return null
     val bids = scoringBids(match, final, confirmTricks) ?: return null

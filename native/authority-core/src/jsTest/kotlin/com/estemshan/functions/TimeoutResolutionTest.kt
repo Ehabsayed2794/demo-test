@@ -1,11 +1,19 @@
 package com.estemshan.functions
 
+import com.estemshan.engine.Bid
+import com.estemshan.engine.BidType
 import com.estemshan.engine.BiddingIntent
 import com.estemshan.engine.BiddingPhase
+import com.estemshan.engine.BiddingState
 import com.estemshan.engine.Card
 import com.estemshan.engine.Dealer
 import com.estemshan.engine.EmitResult
+import com.estemshan.engine.GameType
+import com.estemshan.engine.InactivityClock
+import com.estemshan.engine.ScoringMode
+import com.estemshan.engine.Suit
 import com.estemshan.engine.emit
+import com.estemshan.engine.initFastRound
 import kotlinx.coroutines.test.runTest
 import kotlin.js.json
 import kotlin.test.Test
@@ -51,6 +59,13 @@ class TimeoutResolutionTest {
   /** A server timestamp's epoch-millis; the deadline anchor. */
   private val anchorMillis = 1_000_000L
 
+  /** Sentinel for "key absent", distinct from an explicit null (SettlementTest's idiom). */
+  private val ABSENT = Any()
+
+  /** One round's worth of timed decisions: 52 cards plus the auction, the
+   *  confirmation and the four estimates. Past this the chain is looping. */
+  private val chainSteps = 80
+
   private fun gameState(round: Int): Map<String, Any?> =
     mapOf("initialized" to true, "dealtRound" to round)
 
@@ -60,10 +75,23 @@ class TimeoutResolutionTest {
     "round" to round,
   )
 
+  private fun confirmEntry(seat: String, tricks: Int, suit: String, round: Int): Map<String, Any?> =
+    mapOf(
+      "seatId" to seat,
+      "actionType" to "SubmitConfirmCall",
+      "tricks" to tricks,
+      "suit" to suit,
+      "round" to round,
+    )
+
   /**
    * A round-14 fast round (FULL), dealt, mid-estimate: the dealer is the seat
    * the engine waits on. [bidsOverride] models estimates already committed by
    * other seats; [biddingOpen] models the window still being open.
+   *
+   * [biddingCycle] is T-09's persisted cycle counter. Every writer stamps it
+   * (0 at the deal, +1 per fast Super Call CONFIRM), so it is present on every
+   * document this helper builds; a legacy fixture removes the key explicitly.
    */
   private fun fastRoundDoc(
     bidsOverride: Map<String, Int?> = emptyMap(),
@@ -77,35 +105,45 @@ class TimeoutResolutionTest {
     cardPhase: String? = null,
     turn: String? = null,
     biddingLog: List<Map<String, Any?>> = emptyList(),
+    biddingCycle: Int = 0,
     version: Int = 1,
-  ): Map<String, Any?> = mutableMapOf(
-    "roomId" to "room-1",
-    "players" to players,
-    "status" to status,
-    "currentRound" to currentRound,
-    "maxRounds" to 18,
-    "completedRound" to 0,
-    "extendedRounds" to emptyList<Int>(),
-    "dealer" to seats.getValue("p1"),
-    "turn" to turn,
-    "seats" to seats,
-    "version" to version,
-    "biddingOpen" to biddingOpen,
-    "bids" to linkedMapOf<String, Int?>(*order.map { it to bidsOverride[it] }.toTypedArray()),
-    "lastBidSeat" to bidsOverride.keys.lastOrNull(),
-    "cardLog" to cardLog,
-    "lastCardSeat" to null,
-    "cardPhase" to cardPhase,
-    "biddingLog" to biddingLog,
-    "gameState" to gameState(dealtRound),
-    "gameType" to "FULL",
-    "scoringMode" to "NORMAL",
-    "mode" to "RANKED",
-    "botTier" to "MEDIUM",
-    "botPersonality" to "BALANCED",
-    "decisionTimerSeconds" to timerSeconds,
-    "updatedAt" to updatedAt,
-  )
+    scoringMode: String = "NORMAL",
+    currentMultiplier: Any? = ABSENT,
+  ): Map<String, Any?> {
+    val doc = mutableMapOf(
+      "roomId" to "room-1",
+      "players" to players,
+      "status" to status,
+      "currentRound" to currentRound,
+      "maxRounds" to 18,
+      "completedRound" to 0,
+      "extendedRounds" to emptyList<Int>(),
+      "dealer" to seats.getValue("p1"),
+      "turn" to turn,
+      "seats" to seats,
+      "version" to version,
+      "biddingOpen" to biddingOpen,
+      "bids" to linkedMapOf<String, Int?>(*order.map { it to bidsOverride[it] }.toTypedArray()),
+      "lastBidSeat" to bidsOverride.keys.lastOrNull(),
+      "biddingCycle" to biddingCycle,
+      "cardLog" to cardLog,
+      "lastCardSeat" to null,
+      "cardPhase" to cardPhase,
+      "biddingLog" to biddingLog,
+      "gameState" to gameState(dealtRound),
+      "gameType" to "FULL",
+      "scoringMode" to scoringMode,
+      "mode" to "RANKED",
+      "botTier" to "MEDIUM",
+      "botPersonality" to "BALANCED",
+      "decisionTimerSeconds" to timerSeconds,
+      "updatedAt" to updatedAt,
+    )
+    // O-19: absent by default, so every pre-O-19 fixture stays a LEGACY
+    // document and keeps proving the 1 reading the field replaces.
+    if (currentMultiplier !== ABSENT) doc["currentMultiplier"] = currentMultiplier
+    return doc
+  }
 
   /**
    * A round-1 NORMAL round (FULL), dealt, waiting on the dealer's opening Dash
@@ -120,6 +158,8 @@ class TimeoutResolutionTest {
     timerSeconds: Int = 15,
     biddingLog: List<Map<String, Any?>> = emptyList(),
     version: Int = 1,
+    scoringMode: String = "NORMAL",
+    currentMultiplier: Any? = ABSENT,
   ): Map<String, Any?> = fastRoundDoc(
     biddingOpen = biddingOpen,
     updatedAt = updatedAt,
@@ -131,6 +171,8 @@ class TimeoutResolutionTest {
     turn = null,
     biddingLog = biddingLog,
     version = version,
+    scoringMode = scoringMode,
+    currentMultiplier = currentMultiplier,
   )
 
   /** The round's dealt hands from the real dealer — 4×13 unique cards. */
@@ -244,6 +286,43 @@ class TimeoutResolutionTest {
     assertNull(TimeoutResolution.pendingDecision(doc))
   }
 
+  /**
+   * S1 (A8.7 / Q51): a general pass CANCELS the round instead of re-dealing
+   * it. The round's own log ends in the pass, so the resolver's replay keeps
+   * the engine's cancelled-round state: nobody waits on anything, so no
+   * decision exists to resolve until the document advances to the round the
+   * host arms next. The old replay re-initialised the same round at the
+   * doubled multiplier, which re-litigated a round S1 had already consumed.
+   */
+  @Test
+  fun aPassedRoundReplaysToADecisionlessCancelledRound() {
+    val log = buildList {
+      order.forEach { seat ->
+        add(mapOf(
+          "seatId" to seat,
+          "actionType" to "SubmitDashCallDecision",
+          "declaredDashCall" to false,
+          "round" to 1,
+        ))
+      }
+      order.forEach { seat ->
+        add(mapOf(
+          "seatId" to seat,
+          "actionType" to "SubmitAuctionBid",
+          "isPass" to true,
+          "round" to 1,
+        ))
+      }
+    }
+    val doc = normalRoundDoc(biddingLog = log, version = 2)
+
+    // An all-pass round has no seat waiting to decide.
+    assertNull(TimeoutResolution.pendingDecision(doc))
+    val state = TimeoutResolution.replayBidding(doc, order, 1)!!
+    assertEquals(1, state.round)
+    assertNull(state.waitingFor)
+  }
+
   // ── the MEDIUM bot's decision, in the human path's own write shape ──
 
   @Test
@@ -270,6 +349,421 @@ class TimeoutResolutionTest {
     val state = TimeoutResolution.replayBidding(doc, order, 14)!!
     val reemit = emit(state, BiddingIntent.FinalEstimate("p1", estimate))
     assertTrue(reemit is EmitResult.Applied || reemit is EmitResult.Completed)
+  }
+
+  // ── T-09: the live Fast Super Call declaration cycle ─────────────────
+
+  /** The live fast round after [intents], replayed by the real engine, so the
+   *  fixtures below carry the declarations the writers would actually store. */
+  private fun fastEngineState(vararg intents: BiddingIntent): BiddingState {
+    var state = initFastRound(
+      round = 14,
+      dealer = "p1",
+      seats = order,
+      gameType = GameType.FULL,
+      scoringMode = ScoringMode.NORMAL,
+    )
+    for (intent in intents) {
+      state = when (val emitted = emit(state, intent)) {
+        is EmitResult.Applied -> emitted.state
+        is EmitResult.Completed -> emitted.state
+        is EmitResult.Rejected -> error("engine rejected $intent: ${emitted.reason}")
+        is EmitResult.GeneralPass -> error("a fast round cannot general-pass")
+      }
+    }
+    return state
+  }
+
+  /** The document the atomic CONFIRM reset leaves behind: `bids` REPLACED by
+   *  the active cycle's declared seats, the confirmation log, and the cycle
+   *  counter the reset bumped. */
+  private fun fastCycleDoc(
+    state: BiddingState,
+    confirms: List<Map<String, Any?>>,
+    version: Int,
+    biddingOpen: Boolean = true,
+  ): Map<String, Any?> =
+    fastRoundDoc(
+      bidsOverride = state.bids.mapValues { it.value.amount },
+      biddingOpen = biddingOpen,
+      biddingLog = confirms,
+      biddingCycle = confirms.size,
+      version = version,
+    ).toMutableMap().apply {
+      // The reset REPLACES bids/, so a wiped seat has no key at all;
+      // `fastRoundDoc`'s null-padded map would misstate the document.
+      this["bids"] = state.bids.mapValues { it.value.amount }
+      this["lastBidSeat"] = null
+    }
+
+  @Test
+  fun aFirstSeatFastSuperCallReopensTheReDeclaration() {
+    // Caller p1 is first in bidding order, but a Fast Super Call NEVER ends
+    // the round (T-09): the confirmation wipes every other seat and re-opens
+    // the re-declaration counter-clockwise from the seat after the caller.
+    // T-09's atomic write makes that wipe PERSISTED — `bids` holds only the
+    // caller's confirmed number when the document lands — so the replay stops
+    // on p2 and the round is NOT closed. The With set is derived from the
+    // final cycle, which has not happened yet.
+    val doc = fastRoundDoc(
+      bidsOverride = mapOf("p1" to 8),
+      biddingOpen = true,
+      biddingLog = listOf(confirmEntry("p1", 8, "SANS", 14)),
+      biddingCycle = 1,
+    )
+    val state = TimeoutResolution.replayBidding(doc, order, 14)!!
+    assertEquals(BiddingPhase.ESTIMATES, state.subPhase)
+    assertEquals("p2", state.waitingFor)
+    assertEquals("p1", state.callerId)
+    assertTrue(
+      state.withPlayers.isEmpty(),
+      "the With set belongs to the FINAL cycle, not to this one",
+    )
+    assertEquals(Suit.SANS, state.declaredTrump)
+    assertEquals(8, state.auctionTop)
+    assertEquals(8, state.bids["p1"]?.amount)
+    assertEquals(Suit.SANS, state.bids["p1"]?.suit)
+    assertEquals(
+      setOf("p1"),
+      state.bids.keys,
+      "the persisted wipe leaves exactly the caller's own declaration",
+    )
+
+    // The timeout authority waits for the re-declaration, not for a card.
+    val pending = TimeoutResolution.pendingDecision(doc)!!
+    assertEquals(TimeoutResolution.DecisionPhase.BIDDING, pending.phase)
+    assertEquals("p2", pending.seatId)
+  }
+
+  @Test
+  fun aFastSuperCallWithWipedSeatsReportsTheSeatThatMustReDeclare() {
+    // p2's confirm wipes the other seats, and p3 is the first to re-declare.
+    // A mid-cycle document always carries `biddingOpen == true` (the atomic
+    // reset writes it), but detection must not hinge on that flag: the replay
+    // is the phase authority, so the same document with a stale `false` still
+    // names p3 — and never invents a card decision for an auction that has
+    // not closed.
+    val doc = fastRoundDoc(
+      bidsOverride = mapOf("p2" to 8),
+      biddingOpen = false,
+      biddingLog = listOf(confirmEntry("p2", 8, "SANS", 14)),
+      biddingCycle = 1,
+    )
+    val state = TimeoutResolution.replayBidding(doc, order, 14)!!
+    assertEquals(BiddingPhase.ESTIMATES, state.subPhase)
+    assertEquals("p3", state.waitingFor)
+    assertEquals("p2", state.callerId)
+    assertEquals(Suit.SANS, state.declaredTrump)
+    assertEquals(8, state.bids["p2"]?.amount)
+    assertEquals(setOf("p2"), state.bids.keys)
+
+    val pending = TimeoutResolution.pendingDecision(doc)!!
+    assertEquals(TimeoutResolution.DecisionPhase.BIDDING, pending.phase)
+    assertEquals("p3", pending.seatId)
+  }
+
+  @Test
+  fun theFirstRedeclarationAfterAFastSuperCallIsTimed() {
+    val afterConfirm = fastEngineState(
+      BiddingIntent.FinalEstimate("p1", 8),
+      BiddingIntent.FinalEstimate("p2", 9),
+      BiddingIntent.FinalEstimate("p3", 10),
+      BiddingIntent.FinalEstimate("p4", 7),
+      BiddingIntent.ConfirmCall("p3", 10, Suit.CLUBS),
+    )
+    assertEquals("p4", afterConfirm.waitingFor)
+    val doc = fastCycleDoc(
+      afterConfirm,
+      confirms = listOf(confirmEntry("p3", 10, "CLUBS", 14)),
+      version = 3,
+    )
+    val pending = TimeoutResolution.pendingDecision(doc)!!
+    assertEquals(TimeoutResolution.DecisionPhase.BIDDING, pending.phase)
+    assertEquals("p4", pending.seatId)
+    assertEquals(20, pending.durationSeconds)
+
+    val resolution = TimeoutResolution.resolveExpired(doc, dealtHands(), pending)
+    assertIs<TimeoutResolution.Resolution.Applied>(resolution)
+    val updates = resolution.write.updates
+    val bids = updates["bids"] as Map<*, *>
+    assertEquals(
+      mapOf("p3" to 10, "p4" to bids["p4"]),
+      bids,
+      "the caller's confirmed number survives the re-declaration write",
+    )
+    assertFalse(updates.containsKey("biddingCycle"))
+    assertFalse(updates.containsKey("biddingLog"))
+  }
+
+  @Test
+  fun theResolverTimesOutTheActiveCyclesNextDeclarant() {
+    // Cycle 1: p3 declares 10 and confirms CLUBS; the seats re-declare, and
+    // p2's 11 opens cycle 2, confirmed under HEARTS. p3 has re-declared 5 in
+    // the ACTIVE cycle and p4 is next. Everything from cycle 1 — p1's 4,
+    // p4's 6, the call at 10, the CLUBS trump — is superseded.
+    val secondCycle = fastEngineState(
+      BiddingIntent.FinalEstimate("p1", 8),
+      BiddingIntent.FinalEstimate("p2", 9),
+      BiddingIntent.FinalEstimate("p3", 10),
+      BiddingIntent.FinalEstimate("p4", 7),
+      BiddingIntent.ConfirmCall("p3", 10, Suit.CLUBS),
+      BiddingIntent.FinalEstimate("p4", 6),
+      BiddingIntent.FinalEstimate("p1", 4),
+      BiddingIntent.FinalEstimate("p2", 11),
+      BiddingIntent.ConfirmCall("p2", 11, Suit.HEARTS),
+      BiddingIntent.FinalEstimate("p3", 5),
+    )
+    assertEquals(BiddingPhase.ESTIMATES, secondCycle.subPhase)
+    assertEquals("p4", secondCycle.waitingFor)
+    val doc = fastCycleDoc(
+      secondCycle,
+      confirms = listOf(
+        confirmEntry("p3", 10, "CLUBS", 14),
+        confirmEntry("p2", 11, "HEARTS", 14),
+      ),
+      version = 5,
+    )
+    assertEquals(2, doc["biddingCycle"])
+
+    val state = TimeoutResolution.replayBidding(doc, order, 14)!!
+    assertEquals("p4", state.waitingFor)
+    assertEquals("p2", state.callerId)
+    assertEquals(Suit.HEARTS, state.declaredTrump)
+    assertEquals(11, state.auctionTop)
+    assertEquals(
+      setOf("p2", "p3"),
+      state.bids.keys,
+      "only the active cycle's declarations may be replayed",
+    )
+    assertEquals(Bid(BidType.TRICKS, 11, Suit.HEARTS), state.bids["p2"])
+    assertEquals(Bid(BidType.TRICKS, 5, Suit.HEARTS), state.bids["p3"])
+    assertTrue(state.withPlayers.isEmpty(), "nobody re-declared the final 11")
+
+    val pending = TimeoutResolution.pendingDecision(doc)!!
+    assertEquals(TimeoutResolution.DecisionPhase.BIDDING, pending.phase)
+    assertEquals("p4", pending.seatId)
+    val resolution = TimeoutResolution.resolveExpired(doc, dealtHands(), pending)
+    assertIs<TimeoutResolution.Resolution.Applied>(resolution)
+    val updates = resolution.write.updates
+    assertEquals(
+      setOf("bids", "biddingOpen", "lastBidSeat", "version", "updatedAt"),
+      updates.keys,
+      "an estimate never appends to the log or moves the cycle",
+    )
+    val bids = updates["bids"] as Map<*, *>
+    assertEquals(setOf("p2", "p3", "p4"), bids.keys)
+    assertEquals(11, bids["p2"])
+    assertEquals(5, bids["p3"])
+    assertTrue(bids["p4"] is Int, "the timed seat's estimate is the new value")
+    assertEquals(6, updates["version"])
+
+    // The decision is legal: feeding it back through the real engine accepts it.
+    val reemit = emit(state, BiddingIntent.FinalEstimate("p4", bids["p4"] as Int))
+    assertTrue(reemit is EmitResult.Applied || reemit is EmitResult.Completed)
+  }
+
+  @Test
+  fun theResolverWritesAFastSuperCallConfirmAsTheAtomicCycleReset() {
+    // The last declaration opened the Super Call and the doc's own flag is
+    // down (submitBid closes it when every seat has a bid) — the window a
+    // flag-only detector used to lose. The trump selection is timed, and its
+    // write is the SAME atomic reset the human path commits.
+    val doc = fastRoundDoc(
+      bidsOverride = mapOf("p1" to 8, "p2" to 9, "p3" to 3, "p4" to 2),
+      biddingOpen = false,
+    )
+    val pending = TimeoutResolution.pendingDecision(doc)!!
+    assertEquals(TimeoutResolution.DecisionPhase.BIDDING, pending.phase)
+    assertEquals("p2", pending.seatId, "the highest 8+ declaration wins the call")
+
+    val resolution = TimeoutResolution.resolveExpired(doc, dealtHands(), pending)
+    assertIs<TimeoutResolution.Resolution.Applied>(resolution)
+    val updates = resolution.write.updates
+    assertEquals(
+      setOf("biddingLog", "bids", "biddingOpen", "lastBidSeat", "biddingCycle", "version", "updatedAt"),
+      updates.keys,
+    )
+    val entry = arrayUnionEntries(updates["biddingLog"]).single()
+    assertEquals("SubmitConfirmCall", entry["actionType"])
+    assertEquals("p2", entry["seatId"])
+    val tricks = entry["tricks"] as Int
+    val suit = entry["suit"] as String
+    assertEquals(
+      mapOf("p2" to tricks),
+      updates["bids"],
+      "the reset wipes every other seat to the caller's confirmed number",
+    )
+    assertEquals(true, updates["biddingOpen"])
+    assertNull(updates["lastBidSeat"])
+    assertEquals(1, updates["biddingCycle"])
+    assertEquals(2, updates["version"])
+
+    // The write is exactly the shape the live schema's replay expects.
+    val applied = chainApply(doc, updates)
+    val state = TimeoutResolution.replayBidding(applied, order, 14)!!
+    assertEquals(BiddingPhase.ESTIMATES, state.subPhase)
+    assertEquals("p3", state.waitingFor, "re-declarations resume counter-clockwise")
+    assertEquals("p2", state.callerId)
+    assertEquals(tricks, state.auctionTop)
+    assertEquals(Suit.valueOf(suit), state.declaredTrump)
+  }
+
+  @Test
+  fun theLastRedeclarationClosesTheRoundFromTheFinalCycle() {
+    // Cycle 2 with p3 and p4 re-declared: p1 is the last seat the final cycle
+    // waits on. Its estimate closes the auction, and EVERY term of the round
+    // — caller, trump, estimates, With, leader — comes from this cycle.
+    val beforeLast = fastEngineState(
+      BiddingIntent.FinalEstimate("p1", 8),
+      BiddingIntent.FinalEstimate("p2", 9),
+      BiddingIntent.FinalEstimate("p3", 10),
+      BiddingIntent.FinalEstimate("p4", 7),
+      BiddingIntent.ConfirmCall("p3", 10, Suit.CLUBS),
+      BiddingIntent.FinalEstimate("p4", 6),
+      BiddingIntent.FinalEstimate("p1", 4),
+      BiddingIntent.FinalEstimate("p2", 11),
+      BiddingIntent.ConfirmCall("p2", 11, Suit.HEARTS),
+      BiddingIntent.FinalEstimate("p3", 5),
+      BiddingIntent.FinalEstimate("p4", 3),
+    )
+    assertEquals("p1", beforeLast.waitingFor)
+    val doc = fastCycleDoc(
+      beforeLast,
+      confirms = listOf(
+        confirmEntry("p3", 10, "CLUBS", 14),
+        confirmEntry("p2", 11, "HEARTS", 14),
+      ),
+      version = 6,
+    )
+    val pending = TimeoutResolution.pendingDecision(doc)!!
+    assertEquals("p1", pending.seatId)
+
+    val resolution = TimeoutResolution.resolveExpired(doc, dealtHands(), pending)
+    assertIs<TimeoutResolution.Resolution.Applied>(resolution)
+    val applied = chainApply(doc, resolution.write.updates)
+    val closed = TimeoutResolution.replayBidding(applied, order, 14)!!
+    assertEquals(BiddingPhase.DONE, closed.subPhase)
+    assertEquals("p2", closed.callerId)
+    assertEquals(Suit.HEARTS, closed.declaredTrump)
+    assertEquals(11, closed.auctionTop)
+    assertTrue(closed.withPlayers.isEmpty())
+    assertEquals(11, closed.bids.getValue("p2").amount)
+    assertEquals(5, closed.bids.getValue("p3").amount)
+    assertEquals(3, closed.bids.getValue("p4").amount)
+    assertTrue(closed.bids.getValue("p1").amount in 0..13)
+
+    // Card play is next, led by the final Super Caller.
+    val next = TimeoutResolution.pendingDecision(applied)!!
+    assertEquals(TimeoutResolution.DecisionPhase.CARD, next.phase)
+    assertEquals("p2", next.seatId)
+  }
+
+  @Test
+  fun aCompletedActiveCycleHandsTheTimerToTheCallersOpeningCard() {
+    // The final cycle's last re-declaration closed the auction: the round is
+    // playing cards and the Caller leads. No bidding window may survive, and
+    // the table must be built from the FINAL cycle's trump and estimates.
+    val closed = fastEngineState(
+      BiddingIntent.FinalEstimate("p1", 8),
+      BiddingIntent.FinalEstimate("p2", 9),
+      BiddingIntent.FinalEstimate("p3", 10),
+      BiddingIntent.FinalEstimate("p4", 7),
+      BiddingIntent.ConfirmCall("p3", 10, Suit.CLUBS),
+      BiddingIntent.FinalEstimate("p4", 6),
+      BiddingIntent.FinalEstimate("p1", 4),
+      BiddingIntent.FinalEstimate("p2", 3),
+    )
+    assertEquals(BiddingPhase.DONE, closed.subPhase)
+    val doc = fastCycleDoc(
+      closed,
+      confirms = listOf(confirmEntry("p3", 10, "CLUBS", 14)),
+      version = 6,
+      biddingOpen = false,
+    )
+    val hands = dealtHands()
+    val table = TimeoutResolution.replayTable(doc, order, 14, hands)!!
+    assertEquals(Suit.CLUBS, table.cfg.trump)
+    assertEquals("p3", table.cfg.callerId)
+    assertEquals(
+      mapOf("p3" to 10, "p4" to 6, "p1" to 4, "p2" to 3),
+      table.cfg.estimates,
+    )
+    assertTrue(table.cfg.withPlayers.isEmpty())
+
+    val pending = TimeoutResolution.pendingDecision(doc)!!
+    assertEquals(TimeoutResolution.DecisionPhase.CARD, pending.phase)
+    assertEquals("p3", pending.seatId, "the Super Caller leads the round")
+    assertEquals(15, pending.durationSeconds)
+
+    val resolution = TimeoutResolution.resolveExpired(doc, hands, pending)
+    assertIs<TimeoutResolution.Resolution.Applied>(resolution)
+    val updates = resolution.write.updates
+    assertEquals("PLAY", updates["cardPhase"])
+    assertNotNull(updates["turn"])
+    assertEquals(1, arrayUnionEntries(updates["cardLog"]).size)
+  }
+
+  @Test
+  fun aConfirmationWithoutItsRecordedCycleFailsClosed() {
+    // §5: a document written before the atomic reset still holds the wiped
+    // seats' PRE-confirm declarations and never bumped biddingCycle. Those
+    // numbers are cancelled history, not the active cycle. Nothing may replay
+    // them — detection is silent and resolution refuses by name.
+    val legacy = fastRoundDoc(
+      bidsOverride = mapOf("p1" to 8, "p2" to 8, "p3" to 3, "p4" to 2),
+      biddingOpen = true,
+      biddingLog = listOf(confirmEntry("p1", 8, "SANS", 14)),
+    ).toMutableMap().apply { remove("biddingCycle") }
+    assertNull(
+      TimeoutResolution.replayBidding(legacy, order, 14),
+      "the legacy document has no replayable active cycle",
+    )
+    assertNull(TimeoutResolution.pendingDecision(legacy))
+
+    val stale = TimeoutResolution.Pending(
+      TimeoutResolution.DecisionPhase.BIDDING, "p2", 20, anchorMillis,
+    )
+    val refusal = TimeoutResolution.resolveExpired(legacy, dealtHands(), stale)
+    val noWrite = assertIs<TimeoutResolution.Resolution.NoWrite>(refusal)
+    assertEquals(TimeoutResolution.Reason.HISTORY_CORRUPT, noWrite.reason)
+    assertTrue(
+      noWrite.message.contains("biddingCycle"),
+      "the refusal must name the field it could not trust, was: ${noWrite.message}",
+    )
+  }
+
+  @Test
+  fun aCycleLogDisagreementFailsClosedEvenWithACycleField() {
+    // Two ways the persisted cycle can contradict the log: a lost CONFIRM
+    // (cycle 2, one confirmation on record) and a reset whose own declaration
+    // is missing (the caller's slot no longer holds the number it confirmed).
+    val lostConfirm = fastRoundDoc(
+      bidsOverride = mapOf("p2" to 11),
+      biddingOpen = true,
+      biddingLog = listOf(confirmEntry("p3", 10, "CLUBS", 14)),
+      biddingCycle = 2,
+    )
+    assertNull(TimeoutResolution.replayBidding(lostConfirm, order, 14))
+
+    val missingAnchor = fastRoundDoc(
+      bidsOverride = mapOf("p4" to 6),
+      biddingOpen = true,
+      biddingLog = listOf(confirmEntry("p3", 10, "CLUBS", 14)),
+      biddingCycle = 1,
+    )
+    assertNull(TimeoutResolution.replayBidding(missingAnchor, order, 14))
+
+    val pending = TimeoutResolution.Pending(
+      TimeoutResolution.DecisionPhase.BIDDING, "p2", 20, anchorMillis,
+    )
+    val noWrite = assertIs<TimeoutResolution.Resolution.NoWrite>(
+      TimeoutResolution.resolveExpired(missingAnchor, dealtHands(), pending),
+    )
+    assertEquals(TimeoutResolution.Reason.HISTORY_CORRUPT, noWrite.reason)
+    assertTrue(
+      noWrite.message.contains("confirmed 10 trick(s)"),
+      "the refusal must name the reset's missing declaration, was: ${noWrite.message}",
+    )
   }
 
   /**
@@ -316,6 +810,259 @@ class TimeoutResolutionTest {
     assertEquals(BiddingPhase.DASH, state.subPhase)
     val reemit = emit(state, BiddingIntent.DashCallDecision("p1", declared as Boolean))
     assertTrue(reemit is EmitResult.Applied || reemit is EmitResult.Completed)
+  }
+
+  /**
+   * F1 (owner ruling 2026-10-24, strict two-Dash maximum): a persisted
+   * window claiming THREE declared Dash Calls is a document the
+   * normalising write boundaries can never produce, so the resolver
+   * refuses it BY NAME before any replay — never silently caps to two and
+   * decides on the clamped state.
+   */
+  @Test
+  fun aPersistedWindowClaimingThreeDeclaredDashesIsRefusedByName() {
+    val log = listOf(
+      mapOf("seatId" to "p1", "actionType" to "SubmitDashCallDecision", "declaredDashCall" to true, "round" to 1),
+      mapOf("seatId" to "p2", "actionType" to "SubmitDashCallDecision", "declaredDashCall" to true, "round" to 1),
+      mapOf("seatId" to "p3", "actionType" to "SubmitDashCallDecision", "declaredDashCall" to true, "round" to 1),
+      mapOf("seatId" to "p4", "actionType" to "SubmitDashCallDecision", "declaredDashCall" to false, "round" to 1),
+    )
+    val doc = normalRoundDoc(biddingLog = log, version = 2)
+    val pending = TimeoutResolution.pendingDecision(doc)
+    // Detection itself replays (the engine caps the third internally), so a
+    // decision exists; the named refusal happens at resolution.
+    if (pending == null) return
+    val resolution = TimeoutResolution.resolveExpired(doc, dealtHands(), pending)
+    val noWrite = assertIs<TimeoutResolution.Resolution.NoWrite>(resolution)
+    assertEquals(TimeoutResolution.Reason.HISTORY_CORRUPT, noWrite.reason)
+    assertTrue(
+      noWrite.message.contains("declared Dash Calls"),
+      "the refusal must name the declared-Dash contract it broke",
+    )
+  }
+
+  /**
+   * F1: the resolver's OWN dash write mirrors the engine reducer — with two
+   * effective Dashes already on the log, the timed seat's dash decision
+   * persists declaredDashCall=false and the seat stays in the auction pool.
+   * (BidBrain's own gate declines here too; this pins the WRITE boundary so
+   * the persisted shape never depends on the brain's whim.)
+   */
+  @Test
+  fun aThirdDashAttemptOnATwoDashDocumentPersistsAsADecline() {
+    val log = listOf(
+      mapOf("seatId" to "p1", "actionType" to "SubmitDashCallDecision", "declaredDashCall" to true, "round" to 1),
+      mapOf("seatId" to "p2", "actionType" to "SubmitDashCallDecision", "declaredDashCall" to true, "round" to 1),
+      mapOf("seatId" to "p3", "actionType" to "SubmitDashCallDecision", "declaredDashCall" to false, "round" to 1),
+    )
+    val doc = normalRoundDoc(biddingLog = log, version = 2)
+    val pending = TimeoutResolution.pendingDecision(doc)!!
+    assertEquals("p4", pending.seatId)
+
+    val resolution = TimeoutResolution.resolveExpired(doc, dealtHands(), pending)
+    assertIs<TimeoutResolution.Resolution.Applied>(resolution)
+    val entry = arrayUnionEntries(resolution.write.updates["biddingLog"]).single()
+    assertEquals("p4", entry["seatId"])
+    assertEquals("SubmitDashCallDecision", entry["actionType"])
+    assertEquals(
+      false,
+      entry["declaredDashCall"],
+      "the over-cap attempt must persist as a decline (the seat stays in the auction)",
+    )
+  }
+
+  /**
+   * S73 Stage 2 (RD19) — the resolver's own chain end to end, in memory.
+   *
+   * Every case above hands the resolver a document already sitting on one
+   * expired decision. RD19 needs something neither those cases nor the
+   * instrumented drive can assume: that a table where NOBODY plays is still
+   * owned, decision after decision, until the round is played out — because a
+   * seat's clock only charges for windows the resolver actually closes, and one
+   * round of them is what has to add up to the 50s threshold.
+   *
+   * This runs the callable's own two steps in a loop — detect, then resolve —
+   * feeding every write back into the document, and stops when detection finds
+   * nothing. Silence here is the bug it is looking for: a live, dealt,
+   * un-finished round whose detection returns null is a table no timeout can
+   * ever move again.
+   *
+   * What this found, and what it now keeps found: the document it starts from
+   * carries `biddingOpen == true` with the replayed auction already DONE, which
+   * is not a corruption but what every round with a Dash Caller really carries —
+   * both writers derive the flag from "every seat has a bid" and a Dash Caller
+   * has no estimate to submit, so its `bids` entry stays null for the rest of
+   * the round. Detection reads its own replay, not that flag, so the chain runs
+   * to the 52nd card with no help from this test, and the untouched flag in the
+   * second assertion is the proof that no help was given.
+   */
+  @Test
+  fun theResolverOwnsEveryDecisionOfANormalRoundToTheLastCard() {
+    val hands = dealtHands()
+    var doc = normalRoundDoc(timerSeconds = 5)
+    val ignored = linkedMapOf<String, Int>()
+    val trace = mutableListOf<String>()
+    var stop: String? = null
+
+    while (trace.size < chainSteps) {
+      val pending = TimeoutResolution.pendingDecision(doc)
+      if (pending == null) {
+        stop = "detection found no timed decision while ${describeChain(doc)}"
+        break
+      }
+      val resolution = TimeoutResolution.resolveExpired(doc, hands, pending)
+      if (resolution !is TimeoutResolution.Resolution.Applied) {
+        stop = "seat ${pending.seatId}'s ${pending.phase} decision was not applied: $resolution"
+        break
+      }
+      ignored[pending.seatId] = (ignored[pending.seatId] ?: 0) + pending.durationSeconds
+      trace += "${pending.seatId}/${pending.phase.name.first()}${pending.durationSeconds}"
+      doc = chainApply(doc, resolution.write.updates)
+    }
+
+    val cards = (doc["cardLog"] as? List<Any?>).orEmpty().size
+    assertTrue(
+      cards == 52,
+      "the chain did not play the round out: ${trace.size} steps ($trace), and it stopped because " +
+        "$stop",
+    )
+    assertTrue(
+      doc["biddingOpen"] == true,
+      "something other than this test cleared the flag mid-chain, so nothing here is playing " +
+        "out a round that still carries a stale-open document",
+    )
+
+    val richest = ignored.maxByOrNull { it.value }
+    assertTrue(
+      richest != null && richest.value * 1_000L >= InactivityClock.TAKEOVER_THRESHOLD_MILLIS,
+      "one resolver-owned round charges a seat only $ignored seconds and RD19 needs " +
+        "${InactivityClock.TAKEOVER_THRESHOLD_MILLIS / 1_000} (decisions: $trace)",
+    )
+  }
+
+  /**
+   * The guard on the fix above. A round with a Dash Caller carries `biddingOpen
+   * == true` through the whole auction — the estimate write derives the flag
+   * from "every seat has a bid" and a Dash Caller has no bid to submit — so the
+   * stale value and the `false` a reader that knew the auction closed would have
+   * written are two different documents until the replay reaches DONE. Before
+   * that, `false` is not inert: it says "look at the cards", and a round still
+   * in its auction has no card to look at.
+   *
+   * So the chain is first driven to DONE on the stale copy alone, with no help
+   * at all from this test — any silence there is the stall itself. Only then is
+   * one flag flipped on an identical snapshot, and the two copies run in
+   * lockstep: detection is asked on both and the answers must be equal, which
+   * is what fails first if anything ever makes the flag phase authority again
+   * (the stale copy would go silent at the auction while the other picked up the
+   * opening lead). Every decision is then resolved against BOTH, covering the
+   * half the fix depends on downstream — reconstruction, legality and write
+   * shapes stay blind to the flag to the 52nd card, and the two finished
+   * documents differ in exactly that one key.
+   */
+  @Test
+  fun theStaleOpenFlagChangesNothingAfterTheAuctionCloses() {
+    val hands = dealtHands()
+    var stale = normalRoundDoc(timerSeconds = 5)
+    val auction = mutableListOf<String>()
+
+    while (TimeoutResolution.replayBidding(stale, order, 1)?.subPhase != BiddingPhase.DONE) {
+      assertTrue(
+        auction.size < chainSteps,
+        "the auction never closed ($auction) while ${describeChain(stale)}",
+      )
+      val pending = TimeoutResolution.pendingDecision(stale)
+        ?: error("detection went silent inside the auction ($auction), so the two copies below " +
+          "never reach a comparable state: ${describeChain(stale)}")
+      val resolution = TimeoutResolution.resolveExpired(stale, hands, pending)
+      if (resolution !is TimeoutResolution.Resolution.Applied) {
+        error("seat ${pending.seatId}'s ${pending.phase} decision was not applied: $resolution")
+      }
+      auction += "${pending.seatId}/${pending.phase.name.first()}"
+      stale = chainApply(stale, resolution.write.updates)
+    }
+    assertTrue(
+      stale["biddingOpen"] == true,
+      "the auction closed by clearing the flag, so this is no longer a stale-open document",
+    )
+
+    var cleared: Map<String, Any?> = stale.toMutableMap().apply { this["biddingOpen"] = false }
+    val trace = mutableListOf<String>()
+    var stop: String? = null
+
+    while (trace.size < chainSteps) {
+      val onStale = TimeoutResolution.pendingDecision(stale)
+      val onCleared = TimeoutResolution.pendingDecision(cleared)
+      assertEquals(
+        onCleared,
+        onStale,
+        "detection read the two copies apart at decision ${trace.size + 1} ($auction then $trace) " +
+          "— the flag is load-bearing again, while ${describeChain(stale)}",
+      )
+      val pending = onStale ?: break
+      val writeStale = TimeoutResolution.resolveExpired(stale, hands, pending)
+      val writeCleared = TimeoutResolution.resolveExpired(cleared, hands, pending)
+      if (writeStale !is TimeoutResolution.Resolution.Applied ||
+        writeCleared !is TimeoutResolution.Resolution.Applied
+      ) {
+        stop = "seat ${pending.seatId}'s ${pending.phase} decision was not applied on both copies: " +
+          "stale=$writeStale cleared=$writeCleared"
+        break
+      }
+      assertEquals(
+        writeCleared.write.toString(),
+        writeStale.write.toString(),
+        "the flag changed the decision for seat ${pending.seatId}'s ${pending.phase} turn ($trace)",
+      )
+      trace += "${pending.seatId}/${pending.phase.name.first()}${pending.durationSeconds}"
+      stale = chainApply(stale, writeStale.write.updates)
+      cleared = chainApply(cleared, writeCleared.write.updates)
+    }
+
+    val cardsOnStale = (stale["cardLog"] as? List<Any?>).orEmpty().size
+    val cardsOnCleared = (cleared["cardLog"] as? List<Any?>).orEmpty().size
+    assertTrue(
+      cardsOnStale == 52 && cardsOnCleared == 52,
+      "the round did not play out on both copies (stale=$cardsOnStale cleared=$cardsOnCleared, " +
+        "${trace.size} steps ($trace), stopped because $stop)",
+    )
+    val differs = (stale.keys + cleared.keys).distinct()
+      .filter { stale[it].toString() != cleared[it].toString() }
+    assertEquals(
+      listOf("biddingOpen"),
+      differs,
+      "the flag was supposed to be the only difference between the two tables",
+    )
+    assertTrue(stale["biddingOpen"] == true, "the copy that was never touched still reads open")
+  }
+
+  /** One write, applied the way Firestore would apply it to the document. */
+  private fun chainApply(doc: Map<String, Any?>, updates: Map<String, Any?>): Map<String, Any?> {
+    val next = doc.toMutableMap()
+    for ((key, value) in updates) {
+      next[key] = when (key) {
+        "biddingLog", "cardLog" -> (doc[key] as? List<Any?>).orEmpty() + arrayUnionEntries(value)
+        // serverTimestamp() carries no millis of its own in a double, and the
+        // chain's anchor deliberately does not move: every window it opens is
+        // therefore already expired when the next detection runs.
+        "updatedAt" -> anchorMillis
+        else -> value
+      }
+    }
+    return next
+  }
+
+  /** The document at the moment detection went silent, in exactly the fields
+   *  [TimeoutResolution.pendingDecision] branches on — which of its null
+   *  returns fired is the difference between "the round is over" and "nothing
+   *  can ever move this table again". */
+  private fun describeChain(doc: Map<String, Any?>): String {
+    val replayed = TimeoutResolution.replayBidding(doc, order, 1)
+    return "biddingLog=${(doc["biddingLog"] as? List<Any?>).orEmpty().size} " +
+      "cards=${(doc["cardLog"] as? List<Any?>).orEmpty().size} " +
+      "biddingOpen=${doc["biddingOpen"]} bids=${doc["bids"]} " +
+      "replayed=${replayed?.subPhase}/${replayed?.waitingFor} " +
+      "cardPhase=${doc["cardPhase"]} turn=${doc["turn"]}"
   }
 
   @Test
@@ -417,6 +1164,113 @@ class TimeoutResolutionTest {
     )
     assertIs<TimeoutResolution.Resolution.NoWrite>(resolution)
     assertEquals(TimeoutResolution.Reason.HISTORY_UNAVAILABLE, resolution.reason)
+  }
+
+  // ── O-19: the persisted round multiplier arms the replay ─────────────
+
+  /**
+   * Option B makes the document the multiplier authority for a reconnecting
+   * client and for this resolver alike. The value never changes a decision's
+   * legality — it changes what a round scores — so what these tests pin is
+   * the replay carrying the DOCUMENT's value (not a defaulted 1) and a
+   * present-but-illegal value failing closed instead of being re-read.
+   */
+  @Test
+  fun theAuctionReplayArmsFromTheDocumentedRoundMultiplier() {
+    val normal = normalRoundDoc(currentMultiplier = 4)
+    assertEquals(4, TimeoutResolution.replayBidding(normal, order, 1)!!.roundMultiplier)
+
+    val fast = fastRoundDoc(currentMultiplier = 6)
+    assertEquals(6, TimeoutResolution.replayBidding(fast, order, 14)!!.roundMultiplier)
+
+    // Arming a round never breaks the resolution itself: the ×4 round still
+    // produces the human path's own write shape.
+    val resolution = TimeoutResolution.resolveExpired(
+      normal, dealtHands(), TimeoutResolution.pendingDecision(normal)!!,
+    )
+    assertIs<TimeoutResolution.Resolution.Applied>(resolution)
+  }
+
+  @Test
+  fun aLegacyDocumentWithoutTheFieldReplaysAtTheDefinedOne() {
+    // Absent is not corrupt: it is a document written before the field, whose
+    // only legal reading is ×1.
+    assertEquals(1, TimeoutResolution.replayBidding(normalRoundDoc(), order, 1)!!.roundMultiplier)
+    assertEquals(1, TimeoutResolution.replayBidding(fastRoundDoc(), order, 14)!!.roundMultiplier)
+  }
+
+  @Test
+  fun theTableReplayCarriesTheDocumentedMultiplierIntoTheRound() {
+    val doc = fastRoundDoc(
+      biddingOpen = false,
+      bidsOverride = order.associateWith { 3 },
+      cardPhase = "PLAY",
+      turn = seats.getValue("p2"),
+      currentMultiplier = 4,
+    )
+    val table = TimeoutResolution.replayTable(doc, order, 14, dealtHands())
+      ?: throw AssertionError("the table did not replay")
+    assertEquals(4, table.cfg.multiplier)
+  }
+
+  @Test
+  fun anIllegalDocumentedMultiplierRefusesTheReplayAndIsReported() {
+    // Out of the stored range, below it, or not a number: the replay refuses
+    // rather than resetting to ×1. Detection then sees no timed decision at
+    // all (a document whose history cannot be replayed produces no bot move —
+    // the same posture as an unreplayable auction), and a resolver handed a
+    // pending decision for it reports the document instead of writing into it.
+    for (corrupt in listOf(9, 0, "4")) {
+      val doc = normalRoundDoc(currentMultiplier = corrupt)
+      assertNull(TimeoutResolution.replayBidding(doc, order, 1))
+      assertNull(TimeoutResolution.pendingDecision(doc))
+      val resolution = TimeoutResolution.resolveExpired(
+        doc, dealtHands(), TimeoutResolution.Pending(
+          TimeoutResolution.DecisionPhase.BIDDING, "p1", 20, anchorMillis,
+        ),
+      )
+      assertIs<TimeoutResolution.Resolution.NoWrite>(resolution)
+      assertEquals(TimeoutResolution.Reason.HISTORY_CORRUPT, resolution.reason)
+    }
+  }
+
+  @Test
+  fun aDocumentedMultiplierWithinRangeIsReplayedAtEveryCapValue() {
+    for (value in listOf(1, 2, 4, 6, 8)) {
+      assertEquals(
+        value,
+        TimeoutResolution.replayBidding(fastRoundDoc(currentMultiplier = value), order, 14)!!
+          .roundMultiplier,
+      )
+    }
+    // The card path reads the same field, and an illegal value fails it closed
+    // too — the resolver never invents a table at a defaulted ×1.
+    val corruptTable = fastRoundDoc(
+      biddingOpen = false,
+      bidsOverride = order.associateWith { 3 },
+      cardPhase = "PLAY",
+      turn = seats.getValue("p2"),
+      currentMultiplier = 16,
+    )
+    assertNull(TimeoutResolution.replayTable(corruptTable, order, 14, dealtHands()))
+  }
+
+  @Test
+  fun aClassicDocumentMayOnlyHoldTheMultiplierAtOne() {
+    // Classic never escalates, so any other stored value contradicts the mode
+    // itself: 1 replays, 2 is refused.
+    val legal = normalRoundDoc(scoringMode = "CLASSIC", currentMultiplier = 1)
+    assertEquals(1, TimeoutResolution.replayBidding(legal, order, 1)!!.roundMultiplier)
+
+    val illegal = normalRoundDoc(scoringMode = "CLASSIC", currentMultiplier = 2)
+    assertNull(TimeoutResolution.replayBidding(illegal, order, 1))
+    val resolution = TimeoutResolution.resolveExpired(
+      illegal, dealtHands(), TimeoutResolution.Pending(
+        TimeoutResolution.DecisionPhase.BIDDING, "p1", 20, anchorMillis,
+      ),
+    )
+    assertIs<TimeoutResolution.Resolution.NoWrite>(resolution)
+    assertEquals(TimeoutResolution.Reason.HISTORY_CORRUPT, resolution.reason)
   }
 
   // ── the orchestration seam ───────────────────────────────────────────
@@ -606,6 +1460,31 @@ class TimeoutResolutionTest {
     assertEquals("invalid-argument", error.code)
     assertTrue(error.message.contains("matchId is required"))
     assertNull(db.written)
+  }
+
+  /**
+   * O-19 gate 5 at the seam. A corrupt persisted multiplier makes the replay
+   * refuse, so detection answers "no pending decision" — and an idle table is
+   * the wrong answer for a broken document. The seam names the cause instead,
+   * and writes nothing.
+   */
+  @Test
+  fun aCorruptMultiplierIsReportedRatherThanAnsweredAsAnIdleTable() = runTest {
+    for (doc in listOf(
+      fastRoundDoc(currentMultiplier = 9),
+      fastRoundDoc(scoringMode = "CLASSIC", currentMultiplier = 2),
+    )) {
+      val db = FakeTimeoutDb(doc, dealtHands())
+      val error = assertFailsWith<AuthorityError> {
+        resolveTimeoutOnce(db, "u3", timeoutData(), DecisionClock { anchorMillis + 20_000 })
+      }
+      assertEquals("failed-precondition", error.code)
+      assertTrue(
+        error.message.contains("currentMultiplier"),
+        "the error must name the unreadable field: ${error.message}",
+      )
+      assertNull(db.written)
+    }
   }
 
   // ── Stage 2: the per-seat timeout counter + the 15-timeout removal ──────
