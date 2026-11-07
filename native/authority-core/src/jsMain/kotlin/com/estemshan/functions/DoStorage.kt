@@ -244,21 +244,29 @@ class DoSettlementDb(private val sql: dynamic) : SettlementDb {
         parseRowJson(row["data"], "claim")
       }
 
-    // O-06 D6 (Step 2): player profiles are account state the DO will own in a
-    // `profiles` table snapshotted at match start. Until that lands, a Ranked
-    // settlement on the DO path fails closed here — inside the transaction,
-    // before any write — rather than fold RP against a fabricated pre-image.
-    override suspend fun readProfile(uid: String): Map<String, Any?>? {
-      throw AuthorityError(
-        "unimplemented",
-        "player profiles are not wired into the Durable Object store yet (O-06 D6, Step 2).",
-      )
-    }
+    // O-06 D6 (Step 2): the DO-owned profile store. A corrupt profile must
+    // NOT look like a missing one — refusing loudly here is what keeps a
+    // settlement from folding RP against a pre-image it cannot trust.
+    override suspend fun readProfile(uid: String): Map<String, Any?>? =
+      one(sql, "SELECT data FROM profiles WHERE uid = ?", uid)?.let { row ->
+        parseRowJson(row["data"], "profile")
+      }
 
+    // Merge-write ONLY the fields the core passes (the ranked-progression
+    // contract): everything the profile already holds that this path does not
+    // own — displayName, room/match pointers, the legacy `rank`, and every
+    // field the fold never touches — is preserved by construction.
     override fun writeProfile(uid: String, fields: Map<String, Any?>) {
-      throw AuthorityError(
-        "unimplemented",
-        "player profiles are not wired into the Durable Object store yet (O-06 D6, Step 2).",
+      val current = one(sql, "SELECT data FROM profiles WHERE uid = ?", uid)
+        ?.let { parseRowJson(it["data"], "profile") }
+        ?: LinkedHashMap()
+      val merged = LinkedHashMap(current)
+      for ((key, value) in fields) merged[key] = value
+      exec(
+        sql,
+        "INSERT INTO profiles (uid, data, updated_at) VALUES (?, ?, ?) " +
+          "ON CONFLICT(uid) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
+        uid, toJson(merged), nowMillis(),
       )
     }
 

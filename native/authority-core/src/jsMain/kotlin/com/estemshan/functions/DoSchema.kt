@@ -47,4 +47,15 @@ CREATE TABLE IF NOT EXISTS timeout_counts (
   count INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (match_id, uid)
 );
+-- O-06 D6 (Step 2): the DO-owned player profile store. `data` carries the
+-- Firestore-shaped plain map `players/{uid}` holds — rank/RP/season/placement
+-- plus the career counters — as JSON text; the adapter merge-writes only the
+-- ranked-progression contract fields and leaves everything else intact.
+-- Snapshotted from Firestore at match start (the seed path); never read from
+-- Firestore on the DO authority path.
+CREATE TABLE IF NOT EXISTS profiles (
+  uid TEXT PRIMARY KEY,
+  data TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
 """

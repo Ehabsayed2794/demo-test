@@ -102,6 +102,38 @@ class DoStorageTest {
     seedArchive(db, matchId, 1, rawRound(golden, parts.plays, parts.actions))
   }
 
+  // ── profile seeding (O-06 D6) ──────────────────────────────────────────
+
+  /** A Firestore-shaped `players/{uid}` profile; `rank` stays the legacy field the fold ignores. */
+  private fun profileDoc(uid: String, rp: Int? = null): Map<String, Any?> {
+    val out = LinkedHashMap<String, Any?>()
+    out["uid"] = uid
+    out["displayName"] = "Player-$uid"
+    out["roomId"] = "room-77"
+    out["rank"] = "Gold III"
+    if (rp != null) out["rp"] = rp
+    return out
+  }
+
+  private fun seedProfile(db: dynamic, uid: String, profile: Map<String, Any?>) {
+    val stmt: dynamic = js("db.prepare('INSERT INTO profiles(uid, data, updated_at) VALUES (?,?,?)')")
+    stmt.run(uid, toJson(profile), 1_000.0)
+  }
+
+  private fun seedProfiles(db: dynamic, uids: List<String> = listOf("u1", "u2", "u3", "u4"), rp: Int? = 690) {
+    for (uid in uids) seedProfile(db, uid, profileDoc(uid, rp))
+  }
+
+  /** Reads the stored profile row for [uid]; asserts there is exactly one. */
+  private fun profileOf(db: dynamic, uid: String): Map<String, Any?> {
+    val stmt: dynamic = js("db.prepare('SELECT data FROM profiles WHERE uid = ?')")
+    @Suppress("UNCHECKED_CAST")
+    val rows = stmt.all(uid) as Array<dynamic>
+    assertEquals(1, rows.size, "expected exactly one profile row for $uid")
+    @Suppress("UNCHECKED_CAST")
+    return parseJson(rows[0].data as String) as Map<String, Any?>
+  }
+
   private fun settleData(matchId: String = "m1"): Any? = json("matchId" to matchId)
 
   // ── full timeout resolution through REAL SQLite ────────────────────────
@@ -312,52 +344,125 @@ class DoStorageTest {
   }
 
   /**
-   * The full RP golden through the DO adapter (agree/corrected, claim once,
-   * replay exactly-once, version 7→8) — blocked by design until Step 2
-   * (O-06 D6): the DO store does not own `players/{uid}` yet, and a Ranked
-   * settlement must not fold RP against a profile it cannot read (that
-   * would be a fabricated pre-image), so the transaction fails closed
-   * before any write. Pinned as the interim contract: refusal with
-   * `unimplemented`, nothing written. The goldens through the fakes live in
-   * SettlementTest/RpApplicationTest. When Step 2 lands, restore the full
-   * assertions and keep this fail-closed case as the missing-profile pin.
+   * The full RP golden through the DO adapter over real SQLite: the converged
+   * claim is corrected to the recomputed result, the claim commits exactly
+   * once, the progression lands on the same numbers the fake-path goldens
+   * pin (KING 690→732 crossing into Gold II, SECOND →717, THIRD →690 sign
+   * clamp, KOZ →682), and the merge-write leaves every untracked profile
+   * field intact. The replay answers with the recorded outcome and writes
+   * nothing.
    */
   @Test
-  fun aConvergedMatchFailsClosedUntilProfilesLandInStep2() = runTest {
+  fun aConvergedMatchSettlesCorrectsClaimsAndReplays() = runTest {
     val db = freshDb()
     seedConvergedRound1(db)
-    val before = rawMatch(db)
+    seedProfiles(db)
 
     val adapter = DoSettlementDb(sqlHandle(db))
-    val error = assertFailsWith<AuthorityError> { settleOnce(adapter, "u1", settleData()) }
+    val response = settleOnce(adapter, "u1", settleData())
 
-    assertEquals("unimplemented", error.code)
-    assertEquals(toJson(before), toJson(rawMatch(db)), "the document must be untouched")
-    assertEquals(0, claimCount(db), "no claim may be written when profiles are missing")
-    assertEquals(7, versionColumn(db), "no write lands before the fail-closed gate")
+    assertEquals(true, response["ok"])
+    assertEquals(true, response["corrected"])
+    assertEquals(mapOf("p1" to 25, "p2" to -11, "p3" to 12, "p4" to 14), response["finalScores"])
+    assertEquals(1, claimCount(db))
+    assertEquals(8, versionColumn(db), "the correction write bumps version exactly once")
+
+    // Progression, verified through the store — not the fake:
+    assertEquals(732, profileOf(db, "u1")["rp"])
+    assertEquals(717, profileOf(db, "u4")["rp"])
+    assertEquals(690, profileOf(db, "u3")["rp"])
+    assertEquals(682, profileOf(db, "u2")["rp"])
+    assertEquals("Gold", profileOf(db, "u1")["tier"])
+    assertEquals("II", profileOf(db, "u1")["division"])
+    assertEquals(1, profileOf(db, "u1")["rankedGamesPlayed"])
+    assertEquals(1, profileOf(db, "u1")["rankedKingCount"])
+    assertEquals(1, profileOf(db, "u2")["rankedKozCount"])
+    // The merge-write preserves every field the fold does not own.
+    assertEquals("Player-u1", profileOf(db, "u1")["displayName"])
+    assertEquals("room-77", profileOf(db, "u1")["roomId"])
+    assertEquals("Gold III", profileOf(db, "u1")["rank"])
+
+    val replay = settleOnce(adapter, "u2", settleData())
+    assertEquals(true, replay["replayed"])
+    assertEquals(1, claimCount(db), "a replay must not write a second claim")
+    assertEquals(8, versionColumn(db), "a replay must not touch the document")
+    assertEquals(682, profileOf(db, "u2")["rp"], "a replay folds no second progression")
   }
 
   /**
-   * ROOM matches settle statistics-only on main (S6/A8.4 — the "NOT_RANKED"
-   * no-op response is gone), and that path also reads the attributed human
-   * seats' profiles, so on the DO adapter it fails closed exactly like the
-   * Ranked path until Step 2 lands. Pins: refusal with `unimplemented`,
-   * document untouched, zero claims. When Step 2 lands, restore the
-   * stats-only assertions (counters +1 per attributed human seat, one claim,
-   * replay with empty movements).
+   * A ROOM completion settles statistics-only on main (S6/A8.4; the old
+   * "NOT_RANKED no-op" is gone): career counters fold per seat, the claim
+   * rides the once-only property with EMPTY movements, and no RP is folded.
+   * The replay answers with the recorded outcome and does not re-count.
    */
   @Test
-  fun aRoomMatchFailsClosedUntilProfilesLandInStep2() = runTest {
+  fun aRoomMatchSettlesStatsOnlyAndWritesCountersOnly() = runTest {
     val db = freshDb()
     seedMatch(db, "m1", matchFields(mode = "ROOM"))
+    seedProfiles(db)
+
+    val adapter = DoSettlementDb(sqlHandle(db))
+    val response = settleOnce(adapter, "u1", settleData())
+
+    assertEquals(true, response["settled"])
+    assertEquals(1, profileOf(db, "u1")["rankedGamesPlayed"])
+    assertEquals(1, profileOf(db, "u1")["rankedKingCount"])
+    assertEquals(1, profileOf(db, "u2")["rankedKozCount"])
+    assertEquals(1, profileOf(db, "u3")["rankedThirdCount"])
+    assertEquals(1, profileOf(db, "u4")["rankedSecondCount"])
+    assertEquals(690, profileOf(db, "u1")["rp"], "a ROOM completion never folds RP")
+    assertEquals(7, versionColumn(db), "the stats-only path writes no correction")
+    assertEquals(1, claimCount(db))
+
+    val replay = settleOnce(adapter, "u2", settleData())
+    assertEquals(true, replay["replayed"])
+    assertEquals(1, claimCount(db), "a replay must not write a second claim")
+    assertEquals(1, profileOf(db, "u1")["rankedGamesPlayed"], "a replay must not double-count")
+  }
+
+  /**
+   * A missing profile is not a settled table: the whole settlement fails
+   * closed BEFORE any write — the match stays settleable once the account is
+   * repaired, and no seat is ever folded against an invented pre-image.
+   */
+  @Test
+  fun aMissingProfileFailsClosedAndWritesNothing() = runTest {
+    val db = freshDb()
+    seedConvergedRound1(db)
+    seedProfiles(db, uids = listOf("u1", "u2", "u3")) // u4 has no profile document
     val before = rawMatch(db)
 
     val adapter = DoSettlementDb(sqlHandle(db))
     val error = assertFailsWith<AuthorityError> { settleOnce(adapter, "u1", settleData()) }
 
-    assertEquals("unimplemented", error.code)
+    assertEquals("failed-precondition", error.code)
     assertEquals(toJson(before), toJson(rawMatch(db)), "the document must be untouched")
     assertEquals(0, claimCount(db))
+    assertEquals(7, versionColumn(db))
+  }
+
+  /**
+   * A corrupt profile is not a missing one: the ranked contract parse refuses
+   * the document wholesale (failed-precondition), leaving the match untouched
+   * for inspection. Anything else would let a torn fold half-apply.
+   */
+  @Test
+  fun aCorruptProfileFailsClosedAndWritesNothing() = runTest {
+    val db = freshDb()
+    seedConvergedRound1(db)
+    seedProfiles(db, uids = listOf("u2", "u3", "u4"))
+    val corrupt = LinkedHashMap(profileDoc("u1"))
+    corrupt["rp"] = "not-a-number"
+    seedProfile(db, "u1", corrupt)
+    val before = rawMatch(db)
+
+    val adapter = DoSettlementDb(sqlHandle(db))
+    val error = assertFailsWith<AuthorityError> { settleOnce(adapter, "u1", settleData()) }
+
+    assertEquals("failed-precondition", error.code)
+    assertEquals(toJson(before), toJson(rawMatch(db)), "the document must be untouched")
+    assertEquals(0, claimCount(db))
+    assertEquals(7, versionColumn(db))
   }
 
   @Test
