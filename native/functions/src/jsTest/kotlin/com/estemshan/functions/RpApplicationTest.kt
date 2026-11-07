@@ -166,6 +166,12 @@ class RpApplicationTest {
       appends.filter { it["outcomeKind"] == SettlementLedger.OUTCOME_CORRECTED }.reversed()
   }
 
+  /** The core throws [AuthorityError] (a Kotlin class — its `code` is not a
+   * plain JS property, so `.asDynamic().code` is undefined); the Firebase path
+   * throws the external [HttpsError]. Read both, preferring the core type. */
+  private fun codeOf(error: Throwable): String? =
+    (error as? AuthorityError)?.code ?: (error.asDynamic().code as? String)
+
   private suspend fun expectDenied(
     code: String,
     vararg messageParts: String,
@@ -178,7 +184,7 @@ class RpApplicationTest {
       if (e.message == "expected an HttpsError") throw e
       e
     }
-    assertEquals(code, thrown.asDynamic().code as String, "denied with: ${thrown.message}")
+    assertEquals(code, codeOf(thrown), "denied with: ${thrown.message}")
     messageParts.forEach { messagePart ->
       assertTrue(
         thrown.message?.contains(messagePart) == true,
@@ -223,7 +229,7 @@ class RpApplicationTest {
       profiles = profilesWith(mapOf("u1" to 690, "u2" to 690, "u3" to 690, "u4" to 690)),
     )
 
-    val response = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    val response = settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
 
     assertEquals(true, response["settled"])
     assertEquals(4, db.profileReads)
@@ -269,7 +275,7 @@ class RpApplicationTest {
       profiles = profilesWith(mapOf("u1" to 690, "u2" to 690, "u3" to 690, "u4" to 690)),
     )
 
-    settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
 
     // Same starting RP for all four, so ANY difference here is placement's.
     assertEquals(732, db.writeFor("u1")["rp"])
@@ -305,7 +311,7 @@ class RpApplicationTest {
       profiles = profilesWith(uids.associateWith { 690 }),
     )
 
-    settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
 
     assertEquals(4, db.profileWrites.size)
     db.profileWrites.forEach { (uid, fields) ->
@@ -342,7 +348,7 @@ class RpApplicationTest {
       profiles = profilesWith(mapOf("u1" to null, "u2" to null, "u3" to null, "u4" to null)),
     )
 
-    val response = settleOnce(db, SettlementFixtures.settleRequest("u2", "m1"))
+    val response = settleOnce(db, "u2", SettlementFixtures.settleData("m1"))
 
     assertEquals(
       expectedWrite(
@@ -395,8 +401,8 @@ class RpApplicationTest {
       profiles = profilesWith(uids.associateWith { null }),
     )
 
-    settleOnce(explicit, SettlementFixtures.settleRequest("u1", "m1"))
-    settleOnce(absent, SettlementFixtures.settleRequest("u1", "m1"))
+    settleOnce(explicit, "u1", SettlementFixtures.settleData("m1"))
+    settleOnce(absent, "u1", SettlementFixtures.settleData("m1"))
 
     assertEquals(
       explicit.profileWrites.toList(),
@@ -425,8 +431,8 @@ class RpApplicationTest {
       profiles = profilesWith(uids.associateWith { 150 }),
     )
 
-    val onWeak = settleOnce(weak, SettlementFixtures.settleRequest("u1", "m1"))
-    val onStrong = settleOnce(strong, SettlementFixtures.settleRequest("u1", "m1"))
+    val onWeak = settleOnce(weak, "u1", SettlementFixtures.settleData("m1"))
+    val onStrong = settleOnce(strong, "u1", SettlementFixtures.settleData("m1"))
 
     assertEquals(30, (onWeak["you"] as Map<*, *>)["delta"])
     // 150 → 184: still Bronze I (lower bound 150, next rung 250).
@@ -458,7 +464,7 @@ class RpApplicationTest {
       profiles = profilesWith(mapOf("u1" to 0, "u2" to 150, "u3" to 150, "u4" to 150)),
     )
 
-    val response = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    val response = settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
 
     assertEquals(
       expectedWrite(
@@ -517,7 +523,7 @@ class RpApplicationTest {
       ),
     )
 
-    settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
 
     assertEquals(
       expectedWrite(
@@ -551,7 +557,7 @@ class RpApplicationTest {
       ),
     )
 
-    settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
 
     assertEquals(
       expectedWrite(
@@ -591,7 +597,7 @@ class RpApplicationTest {
       ),
     )
 
-    val response = settleOnce(db, SettlementFixtures.settleRequest("u2", "m1"))
+    val response = settleOnce(db, "u2", SettlementFixtures.settleData("m1"))
 
     assertEquals(
       expectedWrite(
@@ -633,7 +639,7 @@ class RpApplicationTest {
       ),
     )
 
-    settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
 
     assertEquals(
       expectedWrite(
@@ -668,7 +674,7 @@ class RpApplicationTest {
       ),
     )
 
-    settleOnce(db, SettlementFixtures.settleRequest("u3", "m1"))
+    settleOnce(db, "u3", SettlementFixtures.settleData("m1"))
 
     assertEquals(
       expectedWrite(
@@ -700,7 +706,7 @@ class RpApplicationTest {
       ),
     )
 
-    settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
 
     assertEquals(
       expectedWrite(
@@ -740,7 +746,7 @@ class RpApplicationTest {
       ),
     )
 
-    settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
 
     assertEquals(
       expectedWrite(rp = 732, tier = "Gold", division = "II", king = 1, seasonId = "s2"),
@@ -776,7 +782,7 @@ class RpApplicationTest {
       },
     )
 
-    settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
 
     assertEquals(
       expectedWrite(
@@ -804,7 +810,7 @@ class RpApplicationTest {
       profiles = profilesWith(uids.associateWith { 690 }),
     )
 
-    settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
 
     assertEquals(
       expectedWrite(rp = 711, tier = "Gold", division = "II", king = 1),
@@ -839,10 +845,10 @@ class RpApplicationTest {
       profiles = profilesWith(uids.associateWith { 690 }),
     )
 
-    val first = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    val first = settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
     val writesAfterFirst = db.profileWrites.toList()
 
-    val replay = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    val replay = settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
 
     assertEquals(true, replay["replayed"])
     assertEquals(2, db.txRuns)
@@ -868,8 +874,8 @@ class RpApplicationTest {
       profiles = profilesWith(uids.associateWith { 690 }),
     )
 
-    val asU1 = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
-    val asU3 = settleOnce(db, SettlementFixtures.settleRequest("u3", "m1"))
+    val asU1 = settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
+    val asU3 = settleOnce(db, "u3", SettlementFixtures.settleData("m1"))
 
     assertEquals(mapOf("previousRp" to 690, "rp" to 732, "delta" to 42), asU1["you"])
     assertEquals(mapOf("previousRp" to 690, "rp" to 690, "delta" to 0), asU3["you"])
@@ -918,7 +924,7 @@ class RpApplicationTest {
       profiles = profilesWith(uids.associateWith { 690 }),
     )
 
-    val replay = settleOnce(db, SettlementFixtures.settleRequest("u2", "m1"))
+    val replay = settleOnce(db, "u2", SettlementFixtures.settleData("m1"))
 
     assertEquals(true, replay["replayed"])
     assertNull(replay["you"])
@@ -947,7 +953,7 @@ class RpApplicationTest {
     )
 
     expectDenied("failed-precondition", "u4") {
-      settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+      settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
     }
 
     assertEquals(0, db.claims, "a fail-closed settlement writes no claim")
@@ -972,7 +978,7 @@ class RpApplicationTest {
     )
 
     expectDenied("failed-precondition", "is not seated to a uid") {
-      settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+      settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
     }
     assertEquals(0, db.claims)
     assertEquals(0, db.profileWrites.size)
@@ -998,7 +1004,7 @@ class RpApplicationTest {
       "failed-precondition",
       "seated player 'u3' of match 'm1' has a non-numeric players/rp",
     ) {
-      settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+      settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
     }
 
     assertEquals(0, db.claims, "a corrupt rp writes no claim")
@@ -1027,8 +1033,8 @@ class RpApplicationTest {
       profiles = profilesWith(uids.associateWith { null }),
     )
 
-    settleOnce(explicitNull, SettlementFixtures.settleRequest("u1", "m1"))
-    settleOnce(absentKey, SettlementFixtures.settleRequest("u1", "m1"))
+    settleOnce(explicitNull, "u1", SettlementFixtures.settleData("m1"))
+    settleOnce(absentKey, "u1", SettlementFixtures.settleData("m1"))
 
     assertEquals(absentKey.profileWrites.toList(), explicitNull.profileWrites.toList())
     assertEquals(
@@ -1195,7 +1201,7 @@ class RpApplicationTest {
       profiles = profiles,
     )
     expectDenied("failed-precondition", *messageParts) {
-      settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+      settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
     }
     assertEquals(0, db.claims, "a fail-closed settlement writes no claim")
     assertEquals(0, db.profileWrites.size, "a fail-closed settlement writes no profile")
@@ -1218,7 +1224,7 @@ class RpApplicationTest {
       profiles = profilesWith(uids.associateWith { 690 }),
     )
 
-    settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
 
     val lastRead = db.events.indexOfLast { it.startsWith("read-") }
     val firstWrite = db.events.indexOfFirst { it.startsWith("write-") }
@@ -1258,7 +1264,7 @@ class RpApplicationTest {
         profiles = profilesWith(uids.associateWith { 690 }),
       )
 
-      val response = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+      val response = settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
 
       assertEquals(true, response["settled"], "$mode settles stats-only")
       assertNull(response["you"], "$mode reports no RP movement")
@@ -1299,7 +1305,13 @@ class RpApplicationTest {
       profiles = profilesWith(uids.associateWith { 690 }),
     )
     expectDenied("unauthenticated", "") {
-      settleOnce(anon, SettlementFixtures.settleRequest(null, "m1"))
+      // The port boundary takes a verified uid, so "no identity at all" is no
+      // longer expressible to the core — the denial lives at the adapter seam
+      // now, in exactly what Functions.kt's settleMatch calls before it. The
+      // denial matrix is CallableAuthTest's; this pins that the same gate
+      // still stands in front of the settle path, and that nothing is read
+      // or written when it denies.
+      CallableAuth.requireUid(SettlementFixtures.settleRequest(null, "m1"))
     }
     assertEquals(0, anon.txRuns)
     assertEquals(0, anon.profileReads)
@@ -1317,7 +1329,7 @@ class RpApplicationTest {
 
   private suspend fun settleOnceShouldRefuse(db: FakeRpDb, uid: String) {
     expectDenied("permission-denied", "") {
-      settleOnce(db, SettlementFixtures.settleRequest(uid, "m1"))
+      settleOnce(db, uid, SettlementFixtures.settleData("m1"))
     }
   }
 
@@ -1339,7 +1351,7 @@ class RpApplicationTest {
       profiles = profilesWith(uids.associateWith { 690 }),
     )
 
-    val response = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    val response = settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
 
     assertEquals(true, response["corrected"])
     assertEquals(mapOf("p1" to 25, "p2" to -11, "p3" to 12, "p4" to 14), response["finalScores"])
@@ -1372,7 +1384,7 @@ class RpApplicationTest {
       profiles = profilesWith(uids.associateWith { 690 }),
     )
 
-    settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
 
     val record = db.appends.single()
     assertNull(record["movements"])
@@ -1395,7 +1407,7 @@ class RpApplicationTest {
       profiles = profilesWith(mapOf("u1" to 0, "u2" to 150, "u3" to 150, "u4" to 150)),
     )
 
-    settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
 
     val claim = db.claim!!
     assertEquals(setOf("settledBy", "settledAt", "outcome", "movements"), claim.keys)
@@ -1557,7 +1569,7 @@ class RpApplicationTest {
       },
     )
 
-    val response = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    val response = settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
 
     assertEquals(4, db.profileWrites.size, "every seat settles together")
     assertEquals(
@@ -1608,7 +1620,7 @@ class RpApplicationTest {
       claim = replayClaim(mapOf("u1" to movement)),
     )
     expectDenied("failed-precondition", *messageParts) {
-      settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+      settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
     }
     assertEquals(0, db.profileReads, "a refused replay reads no profile")
     assertEquals(0, db.profileWrites.size, "a refused replay writes no profile")
@@ -1653,7 +1665,7 @@ class RpApplicationTest {
       ),
     )
 
-    val replay = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    val replay = settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
 
     assertEquals(true, replay["replayed"])
     assertEquals(mapOf("previousRp" to 150, "rp" to 125, "delta" to -25), replay["you"])
@@ -1677,7 +1689,7 @@ class RpApplicationTest {
         claim = replayClaim(mapOf("u1" to movement)),
       )
 
-      val replay = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+      val replay = settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
 
       assertEquals(true, replay["replayed"])
       assertNull(replay["you"])
@@ -1699,7 +1711,7 @@ class RpApplicationTest {
       ),
     )
 
-    val replay = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    val replay = settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
 
     assertEquals(true, replay["replayed"])
     assertNull(replay["you"])

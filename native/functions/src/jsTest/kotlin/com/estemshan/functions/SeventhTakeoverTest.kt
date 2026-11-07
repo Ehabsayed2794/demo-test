@@ -300,7 +300,7 @@ class SeventhTakeoverTest {
       storedInactivity = mapOf("u1" to inactivityDoc(40_000L, cursorAtRoundStart, 5)),
     )
 
-    val response = resolveTimeoutOnce(db, fakeRequest("u3"), expiredHumanWindow)
+    val response = resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), expiredHumanWindow)
 
     assertEquals(true, response["resolved"])
     assertNull(db.written!![TimeoutResolution.TAKEOVER_REMOVED_UIDS_FIELD])
@@ -324,7 +324,7 @@ class SeventhTakeoverTest {
       storedInactivity = mapOf("u1" to inactivityDoc(40_000L, cursorAtRoundStart, 6)),
     )
 
-    val response = resolveTimeoutOnce(db, fakeRequest("u3"), expiredHumanWindow)
+    val response = resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), expiredHumanWindow)
 
     assertEquals(true, response["resolved"])
     val updates = db.written!!
@@ -379,7 +379,7 @@ class SeventhTakeoverTest {
       storedCounts = mapOf("u1" to 14),
     )
 
-    val response = resolveTimeoutOnce(db, fakeRequest("u3"), expiredHumanWindow)
+    val response = resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), expiredHumanWindow)
 
     assertEquals(true, response["resolved"])
     val updates = db.written!!
@@ -437,7 +437,7 @@ class SeventhTakeoverTest {
       dealtHands(),
       storedCounts = mapOf("u1" to 14),
     )
-    resolveTimeoutOnce(fifteenth, fakeRequest("u3"), expiredHumanWindow)
+    resolveTimeoutOnce(fifteenth, "u3", json("matchId" to "m1"), expiredHumanWindow)
     assertSingleReason(fifteenth)
 
     // The 7th alone.
@@ -446,7 +446,7 @@ class SeventhTakeoverTest {
       dealtHands(),
       storedInactivity = mapOf("u1" to inactivityDoc(40_000L, cursorAtRoundStart, 6)),
     )
-    resolveTimeoutOnce(seventh, fakeRequest("u3"), expiredHumanWindow)
+    resolveTimeoutOnce(seventh, "u3", json("matchId" to "m1"), expiredHumanWindow)
     assertSingleReason(seventh)
 
     // Both at once.
@@ -456,7 +456,7 @@ class SeventhTakeoverTest {
       storedInactivity = mapOf("u1" to inactivityDoc(40_000L, cursorAtRoundStart, 6)),
       storedCounts = mapOf("u1" to 14),
     )
-    resolveTimeoutOnce(collision, fakeRequest("u3"), expiredHumanWindow)
+    resolveTimeoutOnce(collision, "u3", json("matchId" to "m1"), expiredHumanWindow)
     assertSingleReason(collision)
   }
 
@@ -469,7 +469,7 @@ class SeventhTakeoverTest {
         storedInactivity = mapOf("u1" to inactivityDoc(40_000L, cursorAtRoundStart, 6)),
       )
 
-      resolveTimeoutOnce(db, fakeRequest("u3"), expiredHumanWindow)
+      resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), expiredHumanWindow)
 
       assertEquals(
         mapOf("u1" to 2),
@@ -525,7 +525,7 @@ class SeventhTakeoverTest {
       dealtHands(),
       storedInactivity = mapOf("u1" to inactivityDoc(40_000L, cursorAtRoundStart, 6)),
     )
-    resolveTimeoutOnce(first, fakeRequest("u3"), expiredHumanWindow)
+    resolveTimeoutOnce(first, "u3", json("matchId" to "m1"), expiredHumanWindow)
     assertEquals(listOf("u1"), first.written!![TimeoutResolution.TAKEOVER_REMOVED_UIDS_FIELD])
 
     // The committed document: the removal, the charge, the decision, and a
@@ -544,7 +544,7 @@ class SeventhTakeoverTest {
       ),
       storedCounts = mapOf("u1" to 1), // the ordinary increment, as committed
     )
-    resolveTimeoutOnce(replay, fakeRequest("u3"), DecisionClock { anchorMillis + 60_000 })
+    resolveTimeoutOnce(replay, "u3", json("matchId" to "m1"), DecisionClock { anchorMillis + 60_000 })
 
     // Whatever the replay finds to do, it is nothing S7: no second entry, no
     // second charge key, no delete, and u1's count stays exactly 7 (the seat
@@ -603,7 +603,7 @@ class SeventhTakeoverTest {
       dealtHands(),
       storedInactivity = mapOf("u1" to inactivityDoc(48_000L, cursorAtRoundStart, 6)),
     )
-    val response = resolveTimeoutOnce(db, fakeRequest("u3"), expiredHeldWindow)
+    val response = resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), expiredHeldWindow)
 
     assertEquals(true, response["resolved"])
     assertEquals(TimeoutResolution.BOT_DECISION_SECONDS, response["deadlineSeconds"])
@@ -652,7 +652,7 @@ class SeventhTakeoverTest {
       dealtHands(),
       storedInactivity = mapOf("u1" to inactivityDoc(40_000L, cursorAtRoundStart, 6)),
     )
-    val response = resolveTimeoutOnce(db, fakeRequest("u3"), expiredHeldWindow)
+    val response = resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), expiredHeldWindow)
 
     // The bot's decision lands (the table must not stall); nothing S7 does.
     assertEquals(true, response["resolved"])
@@ -678,7 +678,7 @@ class SeventhTakeoverTest {
       storedInactivity = mapOf("u1" to inactivityDoc(40_000L, cursorAtRoundStart, 6)),
     )
 
-    val response = resolveTimeoutOnce(db, fakeRequest("u3"), expiredHumanWindow)
+    val response = resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), expiredHumanWindow)
 
     assertEquals(true, response["resolved"])
     assertEquals(listOf("u1"), db.written!![TimeoutResolution.TAKEOVER_REMOVED_UIDS_FIELD])
@@ -714,7 +714,7 @@ class SeventhTakeoverTest {
       storedInactivity = mapOf("u1" to inactivityDoc(40_000L, cursorAtRoundStart, 6)),
     )
     val pausedResponse = resolveTimeoutOnce(
-      pausedDb, fakeRequest("u3"), DecisionClock { anchorMillis + 20_000 },
+      pausedDb, "u3", json("matchId" to "m1"), DecisionClock { anchorMillis + 20_000 },
     )
 
     assertEquals(false, pausedResponse["resolved"])
@@ -753,7 +753,7 @@ class SeventhTakeoverTest {
       ),
     )
 
-    val response = reclaimOnce(db, fakeRequest("u1"), DecisionClock { anchorMillis + 60_000 })
+    val response = reclaimOnce(db, "u1", json("matchId" to "m1"), DecisionClock { anchorMillis + 60_000 })
 
     assertEquals(true, response["reclaimed"])
     val stored = db.writtenInactivity.getValue("u1")
@@ -812,7 +812,7 @@ class SeventhTakeoverTest {
       storedInactivity = mapOf("u1" to inactivityDoc(49_999L, cursorAtRoundStart, 6)),
     )
 
-    val response = resolveTimeoutOnce(db, fakeRequest("u3"), DecisionClock { anchorMillis + 30_000 })
+    val response = resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), DecisionClock { anchorMillis + 30_000 })
 
     assertEquals(false, response["resolved"])
     assertEquals(TimeoutResolution.Reason.NOT_YET_EXPIRED, response["reason"])

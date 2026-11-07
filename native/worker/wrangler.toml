@@ -1,0 +1,20 @@
+# E3.1 / O-06 — local scaffold with the DO binding.
+#
+# Deliberately absent, always:
+#   - account_id / routes          (nothing here is deployable yet; needs owner approval)
+#   - D1 bindings                  (O-06 slice 2: ledger / backup / outbox)
+#   - vars / secrets               (the Worker has no credentials)
+#
+# The DO binding + migration below are required for the match object to
+# exist at all — `wrangler dev --local` creates the DO locally with its
+# SQLite storage. No deployment, no token, no billing.
+
+name = "estemshan-ranked"
+main = "src/index.js"
+compatibility_date = "2026-10-23"
+
+durable_objects = { bindings = [ { name = "MATCH_DO", class_name = "MatchDO" } ] }
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["MatchDO"]

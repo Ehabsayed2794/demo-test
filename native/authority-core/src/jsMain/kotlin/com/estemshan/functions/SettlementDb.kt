@@ -21,17 +21,12 @@ import com.estemshan.engine.rankAt
 import com.estemshan.engine.rankLadder
 import com.estemshan.engine.resolveRanked
 import com.estemshan.engine.updateHighestRank
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.await
-import kotlinx.coroutines.promise
 
 /**
  * S50 settlement I/O + orchestration (RD12/RD13).
  *
  * The once-only contract: claim-check, recompute, correction write and
- * settlement record commit inside ONE Admin transaction on the claim doc
+ * settlement record commit inside ONE transaction on the claim doc
  * (`matches/{matchId}/settlement/settle`). Two racers read absent, one
  * commits, the other retries into the recorded outcome — correction
  * writes and the claim can never diverge, so a crash cannot leave a
@@ -50,9 +45,11 @@ import kotlinx.coroutines.promise
  * after a write in one transaction), so a redelivery can neither re-award
  * nor settle against a stale pre-image.
  *
- * Ports keep every Firestore touch behind interfaces so the whole
- * orchestration (gate → recompute → write/replay) is unit-testable with
- * fakes; only AdminSettlementDb loads the SDK.
+ * Ports keep every storage touch behind the [SettlementDb] interface so the
+ * whole orchestration (gate → recompute → write/replay) is unit-testable
+ * with fakes; only the runtime adapters touch real storage — the Firebase
+ * Admin SDK in :functions, the Cloudflare Durable Object / D1 in the O-06
+ * slice. The claim path itself is the adapter's business.
  */
 interface SettlementDb {
   suspend fun readMatch(matchId: String): Map<String, Any?>?
@@ -139,9 +136,6 @@ interface SettlementDb {
   }
 }
 
-private const val CLAIM_PATH = "settlement"
-private const val CLAIM_DOC = "settle"
-
 private fun executedResponse(
   recomputed: Settlement.RecomputedMatch,
   matchId: String,
@@ -173,7 +167,7 @@ private fun replayClaim(
 ): Map<String, Any?> {
   @Suppress("UNCHECKED_CAST")
   val recorded = existing["outcome"] as? Map<String, Any?>
-    ?: throw HttpsError(
+    ?: throw AuthorityError(
       "failed-precondition",
       "settleMatch: settlement record for '$matchId' is malformed.",
     )
@@ -189,7 +183,9 @@ private fun claimRecord(
   movements: Map<String, Map<String, Any?>>,
 ): Map<String, Any?> = mapOf(
   "settledBy" to uid,
-  "settledAt" to FieldValue.serverTimestamp(),
+  // A sentinel, not a timestamp: the storage adapter resolves it at commit
+  // time (Firebase: FieldValue.serverTimestamp(); DO/D1: SQL now()).
+  "settledAt" to AuthoritySentinels.serverTimestamp(),
   // Caller-neutral by construction: `you` is the CALLER's slice of
   // [movements], added on the way out and never stored here (RD13 — one
   // claim document is replayed by four different clients, so a stored `you`
@@ -236,7 +232,7 @@ private const val LEGACY_UNRANKED = "Unranked"
  * down.
  */
 private fun failClosed(uid: String, matchId: String, because: String): Nothing =
-  throw HttpsError(
+  throw AuthorityError(
     "failed-precondition",
     "settleMatch: seated player '$uid' of match '$matchId' has $because — nothing writes; " +
       "a Ranked table applies every seat's progression or none.",
@@ -380,7 +376,7 @@ private fun parseRankedProfile(
         "a players/rp ($value) that is not a finite whole number from 0 to ${Int.MAX_VALUE} — " +
           "RP must be a finite whole number inside the Int range",
       )
-    else -> throw HttpsError(
+    else -> throw AuthorityError(
       "failed-precondition",
       "settleMatch: seated player '$uid' of match '$matchId' has a non-numeric players/rp " +
         "(${raw["rp"]}) — nothing wrote; it is not read as 0 RP, which would award " +
@@ -631,7 +627,7 @@ private fun movementNumber(uid: String, field: String, value: Any?, min: Int): I
   val number = value as? Number
   val whole = number?.let { wholeNumberInRange(it, min, Int.MAX_VALUE) }
   if (whole == null) {
-    throw HttpsError(
+    throw AuthorityError(
       "failed-precondition",
       "settleMatch: replay for '$uid' has a corrupt claim movements/$field ($value) — " +
         "it must be a finite whole number in the Int range; the replay is refused rather than fabricated.",
@@ -703,7 +699,7 @@ private suspend fun readSeatInputs(
 ): List<SeatInput> {
   val seats = Settlement.parseSeats(fields)
   return order.mapNotNull { seat ->
-    val uid = seats?.get(seat) ?: throw HttpsError(
+    val uid = seats?.get(seat) ?: throw AuthorityError(
       "failed-precondition",
       "settleMatch: seat '$seat' of match '$matchId' is not seated to a uid.",
     )
@@ -711,7 +707,7 @@ private suspend fun readSeatInputs(
     // stats-only path passes `onlyUids` so it skips that seat BEFORE reading
     // a profile; the RANKED path passes null and reads every seat.
     if (onlyUids != null && uid !in onlyUids) return@mapNotNull null
-    val profile = tx.readProfile(uid) ?: throw HttpsError(
+    val profile = tx.readProfile(uid) ?: throw AuthorityError(
       "failed-precondition",
       "settleMatch: seated player '$uid' of match '$matchId' has no players/ profile — " +
         "nothing wrote, the match stays settleable once that profile exists.",
@@ -879,26 +875,31 @@ private fun foldRankedProgression(
 
 /**
  * Runs one settlement: auth → read → gate → recompute → transacted
- * claim/write. Throws HttpsError on every denial (the client switches on
- * code). Returns Kotlin maps throughout so the orchestration stays
- * unit-testable — the callable handler applies toPlain() once, at the
- * serialization boundary (plain JS objects fail Kotlin Map reads).
+ * claim/write. The caller (a runtime adapter) has already verified the
+ * caller's identity and passes the verified [uid]; [data] is the raw
+ * callable payload and is converted here because both runtimes hand it
+ * over as a plain JS object, never a Kotlin map.
+ *
+ * Throws [AuthorityError] on every denial (the adapter maps the code onto
+ * its wire envelope — Firebase: `HttpsError`; Worker: the callable
+ * envelope). Returns Kotlin maps throughout so the orchestration stays
+ * unit-testable — the adapter applies toPlain() once, at the serialization
+ * boundary (plain JS objects fail Kotlin Map reads).
  */
-suspend fun settleOnce(db: SettlementDb, request: CallableRequest): Map<String, Any?> {
-  // The runtime delivers request.data as a PLAIN JS OBJECT, not a Kotlin map —
+suspend fun settleOnce(db: SettlementDb, uid: String, data: Any?): Map<String, Any?> {
+  // The runtime delivers the payload as a PLAIN JS OBJECT, not a Kotlin map —
   // `as? Map` returns null on one, silently rejecting every real call with
   // "matchId is required". Convert at the boundary, as below.
-  val data = dynamicToKotlin(request.data) as? Map<*, *>
-  val matchId = data?.get("matchId") as? String
+  val converted = dynamicToKotlin(data) as? Map<*, *>
+  val matchId = converted?.get("matchId") as? String
   if (matchId.isNullOrEmpty()) {
-    throw HttpsError("invalid-argument", "settleMatch: matchId is required.")
+    throw AuthorityError("invalid-argument", "settleMatch: matchId is required.")
   }
-  val uid = CallableAuth.requireUid(request)
 
   val fields = db.readMatch(matchId)
-    ?: throw HttpsError("not-found", "settleMatch: match '$matchId' was not found.")
+    ?: throw AuthorityError("not-found", "settleMatch: match '$matchId' was not found.")
   val parsed = Settlement.parseMatch(matchId, fields)
-    ?: throw HttpsError(
+    ?: throw AuthorityError(
       "failed-precondition",
       "settleMatch: match '$matchId' is not a match document.",
     )
@@ -913,13 +914,13 @@ suspend fun settleOnce(db: SettlementDb, request: CallableRequest): Map<String, 
       // S62 decision: a denied attempt is console-only (no write - an
       // authenticated prober must not be able to amplify documents).
       console.log(SettlementLedger.deniedLine(matchId, uid, gate.reason))
-      throw HttpsError(
+      throw AuthorityError(
         if (gate.reason == Settlement.Reason.NOT_MEMBER) "permission-denied" else "failed-precondition",
         gate.message,
       )
     }
     SettleDecision.Proceed -> Unit
-    else -> throw HttpsError("internal", "settleMatch: unreachable gate.")
+    else -> throw AuthorityError("internal", "settleMatch: unreachable gate.")
   }
 
   val parsedArchives = LinkedHashMap<String, Settlement.ArchivedRound>()
@@ -930,7 +931,7 @@ suspend fun settleOnce(db: SettlementDb, request: CallableRequest): Map<String, 
       // S62: a malformed archive is corrupt history - the same FAILED
       // ledger record and console line as a closed recompute.
       SettlementLedger.reportFailure(db, parsed, uid, Settlement.Reason.HISTORY_CORRUPT, message)
-      throw HttpsError("failed-precondition", message)
+      throw AuthorityError("failed-precondition", message)
     }
     parsedArchives[docId] = archive
   }
@@ -944,9 +945,9 @@ suspend fun settleOnce(db: SettlementDb, request: CallableRequest): Map<String, 
       // S62: recompute failures are ledger-recorded (FAILED) before the
       // denial is thrown; reporting is best-effort and never replaces it.
       SettlementLedger.reportFailure(db, withHistory, uid, decision.reason, decision.message)
-      throw HttpsError("failed-precondition", decision.message)
+      throw AuthorityError("failed-precondition", decision.message)
     }
-    else -> throw HttpsError("internal", "settleMatch: unreachable recompute.")
+    else -> throw AuthorityError("internal", "settleMatch: unreachable recompute.")
   }
 
   val settled = db.transact { tx ->
@@ -1066,32 +1067,32 @@ private suspend fun settleStatsOnly(
     val claimedScores = parsed.claimedScores
     val claimedWinners = parsed.claimedWinners
     if (parsed.status != "complete") {
-      throw HttpsError(
+      throw AuthorityError(
         "failed-precondition",
         "settleMatch: match '$matchId' is not complete.",
       )
     }
     if (parsed.completedRound + 1 <= parsed.maxRounds) {
-      throw HttpsError(
+      throw AuthorityError(
         "failed-precondition",
         "settleMatch: completedRound ${parsed.completedRound} does not end " +
           "a ${parsed.maxRounds}-round match.",
       )
     }
     if (claimedScores == null || claimedWinners == null) {
-      throw HttpsError(
+      throw AuthorityError(
         "failed-precondition",
         "settleMatch: a complete match with no claimed result cannot be settled.",
       )
     }
     if (claimedScores.keys.sorted() != parsed.order.sorted()) {
-      throw HttpsError(
+      throw AuthorityError(
         "failed-precondition",
         "settleMatch: claimed finalScores do not cover exactly the match seats.",
       )
     }
     if (claimedWinners.any { it !in parsed.order }) {
-      throw HttpsError(
+      throw AuthorityError(
         "failed-precondition",
         "settleMatch: claimed winnerIds name a seat that is not in the match.",
       )
@@ -1101,7 +1102,7 @@ private suspend fun settleStatsOnly(
     // same authority the RANKED path resolves uid links through; a seat
     // held by a uid that is not in `players` is a bot seat — skipped, never
     // attributed (A7.5). `readSeatInputs` enforces the same seat/uid shape
-    // as the RANKED path, including the HttpsError for a malformed seat.
+    // as the RANKED path, including the AuthorityError for a malformed seat.
     val inputs = readSeatInputs(
       tx, fields, parsed.order, matchId,
       onlyUids = parsed.players.toSet(),
@@ -1142,161 +1143,5 @@ private suspend fun settleStatsOnly(
     // counter writes exactly-once, and no caller ever has a `you` to slice.
     tx.writeClaim(matchId, claimRecord(uid, response, emptyMap()))
     response
-  }
-}
-
-/** Admin-SDK implementation. Reads normalize through dynamicToKotlin;
- *  writes normalize through toPlain. */
-class AdminSettlementDb : SettlementDb {
-  // Before getFirestore() resolves the default app — see ensureDefaultAdminApp.
-  init { ensureDefaultAdminApp() }
-
-  private val db = getFirestore()
-
-  private fun matchRef(matchId: String): DocRef =
-    db.collection("matches").doc(matchId)
-
-  /** The Ranked progression document — the only one settlement writes to. */
-  private fun playerRef(uid: String): DocRef = db.collection("players").doc(uid)
-
-  override suspend fun readMatch(matchId: String): Map<String, Any?>? {
-    val snap = matchRef(matchId).get().await()
-    if (!snap.exists) return null
-    @Suppress("UNCHECKED_CAST")
-    return dynamicToKotlin(snap.data()) as? Map<String, Any?>
-  }
-
-  override suspend fun readArchives(matchId: String): Map<String, Map<String, Any?>> {
-    val snapshot = matchRef(matchId).collection("roundArchive").get().await()
-    val out = LinkedHashMap<String, Map<String, Any?>>()
-    for (doc in snapshot.docs) {
-      @Suppress("UNCHECKED_CAST")
-      val fields = dynamicToKotlin(doc.data()) as? Map<String, Any?> ?: continue
-      out[doc.id] = fields
-    }
-    return out
-  }
-
-  override suspend fun <T> transact(block: suspend (SettlementDb.SettlementTx) -> T): T {
-    val outcome = db.runTransaction { tx ->
-      TxScope.promise { block(AdminTx(tx)) }
-    }.await()
-    @Suppress("UNCHECKED_CAST")
-    return outcome as T
-  }
-
-  override suspend fun appendLedger(record: Map<String, Any?>) {
-    // S62: create-if-absent in its own Admin transaction, keyed by
-    // SettlementLedger.ledgerDocId - the append is idempotent even if the
-    // same event is ever delivered twice, and a failure here cannot touch
-    // the settlement (that transaction has already committed).
-    // appendTargets decides which collections the row lands in, and they all
-    // commit together: the corrections window can never hold a row the ledger
-    // lacks, or miss one it should mirror.
-    val docId = SettlementLedger.ledgerDocId(record) ?: return
-    val refs = SettlementLedger.appendTargets(record).map { collection ->
-      db.collection(collection).doc(docId)
-    }
-    db.runTransaction { tx ->
-      TxScope.promise {
-        // Firestore requires EVERY read in a transaction to precede EVERY
-        // write (the SDK throws on a get after a set), so the create-if-absent
-        // test is done for all targets first and only then written.
-        val existed = refs.map { tx.get(it).await().exists }
-        val plain = toPlain(record)
-        refs.forEachIndexed { index, ref ->
-          if (!existed[index]) tx.set(ref, plain)
-        }
-      }
-    }.await()
-  }
-
-  override suspend fun readCorrectionWindow(): List<Map<String, Any?>> {
-    // S62: newest-first over ONE field of the corrections collection, so the
-    // window is genuinely "the last DETECT_WINDOW corrections" and includes
-    // the record the correction just wrote. An un-ordered equality query on
-    // the ledger instead would return index order, not recency, and would
-    // freeze on the oldest documents once the collection grows - silently
-    // blinding the detector. Mirror the correction at write time and the read
-    // stays on the automatic single-field index: no composite index, no
-    // indexes artifact, no deployment.
-    val snapshot = db.collection(SettlementLedger.COLLECTION_CORRECTIONS)
-      .orderBy("appendedAt", "desc")
-      .limit(SettlementLedger.DETECT_WINDOW)
-      .get().await()
-    return snapshot.docs.mapNotNull { doc ->
-      @Suppress("UNCHECKED_CAST")
-      dynamicToKotlin(doc.data()) as? Map<String, Any?>
-    }
-  }
-
-  private inner class AdminTx(private val tx: Transaction) : SettlementDb.SettlementTx {
-    override suspend fun readClaim(matchId: String): Map<String, Any?>? {
-      val snap = tx.get(matchRef(matchId).collection(CLAIM_PATH).doc(CLAIM_DOC)).await()
-      if (!snap.exists) return null
-      @Suppress("UNCHECKED_CAST")
-      return dynamicToKotlin(snap.data()) as? Map<String, Any?>
-    }
-
-    override suspend fun readProfile(uid: String): Map<String, Any?>? {
-      val snap = tx.get(playerRef(uid)).await()
-      // Absent, not empty: a missing profile document is a fail-closed
-      // condition for the whole settlement, while an existing document with no
-      // `rp` field is a different thing (an unplaced account, RD30).
-      if (!snap.exists) return null
-      @Suppress("UNCHECKED_CAST")
-      return dynamicToKotlin(snap.data()) as? Map<String, Any?>
-    }
-
-    /**
-     * S59's singleton, read INSIDE the transaction and before any write (Q22,
-     * V1-C10): the season a stale seat is lazily reset into is exactly the
-     * season this transaction commits into, so a season flipping mid-call
-     * cannot stamp a profile with a season the write did not land in. Absent
-     * answers NULL — the fresh-deployment bootstrap the alignment guards —
-     * while an existing document is authoritative and parsed by
-     * [lazyResetSeasonOf]: the in-flight TARGET while a reset is RUNNING (a
-     * seat the sweep already moved must not be reset backwards), otherwise
-     * the outgoing `seasonId` the board still serves (malformed fails closed).
-     */
-    override suspend fun currentLazyResetSeason(): String? {
-      val snap = tx.get(db.collection(SEASONS_COLLECTION).doc(CURRENT_SEASON_DOC)).await()
-      if (!snap.exists) return null
-      return lazyResetSeasonOf(exists = true, data = dynamicToKotlin(snap.data()))
-    }
-
-    override fun writeCorrection(
-      matchId: String,
-      scores: Map<String, Int>,
-      winners: List<String>,
-      version: Int,
-    ) {
-      tx.update(
-        matchRef(matchId),
-        toPlain(
-          mapOf(
-            "finalScores" to scores,
-            "winnerIds" to winners,
-            "version" to version,
-          ),
-        ),
-      )
-    }
-
-    override fun writeProfile(uid: String, fields: Map<String, Any?>) {
-      // update(), not set(): it merges these fields into the profile and
-      // leaves everything else the account holds (name, avatar, room/match
-      // pointers, the legacy `rank`, and every field this path does not own)
-      // exactly as it is.
-      tx.update(playerRef(uid), toPlain(fields))
-    }
-
-    override fun writeClaim(matchId: String, record: Map<String, Any?>) {
-      tx.set(matchRef(matchId).collection(CLAIM_PATH).doc(CLAIM_DOC), toPlain(record))
-    }
-  }
-
-  companion object {
-    private val TxScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
   }
 }

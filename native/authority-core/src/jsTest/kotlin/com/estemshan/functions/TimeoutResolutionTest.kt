@@ -1110,7 +1110,9 @@ class TimeoutResolutionTest {
     val resolution = TimeoutResolution.resolveExpired(doc, dealtHands(), pending)
     assertIs<TimeoutResolution.Resolution.Applied>(resolution)
 
-    val element = (resolution.write.updates["cardLog"]?.asDynamic()?.elements as Array<*>).single()
+    val element = (resolution.write.updates["cardLog"] as? ArrayUnionSentinel)
+      ?.elements?.single()
+      ?: error("the cardLog update must be an ArrayUnionSentinel")
     assertNull(element as? Map<*, *>, "a Kotlin map's prototype is what Firestore rejects")
     assertTrue(
       js("Object.getPrototypeOf(element) === Object.prototype") as Boolean,
@@ -1316,38 +1318,33 @@ class TimeoutResolutionTest {
     }
   }
 
-  private fun fakeRequest(uid: String?, matchId: String = "m1"): CallableRequest =
-    object : CallableRequest {
-      // The Functions runtime delivers data as a PLAIN JS OBJECT, never a Kotlin
-      // map — `mapOf` here would let a broken `as? Map` cast pass (the S61
-      // instrumented suite caught exactly that). json() is the runtime shape.
-      override val data: Any? = json("matchId" to matchId)
-      override val auth: AuthData? = uid?.let {
-        object : AuthData {
-          override val uid: String = it
-          override val token: AuthToken? = null
-        }
-      }
-      override val instanceIdToken: String? = null
-      override val rawRequest: Any? = null
-      override val app: Any? = null
-    }
+  // The adapters deliver the payload as a PLAIN JS OBJECT, never a Kotlin
+  // map — `mapOf` here would let a broken `as? Map` cast pass (the S61
+  // instrumented suite caught exactly that). json() is the runtime shape.
+  private fun timeoutData(matchId: Any? = "m1"): Any? = json("matchId" to matchId)
 
   /**
-   * Reads back the entries an arrayUnion transform appends.
+   * Reads back the entries of the core's arrayUnion sentinel.
    *
-   * `FieldValue.arrayUnion(entry)` is a firebase-admin transform OBJECT, not an
-   * array, so the log update cannot be inspected with a plain cast — it has to
-   * be expanded through the SDK's own `elements` field. Those elements are the
-   * PLAIN JS objects the resolver now hands arrayUnion (a Kotlin map's custom
-   * prototype is what Firestore rejects), so they come back through
-   * dynamicToKotlin. Test-only, against the pinned SDK.
+   * `AuthoritySentinels.arrayUnion(entry)` wraps PLAIN JS objects (the core
+   * runs the entry through toPlain at construction — a Kotlin map's custom
+   * prototype is what Firestore rejects). The firebase-admin transform
+   * object is created by the adapter at the commit boundary, one layer out
+   * from here; this test pins the sentinel's element payload instead.
    */
   private fun arrayUnionEntries(value: Any?): List<Map<String, Any?>> {
-    val transform = value?.asDynamic() ?: return emptyList()
-    assertEquals("FieldValue.arrayUnion", transform.methodName, "the log update must be an arrayUnion")
-    @Suppress("UNCHECKED_CAST")
-    return (transform.elements as Array<*>).map { dynamicToKotlin(it) as Map<String, Any?> }
+    val sentinel = value as? ArrayUnionSentinel
+      ?: error("the log update must be an ArrayUnionSentinel, was: $value")
+    // The elements must be plain JS objects: dynamicToKotlin proves they are
+    // readable as maps, and none of them carries a Kotlin prototype.
+    return sentinel.elements.map { element ->
+      assertTrue(
+        js("Object.getPrototypeOf(element) === Object.prototype") as Boolean,
+        "the log entry must be a plain JS object",
+      )
+      @Suppress("UNCHECKED_CAST")
+      dynamicToKotlin(element) as Map<String, Any?>
+    }
   }
 
   @Test
@@ -1355,7 +1352,7 @@ class TimeoutResolutionTest {
     val db = FakeTimeoutDb(fastRoundDoc(), dealtHands())
     val oneMillisecondEarly = DecisionClock { anchorMillis + 19_999 }
 
-    val response = resolveTimeoutOnce(db, fakeRequest("u3"), oneMillisecondEarly)
+    val response = resolveTimeoutOnce(db, "u3", timeoutData(), oneMillisecondEarly)
 
     assertEquals(false, response["resolved"])
     assertEquals(TimeoutResolution.Reason.NOT_YET_EXPIRED, response["reason"])
@@ -1369,7 +1366,7 @@ class TimeoutResolutionTest {
     val expired = DecisionClock { anchorMillis + 20_000 }
 
     // u3 triggers it — not the acting seat, whose app may be gone entirely.
-    val response = resolveTimeoutOnce(db, fakeRequest("u3"), expired)
+    val response = resolveTimeoutOnce(db, "u3", timeoutData(), expired)
 
     assertEquals(true, response["resolved"])
     assertEquals("p1", response["seatId"])
@@ -1395,7 +1392,7 @@ class TimeoutResolutionTest {
     )
     val expiredForTheOldDecision = DecisionClock { anchorMillis + 20_000 }
 
-    val response = resolveTimeoutOnce(db, fakeRequest("u2"), expiredForTheOldDecision)
+    val response = resolveTimeoutOnce(db, "u2", timeoutData(), expiredForTheOldDecision)
 
     assertEquals(false, response["resolved"])
     assertEquals(TimeoutResolution.Reason.NOT_YET_EXPIRED, response["reason"])
@@ -1408,7 +1405,7 @@ class TimeoutResolutionTest {
     val expired = DecisionClock { anchorMillis + 20_000 }
 
     val error = assertFailsWith<Throwable> {
-      resolveTimeoutOnce(db, fakeRequest("not-a-player"), expired)
+      resolveTimeoutOnce(db, "not-a-player", timeoutData(), expired)
     }
     assertNotNull(error.message)
     assertTrue(error.message!!.contains("not a player in this match"))
@@ -1430,7 +1427,7 @@ class TimeoutResolutionTest {
     val db = FakeTimeoutDb(liveDoc, dealtHands())
     val oneMillisecondEarly = DecisionClock { anchorMillis + 19_999 }
 
-    val response = resolveTimeoutOnce(db, fakeRequest("u3"), oneMillisecondEarly)
+    val response = resolveTimeoutOnce(db, "u3", timeoutData(), oneMillisecondEarly)
 
     assertEquals(false, response["resolved"])
     assertEquals(TimeoutResolution.Reason.NOT_YET_EXPIRED, response["reason"])
@@ -1439,29 +1436,29 @@ class TimeoutResolutionTest {
   }
 
   @Test
-  fun anUnauthenticatedCallerIsRejectedBeforeAnyRead() = runTest {
+  fun aCallerOutsideTheMatchIsRejectedBeforeAnyRead() = runTest {
+    // Authentication happens at the adapter (callable-auth / the Worker's
+    // bearer gate) before this orchestration runs; what remains here is
+    // authorization — the caller must be a player in the match, and it
+    // fires before any read or write.
     val db = FakeTimeoutDb(fastRoundDoc(), dealtHands())
 
-    assertFailsWith<Throwable> {
-      resolveTimeoutOnce(db, fakeRequest(null), DecisionClock { anchorMillis + 20_000 })
+    assertFailsWith<AuthorityError> {
+      resolveTimeoutOnce(db, "not-a-player", timeoutData(), DecisionClock { anchorMillis + 20_000 })
     }
     assertNull(db.written)
+    assertEquals(0, db.handReads)
   }
 
   @Test
   fun aMatchIdIsRequired() = runTest {
     val db = FakeTimeoutDb(fastRoundDoc(), dealtHands())
-    val request = object : CallableRequest {
-      override val data: Any? = null
-      override val auth: AuthData? = object : AuthData {
-        override val uid: String = "u1"
-        override val token: AuthToken? = null
-      }
-      override val instanceIdToken: String? = null
-      override val rawRequest: Any? = null
-      override val app: Any? = null
+
+    val error = assertFailsWith<AuthorityError> {
+      resolveTimeoutOnce(db, "u1", null, DecisionClock { anchorMillis })
     }
-    assertFailsWith<Throwable> { resolveTimeoutOnce(db, request, DecisionClock { anchorMillis }) }
+    assertEquals("invalid-argument", error.code)
+    assertTrue(error.message.contains("matchId is required"))
     assertNull(db.written)
   }
 
@@ -1478,12 +1475,12 @@ class TimeoutResolutionTest {
       fastRoundDoc(scoringMode = "CLASSIC", currentMultiplier = 2),
     )) {
       val db = FakeTimeoutDb(doc, dealtHands())
-      val error = assertFailsWith<Throwable> {
-        resolveTimeoutOnce(db, fakeRequest("u3"), DecisionClock { anchorMillis + 20_000 })
+      val error = assertFailsWith<AuthorityError> {
+        resolveTimeoutOnce(db, "u3", timeoutData(), DecisionClock { anchorMillis + 20_000 })
       }
-      assertNotNull(error.message)
+      assertEquals("failed-precondition", error.code)
       assertTrue(
-        error.message!!.contains("currentMultiplier"),
+        error.message.contains("currentMultiplier"),
         "the error must name the unreadable field: ${error.message}",
       )
       assertNull(db.written)
@@ -1498,7 +1495,7 @@ class TimeoutResolutionTest {
   fun aFirstTimeoutCreatesTheCounterAtOne() = runTest {
     val db = FakeTimeoutDb(fastRoundDoc(), dealtHands())
 
-    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+    resolveTimeoutOnce(db, "u3", timeoutData(), expiredClock)
 
     // p1 is the acting seat; u1 owns it. The counter is keyed by the PLAYER.
     assertEquals(1, db.writtenCounts["u1"])
@@ -1515,7 +1512,7 @@ class TimeoutResolutionTest {
       storedCounts = mapOf("u1" to 7),
     )
 
-    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+    resolveTimeoutOnce(db, "u3", timeoutData(), expiredClock)
 
     assertEquals(8, db.writtenCounts["u1"])
     assertNull(db.written!!["timeoutRemovedUids"])
@@ -1529,7 +1526,7 @@ class TimeoutResolutionTest {
       storedCounts = mapOf("u1" to 14),
     )
 
-    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+    resolveTimeoutOnce(db, "u3", timeoutData(), expiredClock)
 
     // The count reaches the threshold and the removal lands in the SAME write
     // as the deciding move — never before it.
@@ -1546,7 +1543,7 @@ class TimeoutResolutionTest {
       storedCounts = mapOf("u1" to 14),
     )
 
-    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+    resolveTimeoutOnce(db, "u3", timeoutData(), expiredClock)
 
     // The timeout mechanism's OWN field only — never botSeats, never
     // removedUids (Vote Kick's state stays untouched).
@@ -1563,7 +1560,7 @@ class TimeoutResolutionTest {
       storedCounts = mapOf("u1" to "not-a-number"),
     )
 
-    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+    resolveTimeoutOnce(db, "u3", timeoutData(), expiredClock)
 
     // The decision still applies — the match must progress — but the counter
     // is neither trusted nor written, and no removal can fire.
@@ -1580,7 +1577,7 @@ class TimeoutResolutionTest {
       storedCounts = mapOf("u1" to 99),
     )
 
-    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+    resolveTimeoutOnce(db, "u3", timeoutData(), expiredClock)
 
     // A stored value above the threshold cannot leap straight to a removal.
     assertNull(db.writtenCounts["u1"])
@@ -1596,7 +1593,7 @@ class TimeoutResolutionTest {
     doc["timeoutRemovedUids"] = listOf("u1")
     val db = FakeTimeoutDb(doc, dealtHands())
 
-    val response = resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+    val response = resolveTimeoutOnce(db, "u3", timeoutData(), expiredClock)
 
     assertEquals(true, response["resolved"])
     assertNotNull(db.written)
@@ -1611,7 +1608,7 @@ class TimeoutResolutionTest {
     doc["botSeats"] = listOf("p1")
     val db = FakeTimeoutDb(doc, dealtHands())
 
-    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+    resolveTimeoutOnce(db, "u3", timeoutData(), expiredClock)
 
     assertNotNull(db.written)
     assertNull(db.writtenCounts["u1"])
@@ -1658,7 +1655,7 @@ class TimeoutResolutionTest {
     // 1 s before a 15 s BIDDING window (10 + 5) — the client called early.
     val clock = DecisionClock { anchorMillis + 14_000 }
 
-    val response = resolveTimeoutOnce(db, fakeRequest("u3"), clock)
+    val response = resolveTimeoutOnce(db, "u3", timeoutData(), clock)
 
     assertEquals(false, response["resolved"])
     assertEquals(TimeoutResolution.Reason.NOT_YET_EXPIRED, response["reason"])
@@ -1675,7 +1672,7 @@ class TimeoutResolutionTest {
     // spin on.
     val clock = DecisionClock { anchorMillis + 19_999 }
 
-    val response = resolveTimeoutOnce(db, fakeRequest("u3"), clock)
+    val response = resolveTimeoutOnce(db, "u3", timeoutData(), clock)
 
     assertEquals(false, response["resolved"])
     assertEquals(

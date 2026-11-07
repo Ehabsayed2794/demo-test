@@ -206,15 +206,15 @@ internal fun replayFastSuperCallChain(
 
 object Settlement {
 
-  /** Canonical failure reasons. The seam maps these to HttpsError codes. */
+  /** Canonical failure reasons. The seam maps these to AuthorityError codes. */
   object Reason {
-    /** Settler is not a player in this match (HttpsError permission-denied). */
+    /** Settler is not a player in this match (AuthorityError permission-denied). */
     const val NOT_MEMBER = "NOT_MEMBER"
 
-    /** Match status is not complete (HttpsError failed-precondition). */
+    /** Match status is not complete (AuthorityError failed-precondition). */
     const val NOT_COMPLETE = "NOT_COMPLETE"
 
-    /** Expected history is absent (HttpsError failed-precondition). */
+    /** Expected history is absent (AuthorityError failed-precondition). */
     const val HISTORY_INCOMPLETE = "HISTORY_INCOMPLETE"
 
     /** Present history contradicts the engine or the doc shape (failed-precondition). */
@@ -339,7 +339,7 @@ object Settlement {
     /** Recompute disagrees — the recomputed value is what settles (RD12). */
     data class Corrected(val recomputed: RecomputedMatch) : SettleDecision()
 
-    /** Fail-closed: nothing settles. The seam throws the mapped HttpsError. */
+    /** Fail-closed: nothing settles. The seam throws the mapped AuthorityError. */
     data class Failed(val reason: String, val message: String) : SettleDecision()
   }
 

@@ -1,0 +1,21 @@
+# TEST-ONLY local config for the seeded O-06 E2E. NEVER DEPLOYED.
+#
+# `main` points at scripts/e2e-entry.mjs, whose verifier accepts
+# `Authorization: Bearer e2e:<uid>` so the E2E can drive the PRODUCTION
+# `/call/*` router end to end. The production config (wrangler.toml) is
+# untouched: it still points at src/index.js, whose default verifier rejects
+# every request.
+#
+# No account_id, no routes, no vars, no secrets. `wrangler dev --local` only.
+# The worker name deliberately matches production so the DO unique key
+# (`estemshan-ranked-MatchDO`) is the same one the real config produces.
+
+name = "estemshan-ranked"
+main = "scripts/e2e-entry.mjs"
+compatibility_date = "2026-10-23"
+
+durable_objects = { bindings = [ { name = "MATCH_DO", class_name = "MatchDO" } ] }
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["MatchDO"]

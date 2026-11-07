@@ -222,7 +222,7 @@ class SeatReclaimOnceTest {
   private suspend fun reclaim(
     db: FakeReclaimDb,
     uid: String = "u1",
-  ): Map<String, Any?> = reclaimOnce(db, fakeRequest(uid), later)
+  ): Map<String, Any?> = reclaimOnce(db, uid, json("matchId" to "m1"), later)
 
   // ── the atomic pair ───────────────────────────────────────────────────
 

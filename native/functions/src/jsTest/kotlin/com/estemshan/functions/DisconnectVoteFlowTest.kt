@@ -752,10 +752,16 @@ class DisconnectVoteFlowTest {
     try {
       block()
     } catch (e: Throwable) {
-      return e.asDynamic().code as String
+      return codeOf(e) ?: throw AssertionError("no code on $e")
     }
     throw AssertionError("expected HttpsError")
   }
+
+  /** The core throws [AuthorityError] (a Kotlin class — its `code` is not a
+   * plain JS property, so `.asDynamic().code` is undefined); the Firebase path
+   * throws the external [HttpsError]. Read both, preferring the core type. */
+  private fun codeOf(error: Throwable): String? =
+    (error as? AuthorityError)?.code ?: (error.asDynamic().code as? String)
 
   @Test
   fun theOuterGatesHold() = runTest {
@@ -978,7 +984,7 @@ class DisconnectVoteFlowTest {
     val doc = pendingDoc(pause = grantedWait("p2", endsAt = anchor + 60_000L))
     val db = PausedTimeoutDb(doc)
 
-    val response = resolveTimeoutOnce(db, fakeRequest("u3"), DecisionClock { anchor + 20_000L })
+    val response = resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), DecisionClock { anchor + 20_000L })
 
     assertEquals(TimeoutResolution.Reason.NOT_YET_EXPIRED, response["reason"])
     assertEquals(
@@ -1002,7 +1008,7 @@ class DisconnectVoteFlowTest {
     val doc = pendingDoc(pause = grantedWait("p2", endsAt = anchor + 20_000L))
     val db = PausedTimeoutDb(doc)
 
-    val response = resolveTimeoutOnce(db, fakeRequest("u1"), DecisionClock { anchor + 19_000L })
+    val response = resolveTimeoutOnce(db, "u1", json("matchId" to "m1"), DecisionClock { anchor + 19_000L })
 
     assertEquals(TimeoutResolution.Reason.NOT_YET_EXPIRED, response["reason"])
     assertEquals(1_000L, response["retryAfterMillis"])

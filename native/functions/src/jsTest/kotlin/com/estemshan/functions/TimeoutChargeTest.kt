@@ -176,7 +176,7 @@ class TimeoutChargeTest {
   fun theFifteenthTimeoutRecordsOneKozInRoom() = runTest {
     val db = FakeTimeoutDb(removalDoc(mode = "ROOM"), dealtHands(), storedCounts = mapOf("u1" to 14))
 
-    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+    resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), expiredClock)
 
     assertEquals(mapOf("u1" to 1), db.written!![TimeoutResolution.TIMEOUT_REMOVED_CHARGES_FIELD])
   }
@@ -185,7 +185,7 @@ class TimeoutChargeTest {
   fun theFifteenthTimeoutRecordsTwoKozInRanked() = runTest {
     val db = FakeTimeoutDb(removalDoc(mode = "RANKED"), dealtHands(), storedCounts = mapOf("u1" to 14))
 
-    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+    resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), expiredClock)
 
     assertEquals(mapOf("u1" to 2), db.written!![TimeoutResolution.TIMEOUT_REMOVED_CHARGES_FIELD])
   }
@@ -194,7 +194,7 @@ class TimeoutChargeTest {
   fun theFifteenthTimeoutRecordsTwoKozInUnranked() = runTest {
     val db = FakeTimeoutDb(removalDoc(mode = "UNRANKED"), dealtHands(), storedCounts = mapOf("u1" to 14))
 
-    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+    resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), expiredClock)
 
     assertEquals(mapOf("u1" to 2), db.written!![TimeoutResolution.TIMEOUT_REMOVED_CHARGES_FIELD])
   }
@@ -206,7 +206,7 @@ class TimeoutChargeTest {
     // reads those as ROOM, so the removal charges ROOM's 1 Koz.
     val db = FakeTimeoutDb(removalDoc(mode = null), dealtHands(), storedCounts = mapOf("u1" to 14))
 
-    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+    resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), expiredClock)
 
     assertEquals(mapOf("u1" to 1), db.written!![TimeoutResolution.TIMEOUT_REMOVED_CHARGES_FIELD])
   }
@@ -215,7 +215,7 @@ class TimeoutChargeTest {
   fun anUnrecognisedModeFallsBackToTheRoomAmount() = runTest {
     val db = FakeTimeoutDb(removalDoc(mode = "WEIRD"), dealtHands(), storedCounts = mapOf("u1" to 14))
 
-    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+    resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), expiredClock)
 
     assertEquals(mapOf("u1" to 1), db.written!![TimeoutResolution.TIMEOUT_REMOVED_CHARGES_FIELD])
   }
@@ -226,7 +226,7 @@ class TimeoutChargeTest {
   fun theChargeRidesTheSameWriteAsTheRemovalAndTheDecidingMove() = runTest {
     val db = FakeTimeoutDb(removalDoc(mode = "RANKED"), dealtHands(), storedCounts = mapOf("u1" to 14))
 
-    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+    resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), expiredClock)
 
     val updates = db.written!!
     // The removal list and the charge map land in ONE update, together with
@@ -241,7 +241,7 @@ class TimeoutChargeTest {
   fun aMidMatchTimeoutRecordsNoCharge() = runTest {
     val db = FakeTimeoutDb(removalDoc(mode = "ROOM"), dealtHands(), storedCounts = mapOf("u1" to 7))
 
-    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+    resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), expiredClock)
 
     // The 8th timeout removes nobody: the decision lands, the counter ticks,
     // and no charge field is even present in the write.
@@ -258,7 +258,7 @@ class TimeoutChargeTest {
       storedCounts = mapOf("u1" to "not-a-number"),
     )
 
-    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+    resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), expiredClock)
 
     // Corrupt state can never buy a removal — or a charge.
     assertNull(db.writtenCounts["u1"])
@@ -270,7 +270,7 @@ class TimeoutChargeTest {
   fun aRemovalChargeNeverWritesAnotherMechanismsState() = runTest {
     val db = FakeTimeoutDb(removalDoc(mode = "ROOM"), dealtHands(), storedCounts = mapOf("u1" to 14))
 
-    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+    resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), expiredClock)
 
     // The timeout mechanism's OWN fields only — never Vote Kick's
     // removedUids/botSeats, never the leave path's leftUids.
@@ -287,7 +287,7 @@ class TimeoutChargeTest {
     // SeventhTakeoverTest's to pin.
     val db = FakeTimeoutDb(removalDoc(mode = "ROOM"), dealtHands(), storedCounts = mapOf("u1" to 14))
 
-    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+    resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), expiredClock)
 
     assertNull(db.written!![TimeoutResolution.TAKEOVER_REMOVED_UIDS_FIELD])
     assertNull(db.written!![TimeoutResolution.TAKEOVER_REMOVED_CHARGES_FIELD])
@@ -302,7 +302,7 @@ class TimeoutChargeTest {
       dealtHands(),
       storedCounts = mapOf("u1" to 14),
     )
-    resolveTimeoutOnce(first, fakeRequest("u3"), expiredClock)
+    resolveTimeoutOnce(first, "u3", json("matchId" to "m1"), expiredClock)
     val committed = committedDoc(
       doc = removalDoc(mode = "ROOM"),
       updates = first.written!!,
@@ -321,7 +321,7 @@ class TimeoutChargeTest {
       storedCounts = mapOf("u1" to 15), // the count the first write committed
     )
     val replayClock = DecisionClock { anchorMillis + 60_000 }
-    resolveTimeoutOnce(replay, fakeRequest("u3"), replayClock)
+    resolveTimeoutOnce(replay, "u3", json("matchId" to "m1"), replayClock)
 
     assertNull(replay.writtenCounts["u1"])
     assertTrue(
@@ -343,7 +343,7 @@ class TimeoutChargeTest {
     doc["botSeats"] = listOf("p1")
     val db = FakeTimeoutDb(doc, dealtHands(), storedCounts = mapOf("u1" to 14))
 
-    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+    resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), expiredClock)
 
     assertNull(db.writtenCounts["u1"])
     assertNull(db.written!!["timeoutRemovedUids"])
@@ -362,7 +362,7 @@ class TimeoutChargeTest {
     doc[TimeoutResolution.TIMEOUT_REMOVED_CHARGES_FIELD] = mapOf("u4" to 2)
     val db = FakeTimeoutDb(doc, dealtHands(), storedCounts = mapOf("u1" to 14))
 
-    resolveTimeoutOnce(db, fakeRequest("u3"), expiredClock)
+    resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), expiredClock)
 
     assertEquals(
       mapOf("u4" to 2, "u1" to 2),

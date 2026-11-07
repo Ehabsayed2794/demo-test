@@ -602,7 +602,7 @@ class InactiveTakeoverResolutionTest {
   fun aFirstIgnoredWindowWritesTheClockButNoMarker() = runTest {
     val db = FakeDb(fastRoundDoc(), dealtHands())
 
-    val response = resolveTimeoutOnce(db, fakeRequest("u3"), expiredHumanWindow)
+    val response = resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), expiredHumanWindow)
 
     assertEquals(true, response["resolved"])
     // The marker stays absent until the threshold, and the match write is the
@@ -631,7 +631,7 @@ class InactiveTakeoverResolutionTest {
       storedInactivity = mapOf("u1" to inactivityDoc(40_000L, cursorAtRoundStart)),
     )
 
-    val response = resolveTimeoutOnce(db, fakeRequest("u3"), expiredHumanWindow)
+    val response = resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), expiredHumanWindow)
 
     assertEquals(true, response["resolved"])
     val marker = assertNotNull(markerOf(db.written))
@@ -660,7 +660,7 @@ class InactiveTakeoverResolutionTest {
       storedInactivity = mapOf("u1" to inactivityDoc(40_000L, cursorAtRoundStart)),
     )
 
-    resolveTimeoutOnce(db, fakeRequest("u3"), expiredHumanWindow)
+    resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), expiredHumanWindow)
 
     val marker = assertNotNull(markerOf(db.written))
     assertEquals(setOf("p1", "p2"), marker.keys)
@@ -677,7 +677,7 @@ class InactiveTakeoverResolutionTest {
       storedCounts = mapOf("u1" to 7),
     )
 
-    val response = resolveTimeoutOnce(db, fakeRequest("u3"), expiredBorrowedWindow)
+    val response = resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), expiredBorrowedWindow)
 
     assertEquals(true, response["resolved"])
     assertEquals(TimeoutResolution.BOT_DECISION_SECONDS, response["deadlineSeconds"])
@@ -703,7 +703,7 @@ class InactiveTakeoverResolutionTest {
       storedCounts = mapOf("u1" to 7),
     )
 
-    val response = resolveTimeoutOnce(db, fakeRequest("u3"), expiredHumanWindow)
+    val response = resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), expiredHumanWindow)
 
     // Read as not-borrowed: the full window, the counter still advancing, and
     // the clock still accumulating so a genuine takeover overwrites the garbage.
@@ -721,7 +721,7 @@ class InactiveTakeoverResolutionTest {
       storedInactivity = mapOf("u1" to inactivityDoc(40_000L, cursorAtRoundStart)),
     )
 
-    val response = resolveTimeoutOnce(db, fakeRequest("u3"), DecisionClock { anchorMillis + 19_999 })
+    val response = resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), DecisionClock { anchorMillis + 19_999 })
 
     assertEquals(false, response["resolved"])
     assertNull(db.written)
@@ -741,7 +741,7 @@ class InactiveTakeoverResolutionTest {
       storedInactivity = mapOf("u1" to inactivityDoc(40_000L, cursorAtRoundStart)),
     )
 
-    val response = resolveTimeoutOnce(db, fakeRequest("u3"), DecisionClock { anchorMillis + 25_000 })
+    val response = resolveTimeoutOnce(db, "u3", json("matchId" to "m1"), DecisionClock { anchorMillis + 25_000 })
 
     assertEquals(false, response["resolved"])
     assertNotNull(response["retryAfterMillis"])

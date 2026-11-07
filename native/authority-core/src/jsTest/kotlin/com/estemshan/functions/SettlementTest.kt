@@ -4,8 +4,21 @@ import com.estemshan.engine.GameType
 import com.estemshan.engine.MatchMode
 import com.estemshan.engine.ScoringMode
 import com.estemshan.engine.Suit
-import com.estemshan.functions.Settlement.ArchivedRound
-import com.estemshan.functions.Settlement.ConvergedMatch
+import com.estemshan.functions.Fixtures.ABSENT
+import com.estemshan.functions.Fixtures.archiveFields
+import com.estemshan.functions.Fixtures.archived
+import com.estemshan.functions.Fixtures.card
+import com.estemshan.functions.Fixtures.confirm
+import com.estemshan.functions.Fixtures.converged
+import com.estemshan.functions.Fixtures.dash
+import com.estemshan.functions.Fixtures.auctionBid
+import com.estemshan.functions.Fixtures.auctionPass
+import com.estemshan.functions.Fixtures.matchFields
+import com.estemshan.functions.Fixtures.playsFor
+import com.estemshan.functions.Fixtures.round1Golden
+import com.estemshan.functions.Fixtures.round1Parts
+import com.estemshan.functions.Fixtures.rawRound
+import com.estemshan.functions.Fixtures.shellMatch
 import com.estemshan.functions.Settlement.SettleDecision
 import kotlinx.coroutines.test.runTest
 import kotlin.js.json
@@ -30,250 +43,6 @@ import kotlin.test.assertTrue
  * disagrees), never silently.
  */
 class SettlementTest {
-
-  // ── raw Firestore-shaped builders ─────────────────────────────────
-
-  private fun rankS(v: Int): String = when (v) {
-    11 -> "J"
-    12 -> "Q"
-    13 -> "K"
-    14 -> "A"
-    else -> "$v"
-  }
-
-  private fun card(seat: String, suit: String, v: Int, round: Int): Map<String, Any?> =
-    mapOf(
-      "seatId" to seat,
-      "card" to mapOf("suit" to suit, "rank" to mapOf("v" to v, "s" to rankS(v))),
-      "round" to round,
-    )
-
-  private fun dash(seat: String, declared: Boolean, round: Int): Map<String, Any?> =
-    mapOf(
-      "seatId" to seat,
-      "actionType" to "SubmitDashCallDecision",
-      "declaredDashCall" to declared,
-      "round" to round,
-    )
-
-  private fun auctionBid(seat: String, tricks: Int, suit: String, round: Int): Map<String, Any?> =
-    mapOf(
-      "seatId" to seat,
-      "actionType" to "SubmitAuctionBid",
-      "isPass" to false,
-      "tricks" to tricks,
-      "suit" to suit,
-      "round" to round,
-    )
-
-  private fun auctionPass(seat: String, round: Int): Map<String, Any?> =
-    mapOf(
-      "seatId" to seat,
-      "actionType" to "SubmitAuctionBid",
-      "isPass" to true,
-      "round" to round,
-    )
-
-  private fun confirm(seat: String, tricks: Int, suit: String, round: Int): Map<String, Any?> =
-    mapOf(
-      "seatId" to seat,
-      "actionType" to "SubmitConfirmCall",
-      "tricks" to tricks,
-      "suit" to suit,
-      "round" to round,
-    )
-
-  /**
-   * Builds 52 plays for 13 tricks: [winners] is the winner seat per
-   * trick in play order (must total the intended tricksWon). Two
-   * phases, so filler assignment can never starve a future winner:
-   * first every winner takes the highest remaining card of the
-   * winning suit (trump, or led when trump is SANS), then every other
-   * slot takes the lowest remaining card that cannot beat its trick's
-   * winner. Led suit cycles S/H/D/C; play order is p1..p4.
-   */
-  private fun nextSeat(seat: String): String {
-    val order = listOf("p1", "p2", "p3", "p4")
-    return order[(order.indexOf(seat) + 1) % order.size]
-  }
-
-  private fun playsFor(
-    winners: List<String>,
-    trump: String,
-    round: Int,
-    leaderId: String,
-  ): List<Map<String, Any?>> {
-    require(winners.size == 13)
-    val pools = mutableMapOf<String, ArrayDeque<Int>>()
-    for (suit in listOf("SPADES", "HEARTS", "DIAMONDS", "CLUBS")) {
-      pools[suit] = ArrayDeque((14 downTo 2).toList())
-    }
-    val ledCycle = listOf("SPADES", "HEARTS", "DIAMONDS", "CLUBS")
-    val winSuitOf = winners.indices.map { if (trump == "SANS") ledCycle[it % 4] else trump }
-    val winValue = HashMap<Int, Int>()
-    for (trick in winners.indices) {
-      winValue[trick] = pools.getValue(winSuitOf[trick]).removeFirst()
-    }
-    val plays = ArrayList<Map<String, Any?>>()
-    var leader = leaderId
-    winners.forEachIndexed { trick, winner ->
-      val winSuit = winSuitOf[trick]
-      val winV = winValue.getValue(trick)
-      val led = ledCycle[trick % 4]
-      var seat = leader
-      repeat(4) {
-        if (seat == winner) {
-          plays.add(card(seat, winSuit, winV, round))
-        } else if (seat == leader && trump == "SANS") {
-          val pool = pools.getValue(led)
-          plays.add(card(seat, led, pool.removeLast(), round))
-        } else {
-          val fallback = pools.entries
-            .filter { it.key != winSuit && it.value.isNotEmpty() }
-            .minByOrNull { it.value.last() }
-            ?: pools.entries.first { it.value.isNotEmpty() }
-          plays.add(card(seat, fallback.key, fallback.value.removeLast(), round))
-        }
-        seat = nextSeat(seat)
-      }
-      leader = winner
-    }
-    assertEquals(52, plays.size)
-    return plays
-  }
-
-  private fun matchFields(
-    status: String = "complete",
-    mode: Any? = "RANKED",
-    gameType: Any? = "FULL",
-    scoringMode: Any? = "NORMAL",
-    seats: Map<String, String> = mapOf("p1" to "u1", "p2" to "u2", "p3" to "u3", "p4" to "u4"),
-    players: List<String> = listOf("u1", "u2", "u3", "u4"),
-    dealer: Any? = "u1",
-    completedRound: Any? = 1,
-    // Synthetic shortened matches: completedRound ends the match, so the
-    // default pairs 1/1 (mirrors endMatch's completedRound+1 > maxRounds).
-    maxRounds: Any? = 1,
-    finalScores: Any? = mapOf("p1" to 25, "p2" to -11, "p3" to 12, "p4" to 14),
-    winnerIds: Any? = listOf("p1"),
-    version: Any? = 7,
-    // O-19: the persisted multiplier of the round current at completion. The
-    // sentinel default keeps every pre-O-19 fixture a LEGACY document (key
-    // absent), which must still settle from the replayed chain alone.
-    currentMultiplier: Any? = ABSENT,
-  ): Map<String, Any?> {
-    val out = LinkedHashMap<String, Any?>()
-    out["roomId"] = "r1"
-    out["players"] = players
-    out["status"] = status
-    out["currentRound"] = completedRound
-    out["maxRounds"] = maxRounds
-    out["dealer"] = dealer
-    out["seats"] = seats
-    out["version"] = version
-    if (mode !== ABSENT) out["mode"] = mode
-    if (gameType !== ABSENT) out["gameType"] = gameType
-    if (scoringMode !== ABSENT) out["scoringMode"] = scoringMode
-    if (completedRound !== ABSENT) out["completedRound"] = completedRound
-    if (maxRounds !== ABSENT) out["maxRounds"] = maxRounds
-    if (finalScores !== ABSENT) out["finalScores"] = finalScores
-    if (winnerIds !== ABSENT) out["winnerIds"] = winnerIds
-    if (currentMultiplier !== ABSENT) out["currentMultiplier"] = currentMultiplier
-    return out
-  }
-
-  private companion object {
-    /** Sentinel for "key absent" (distinct from an explicit null). */
-    val ABSENT = object {}
-  }
-
-  private fun archiveFields(
-    round: Int,
-    plays: List<Map<String, Any?>>,
-    actions: List<Map<String, Any?>>,
-    estimates: Any? = ABSENT,
-  ): Map<String, Any?> {
-    val out = LinkedHashMap<String, Any?>()
-    out["round"] = round
-    out["matchId"] = "m1"
-    out["cardLog"] = plays
-    out["biddingLog"] = actions
-    if (estimates !== ABSENT) out["estimates"] = estimates
-    return out
-  }
-
-  private fun shellMatch(order: List<String> = listOf("p1", "p2", "p3", "p4")) = ConvergedMatch(
-    matchId = "m1",
-    mode = MatchMode.RANKED,
-    status = "complete",
-    order = order,
-    players = listOf("u1", "u2", "u3", "u4"),
-    dealerSeatFinal = "p1",
-    gameType = GameType.FULL,
-    classic = false,
-    completedRound = 1,
-    maxRounds = 18,
-    claimedScores = null,
-    claimedWinners = null,
-    archives = emptyList(),
-  )
-
-  private fun converged(
-    archives: List<ArchivedRound>,
-    fields: Map<String, Any?> = matchFields(),
-  ): ConvergedMatch {
-    val parsed = Settlement.parseMatch("m1", fields)
-      ?: throw AssertionError("fixture match did not parse")
-    return parsed.copy(archives = archives)
-  }
-
-  private fun archived(
-    round: Int,
-    winners: List<String>,
-    trump: String,
-    actions: List<Map<String, Any?>>,
-    estimates: Map<String, Int>?,
-    leaderId: String = "p1",
-  ): ArchivedRound {
-    val parsed = Settlement.parseArchive(
-      "$round",
-      archiveFields(round, playsFor(winners, trump, round, leaderId), actions, estimates ?: ABSENT),
-    ) ?: throw AssertionError("fixture archive $round did not parse")
-    // Self-validating fixture: the replay must re-derive the intended wins.
-    val tricks = Settlement.replayTricks(shellMatch(), parsed, Suit.valueOf(trump))
-      ?: throw AssertionError("fixture tricks did not replay")
-    assertEquals(winners.groupingBy { it }.eachCount(), tricks.filterValues { it > 0 })
-    return parsed
-  }
-
-  /** Round-1 golden parts: caller p1 5♠; est p2:3, p3:2, p4:4 (total
-   *  14, over); won 5/2/2/4 — p2 alone misses (sole loser): p1 CALLER 25,
-   *  p2 −1−10 = −11, p3 12, p4 RISK win 14. (Completed totals never equal
-   *  13 — the forbidden-13 rule — so all-succeed is unreachable; at least
-   *  one seat always misses.) */
-  private data class RoundFixture(
-    val winners: List<String>,
-    val plays: List<Map<String, Any?>>,
-    val actions: List<Map<String, Any?>>,
-    val estimates: Map<String, Int>,
-  )
-
-  private fun round1Parts(): RoundFixture {
-    val winners = listOf("p1", "p1", "p1", "p1", "p1", "p2", "p2", "p3", "p3", "p4", "p4", "p4", "p4")
-    val plays = playsFor(winners, "SPADES", 1, "p1")
-    val actions = listOf(
-      dash("p1", false, 1), dash("p2", false, 1), dash("p3", false, 1), dash("p4", false, 1),
-      auctionBid("p1", 5, "SPADES", 1),
-      auctionPass("p2", 1), auctionPass("p3", 1), auctionPass("p4", 1),
-      confirm("p1", 5, "SPADES", 1),
-    )
-    return RoundFixture(winners, plays, actions, mapOf("p2" to 3, "p3" to 2, "p4" to 4))
-  }
-
-  private fun round1Golden(): ArchivedRound {
-    val parts = round1Parts()
-    return archived(1, parts.winners, "SPADES", parts.actions, parts.estimates)
-  }
 
   // ── gate ──────────────────────────────────────────────────────────
 
@@ -1436,25 +1205,10 @@ class SettlementTest {
     }
   }
 
-  private fun settleRequest(uid: String?, matchId: Any?): CallableRequest =
-    object : CallableRequest {
-      // The Functions runtime delivers data as a PLAIN JS OBJECT, never a Kotlin
-      // map — `mapOf` here would let a broken `as? Map` cast pass. json() is
-      // the runtime shape; matchId is Any? because one caller probes a null id.
-      override val data: Any? = json("matchId" to matchId)
-      override val auth: AuthData? = uid?.let { object : AuthData {
-        override val uid: String = it
-        override val token: AuthToken? = null
-      } }
-      override val instanceIdToken: String? = null
-      override val rawRequest: Any? = null
-      override val app: Any? = null
-    }
-
-  private fun rawRound(round: ArchivedRound, plays: List<Map<String, Any?>>, actions: List<Map<String, Any?>>): Map<String, Any?> {
-    val estimates: Any? = round.estimates ?: ABSENT
-    return archiveFields(round.round, plays, actions, estimates)
-  }
+  // The adapters deliver the payload as a PLAIN JS OBJECT, never a Kotlin
+  // map — `mapOf` here would let a broken `as? Map` cast pass. json() is
+  // the runtime shape.
+  private fun settleData(matchId: Any?): Any? = json("matchId" to matchId)
 
   @Test
   fun firstSettleCorrectsAndRecords() = runTest {
@@ -1464,7 +1218,7 @@ class SettlementTest {
       match = matchFields(finalScores = mapOf("p1" to 25, "p2" to -1, "p3" to 12, "p4" to 14)),
       archives = mapOf("1" to rawRound(golden, parts.plays, parts.actions)),
     )
-    val response = settleOnce(db, settleRequest("u1", "m1"))
+    val response = settleOnce(db, "u1", settleData("m1"))
     assertTrue(response["ok"] == true, "expected ok response but was $response")
     assertTrue(response["corrected"] == true, "expected corrected response but was $response")
     assertEquals(mapOf("p1" to 25, "p2" to -11, "p3" to 12, "p4" to 14), response["finalScores"])
@@ -1472,7 +1226,7 @@ class SettlementTest {
     assertEquals(1, db.claims)
 
     // Replay: recorded outcome returns, nothing rewrites.
-    val replay = settleOnce(db, settleRequest("u2", "m1"))
+    val replay = settleOnce(db, "u2", settleData("m1"))
     assertTrue(replay["replayed"] == true, "expected replay but was $replay")
     assertTrue(replay["corrected"] == true, "expected corrected replay but was $replay")
     assertEquals(1, db.corrections)
@@ -1488,7 +1242,7 @@ class SettlementTest {
       match = matchFields(),
       archives = mapOf("1" to rawRound(golden, parts.plays, parts.actions)),
     )
-    val response = settleOnce(db, settleRequest("u1", "m1"))
+    val response = settleOnce(db, "u1", settleData("m1"))
     assertTrue(response["corrected"] == false, "expected agreed response but was $response")
     assertEquals(0, db.corrections)
     assertEquals(1, db.claims)
@@ -1508,7 +1262,7 @@ class SettlementTest {
         "u4" to mapOf("rp" to 700), // Gold II
       ),
     )
-    val response = settleOnce(db, settleRequest("u1", "m1"))
+    val response = settleOnce(db, "u1", settleData("m1"))
     assertTrue(response["settled"] == true, "expected a settlement but was $response")
     assertEquals(1, db.claims)
 
@@ -1544,7 +1298,7 @@ class SettlementTest {
         "u4" to mapOf("rp" to 400), // Silver II
       ),
     )
-    val response = settleOnce(db, settleRequest("u1", "m1"))
+    val response = settleOnce(db, "u1", settleData("m1"))
     assertTrue(response["settled"] == true, "expected a settlement but was $response")
     val movements = db.claim!!["movements"] as Map<*, *>
     val deltas = movements.values.map { (it as Map<*, *>)["delta"] as Int }
@@ -1555,14 +1309,30 @@ class SettlementTest {
   }
 
   @Test
-  fun unauthenticatedSettleThrows() = runTest {
+  fun aSettlerOutsideTheMatchIsDenied() = runTest {
+    // Authentication itself happens at the adapter (callable-auth / the
+    // Worker's bearer gate) before this orchestration runs; what remains
+    // here is authorization — the caller must be a player in the match.
     val db = FakeDb(match = matchFields())
     try {
-      settleOnce(db, settleRequest(null, "m1"))
-      throw AssertionError("expected HttpsError")
-    } catch (e: Throwable) {
-      assertEquals("unauthenticated", e.asDynamic().code as String)
+      settleOnce(db, "not-a-player", settleData("m1"))
+      throw AssertionError("expected AuthorityError")
+    } catch (e: AuthorityError) {
+      assertEquals("permission-denied", e.code)
     }
+  }
+
+  @Test
+  fun aMissingMatchIdIsRejectedBeforeAnyRead() = runTest {
+    val db = FakeDb(match = matchFields())
+    try {
+      settleOnce(db, "u1", json("matchId" to null))
+      throw AssertionError("expected AuthorityError")
+    } catch (e: AuthorityError) {
+      assertEquals("invalid-argument", e.code)
+    }
+    // The rejection happens before the storage layer is touched.
+    assertEquals(0, db.txRuns)
   }
 
   /**
@@ -1575,7 +1345,7 @@ class SettlementTest {
   @Test
   fun nonRankedSkipsArchivesAndSettlesStatsOnly() = runTest {
     val db = FakeDb(match = matchFields(mode = "ROOM"))
-    val response = settleOnce(db, settleRequest("u1", "m1"))
+    val response = settleOnce(db, "u1", settleData("m1"))
     assertEquals(true, response["settled"])
     assertNull(response["you"], "a stats-only settle reports no RP movement")
     assertEquals(0, db.archiveReads, "the recompute never runs outside RANKED")
@@ -1606,7 +1376,7 @@ class SettlementTest {
       match = matchFields(finalScores = mapOf("p1" to 25, "p2" to -1, "p3" to 12, "p4" to 14)),
       archives = mapOf("1" to rawRound(golden, parts.plays, parts.actions)),
     )
-    val response = settleOnce(db, settleRequest("u1", "m1"))
+    val response = settleOnce(db, "u1", settleData("m1"))
     assertTrue(response["settled"] == true, "expected a settlement but was $response")
     assertEquals(1, db.appendAttempts)
     assertEquals(1, db.appends.size)
@@ -1621,7 +1391,7 @@ class SettlementTest {
     assertEquals(1, db.recentReads)
 
     // Retry of the settled match: the replay path is inert for the ledger.
-    val replay = settleOnce(db, settleRequest("u2", "m1"))
+    val replay = settleOnce(db, "u2", settleData("m1"))
     assertTrue(replay["replayed"] == true, "expected a replay but was $replay")
     assertEquals(1, db.appendAttempts)
     assertEquals(1, db.appends.size)
@@ -1638,7 +1408,7 @@ class SettlementTest {
       match = matchFields(),
       archives = mapOf("1" to rawRound(golden, parts.plays, parts.actions)),
     )
-    val response = settleOnce(db, settleRequest("u1", "m1"))
+    val response = settleOnce(db, "u1", settleData("m1"))
     assertTrue(response["corrected"] == false, "expected an agreed settle but was $response")
     assertEquals(1, db.appends.size)
     assertEquals("APPLIED", db.appends[0]["outcomeKind"])
@@ -1655,7 +1425,7 @@ class SettlementTest {
       archives = mapOf("1" to rawRound(golden, parts.plays, parts.actions)),
     )
     db.appendThrows = true
-    val response = settleOnce(db, settleRequest("u1", "m1"))
+    val response = settleOnce(db, "u1", settleData("m1"))
     assertTrue(
       response["ok"] == true && response["settled"] == true,
       "the settlement must survive an append failure but was $response",
@@ -1680,10 +1450,10 @@ class SettlementTest {
       archives = mapOf("1" to rawRound(golden, parts.plays, parts.actions)),
     )
     try {
-      settleOnce(db, settleRequest("u1", "m1"))
-      throw AssertionError("expected HttpsError")
-    } catch (e: Throwable) {
-      assertEquals("failed-precondition", e.asDynamic().code as String)
+      settleOnce(db, "u1", settleData("m1"))
+      throw AssertionError("expected AuthorityError")
+    } catch (e: AuthorityError) {
+      assertEquals("failed-precondition", e.code)
     }
     assertEquals(1, db.appends.size)
     assertEquals("FAILED", db.appends[0]["outcomeKind"])
@@ -1706,13 +1476,13 @@ class SettlementTest {
       ),
     )
     try {
-      settleOnce(db, settleRequest("u1", "m1"))
-      throw AssertionError("expected HttpsError")
-    } catch (e: Throwable) {
-      assertEquals("failed-precondition", e.asDynamic().code as String)
+      settleOnce(db, "u1", settleData("m1"))
+      throw AssertionError("expected AuthorityError")
+    } catch (e: AuthorityError) {
+      assertEquals("failed-precondition", e.code)
       assertTrue(
-        (e.asDynamic().message as String).contains("roundArchive/1 is malformed"),
-        "unexpected message: ${e.asDynamic().message}",
+        e.message.contains("roundArchive/1 is malformed"),
+        "unexpected message: ${e.message}",
       )
     }
     assertEquals(1, db.appends.size)
@@ -1730,16 +1500,16 @@ class SettlementTest {
   @Test
   fun statsOnlyAndDeniedAttemptsAppendNothing() = runTest {
     val roomDb = FakeDb(match = matchFields(mode = "ROOM"))
-    val response = settleOnce(roomDb, settleRequest("u1", "m1"))
+    val response = settleOnce(roomDb, "u1", settleData("m1"))
     assertEquals(true, response["settled"], "a ROOM match settles stats-only")
     assertEquals(0, roomDb.appendAttempts, "a stats-only settle never appends to the ledger")
 
     val deniedDb = FakeDb(match = matchFields())
     try {
-      settleOnce(deniedDb, settleRequest("stranger", "m1"))
-      throw AssertionError("expected HttpsError")
-    } catch (e: Throwable) {
-      assertEquals("permission-denied", e.asDynamic().code as String)
+      settleOnce(deniedDb, "stranger", settleData("m1"))
+      throw AssertionError("expected AuthorityError")
+    } catch (e: AuthorityError) {
+      assertEquals("permission-denied", e.code)
     }
     assertEquals(0, deniedDb.appendAttempts)
   }
@@ -1766,7 +1536,7 @@ class SettlementTest {
         "outcomeKind" to "CORRECTED",
       ),
     )
-    val response = settleOnce(db, settleRequest("u1", "m1"))
+    val response = settleOnce(db, "u1", settleData("m1"))
     assertTrue(response["corrected"] == true, "expected a corrected settle but was $response")
     // The bounded corrections window was read and fed to the pure detector
     // (SettlementLedgerTest pins what the detector derives from it).
@@ -1782,7 +1552,7 @@ class SettlementTest {
 
     // A: the table has never been corrected - the detector finds no repeat.
     val quiet = FakeDb(match = fields, archives = archives)
-    val quietResponse = settleOnce(quiet, settleRequest("u1", "m1"))
+    val quietResponse = settleOnce(quiet, "u1", settleData("m1"))
 
     // B: identical settlement, but the window now says this same table was
     // corrected once before, so S62_REPEAT fires.
@@ -1798,7 +1568,7 @@ class SettlementTest {
         "outcomeKind" to "CORRECTED",
       ),
     )
-    val loudResponse = settleOnce(loud, settleRequest("u1", "m1"))
+    val loudResponse = settleOnce(loud, "u1", settleData("m1"))
 
     // A4.3, pinned: the diagnostic signal may not reach the client response,
     // the correction write, the claim, or even the audit row itself.

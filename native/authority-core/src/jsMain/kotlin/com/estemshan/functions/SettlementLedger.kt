@@ -135,7 +135,7 @@ object SettlementLedger {
       "winnerIds" to recomputed.winnerIds,
       "changedSeats" to changedSeats,
       "winnerChanged" to (recomputed.winnerIds.sorted() != recomputed.claimedWinners.sorted()),
-      "appendedAt" to FieldValue.serverTimestamp(),
+      "appendedAt" to AuthoritySentinels.serverTimestamp(),
     )
   }
 
@@ -159,7 +159,7 @@ object SettlementLedger {
     "settledBy" to settledBy,
     "failureReason" to reason,
     "failureMessage" to message,
-    "appendedAt" to FieldValue.serverTimestamp(),
+    "appendedAt" to AuthoritySentinels.serverTimestamp(),
   )
 
   /**
@@ -346,7 +346,7 @@ object SettlementLedger {
   /**
    * Failure hook (recompute failures and malformed archives): console line
    * plus a best-effort FAILED record. The caller rethrows its own
-   * HttpsError afterwards - the ledger never replaces the denial, and
+   * AuthorityError afterwards - the ledger never replaces the denial, and
    * (like [recordSettlement]) this guarded body never throws.
    */
   suspend fun reportFailure(

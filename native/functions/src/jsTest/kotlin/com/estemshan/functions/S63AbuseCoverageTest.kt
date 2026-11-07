@@ -51,6 +51,13 @@ import kotlin.test.assertTrue
 
 class S63AbuseCoverageTest {
 
+  /** The core throws [AuthorityError] (a Kotlin class — its `code` is not a
+   * plain JS property, so `.asDynamic().code` is undefined); the Firebase path
+   * throws the external [HttpsError]. Read both, preferring the core type. */
+  private fun codeOf(error: Throwable): String? =
+    (error as? AuthorityError)?.code ?: (error.asDynamic().code as? String)
+
+
   // ═══════════════════════════════════════════════════════════════════════════
   // Section A — Forged results (settlement)
   // ═══════════════════════════════════════════════════════════════════════════
@@ -128,23 +135,13 @@ class S63AbuseCoverageTest {
     }
   }
 
-  /** A callable request whose [data] is a plain JS object carrying matchId. */
-  private fun settleReq(uid: String?, matchId: Any?): CallableRequest = object : CallableRequest {
-    override val data: Any? = json("matchId" to matchId)
-    override val auth: AuthData? = uid?.let {
-      object : AuthData {
-        override val uid: String = it
-        override val token: AuthToken? = null
-      }
-    }
-    override val instanceIdToken: String? = null
-    override val rawRequest: Any? = null
-    override val app: Any? = null
-  }
+  /** A `data` payload carrying matchId (the port boundary takes `(uid, data)`). */
+  private fun s63SettleData(matchId: Any?): Any? = json("matchId" to matchId)
 
   /** A callable request whose data is a plain JS object carrying matchId plus forged fields. */
-  private fun forgedSettleReq(uid: String?, matchId: Any? = "m1"): CallableRequest = object : CallableRequest {
-    override val data: Any? = json(
+  /** The forged payload, without the request shell (the port takes `(uid, data)`). */
+  private fun forgedSettleData(matchId: Any? = "m1"): Any? =
+    json(
       "matchId" to matchId,
       "finalScores" to mapOf("p1" to 999, "p2" to 999, "p3" to 999, "p4" to 999),
       "winnerIds" to listOf("attacker"),
@@ -153,35 +150,15 @@ class S63AbuseCoverageTest {
       "rp" to 9999,
       "position" to 1,
     )
-    override val auth: AuthData? = uid?.let {
-      object : AuthData {
-        override val uid: String = it
-        override val token: AuthToken? = null
-      }
-    }
-    override val instanceIdToken: String? = null
-    override val rawRequest: Any? = null
-    override val app: Any? = null
-  }
 
-  /** A forged request whose finalScores key bogus seats that don't exist in the match. */
-  private fun forgedSettleReqWrongSeats(uid: String?, matchId: Any? = "m1"): CallableRequest = object : CallableRequest {
-    override val data: Any? = json(
+  /** The forged payload whose finalScores key bogus seats that don't exist in the match. */
+  private fun forgedWrongSeatsData(matchId: Any? = "m1"): Any? =
+    json(
       "matchId" to matchId,
       "finalScores" to mapOf("seat-x" to 999, "seat-y" to 999, "seat-z" to 999),
       "winnerIds" to listOf("seat-x"),
       "uid" to "attacker",
     )
-    override val auth: AuthData? = uid?.let {
-      object : AuthData {
-        override val uid: String = it
-        override val token: AuthToken? = null
-      }
-    }
-    override val instanceIdToken: String? = null
-    override val rawRequest: Any? = null
-    override val app: Any? = null
-  }
 
   @Suppress("UNCHECKED_CAST")
   private fun s63Response(response: Map<String, Any?>): Map<String, Any?> =
@@ -228,7 +205,7 @@ class S63AbuseCoverageTest {
 
     // u1 is p1 (a seated player). The payload carries forged finalScores,
     // winnerIds, uid, tier, rp and position — none of them may steer anything.
-    val response = s63Response(settleOnce(db, forgedSettleReq("u1")))
+    val response = s63Response(settleOnce(db, "u1", forgedSettleData()))
 
     assertEquals(true, response["settled"])
     // The recomputed golden values settle — never the forged 999s.
@@ -290,7 +267,7 @@ class S63AbuseCoverageTest {
       profiles = allProfiles,
     )
 
-    settleOnce(db, forgedSettleReq("u1"))
+    settleOnce(db, "u1", forgedSettleData())
 
     // settledBy is u1 (the authenticated caller), never "attacker" from the payload.
     assertNotNull(db.lastClaimRecord)
@@ -316,7 +293,7 @@ class S63AbuseCoverageTest {
 
     // The payload's forged finalScores cover completely different seats — they
     // must not become the seat set, because the payload never supplies it.
-    val response = s63Response(settleOnce(db, forgedSettleReqWrongSeats("u1")))
+    val response = s63Response(settleOnce(db, "u1", forgedWrongSeatsData()))
 
     assertEquals(true, response["settled"])
     assertEquals(mapOf("p1" to 25, "p2" to -11, "p3" to 12, "p4" to 14), response["finalScores"])
@@ -338,9 +315,9 @@ class S63AbuseCoverageTest {
     )
 
     val error = assertFailsWith<Throwable> {
-      settleOnce(db, settleReq("u1", 123))
+      settleOnce(db, "u1", s63SettleData(123))
     }
-    assertEquals("invalid-argument", error.asDynamic().code as String)
+    assertEquals("invalid-argument", codeOf(error))
     // No read happened — the matchId check precedes readMatch.
     assertEquals(0, db.archiveReads)
     assertEquals(0, db.profileReads)
@@ -356,9 +333,9 @@ class S63AbuseCoverageTest {
     )
 
     val error = assertFailsWith<Throwable> {
-      settleOnce(db, settleReq("u1", null))
+      settleOnce(db, "u1", s63SettleData(null))
     }
-    assertEquals("invalid-argument", error.asDynamic().code as String)
+    assertEquals("invalid-argument", codeOf(error))
     assertEquals(0, db.archiveReads)
     assertEquals(0, db.profileReads)
     assertEquals(0, db.txRuns)
@@ -372,18 +349,10 @@ class S63AbuseCoverageTest {
       profiles = allProfiles,
     )
 
-    val request = object : CallableRequest {
-      override val data: Any? = js("({})")
-      override val auth: AuthData? = object : AuthData {
-        override val uid: String = "u1"
-        override val token: AuthToken? = null
-      }
-      override val instanceIdToken: String? = null
-      override val rawRequest: Any? = null
-      override val app: Any? = null
-    }
-    val error = assertFailsWith<Throwable> { settleOnce(db, request) }
-    assertEquals("invalid-argument", error.asDynamic().code as String)
+    // The port boundary cannot express "a request with an empty payload" — the uid
+    // is the first argument, and an empty object carries no matchId.
+    val error = assertFailsWith<Throwable> { settleOnce(db, "u1", js("({})")) }
+    assertEquals("invalid-argument", codeOf(error))
     assertEquals(0, db.archiveReads)
     assertEquals(0, db.profileReads)
     assertEquals(0, db.txRuns)
@@ -402,7 +371,7 @@ class S63AbuseCoverageTest {
     )
 
     // First settle by u1: one claim, one outcome, no correction (claim matches).
-    val first = s63Response(settleOnce(db, settleReq("u1", "m1")))
+    val first = s63Response(settleOnce(db, "u1", s63SettleData("m1")))
     assertEquals(true, first["settled"])
     assertEquals(false, first["replayed"])
     assertEquals(mapOf("p1" to 25, "p2" to -11, "p3" to 12, "p4" to 14), first["finalScores"])
@@ -412,7 +381,7 @@ class S63AbuseCoverageTest {
 
     // Second call: a different caller (u2) with a completely forged payload.
     // It must replay the first outcome and write nothing.
-    val replay = s63Response(settleOnce(db, forgedSettleReq("u2", "m1")))
+    val replay = s63Response(settleOnce(db, "u2", forgedSettleData("m1")))
     assertEquals(true, replay["replayed"], "a redelivered call must report replayed")
     assertEquals(first["finalScores"], replay["finalScores"], "the replay returns the first outcome")
     assertEquals(first["winnerIds"], replay["winnerIds"], "the first caller's winnerIds stand")
@@ -434,10 +403,10 @@ class S63AbuseCoverageTest {
       profiles = allProfiles,
     )
 
-    settleOnce(db, settleReq("u1", "m1"))
+    settleOnce(db, "u1", s63SettleData("m1"))
 
     // u2 replays with forged winnerIds, finalScores, uid — none of it lands.
-    val replay = s63Response(settleOnce(db, forgedSettleReq("u2", "m1")))
+    val replay = s63Response(settleOnce(db, "u2", forgedSettleData("m1")))
 
     assertEquals(true, replay["replayed"])
     // The recorded outcome is u1's recomputed result, not u2's forged one.
@@ -807,7 +776,7 @@ class S63AbuseCoverageTest {
       block()
       throw AssertionError("expected invalid-argument HttpsError")
     } catch (e: Throwable) {
-      assertEquals("invalid-argument", e.asDynamic().code as String)
+      assertEquals("invalid-argument", codeOf(e))
     }
     assertEquals(0, db.reads, "an invalid argument must cost zero profile reads")
   }

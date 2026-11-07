@@ -274,4 +274,12 @@ internal object SettlementFixtures {
     override val rawRequest: Any? = null
     override val app: Any? = null
   }
+
+  /**
+   * The callable `data` payload alone — the RP port boundary takes
+   * `(uid, data)` rather than a request object, so tests pass the payload
+   * and the uid separately. Same shape [settleRequest] delivers on the
+   * request.
+   */
+  fun settleData(matchId: Any?): Any? = json("matchId" to matchId)
 }

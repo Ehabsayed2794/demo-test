@@ -182,6 +182,12 @@ class StatsOnlySettlementTest {
     override suspend fun readCorrectionWindow(): List<Map<String, Any?>> = emptyList()
   }
 
+  /** The core throws [AuthorityError] (a Kotlin class — its `code` is not a
+   * plain JS property, so `.asDynamic().code` is undefined); the Firebase path
+   * throws the external [HttpsError]. Read both, preferring the core type. */
+  private fun codeOf(error: Throwable): String? =
+    (error as? AuthorityError)?.code ?: (error.asDynamic().code as? String)
+
   private fun db(
     match: Map<String, Any?> = roomMatch(),
     storedProfiles: MutableMap<String, MutableMap<String, Any?>> = profiles(),
@@ -198,7 +204,7 @@ class StatsOnlySettlementTest {
       if (e.message == "expected an HttpsError") throw e
       e
     }
-    assertEquals("failed-precondition", thrown.asDynamic().code as String, "denied with: ${thrown.message}")
+    assertEquals("failed-precondition", codeOf(thrown), "denied with: ${thrown.message}")
     messageParts.forEach { part ->
       assertTrue(
         thrown.message?.contains(part) == true,
@@ -218,7 +224,7 @@ class StatsOnlySettlementTest {
   fun everyModeCountsOneGameAndOneOutcomePerSeat() = runTest {
     for (mode in listOf("ROOM", "UNRANKED")) {
       val statsDb = db(roomMatch(mode = mode))
-      val response = settleOnce(statsDb, SettlementFixtures.settleRequest("u1", "m1"))
+      val response = settleOnce(statsDb, "u1", SettlementFixtures.settleData("m1"))
 
       assertEquals(true, response["settled"], "$mode settles")
       assertEquals(false, response["corrected"], "$mode never corrects — no recompute ran")
@@ -245,7 +251,7 @@ class StatsOnlySettlementTest {
   @Test
   fun writesOwnExactlyTheFiveCounterFieldsAndNoRpField() = runTest {
     val statsDb = db()
-    settleOnce(statsDb, SettlementFixtures.settleRequest("u1", "m1"))
+    settleOnce(statsDb, "u1", SettlementFixtures.settleData("m1"))
 
     assertEquals(4, statsDb.profileWrites.size)
     statsDb.profileWrites.forEach { (uid, fields) ->
@@ -266,7 +272,7 @@ class StatsOnlySettlementTest {
   fun aCorruptRpFieldDoesNotBlockAStatsOnlySettlement() = runTest {
     val stored = profiles().also { it.getValue("u1")["rp"] = "not-a-number" }
     val statsDb = db(storedProfiles = stored)
-    val response = settleOnce(statsDb, SettlementFixtures.settleRequest("u1", "m1"))
+    val response = settleOnce(statsDb, "u1", SettlementFixtures.settleData("m1"))
 
     assertEquals(true, response["settled"])
     assertEquals(1, statsDb.writeFor("u1")["rankedGamesPlayed"])
@@ -282,7 +288,7 @@ class StatsOnlySettlementTest {
   @Test
   fun statsOnlyNeverReadsSeasonsAppendsLedgerNorReadsArchives() = runTest {
     val statsDb = db(roomMatch(mode = "UNRANKED"))
-    settleOnce(statsDb, SettlementFixtures.settleRequest("u2", "m1"))
+    settleOnce(statsDb, "u2", SettlementFixtures.settleData("m1"))
 
     assertEquals(0, statsDb.seasonReads, "seasons/current is never consulted")
     assertEquals(0, statsDb.archiveReads, "no archive is read — no recompute")
@@ -310,7 +316,7 @@ class StatsOnlySettlementTest {
     for ((field, value) in provenance) {
       val fields = roomMatch().apply { this[field] = value }
       val statsDb = db(fields)
-      settleOnce(statsDb, SettlementFixtures.settleRequest("u1", "m1"))
+      settleOnce(statsDb, "u1", SettlementFixtures.settleData("m1"))
 
       assertEquals(0, statsDb.writeFor("u1")["rankedKingCount"], "$field: the bot's King is not attributed")
       assertEquals(1, statsDb.writeFor("u1")["rankedKozCount"], "$field: the departed row is KOZ")
@@ -329,7 +335,7 @@ class StatsOnlySettlementTest {
         takeoverRemovedUids = listOf("u4"),
       ),
     )
-    settleOnce(statsDb, SettlementFixtures.settleRequest("u1", "m1"))
+    settleOnce(statsDb, "u1", SettlementFixtures.settleData("m1"))
 
     for (uid in uids) {
       assertEquals(1, statsDb.writeFor(uid)["rankedKozCount"], "$uid is departed → KOZ")
@@ -348,7 +354,7 @@ class StatsOnlySettlementTest {
   @Test
   fun completingHumansKeepTheirOwnPlacements() = runTest {
     val statsDb = db(roomMatch(leftUids = listOf("u1")))
-    settleOnce(statsDb, SettlementFixtures.settleRequest("u1", "m1"))
+    settleOnce(statsDb, "u1", SettlementFixtures.settleData("m1"))
 
     assertEquals(1, statsDb.writeFor("u4")["rankedSecondCount"], "u4 keeps Second")
     assertEquals(1, statsDb.writeFor("u3")["rankedThirdCount"], "u3 keeps Third")
@@ -367,7 +373,7 @@ class StatsOnlySettlementTest {
   @Test
   fun disconnectReplacedUidsIsDeliberatelyNotForced() = runTest {
     val statsDb = db(roomMatch(disconnectReplacedUids = listOf("u1")))
-    settleOnce(statsDb, SettlementFixtures.settleRequest("u1", "m1"))
+    settleOnce(statsDb, "u1", SettlementFixtures.settleData("m1"))
 
     assertEquals(1, statsDb.writeFor("u1")["rankedKingCount"], "the placement stands — no override")
     assertEquals(0, statsDb.writeFor("u1")["rankedKozCount"], "and no charge is invented either")
@@ -389,7 +395,7 @@ class StatsOnlySettlementTest {
         seats = mapOf("p1" to "u1", "p2" to "bot-1", "p3" to "u3", "p4" to "u4"),
       ),
     )
-    settleOnce(statsDb, SettlementFixtures.settleRequest("u1", "m1"))
+    settleOnce(statsDb, "u1", SettlementFixtures.settleData("m1"))
 
     assertEquals(listOf("u1", "u3", "u4"), statsDb.profileReads, "the bot uid is never read")
     assertEquals(setOf("u1", "u3", "u4"), statsDb.profileWrites.map { it.first }.toSet())
@@ -408,7 +414,7 @@ class StatsOnlySettlementTest {
   fun aPlacementProfileCountsTowardNothingEvenWhenDeparted() = runTest {
     val stored = profiles("u1" to "IN_PROGRESS")
     val statsDb = db(roomMatch(leftUids = listOf("u1")), stored)
-    settleOnce(statsDb, SettlementFixtures.settleRequest("u2", "m1"))
+    settleOnce(statsDb, "u2", SettlementFixtures.settleData("m1"))
 
     for (field in FIVE_COUNTER_FIELDS) {
       val written = statsDb.writeFor("u1")
@@ -429,11 +435,11 @@ class StatsOnlySettlementTest {
   @Test
   fun aSecondCallReplaysAndTheCountersMovedExactlyOnce() = runTest {
     val statsDb = db()
-    val first = settleOnce(statsDb, SettlementFixtures.settleRequest("u1", "m1"))
+    val first = settleOnce(statsDb, "u1", SettlementFixtures.settleData("m1"))
     assertEquals(true, first["settled"])
     assertNull(first["you"])
 
-    val replay = settleOnce(statsDb, SettlementFixtures.settleRequest("u3", "m1"))
+    val replay = settleOnce(statsDb, "u3", SettlementFixtures.settleData("m1"))
 
     assertEquals(true, replay["replayed"], "the second call replays")
     assertNull(replay["you"], "a stats-only replay has no you — empty movements")
@@ -456,13 +462,13 @@ class StatsOnlySettlementTest {
   fun aNonMemberIsStillRejectedOnARoomMatch() = runTest {
     val statsDb = db()
     val thrown = try {
-      settleOnce(statsDb, SettlementFixtures.settleRequest("stranger", "m1"))
+      settleOnce(statsDb, "stranger", SettlementFixtures.settleData("m1"))
       throw AssertionError("expected an HttpsError")
     } catch (e: Throwable) {
       if (e.message == "expected an HttpsError") throw e
       e
     }
-    assertEquals("permission-denied", thrown.asDynamic().code as String)
+    assertEquals("permission-denied", codeOf(thrown))
     assertEquals(0, statsDb.txRuns, "the denial precedes any transaction")
     assertEquals(0, statsDb.claims)
     assertEquals(0, statsDb.profileWrites.size)
@@ -489,7 +495,7 @@ class StatsOnlySettlementTest {
     )
     for ((fields, messagePart) in shapes) {
       val statsDb = db(fields)
-      expectDenied(messagePart) { settleOnce(statsDb, SettlementFixtures.settleRequest("u1", "m1")) }
+      expectDenied(messagePart) { settleOnce(statsDb, "u1", SettlementFixtures.settleData("m1")) }
       assertEquals(0, statsDb.claims, "[$messagePart] no claim — the match stays settleable")
       assertEquals(0, statsDb.profileWrites.size, "[$messagePart] nothing writes")
     }
@@ -501,7 +507,7 @@ class StatsOnlySettlementTest {
     val stored = profiles()
     stored.remove("u4")
     val statsDb = db(roomMatch(), stored)
-    expectDenied("u4") { settleOnce(statsDb, SettlementFixtures.settleRequest("u1", "m1")) }
+    expectDenied("u4") { settleOnce(statsDb, "u1", SettlementFixtures.settleData("m1")) }
     assertEquals(0, statsDb.claims)
     assertEquals(0, statsDb.profileWrites.size)
   }

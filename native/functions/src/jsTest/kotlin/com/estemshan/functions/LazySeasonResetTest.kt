@@ -87,11 +87,17 @@ class LazySeasonResetTest {
   private fun section(response: Map<String, Any?>, key: String): Map<String, Any?> =
     response.getValue(key) as Map<String, Any?>
 
+  /** The core throws [AuthorityError] (a Kotlin class — its `code` is not a
+   * plain JS property, so `.asDynamic().code` is undefined); the Firebase path
+   * throws the external [HttpsError]. Read both, preferring the core type. */
+  private fun codeOf(error: Throwable): String? =
+    (error as? AuthorityError)?.code ?: (error.asDynamic().code as? String)
+
   private suspend fun thrownCode(block: suspend () -> Any?): String {
     try {
       block()
     } catch (e: Throwable) {
-      return e.asDynamic().code as String
+      return codeOf(e) ?: throw AssertionError("no code on $e")
     }
     throw AssertionError("expected HttpsError")
   }
@@ -307,7 +313,7 @@ class LazySeasonResetTest {
       currentSeason = seasonDoc("s3"),
     )
 
-    val response = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    val response = settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
 
     assertEquals(true, response["settled"])
     assertEquals(4, db.profileWrites.size)
@@ -349,7 +355,7 @@ class LazySeasonResetTest {
 
     val settleAfterRead = settleOnce(
       readFirst.settlementDb,
-      SettlementFixtures.settleRequest("u1", "m1"),
+      "u1", SettlementFixtures.settleData("m1"),
     )
     assertEquals(true, settleAfterRead["settled"])
     assertEquals(mapOf("previousRp" to 450, "rp" to 490, "delta" to 40), settleAfterRead["you"])
@@ -360,7 +366,7 @@ class LazySeasonResetTest {
     // Order (b): the settlement resets and folds everyone first; the read
     // then finds u1 current and writes nothing.
     val settleFirst = SharedStore(seasonDoc("s3"))
-    val settled = settleOnce(settleFirst.settlementDb, SettlementFixtures.settleRequest("u1", "m1"))
+    val settled = settleOnce(settleFirst.settlementDb, "u1", SettlementFixtures.settleData("m1"))
     assertEquals(true, settled["settled"])
     val readAfter = loadOnce(settleFirst.profileDb, fakeRequest("u1"))
     assertEquals(false, readAfter["migrated"])
@@ -502,7 +508,7 @@ class LazySeasonResetTest {
       currentSeason = null,
     )
 
-    val response = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    val response = settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
 
     assertEquals(true, response["settled"])
     assertTrue(
@@ -531,9 +537,9 @@ class LazySeasonResetTest {
 
     assertEquals(
       "failed-precondition",
-      thrownCode { settleOnce(db, SettlementFixtures.settleRequest("u1", "m1")) },
+      thrownCode { settleOnce(db, "u1", SettlementFixtures.settleData("m1")) },
     )
-    val message = thrownMessage { settleOnce(db, SettlementFixtures.settleRequest("u1", "m1")) }
+    val message = thrownMessage { settleOnce(db, "u1", SettlementFixtures.settleData("m1")) }
     assertTrue("'s2'" in message, "expected '$message' to name the recorded season")
     assertTrue("seasons/current does not exist" in message)
     // The whole settlement failed closed BEFORE any write: no profile write,
@@ -554,11 +560,11 @@ class LazySeasonResetTest {
 
     assertEquals(
       "failed-precondition",
-      thrownCode { settleOnce(db, SettlementFixtures.settleRequest("u1", "m1")) },
+      thrownCode { settleOnce(db, "u1", SettlementFixtures.settleData("m1")) },
     )
     assertTrue(
       "seasons/current has no usable seasonId" in
-        thrownMessage { settleOnce(db, SettlementFixtures.settleRequest("u1", "m1")) },
+        thrownMessage { settleOnce(db, "u1", SettlementFixtures.settleData("m1")) },
     )
     assertEquals(0, db.profileWrites.size)
     assertEquals(null, db.claim)
@@ -617,7 +623,7 @@ class LazySeasonResetTest {
       currentSeason = runningSeasonDoc("s2", "s3"),
     )
 
-    val response = settleOnce(db, SettlementFixtures.settleRequest("u1", "m1"))
+    val response = settleOnce(db, "u1", SettlementFixtures.settleData("m1"))
 
     assertEquals(true, response["settled"])
     assertTrue(
@@ -656,7 +662,7 @@ class LazySeasonResetTest {
     )
     assertEquals(
       "failed-precondition",
-      thrownCode { settleOnce(settle, SettlementFixtures.settleRequest("u1", "m1")) },
+      thrownCode { settleOnce(settle, "u1", SettlementFixtures.settleData("m1")) },
     )
     assertEquals(0, settle.profileWrites.size)
     assertEquals(null, settle.claim)

@@ -145,7 +145,7 @@ class SettlementRpEmulatorTest {
     val uids = seats.map { uid(it) }
     seedTable(matchId, uids, uids.associateWith { 690 })
 
-    val response = settleOnce(AdminSettlementDb(), SettlementFixtures.settleRequest(uids[0], matchId))
+    val response = settleOnce(AdminSettlementDb(), uids[0], SettlementFixtures.settleData(matchId))
 
     assertEquals(true, response["settled"])
     assertEquals(
@@ -180,15 +180,15 @@ class SettlementRpEmulatorTest {
     seedTable(matchId, uids, uids.associateWith { 690 })
     val db = AdminSettlementDb()
 
-    val first = settleOnce(db, SettlementFixtures.settleRequest(uids[0], matchId))
+    val first = settleOnce(db, uids[0], SettlementFixtures.settleData(matchId))
     assertEquals(true, first["settled"])
     val claimBefore = assertNotNull(fieldsOf(claimRef(matchId)))
     val profilesBefore = uids.associateWith { assertNotNull(fieldsOf(playerRef(it))) }
 
     // The same call delivered again (a client retry) and a DIFFERENT caller
     // replaying the one claim document.
-    val again = settleOnce(db, SettlementFixtures.settleRequest(uids[0], matchId))
-    val neighbour = settleOnce(db, SettlementFixtures.settleRequest(uids[3], matchId))
+    val again = settleOnce(db, uids[0], SettlementFixtures.settleData(matchId))
+    val neighbour = settleOnce(db, uids[3], SettlementFixtures.settleData(matchId))
     assertEquals(true, again["replayed"])
     assertEquals(true, neighbour["replayed"])
     assertEquals(first["you"], again["you"], "a retry answers with the recorded award")
@@ -261,7 +261,7 @@ class SettlementRpEmulatorTest {
     )
 
     val thrown = try {
-      settleOnce(AdminSettlementDb(), SettlementFixtures.settleRequest(uids[0], matchId))
+      settleOnce(AdminSettlementDb(), uids[0], SettlementFixtures.settleData(matchId))
       throw AssertionError("expected a fail-closed denial")
     } catch (e: Throwable) {
       if (e.message == "expected a fail-closed denial") throw e
@@ -311,7 +311,7 @@ class SettlementRpEmulatorTest {
     )
 
     val thrown = try {
-      settleOnce(AdminSettlementDb(), SettlementFixtures.settleRequest(uids[0], matchId))
+      settleOnce(AdminSettlementDb(), uids[0], SettlementFixtures.settleData(matchId))
       throw AssertionError("expected a fail-closed denial")
     } catch (e: Throwable) {
       if (e.message == "expected a fail-closed denial") throw e
@@ -352,7 +352,7 @@ class SettlementRpEmulatorTest {
 
     val response = settleOnce(
       AdminSettlementDb(),
-      SettlementFixtures.settleRequest(uids[1], matchId),
+      uids[1], SettlementFixtures.settleData(matchId),
     )
 
     // A table of four Bronze IIIs: KING 30, SECOND 15, and both losers floored
