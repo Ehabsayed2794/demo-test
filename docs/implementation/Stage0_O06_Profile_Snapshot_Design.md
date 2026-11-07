@@ -1,5 +1,7 @@
 # Stage 0 — O-06 D6, profiles snapshot at match start (design note)
 
+> **⚠ SUPERSEDED IN PART (2026-11-07): the cross-match topology is undecided and currently broken — see `Stage0_O06_Profile_Authority_Gap.md` (documented blocker). Nothing in this note may be implemented; it describes the seed-push mechanics faithfully, but the fold that the seeded pre-image feeds has nowhere to go afterwards until the owner decides the profile-authority topology.**
+
 **Date:** 2026-11-07 · **Status:** **Draft — for owner review. No code written under this note yet.**
 **Branch:** `feat/o06-do-sqlite` · **Base:** `origin/main@2b35b49` + Step 2 (D6) landed in `b44796c`
 **Decides:** where the DO-owned `profiles` table is seeded from `players/{uid}`, by whom, and how a match becomes settleable on the DO authority path.
