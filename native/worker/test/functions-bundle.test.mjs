@@ -69,9 +69,20 @@ const makeDb = () => ({
   runTransaction: async (fn) => fn({ get: async () => ({ exists: false }) }),
 });
 
+// Scheduled functions carry `__endpoint`, not `__trigger` (the Worker/manifest
+// guard and the Firebase CLI both dispatch on it). The stub mirrors the exact
+// shape `FirebaseScheduler.kt` declares: (schedule, handler) => fn.
+const onSchedule = (schedule, handler) => {
+  const fn = (...args) => handler(...args);
+  fn.__endpoint = { schedule };
+  return fn;
+};
+
 const STUBS = {
   "firebase-functions/v2/https": { HttpsError, onCall },
+  "firebase-functions/v2/scheduler": { onSchedule },
   "firebase-admin/firestore": { getFirestore: makeDb, FieldValue },
+  "firebase-admin/app": { initializeApp: () => ({}) },
   "firebase-admin": { initializeApp: () => ({}) },
 };
 
@@ -88,19 +99,28 @@ function withStubbedFirebase(load) {
   }
 }
 
-test("the :functions bundle loads and every callable keeps its __trigger", { skip }, () => {
-  // index.js itself requires the bundle and throws if a callable lost its
-  // trigger — so this is also the load-time collision check.
+test("the :functions bundle loads and every Firebase function carries its marker", { skip }, () => {
+  // index.js requires the bundle and throws if an export lost its marker — so
+  // this is also the load-time collision check. The export map is the whole
+  // merged surface (callables + scheduled functions), not the V1 three the
+  // Worker serves; every export must load and carry __trigger (onCall) or
+  // __endpoint (onSchedule) — a name lost here is invisible to the CLI.
   const manifest = withStubbedFirebase(() => require(FUNCTIONS_INDEX));
 
-  assert.deepEqual(Object.keys(manifest).sort(), [
-    "engineSmoke",
-    "resolveDecisionTimeout",
-    "settleMatch",
-  ]);
+  const names = Object.keys(manifest);
+  assert.ok(names.length >= 3, "the Firebase export map is empty");
+  for (const name of ["engineSmoke", "settleMatch", "resolveDecisionTimeout"]) {
+    assert.ok(
+      names.includes(name),
+      `the V1 Worker callable "${name}" is missing from the Firebase export map`,
+    );
+  }
   for (const [name, fn] of Object.entries(manifest)) {
     assert.equal(typeof fn, "function", `${name} is not a function`);
-    assert.ok(fn.__trigger, `${name} lost its __trigger`);
+    assert.ok(
+      fn.__trigger || fn.__endpoint,
+      `${name} has neither __trigger nor __endpoint`,
+    );
   }
 
   const kotlin = withStubbedFirebase(() => require(FUNCTIONS_BUNDLE));

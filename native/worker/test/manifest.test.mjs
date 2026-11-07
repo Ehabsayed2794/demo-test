@@ -1,12 +1,16 @@
-// The manifest contract: three sources, one callable set.
+// The manifest contract: three sources, one pinned subset.
 //
 //   Kotlin  native/functions/src/jsMain/kotlin/Functions.kt   @JsName("...")
 //   Firebase native/functions/index.js                        export map
 //   Worker  native/worker/src/manifest.js                     CALLABLES
 //
-// The Kotlin source is the source of truth; the other two are projections of
-// it. This test fails if any projection drifts, so adding a callable means
-// touching all three (and the pinned expectation below) in the same change.
+// The Kotlin source is the source of truth. The Firebase export map and the
+// Worker manifest are projections of it, and the Worker deliberately serves
+// ONLY the three V1 callables — the rest (season reset, matchmaking,
+// playUnranked, leaderboards, ...) are Firebase functions outside the
+// Worker's scope. So the checks are containment, not equality: the three
+// Worker callables must exist in the Kotlin source and the Firebase export
+// map, and nothing more is claimed about the rest of the surface.
 //
 // Built-in modules only: node:test, node:assert, node:fs, node:path, node:url.
 // No dependencies, no network.
@@ -68,28 +72,38 @@ function kotlinCallableNames(source) {
 }
 
 function firebaseCallableNames(source) {
-  const block = /const callables = \{([\s\S]*?)\n\};/.exec(source);
-  assert.ok(block, "native/functions/index.js has no `const callables = { ... }` block");
+  const block = /const exported = \{([\s\S]*?)\n\};/.exec(source);
+  assert.ok(block, "native/functions/index.js has no `const exported = { ... }` block");
 
   return [...block[1].matchAll(/^\s*([A-Za-z_$][\w$]*)\s*:/gm)].map(
     (match) => match[1],
   );
 }
 
-test("Worker manifest matches the Kotlin @JsName callables", async () => {
+test("Worker callables exist in the Kotlin @JsName source", async () => {
   const source = await readFile(KOTLIN, "utf8");
   const kotlin = kotlinCallableNames(source);
 
   assert.ok(kotlin.length > 0, "no @JsName callables found in Functions.kt");
-  assert.deepEqual(sorted(CALLABLES), sorted(kotlin));
+  for (const name of CALLABLES) {
+    assert.ok(
+      kotlin.includes(name),
+      `the Worker callable "${name}" is missing from Functions.kt`,
+    );
+  }
 });
 
-test("Worker manifest matches the Firebase export map", async () => {
+test("Worker callables exist in the Firebase export map", async () => {
   const source = await readFile(FIREBASE, "utf8");
   const firebase = firebaseCallableNames(source);
 
   assert.ok(firebase.length > 0, "no callables found in native/functions/index.js");
-  assert.deepEqual(sorted(CALLABLES), sorted(firebase));
+  for (const name of CALLABLES) {
+    assert.ok(
+      firebase.includes(name),
+      `the Worker callable "${name}" is missing from native/functions/index.js`,
+    );
+  }
 });
 
 test("the callable set is the pinned V1 surface", () => {
